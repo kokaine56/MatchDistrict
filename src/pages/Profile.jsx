@@ -2111,74 +2111,80 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               </button>
 
               {/* Public Organizer Profile Card */}
-              <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden h-[420px] sm:h-[500px] lg:h-[540px]">
-                <div className="flex flex-col h-full">
-                  {/* Banner — 40% */}
-                  <div className="flex-[2] min-h-0 relative overflow-hidden bg-surface-container">
-                    <img
-                      src={viewedUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'}
-                      alt="Organizer Banner"
-                      className="w-full h-full object-cover absolute inset-0"
-                    />
-                  </div>
-
-                  {/* Content — 60%, centered column */}
-                  <div className="flex-[3] min-h-0 relative px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col items-center text-center md:items-start md:text-left">
-                    {/* Name & Handle — offset to clear avatar's bottom half */}
-                    <div className="mt-11 sm:mt-14 lg:mt-16 mb-3">
-                      <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight flex items-center justify-center md:justify-start gap-2 flex-wrap">
-                        <span>{viewedUser.orgName || viewedUser.name}</span>
-                        <VerificationBadge tier={viewedUser.tier} size="sm" />
-                      </h1>
-                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">{viewedUser.gamerTag || viewedUser.orgHandle}</p>
-                    </div>
-
-                    {/* Bio */}
-                    {(viewedUser.orgBio || viewedUser.experience || viewedUser.bio) && (
-                      <p className="text-on-surface-variant text-xs sm:text-sm leading-relaxed mb-3 line-clamp-2 max-w-[90%] md:max-w-prose md:self-start">
-                        {viewedUser.orgBio || viewedUser.experience || viewedUser.bio}
-                      </p>
-                    )}
-
-                    {/* Stats row */}
-                    <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-3 w-full max-w-md md:mx-0">
-                      {[
-                        { label: 'Followers', value: viewedUser.followers ?? 0, icon: 'group' },
-                        { label: 'Events', value: viewedUser.tournamentsHosted ?? 0, icon: 'sports_esports' },
-                        { label: 'Rating', value: viewedUser.rating ?? '—', icon: 'star' },
-                      ].map(s => (
-                        <div key={s.label} className="rounded-xl px-2 py-2 sm:px-3 sm:py-3 text-center bg-surface-container border border-outline-variant/40">
-                          <span className="material-symbols-outlined text-primary text-sm sm:text-base block mb-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
-                          <div className="font-bold text-xs sm:text-sm text-on-background">{s.value}</div>
-                          <div className="text-on-surface-variant text-[9px] font-bold uppercase tracking-wider mt-0.5 opacity-50">{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Tier badge */}
-                    <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
-                      <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
-                        (viewedUser.tier || '').toLowerCase() === 'elite' ? 'text-primary border-primary/30 bg-primary/8' :
-                        (viewedUser.tier || '').toLowerCase() === 'pro'   ? 'text-amber-400 border-amber-400/30 bg-amber-400/8' :
-                        (viewedUser.tier || '').toLowerCase() === 'basic' ? 'text-[#1d9bf0] border-[#1d9bf0]/30 bg-[#1d9bf0]/8' :
-                        'text-on-surface-variant border-outline-variant bg-surface-container'
-                      }`}>{viewedUser.tier || 'Free'} Plan</span>
-                      {viewedUser.kycVerified && (
-                        <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border text-emerald-400 border-emerald-400/30 bg-emerald-400/8 flex items-center gap-1">
-                          <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span> KYC Verified
-                        </span>
-                      )}
-                    </div>
-                  </div>
+              <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
+                {/* Cover Banner */}
+                <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
+                  <img
+                    src={viewedUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'}
+                    alt="Organizer Banner"
+                    className="w-full h-full object-cover object-center"
+                  />
                 </div>
 
-                {/* Avatar — absolutely positioned at 40/60 boundary, float over both sections */}
-                <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 md:left-6 md:-translate-x-0 z-20" style={{ top: '40%' }}>
+                {/* Avatar / Logo — overlaps banner edge 50/50 */}
+                <div className="flex justify-center md:justify-start px-4 md:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
                   <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] shrink-0">
                     <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
                       {viewedUser.orgImage || viewedUser.avatar
                         ? <img src={viewedUser.orgImage || viewedUser.avatar} alt={viewedUser.orgName || viewedUser.name} className="avatar-img" />
                         : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-3xl">business</span></div>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Content section */}
+                <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4 relative z-10">
+                  {/* Top row: Info + stats / badges */}
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="flex-1 min-w-0 text-center md:text-left">
+                      {/* Name */}
+                      <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight flex items-center justify-center md:justify-start gap-2 flex-wrap">
+                        <span>{viewedUser.orgName || viewedUser.name}</span>
+                        <VerificationBadge tier={viewedUser.tier} size="sm" />
+                      </h1>
+
+                      {/* Handle / GamerTag */}
+                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">{viewedUser.gamerTag || viewedUser.orgHandle}</p>
+
+                      {/* Bio */}
+                      {(viewedUser.orgBio || viewedUser.experience || viewedUser.bio) && (
+                        <p className="mt-4 font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 max-w-[700px] mx-auto md:mx-0 leading-relaxed text-center md:text-left">
+                          {viewedUser.orgBio || viewedUser.experience || viewedUser.bio}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Right side stats + tier badges */}
+                    <div className="flex flex-col items-center md:items-end gap-3 shrink-0">
+                      {/* Stats row */}
+                      <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full max-w-md justify-center">
+                        {[
+                          { label: 'Followers', value: viewedUser.followers ?? 0, icon: 'group' },
+                          { label: 'Events', value: viewedUser.tournamentsHosted ?? 0, icon: 'sports_esports' },
+                          { label: 'Rating', value: viewedUser.rating ?? '—', icon: 'star' },
+                        ].map(s => (
+                          <div key={s.label} className="rounded-xl px-2 py-2 sm:px-3 sm:py-3 text-center bg-surface-container border border-outline-variant/40 min-w-[70px]">
+                            <span className="material-symbols-outlined text-primary text-sm sm:text-base block mb-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
+                            <div className="font-bold text-xs sm:text-sm text-on-background">{s.value}</div>
+                            <div className="text-on-surface-variant text-[9px] font-bold uppercase tracking-wider mt-0.5 opacity-50">{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Tier badges */}
+                      <div className="flex items-center justify-center md:justify-end gap-2 flex-wrap">
+                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                          (viewedUser.tier || '').toLowerCase() === 'elite' ? 'text-primary border-primary/30 bg-primary/8' :
+                          (viewedUser.tier || '').toLowerCase() === 'pro'   ? 'text-amber-400 border-amber-400/30 bg-amber-400/8' :
+                          (viewedUser.tier || '').toLowerCase() === 'basic' ? 'text-[#1d9bf0] border-[#1d9bf0]/30 bg-[#1d9bf0]/8' :
+                          'text-on-surface-variant border-outline-variant bg-surface-container'
+                        }`}>{viewedUser.tier || 'Free'} Plan</span>
+                        {viewedUser.kycVerified && (
+                          <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border text-emerald-400 border-emerald-400/30 bg-emerald-400/8 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span> KYC Verified
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2215,125 +2221,35 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 return (
                   <div className="space-y-6">
                     {/* Compact Player Header Hero Card */}
-                    <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden h-[420px] sm:h-[500px] lg:h-[540px]">
-                      <div className="flex flex-col h-full">
-                        {/* Banner — 40% */}
-                        <div className="flex-[2] min-h-0 relative overflow-hidden bg-slate-950">
-                          {(uploadPreviewUrls.banner || playerData.banner) ? (
-                            <>
-                              {!localMediaLoaded.banner && <div className="absolute inset-0 bg-slate-800 animate-pulse" />}
-                              <img
-                                src={(uploadPreviewUrls.banner || playerData.banner) + `?v=${profileImageVersion}`}
-                                alt="Profile Banner"
-                                className="w-full h-full object-cover object-center absolute inset-0"
-                                onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
-                                onError={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
-                                style={{ opacity: localMediaLoaded.banner ? 1 : 0 }}
-                              />
-                            </>
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
-                            </div>
-                          )}
-                          {activeUploadField === 'banner' && profileUploadProgress !== null && (
-                            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                              <CircularUploadProgress progress={profileUploadProgress} />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Content — 60%, centered column */}
-                        <div className="flex-[3] min-h-0 relative px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col items-center text-center md:items-start md:text-left">
-                          {/* Top row: text left + buttons right on desktop */}
-                          <div className="w-full mt-11 sm:mt-14 lg:mt-16 mb-3 flex flex-col md:flex-row md:justify-between md:items-start md:gap-6">
-                            {/* Left text block */}
-                            <div className="md:flex-1 md:min-w-0">
-                              <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{playerData.name}</h1>
-                              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
-                                <span className="inline-flex items-center gap-0.5 text-primary font-bold">
-                                  <span className="material-symbols-outlined text-xs">alternate_email</span>
-                                  {playerData.gamerTag?.replace(/^@/, '')}
-                                </span>
-                                <span className="inline-flex items-center gap-1">
-                                  <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
-                                  {playerData.email}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Desktop buttons — right side on desktop */}
-                            <div className="hidden sm:flex flex-row items-center justify-center md:justify-end gap-3 md:shrink-0 md:mt-0">
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                              >
-                                <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                              </motion.button>
-                              {currentUser?.role === 'organiser' ? (
-                                <motion.button
-                                  whileHover={{ scale: 1.02 }}
-                                  whileTap={{ scale: 0.98 }}
-                                  onClick={() => onNavigate && onNavigate('org-management')}
-                                  className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                                >
-                                  <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                                </motion.button>
-                              ) : (
-                                <motion.button
-                                  whileHover={{ scale: 1.02 }}
-                                  whileTap={{ scale: 0.98 }}
-                                  onClick={() => onNavigate && onNavigate('become-organizer')}
-                                  className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                                >
-                                  <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                                </motion.button>
-                              )}
-                            </div>
+                    <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
+                      {/* Cover Banner */}
+                      <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
+                        {(uploadPreviewUrls.banner || playerData.banner) ? (
+                          <>
+                            {!localMediaLoaded.banner && <div className="absolute inset-0 bg-slate-800 animate-pulse" />}
+                            <img
+                              src={(uploadPreviewUrls.banner || playerData.banner) + `?v=${profileImageVersion}`}
+                              alt="Profile Banner"
+                              className="w-full h-full object-cover object-center absolute inset-0"
+                              onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
+                              onError={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
+                              style={{ opacity: localMediaLoaded.banner ? 1 : 0 }}
+                            />
+                          </>
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
                           </div>
-
-                          {/* Description */}
-                          <p className="font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 leading-relaxed line-clamp-2 mb-3 max-w-[90%] md:max-w-prose md:self-start">
-                            {playerData.bio || 'Competitive Arena Contender. Defending champions in the esports league.'}
-                          </p>
-
-                          {/* Mobile buttons — centered */}
-                          <div className="flex sm:hidden flex-col items-center gap-3 mt-3 w-full">
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                              className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                            >
-                              <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                            </motion.button>
-                            {currentUser?.role === 'organiser' ? (
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => onNavigate && onNavigate('org-management')}
-                                className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                              >
-                                <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                              </motion.button>
-                            ) : (
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => onNavigate && onNavigate('become-organizer')}
-                                className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                              >
-                                <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                              </motion.button>
-                            )}
+                        )}
+                        {activeUploadField === 'banner' && profileUploadProgress !== null && (
+                          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                            <CircularUploadProgress progress={profileUploadProgress} />
                           </div>
-                        </div>
+                        )}
                       </div>
 
-                      {/* Avatar — absolutely positioned at 40/60 boundary, float over both sections */}
-                      <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 md:left-6 md:-translate-x-0 z-20" style={{ top: '40%' }}>
+                      {/* Avatar / Logo — overlaps banner edge 50/50 */}
+                      <div className="flex justify-center md:justify-start px-4 md:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
                         <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] shrink-0">
                           <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
                             {(uploadPreviewUrls.avatar || playerData.avatar) ? (
@@ -2359,6 +2275,96 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               </div>
                             )}
                           </div>
+                        </div>
+                      </div>
+
+                      {/* Content section */}
+                      <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4 relative z-10">
+                        {/* Top row: Info + Buttons */}
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                          <div className="flex-1 min-w-0 text-center md:text-left">
+                            {/* Name */}
+                            <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{playerData.name}</h1>
+
+                            {/* Username + Email */}
+                            <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
+                              <span className="inline-flex items-center gap-0.5 text-primary font-bold">
+                                <span className="material-symbols-outlined text-xs">alternate_email</span>
+                                {playerData.gamerTag?.replace(/^@/, '')}
+                              </span>
+                              <span className="inline-flex items-center gap-1">
+                                <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
+                                {playerData.email}
+                              </span>
+                            </div>
+
+                            {/* Bio / Description */}
+                            <p className="mt-4 font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 max-w-[700px] mx-auto md:mx-0 leading-relaxed text-center md:text-left">
+                              {playerData.bio || 'Competitive Arena Contender. Defending champions in the esports league.'}
+                            </p>
+                          </div>
+
+                          {/* Desktop buttons — right side */}
+                          <div className="hidden md:flex flex-row items-center gap-3 shrink-0">
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
+                              className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
+                            >
+                              <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
+                            </motion.button>
+                            {currentUser?.role === 'organiser' ? (
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => onNavigate && onNavigate('org-management')}
+                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                              >
+                                <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
+                              </motion.button>
+                            ) : (
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => onNavigate && onNavigate('become-organizer')}
+                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                              >
+                                <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
+                              </motion.button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Mobile buttons — stacked, full width */}
+                        <div className="flex md:hidden flex-col gap-3 mt-6">
+                          <motion.button
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
+                            className="min-h-[44px] w-full px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
+                          >
+                            <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
+                          </motion.button>
+                          {currentUser?.role === 'organiser' ? (
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => onNavigate && onNavigate('org-management')}
+                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                            >
+                              <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
+                            </motion.button>
+                          ) : (
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => onNavigate && onNavigate('become-organizer')}
+                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                            >
+                              <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
+                            </motion.button>
+                          )}
                         </div>
                       </div>
                     </div>
