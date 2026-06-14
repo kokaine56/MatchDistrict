@@ -526,6 +526,8 @@ async function initDb() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_tournament ON sponsor_contributions(tournament_id);
+        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
+        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
       `);
       console.log('📦 [MATCH DISTRICT DB] Sponsor, links, forms & admin log tables initialized.');
     } catch (extErr) {
@@ -610,7 +612,7 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
     }
 
-    // Seed default platform fee percentage if not set
+    // Seed default fee percentages if not set
     try {
       await client.query(`
         INSERT INTO site_settings (key, value, updated_at)
@@ -620,6 +622,17 @@ async function initDb() {
       console.log('💰 [MATCH DISTRICT DB] Default platform fee seeded (10%).');
     } catch (feeErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not seed platform fee:', feeErr.message);
+    }
+
+    try {
+      await client.query(`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('organizer_fee_percentage', '5', CURRENT_TIMESTAMP)
+        ON CONFLICT (key) DO NOTHING
+      `);
+      console.log('💰 [MATCH DISTRICT DB] Default organizer fee seeded (5%).');
+    } catch (orgFeeErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not seed organizer fee:', orgFeeErr.message);
     }
 
     client.release();
@@ -4406,6 +4419,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- SITE SETTINGS: GET ORGANIZER FEE PERCENTAGE (public) ---
+  if (req.url === '/api/settings/organizer-fee' && req.method === 'GET') {
+    try {
+      const result = await pool.query(`SELECT value FROM site_settings WHERE key = 'organizer_fee_percentage'`);
+      const fee = result.rows.length > 0 ? parseFloat(result.rows[0].value) : 5;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, percentage: fee }));
+    } catch (err) {
+      console.error('❌ [SETTINGS] Failed to fetch organizer fee:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, percentage: 5, error: err.message }));
+    }
+    return;
+  }
+
+  // --- SITE SETTINGS: SET ORGANIZER FEE PERCENTAGE (admin only) ---
+  if (req.url === '/api/settings/organizer-fee' && req.method === 'PUT') {
+    const authUser = getAuthUser(req);
+    if (!authUser || authUser.role !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { percentage } = JSON.parse(body);
+        const fee = parseFloat(percentage);
+        if (isNaN(fee) || fee < 0 || fee > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid fee percentage. Must be a number between 0 and 100.' }));
+          return;
+        }
+        await pool.query(
+          `INSERT INTO site_settings (key, value, updated_at)
+           VALUES ('organizer_fee_percentage', $1, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+          [fee.toString()]
+        );
+        console.log(`💰 [SETTINGS] Organizer fee updated to ${fee}% by admin ${authUser.email || authUser.id}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, percentage: fee, message: `Organizer fee set to ${fee}% successfully.` }));
+      } catch (err) {
+        console.error('❌ [SETTINGS] Failed to update organizer fee:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // --- GET TOURNAMENT SLOTS DETAIL ---
   if (req.url.startsWith('/api/tournaments/') && req.url.endsWith('/slots') && req.method === 'GET') {
     const parts = req.url.split('/');
@@ -7017,9 +7082,9 @@ const server = http.createServer(async (req, res) => {
         }
         const contribId = 'SC-' + crypto.randomBytes(6).toString('hex').toUpperCase();
         await pool.query(
-          `INSERT INTO sponsor_contributions (id, tournament_id, contributor_name, contributor_email, amount, message, screenshot_url, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-          [contribId, tournamentId, payload.contributor_name, payload.contributor_email || null, parseInt(payload.amount), payload.message || null, payload.screenshot_url || null]
+          `INSERT INTO sponsor_contributions (id, tournament_id, contributor_name, contributor_email, amount, message, screenshot_url, transaction_id, payment_app, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
+          [contribId, tournamentId, payload.contributor_name, payload.contributor_email || null, parseInt(payload.amount), payload.message || null, payload.screenshot_url || null, payload.transaction_id || null, payload.payment_app || null]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, id: contribId, message: 'Contribution submitted for review!' }));
@@ -7121,17 +7186,36 @@ const server = http.createServer(async (req, res) => {
         }
         const contrib = cRes.rows[0];
 
-        // Approve the contribution
-        await pool.query(
-          `UPDATE sponsor_contributions SET status = 'approved', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3`,
-          [authUser.id, adminNotes || null, contributionId]
-        );
+      // Approve the contribution
+      await pool.query(
+        `UPDATE sponsor_contributions SET status = 'approved', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3`,
+        [authUser.id, adminNotes || null, contributionId]
+      );
 
-        // Update tournament prize_pool_amount by adding contribution amount
-        await pool.query(
-          `UPDATE tournaments SET prize_pool_amount = COALESCE(prize_pool_amount, 0) + $1 WHERE id = $2`,
-          [parseInt(contrib.amount), contrib.tournament_id]
-        );
+      // Update tournament prize_pool_amount by adding contribution amount
+      await pool.query(
+        `UPDATE tournaments SET prize_pool_amount = COALESCE(prize_pool_amount, 0) + $1 WHERE id = $2`,
+        [parseInt(contrib.amount), contrib.tournament_id]
+      );
+
+      // Append approved contribution to sponsors_data JSON column
+      const spRes = await pool.query('SELECT sponsors_data FROM tournaments WHERE id = $1', [contrib.tournament_id]);
+      let existingSponsors = [];
+      if (spRes.rows.length > 0 && spRes.rows[0].sponsors_data) {
+        try { existingSponsors = JSON.parse(spRes.rows[0].sponsors_data); } catch { existingSponsors = []; }
+      }
+      existingSponsors.push({
+        id: contributionId,
+        name: contrib.contributor_name,
+        amount: parseInt(contrib.amount),
+        message: contrib.message || '',
+        logo: '',
+        status: 'approved',
+        type: 'public',
+        approved_at: new Date().toISOString()
+      });
+      await pool.query('UPDATE tournaments SET sponsors_data = $1 WHERE id = $2',
+        [JSON.stringify(existingSponsors), contrib.tournament_id]);
 
         // Log the action
         const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();

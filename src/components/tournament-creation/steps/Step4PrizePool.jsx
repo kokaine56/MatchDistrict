@@ -27,12 +27,20 @@ function Toggle({ enabled, onChange, label, description }) {
 
 export default function Step4PrizePool({ data, onChange, errors, userTier }) {
   const [platformFeePct, setPlatformFeePct] = useState(0)
+  const [organizerFeePct, setOrganizerFeePct] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/settings/platform-fee')
-      .then((r) => r.json())
-      .then((res) => { if (!cancelled && res.success) setPlatformFeePct(res.percentage) })
+    Promise.all([
+      fetch('/api/settings/platform-fee').then((r) => r.json()),
+      fetch('/api/settings/organizer-fee').then((r) => r.json()),
+    ])
+      .then(([platRes, orgRes]) => {
+        if (!cancelled) {
+          if (platRes.success) setPlatformFeePct(platRes.percentage)
+          if (orgRes.success) setOrganizerFeePct(orgRes.percentage)
+        }
+      })
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
@@ -47,9 +55,6 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
 
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
-  const teams = data.match_type === 'solo' ? totalSlots
-    : data.match_type === 'duo' ? Math.floor(totalSlots / 2)
-    : Math.floor(totalSlots / 4)
 
   const basePrizePool = useMemo(() => entryFee * totalSlots, [entryFee, totalSlots])
   const sponsorContributions = useMemo(() => {
@@ -61,12 +66,16 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
   const totalPrizePool = basePrizePool + sponsorContributions
   const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
   const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
-  const killRewardBudget = data.kill_reward_enabled ? (teams * killRewardPerKill) : 0
+  const killRewardBudget = data.kill_reward_enabled ? (totalSlots * killRewardPerKill) : 0
   const platformFeeAmount = useMemo(() => {
-    if (!platformFeePct || totalPrizePool <= 0) return 0
-    return Math.round(totalPrizePool * (platformFeePct / 100))
-  }, [platformFeePct, totalPrizePool])
-  const availablePlacementPool = Math.max(0, totalPrizePool - platformFeeAmount - mvpAmount - killRewardBudget)
+    if (!platformFeePct || basePrizePool <= 0) return 0
+    return Math.round(basePrizePool * (platformFeePct / 100))
+  }, [platformFeePct, basePrizePool])
+  const organizerFeeAmount = useMemo(() => {
+    if (!organizerFeePct || basePrizePool <= 0) return 0
+    return Math.round(basePrizePool * (organizerFeePct / 100))
+  }, [organizerFeePct, basePrizePool])
+  const availablePlacementPool = Math.max(0, basePrizePool - mvpAmount - killRewardBudget - organizerFeeAmount - platformFeeAmount)
 
   return (
     <motion.div
@@ -97,7 +106,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         </div>
       </div>
 
-      <PrizeAllocationEngine data={data} platformFeePct={platformFeePct} />
+      <PrizeAllocationEngine data={data} platformFeePct={platformFeePct} organizerFeePct={organizerFeePct} />
 
       <div className="space-y-4">
         {/* MVP Reward */}
@@ -110,15 +119,15 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
           />
           {data.mvp_enabled && (
             <div className="flex items-center gap-3 pl-1">
-              <div className="relative flex-1 max-w-[200px]">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
+              <div className="relative min-w-[120px] max-w-[200px]">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
                 <input
                   type="number"
                   min="0"
                   value={data.mvp_amount || ''}
                   onChange={(e) => onChange({ ...data, mvp_amount: e.target.value })}
                   placeholder="0"
-                  className="w-full pl-8 pr-4 py-2 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
+                  className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
                 />
               </div>
               <span className="text-xs text-on-surface-variant">Fixed amount deducted from total prize pool</span>
@@ -137,24 +146,24 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
           {data.kill_reward_enabled && (
             <div className="space-y-2 pl-1">
               <div className="flex items-center gap-3">
-                <div className="relative flex-1 max-w-[200px]">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
+                <div className="relative min-w-[120px] max-w-[200px]">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
                   <input
                     type="number"
                     min="0"
                     value={data.kill_reward_per_kill || ''}
                     onChange={(e) => onChange({ ...data, kill_reward_per_kill: e.target.value })}
                     placeholder="0"
-                    className="w-full pl-8 pr-4 py-2 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
+                    className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
                   />
                 </div>
                 <span className="text-xs text-on-surface-variant">per kill</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-on-surface-variant">
                 <span className="px-2 py-0.5 rounded bg-surface-container-highest font-medium text-rose-500">
-                  Max budget: ₹{(teams * killRewardPerKill).toLocaleString('en-IN')}
+                  Max budget: ₹{(totalSlots * killRewardPerKill).toLocaleString('en-IN')}
                 </span>
-                <span>({teams} teams × ₹{killRewardPerKill})</span>
+                <span>({totalSlots} Max Kills × ₹{killRewardPerKill})</span>
               </div>
             </div>
           )}

@@ -34,7 +34,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [sponsorList, setSponsorList] = useState([]);
   const [totalSponsorAmount, setTotalSponsorAmount] = useState(0);
   const [showSponsorForm, setShowSponsorForm] = useState(false);
-  const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '' });
+  const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
   const [sponsorSubmitting, setSponsorSubmitting] = useState(false);
   
   // Search and tabs states
@@ -152,6 +152,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     fetch(`/api/org/followers/${orgId}`)
       .then(r => r.json()).then(d => { if (d?.count !== undefined) setFollowerCount(d.count); }).catch(() => {});
   }, [tourney?.orgId]);
+
+  // Fetch approved sponsor data for public wall
+  useEffect(() => {
+    if (!tournamentId) return;
+    fetch(`/api/tournament/${tournamentId}/sponsors/public`)
+      .then(r => r.json()).then(d => {
+        if (d.success) { setSponsorList(d.sponsors || []); setTotalSponsorAmount(d.totalContributions || 0); }
+      }).catch(() => {});
+  }, [tournamentId]);
 
   // Main countdown timer
   useEffect(() => {
@@ -344,11 +353,22 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const handleSponsorContribute = async (e) => {
     e.preventDefault();
     if (!sponsorForm.name.trim() || !sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { triggerToast('Please enter your name and a valid contribution amount.'); return; }
+    if (!sponsorForm.transaction_id.trim()) { triggerToast('Please enter your UPI transaction ID for verification.'); return; }
     setSponsorSubmitting(true);
     try {
-      const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contributor_name: sponsorForm.name.trim(), contributor_email: sponsorForm.email.trim() || undefined, amount: parseInt(sponsorForm.amount), message: sponsorForm.message.trim() || undefined }) });
+      const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contributor_name: sponsorForm.name.trim(),
+          contributor_email: sponsorForm.email.trim() || undefined,
+          amount: parseInt(sponsorForm.amount),
+          message: sponsorForm.message.trim() || undefined,
+          transaction_id: sponsorForm.transaction_id.trim(),
+          payment_app: sponsorForm.payment_app || undefined
+        })
+      });
       const data = await res.json();
-      if (data.success) { triggerToast('Contribution submitted for admin review!'); setShowSponsorForm(false); setSponsorForm({ name: '', email: '', amount: '', message: '' }); }
+      if (data.success) { triggerToast('Contribution submitted for admin review!'); setShowSponsorForm(false); setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' }); }
       else triggerToast(data.message || 'Failed to submit contribution.');
     } catch (e) { triggerToast('Network error submitting contribution.'); } finally { setSponsorSubmitting(false); }
   };
@@ -1036,6 +1056,57 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 {/* Secured coordinates credentials card */}
                 {renderRoomCredentialsCard()}
 
+                {/* Support this Tournament — Mobile */}
+                <div className="glass-card rounded-2xl p-5 border border-outline-variant/10 space-y-4">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-on-background flex items-center gap-2">
+                    <span className="material-symbols-outlined text-primary text-base">handshake</span>
+                    Sponsor This Tournament
+                  </h3>
+                  <p className="text-[10px] text-on-surface-variant leading-relaxed">
+                    Contribute to the prize pool and get featured on the Sponsor Wall.
+                  </p>
+                  {!showSponsorForm ? (
+                    <button onClick={() => setShowSponsorForm(true)}
+                      className="w-full py-2.5 min-h-[44px] rounded-xl bg-primary text-white text-[11px] font-bold transition-all hover:bg-primary/90">
+                      Support with UPI
+                    </button>
+                  ) : (
+                    <form onSubmit={handleSponsorContribute} className="space-y-3">
+                      <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                        placeholder="Your name" required
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                      <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
+                        placeholder="Email (optional)" type="email"
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                      <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                        placeholder="Amount (₹)" type="number" min="1" required
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                      <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                        placeholder="UPI Transaction ID / UTR" required
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                      <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
+                        placeholder="Payment app (Google Pay / PhonePe / Paytm)"
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                      <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                        placeholder="Message (optional)"
+                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50 resize-none h-16" />
+                      <p className="text-[9px] text-on-surface-variant/60">
+                        Pay to <span className="font-bold text-primary">matchdistrict@upi</span> and enter the transaction ID.
+                      </p>
+                      <div className="flex gap-2">
+                        <button type="submit" disabled={sponsorSubmitting}
+                          className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 text-white text-[10px] font-bold transition-all hover:bg-emerald-600 disabled:opacity-50">
+                          {sponsorSubmitting ? 'Submitting...' : 'Submit'}
+                        </button>
+                        <button type="button" onClick={() => setShowSponsorForm(false)}
+                          className="px-3 py-2.5 min-h-[44px] rounded-xl border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
                 {/* Event timeline Roadmap */}
                 <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
                   <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
@@ -1083,6 +1154,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {tourney.description || 'No tournament brief has been provided by the organizer.'}
                   </p>
                 </div>
+
+                {/* Sponsor Wall — Mobile */}
+                {sponsorList.length > 0 && (
+                  <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-base">handshake</span>
+                      Our Sponsors
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {sponsorList.map((s, i) => (
+                        <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container-higher/50 border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                          <span className="text-warning text-[12px]">&#9733;</span>
+                          {s.name}
+                          {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                        </span>
+                      ))}
+                    </div>
+                    {totalSponsorAmount > 0 && (
+                      <p className="text-[10px] text-on-surface-variant/60">Total sponsor contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1133,6 +1226,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </div>
                 </div>
               </div>
+
+              {/* Sponsor Wall — Desktop */}
+              {sponsorList.length > 0 && (
+                <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
+                    <span className="material-symbols-outlined text-primary text-base">handshake</span>
+                    Our Sponsors
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {sponsorList.map((s, i) => (
+                      <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container-higher/50 border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                        <span className="text-warning text-[12px]">&#9733;</span>
+                        {s.name}
+                        {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                      </span>
+                    ))}
+                  </div>
+                  {totalSponsorAmount > 0 && (
+                    <p className="text-[10px] text-on-surface-variant/60">Total sponsor contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right panels (35%) */}
@@ -1210,6 +1325,57 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Support this Tournament — Desktop */}
+              <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-base">handshake</span>
+                  Sponsor This Tournament
+                </h3>
+                <p className="text-[10px] text-on-surface-variant leading-relaxed">
+                  Contribute to the prize pool and get featured on the Sponsor Wall.
+                </p>
+                {!showSponsorForm ? (
+                  <button onClick={() => setShowSponsorForm(true)}
+                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-primary text-white text-xs font-bold transition-all hover:bg-primary/90">
+                    Support with UPI
+                  </button>
+                ) : (
+                  <form onSubmit={handleSponsorContribute} className="space-y-3">
+                    <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                      placeholder="Your name" required
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                    <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
+                      placeholder="Email (optional)" type="email"
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                    <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                      placeholder="Amount (₹)" type="number" min="1" required
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                    <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                      placeholder="UPI Transaction ID / UTR" required
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                    <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
+                      placeholder="Payment app (Google Pay / PhonePe / Paytm)" 
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
+                    <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                      placeholder="Message (optional)"
+                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50 resize-none h-16" />
+                    <p className="text-[9px] text-on-surface-variant/60">
+                      Pay to <span className="font-bold text-primary">matchdistrict@upi</span> (UPI) and enter the transaction ID.
+                    </p>
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={sponsorSubmitting}
+                        className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 text-white text-[10px] font-bold transition-all hover:bg-emerald-600 disabled:opacity-50">
+                        {sponsorSubmitting ? 'Submitting...' : 'Submit Contribution'}
+                      </button>
+                      <button type="button" onClick={() => setShowSponsorForm(false)}
+                        className="px-3 py-2.5 min-h-[44px] rounded-xl border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
 
             </div>

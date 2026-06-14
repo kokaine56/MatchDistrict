@@ -75,15 +75,12 @@ function validateStep(step, data, planLimits, orgName, userTier) {
     case 4: {
       const entryFee = parseInt(data.entry_fee_amount) || 0
       const totalSlots = parseInt(data.slotsTotal) || 0
-      const basePool = entryFee * totalSlots
-      const sponsorContribs = (data.sponsors || []).filter((s) => s.status === 'approved').reduce((s, v) => s + (v.amount || 0), 0)
-      const totalPrizePool = basePool + sponsorContribs
+      const basePrizePool = entryFee * totalSlots
       const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
-      const teams = data.match_type === 'solo' ? totalSlots : data.match_type === 'duo' ? Math.floor(totalSlots / 2) : Math.floor(totalSlots / 4)
-      const killRewardBudget = data.kill_reward_enabled ? (teams * (parseInt(data.kill_reward_per_kill) || 0)) : 0
+      const killRewardBudget = data.kill_reward_enabled ? (totalSlots * (parseInt(data.kill_reward_per_kill) || 0)) : 0
 
-      if (mvpAmount + killRewardBudget > totalPrizePool && totalPrizePool > 0) {
-        errs.prize_split = 'MVP + Kill Reward budget exceeds total prize pool.'
+      if (mvpAmount + killRewardBudget > basePrizePool && basePrizePool > 0) {
+        errs.prize_split = 'MVP + Kill Reward budget exceeds base prize pool.'
       }
 
       const totalPct = (data.prize_positions || []).reduce((s, p) => s + (parseInt(p.percentage) || 0), 0)

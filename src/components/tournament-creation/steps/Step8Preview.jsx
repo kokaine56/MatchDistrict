@@ -33,7 +33,7 @@ export default function Step8Preview({ data, orgName, orgTier }) {
   const totalPrizePool = basePrizePool + sponsorContributions
   const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
   const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
-  const killRewardBudget = data.kill_reward_enabled ? (teams * killRewardPerKill) : 0
+  const killRewardBudget = data.kill_reward_enabled ? (totalSlots * killRewardPerKill) : 0
   const availablePlacementPool = Math.max(0, totalPrizePool - mvpAmount - killRewardBudget)
 
   const positions = data.prize_positions || []
@@ -96,7 +96,7 @@ export default function Step8Preview({ data, orgName, orgTier }) {
               <DetailRow label="MVP Reward" value={`−₹${mvpAmount.toLocaleString('en-IN')}`} />
             )}
             {killRewardBudget > 0 && (
-              <DetailRow label="Kill Reward Budget" value={`−₹${killRewardBudget.toLocaleString('en-IN')} (${teams} teams × ₹${killRewardPerKill})`} />
+              <DetailRow label="Kill Reward Budget" value={`−₹${killRewardBudget.toLocaleString('en-IN')} (${totalSlots} Max Kills × ₹${killRewardPerKill})`} />
             )}
             <DetailRow label="Available for Placement" value={
               <span className={`text-sm font-bold ${availablePlacementPool >= 0 ? 'text-emerald-500' : 'text-error'}`}>

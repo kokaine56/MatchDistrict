@@ -534,6 +534,7 @@ export default function AdminDashboard({ onNavigate }) {
               { id: 'subscriptions', label: 'Subscriptions', icon: 'credit_card' },
               { id: 'payments', label: 'Payments', icon: 'payments' },
               { id: 'sponsor', label: 'Sponsorships', icon: 'sponsor' },
+              { id: 'verify', label: 'Verify Sponsor', icon: 'verified' },
               { id: 'featureflags', label: 'Feature Flags', icon: 'flag' }
             ].map((tab) => (
               <button
@@ -1717,6 +1718,10 @@ export default function AdminDashboard({ onNavigate }) {
           <SponsorManagementTab triggerToast={triggerToast} />
         )}
 
+        {activeTab === 'verify' && (
+          <VerifySponsorTab triggerToast={triggerToast} />
+        )}
+
         {activeTab === 'featureflags' && (
           <FeatureFlagsTab triggerToast={triggerToast} />
         )}
@@ -2579,6 +2584,202 @@ function SubscriptionPaymentsTab({ triggerToast }) {
                 className="flex-1 px-4 py-2 min-h-[44px] rounded-xl bg-error text-white text-sm font-semibold disabled:opacity-50">
                 {actionLoading === rejectModal ? 'Rejecting...' : 'Reject'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Verify Sponsor Tab (dedicated public contribution approval) ───────────
+function VerifySponsorTab({ triggerToast }) {
+  const [contributions, setContributions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [actionLoading, setActionLoading] = useState(null);
+  const [showNotesModal, setShowNotesModal] = useState(null);
+  const [actionNotes, setActionNotes] = useState('');
+  const [actionMode, setActionMode] = useState('approve');
+  const [rejectionReason, setRejectionReason] = useState('');
+
+  const getHeaders = async () => {
+    const token = await getAuthToken();
+    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  };
+
+  const fetchContributions = async (status) => {
+    setLoading(true);
+    try {
+      const headers = await getHeaders();
+      const url = status ? `/api/admin/sponsor/contributions?status=${status}` : '/api/admin/sponsor/contributions';
+      const res = await fetch(url, { headers });
+      const data = await res.json();
+      if (data.success) setContributions(data.contributions || []);
+    } catch (e) { triggerToast('Failed to load contributions'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { fetchContributions(statusFilter); }, [statusFilter]);
+
+  const handleApprove = async (id) => {
+    setActionLoading(id);
+    try {
+      const headers = await getHeaders();
+      const res = await fetch('/api/admin/sponsor/contribution/approve', {
+        method: 'POST', headers,
+        body: JSON.stringify({ contributionId: id, adminNotes: actionNotes })
+      });
+      const data = await res.json();
+      if (data.success) { triggerToast('Contribution approved! Prize pool updated.'); fetchContributions(statusFilter); setShowNotesModal(null); setActionNotes(''); }
+      else triggerToast(data.message || 'Failed to approve');
+    } catch (e) { triggerToast('Network error'); }
+    finally { setActionLoading(null); }
+  };
+
+  const handleReject = async (id) => {
+    setActionLoading(id);
+    try {
+      const headers = await getHeaders();
+      const res = await fetch('/api/admin/sponsor/contribution/reject', {
+        method: 'POST', headers,
+        body: JSON.stringify({ contributionId: id, adminNotes: actionNotes })
+      });
+      const data = await res.json();
+      if (data.success) { triggerToast('Contribution rejected'); fetchContributions(statusFilter); setShowNotesModal(null); setActionNotes(''); }
+      else triggerToast(data.message || 'Failed to reject');
+    } catch (e) { triggerToast('Network error'); }
+    finally { setActionLoading(null); }
+  };
+
+  const openApproveModal = (id) => { setActionMode('approve'); setActionNotes(''); setShowNotesModal(id); };
+  const openRejectModal = (id) => { setActionMode('reject'); setActionNotes(''); setShowNotesModal(id); };
+
+  const statusColor = (status) => {
+    switch (status) {
+      case 'approved': return 'bg-emerald-500/15 text-emerald-400';
+      case 'rejected': return 'bg-error/15 text-error';
+      default: return 'bg-warning/15 text-warning';
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-on-background">Verify Sponsor Contributions</h2>
+          <p className="text-xs text-on-surface-variant">Approve or reject public sponsor contributions — approved amounts are added to prize pool</p>
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        {['pending', 'approved', 'rejected', ''].map(s => (
+          <button key={s} onClick={() => setStatusFilter(s)}
+            className={`px-3 py-1.5 min-h-[44px] rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${statusFilter === s ? 'bg-primary text-white' : 'bg-surface-container-highest/40 text-on-surface-variant hover:text-on-background'}`}>
+            {s || 'All'}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-xs text-on-surface-variant">Loading contributions...</div>
+      ) : contributions.length === 0 ? (
+        <div className="text-center py-12 bg-surface-container-low/30 rounded-2xl border border-outline-variant/20">
+          <span className="material-symbols-outlined text-3xl text-on-surface-variant/40">verified</span>
+          <p className="text-xs text-on-surface-variant mt-2">No {statusFilter || ''} contributions found</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-outline-variant/20">
+          <table className="w-full text-xs">
+            <thead className="bg-surface-container-highest/40">
+              <tr className="border-b border-outline-variant/20">
+                <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Contributor</th>
+                <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Tournament</th>
+                <th className="text-right py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Amount</th>
+                <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Transaction ID</th>
+                <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Status</th>
+                <th className="text-center py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Screenshot</th>
+                <th className="text-center py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/10">
+              {contributions.map(c => (
+                <tr key={c.id} className="hover:bg-surface-container-low/30 transition-colors">
+                  <td className="py-3 px-4">
+                    <div className="font-bold text-on-background">{c.contributor_name}</div>
+                    {c.contributor_email && <div className="text-[10px] text-on-surface-variant/60">{c.contributor_email}</div>}
+                    {c.message && <div className="text-[10px] text-on-surface-variant/40 italic mt-0.5">"{c.message}"</div>}
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className="text-on-background">{c.tournament_title || c.tournament_id}</span>
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    <span className="font-bold text-on-background">₹{(parseInt(c.amount) || 0).toLocaleString('en-IN')}</span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className="font-mono text-[10px] text-on-surface-variant">{c.transaction_id || '—'}</span>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-medium capitalize ${statusColor(c.status)}`}>{c.status}</span>
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    {c.screenshot_url ? (
+                      <a href={c.screenshot_url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline text-[10px]">
+                        <span className="material-symbols-outlined text-[14px]">image</span>
+                        View
+                      </a>
+                    ) : (
+                      <span className="text-on-surface-variant/40">—</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    {c.status === 'pending' ? (
+                      <div className="flex gap-1.5 justify-center">
+                        <button onClick={() => openApproveModal(c.id)}
+                          className="px-2.5 py-1 min-h-[32px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-bold rounded-lg transition-all">
+                          Approve
+                        </button>
+                        <button onClick={() => openRejectModal(c.id)}
+                          className="px-2.5 py-1 min-h-[32px] bg-error/10 hover:bg-error/20 text-error text-[10px] font-bold rounded-lg transition-all">
+                          Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-on-surface-variant/60">{c.admin_notes ? `Notes: ${c.admin_notes}` : '—'}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Notes/Confirmation Modal */}
+      {showNotesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white dark:bg-[#0f111a] border border-outline-variant rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="font-bold text-sm">{actionMode === 'approve' ? 'Approve Contribution' : 'Reject Contribution'}</h3>
+            <p className="text-xs text-on-surface-variant">
+              {actionMode === 'approve'
+                ? 'This will mark the contribution as approved and add the amount to the tournament prize pool.'
+                : 'This will reject the contribution. You can optionally provide a reason below.'}
+            </p>
+            <textarea value={actionNotes} onChange={e => setActionNotes(e.target.value)}
+              placeholder="Optional admin notes..."
+              className="w-full bg-surface-container-highest/50 border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-surface placeholder:text-on-surface-variant/50 resize-none h-20"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => {
+                if (actionMode === 'approve') handleApprove(showNotesModal);
+                else handleReject(showNotesModal);
+              }} disabled={actionLoading === showNotesModal}
+                className={`flex-1 px-4 py-2 min-h-[44px] rounded-xl text-white text-sm font-semibold disabled:opacity-50 ${actionMode === 'approve' ? 'bg-emerald-500' : 'bg-error'}`}>
+                {actionLoading === showNotesModal ? 'Processing...' : actionMode === 'approve' ? 'Approve' : 'Reject'}
+              </button>
+              <button onClick={() => setShowNotesModal(null)}
+                className="px-4 py-2 min-h-[44px] rounded-xl border border-outline-variant/40 text-sm text-on-surface">Cancel</button>
             </div>
           </div>
         </div>
