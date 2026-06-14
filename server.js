@@ -610,6 +610,18 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
     }
 
+    // Seed default platform fee percentage if not set
+    try {
+      await client.query(`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('platform_fee_percentage', '10', CURRENT_TIMESTAMP)
+        ON CONFLICT (key) DO NOTHING
+      `);
+      console.log('💰 [MATCH DISTRICT DB] Default platform fee seeded (10%).');
+    } catch (feeErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not seed platform fee:', feeErr.message);
+    }
+
     client.release();
     console.log('📦 [MATCH DISTRICT DB] Supabase Tables Initialized Successfully.\n');
   } catch (err) {
@@ -4335,6 +4347,58 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true, theme, message: `Global site theme set to "${theme}" successfully.` }));
       } catch (err) {
         console.error('❌ [SETTINGS] Failed to update theme:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // --- SITE SETTINGS: GET PLATFORM FEE PERCENTAGE (public) ---
+  if (req.url === '/api/settings/platform-fee' && req.method === 'GET') {
+    try {
+      const result = await pool.query(`SELECT value FROM site_settings WHERE key = 'platform_fee_percentage'`);
+      const fee = result.rows.length > 0 ? parseFloat(result.rows[0].value) : 10;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, percentage: fee }));
+    } catch (err) {
+      console.error('❌ [SETTINGS] Failed to fetch platform fee:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, percentage: 10, error: err.message }));
+    }
+    return;
+  }
+
+  // --- SITE SETTINGS: SET PLATFORM FEE PERCENTAGE (admin only) ---
+  if (req.url === '/api/settings/platform-fee' && req.method === 'PUT') {
+    const authUser = getAuthUser(req);
+    if (!authUser || authUser.role !== 'admin') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { percentage } = JSON.parse(body);
+        const fee = parseFloat(percentage);
+        if (isNaN(fee) || fee < 0 || fee > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid fee percentage. Must be a number between 0 and 100.' }));
+          return;
+        }
+        await pool.query(
+          `INSERT INTO site_settings (key, value, updated_at)
+           VALUES ('platform_fee_percentage', $1, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+          [fee.toString()]
+        );
+        console.log(`💰 [SETTINGS] Platform fee updated to ${fee}% by admin ${authUser.email || authUser.id}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, percentage: fee, message: `Platform fee set to ${fee}% successfully.` }));
+      } catch (err) {
+        console.error('❌ [SETTINGS] Failed to update platform fee:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }

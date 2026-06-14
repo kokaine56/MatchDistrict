@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 
-export default function PrizeAllocationEngine({ data }) {
+export default function PrizeAllocationEngine({ data, platformFeePct = 0 }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
   const teams = data.match_type === 'solo' ? totalSlots
@@ -22,7 +22,12 @@ export default function PrizeAllocationEngine({ data }) {
   const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
   const killRewardBudget = killRewardEnabled ? (teams * killRewardPerKill) : 0
 
-  const availablePlacementPool = Math.max(0, totalPrizePool - mvpAmount - killRewardBudget)
+  const platformFeeAmount = useMemo(() => {
+    if (!platformFeePct || totalPrizePool <= 0) return 0
+    return Math.round(totalPrizePool * (platformFeePct / 100))
+  }, [platformFeePct, totalPrizePool])
+
+  const availablePlacementPool = Math.max(0, totalPrizePool - platformFeeAmount - mvpAmount - killRewardBudget)
 
   const positions = data.prize_positions || []
   const totalAllocatedPercentage = positions.reduce((sum, p) => sum + (parseInt(p.percentage) || 0), 0)
@@ -63,6 +68,13 @@ export default function PrizeAllocationEngine({ data }) {
         </div>
       </div>
 
+      {platformFeeAmount > 0 && (
+        <div className="flex items-center justify-between py-1.5 border-t border-outline-variant/10">
+          <span className="text-sm text-on-surface-variant">Platform Fee ({platformFeePct}%)</span>
+          <span className="text-sm font-semibold text-error">−₹{platformFeeAmount.toLocaleString('en-IN')}</span>
+        </div>
+      )}
+
       {mvpAmount > 0 && (
         <div className="flex items-center justify-between py-1.5 border-t border-outline-variant/10">
           <span className="text-sm text-on-surface-variant">MVP Reward</span>
@@ -82,7 +94,7 @@ export default function PrizeAllocationEngine({ data }) {
         </div>
       )}
 
-      {(mvpAmount > 0 || killRewardBudget > 0) && (
+      {(platformFeeAmount > 0 || mvpAmount > 0 || killRewardBudget > 0) && (
         <div className="border-t border-emerald-200/50 dark:border-emerald-500/20 pt-2 flex items-center justify-between">
           <span className="text-sm font-bold text-on-background">Available for Placement</span>
           <span className={`text-base font-bold ${availablePlacementPool >= 0 ? 'text-emerald-500' : 'text-error'}`}>

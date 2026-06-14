@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
+const ACTIVE_GAME = 'BGMI'
+
 export default function GameDropdown({ value, onChange, games = [], loading }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -30,7 +32,7 @@ export default function GameDropdown({ value, onChange, games = [], loading }) {
         onClick={() => setOpen(!open)}
         className="game-dropdown-btn"
       >
-        <span className={selected ? '' : ''}>
+        <span>
           {selected ? selected.name : 'Select a game...'}
         </span>
         <motion.svg
@@ -67,16 +69,21 @@ export default function GameDropdown({ value, onChange, games = [], loading }) {
               ) : filtered.length === 0 ? (
                 <div className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">No games found</div>
               ) : (
-                filtered.map((g) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onClick={() => { onChange(g.name); setOpen(false); setQuery('') }}
-                    className={`game-dropdown-option${g.name === value ? ' selected' : ''}`}
-                  >
-                    {g.name}
-                  </button>
-                ))
+                filtered.map((g) => {
+                  const isDisabled = g.name !== ACTIVE_GAME
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      disabled={isDisabled}
+                      onClick={() => { onChange(g.name); setOpen(false); setQuery('') }}
+                      className={`game-dropdown-option${g.name === value ? ' selected' : ''}${isDisabled ? ' disabled' : ''}`}
+                    >
+                      <span>{g.name}</span>
+                      {isDisabled && <span className="game-dropdown-coming-soon">Coming Soon</span>}
+                    </button>
+                  )
+                })
               )}
             </div>
           </motion.div>

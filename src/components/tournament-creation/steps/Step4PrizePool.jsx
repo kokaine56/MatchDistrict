@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import SponsorManager from '../SponsorManager'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
@@ -26,6 +26,17 @@ function Toggle({ enabled, onChange, label, description }) {
 }
 
 export default function Step4PrizePool({ data, onChange, errors, userTier }) {
+  const [platformFeePct, setPlatformFeePct] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/settings/platform-fee')
+      .then((r) => r.json())
+      .then((res) => { if (!cancelled && res.success) setPlatformFeePct(res.percentage) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const handleSponsorsChange = useCallback((sponsors) => {
     onChange({ ...data, sponsors })
   }, [data, onChange])
@@ -51,7 +62,11 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
   const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
   const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
   const killRewardBudget = data.kill_reward_enabled ? (teams * killRewardPerKill) : 0
-  const availablePlacementPool = Math.max(0, totalPrizePool - mvpAmount - killRewardBudget)
+  const platformFeeAmount = useMemo(() => {
+    if (!platformFeePct || totalPrizePool <= 0) return 0
+    return Math.round(totalPrizePool * (platformFeePct / 100))
+  }, [platformFeePct, totalPrizePool])
+  const availablePlacementPool = Math.max(0, totalPrizePool - platformFeeAmount - mvpAmount - killRewardBudget)
 
   return (
     <motion.div
@@ -82,7 +97,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         </div>
       </div>
 
-      <PrizeAllocationEngine data={data} />
+      <PrizeAllocationEngine data={data} platformFeePct={platformFeePct} />
 
       <div className="space-y-4">
         {/* MVP Reward */}
