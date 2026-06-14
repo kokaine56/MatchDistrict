@@ -5,12 +5,30 @@ import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
 import TournamentCard from '../components/TournamentCard'
+import VerificationBadge from '../components/VerificationBadge'
+import gameBgmi from '../assets/supported_games/bgmi.png'
+import gameFreeFire from '../assets/supported_games/freefire.png'
+import gameCodm from '../assets/supported_games/codm.png'
+import gameValorant from '../assets/supported_games/valorant.png'
 
 const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live']
 const GAME_OPTIONS = ['All Games', 'BGMI']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+
+const formatINR = (val) => {
+  const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
+  return isNaN(n) ? (val || 'TBA') : `\u20B9${n.toLocaleString('en-IN')}`
+}
+
+const GAME_ICON_MAP = {
+  bgmi: gameBgmi,
+  'free fire': gameFreeFire,
+  codm: gameCodm,
+  'cod mobile': gameCodm,
+  valorant: gameValorant,
+}
 
 function Tournaments({ onNavigate }) {
   const [dbTournaments, setDbTournaments] = useState([]);
@@ -74,6 +92,7 @@ function Tournaments({ onNavigate }) {
         title: t.title,
         game: t.game,
         status: t.status || 'upcoming',
+        startDate: t.startDate || t.date || null,
         badgeBg: '',
         badgeText: '',
         date: t.startDate || t.date || new Date().toISOString(),
@@ -99,7 +118,7 @@ function Tournaments({ onNavigate }) {
   }, [dbTournaments]);
 
   const featuredTournaments = useMemo(() => {
-    return tournaments.filter(t => t.featured || t.status === 'live');
+    return tournaments.filter(t => t.featured || t.status === 'live' || t.status === 'active');
   }, [tournaments]);
 
   const filteredTournaments = useMemo(() => {
@@ -111,7 +130,7 @@ function Tournaments({ onNavigate }) {
         t.game.toLowerCase().includes(searchLower);
 
       let matchStatus = true;
-      if (statusFilter === 'Live') matchStatus = t.status === 'live';
+      if (statusFilter === 'Live') matchStatus = t.status === 'live' || t.status === 'active' || (t.startDate && new Date() >= new Date(t.startDate) && t.status !== 'completed' && t.status !== 'archived');
       else if (statusFilter === 'Upcoming') matchStatus = t.status === 'upcoming';
       else if (statusFilter === 'Registrations Open') matchStatus = t.status === 'registrations_open';
 
@@ -204,7 +223,7 @@ function Tournaments({ onNavigate }) {
                     entryFeeAmount={t.entryFeeAmount}
                     orgName={t.orgName}
                     orgTier={t.orgTier}
-                    buttonText="Register Now"
+                    buttonText="JOIN NOW"
                     onNavigate={onNavigate}
                   />
                 </div>
@@ -481,31 +500,85 @@ function Tournaments({ onNavigate }) {
 
           <AnimatePresence mode="popLayout">
             {filteredTournaments.length > 0 ? (
-              <motion.div className="flex flex-nowrap overflow-x-auto items-start justify-start gap-4 sm:gap-6 w-full pb-4 snap-x scrollbar-hide">
-                {filteredTournaments.slice(0, 50).map(t => (
-                  <TournamentCard
-                    key={`featured-${t.id}`}
-                    id={t.id}
-                    title={t.title}
-                    game={t.game}
-                    status={t.status}
-                    badgeTextColor="text-white"
-                    imgSrc={t.cover_image_url || t.coverImage || "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=500&q=80"}
-                    imgAlt={t.title}
-                    prizePool={t.prize}
-                    entryFee={t.entry}
-                    matchType={t.match_type}
-                    perspective={t.perspective}
-                    slotsTotal={t.slotsTotal}
-                    slotsFilled={t.slotsFilled}
-                    entryFeeAmount={t.entryFeeAmount}
-                    orgName={t.orgName}
-                    orgTier={t.orgTier}
-                    buttonText="Register Now"
-                    onNavigate={onNavigate}
-                  />
-                ))}
-              </motion.div>
+              statusFilter === 'Live' ? (
+                <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                  {filteredTournaments.map(t => {
+                    const modeLabel = [t.match_type === 'solo' ? 'Solo' : t.match_type === 'duo' ? 'Duo' : 'Squad', t.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
+                    return (
+                      <motion.div
+                        key={`live-${t.id}`}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        onClick={() => onNavigate && onNavigate('tournament-detail', t.id)}
+                        whileHover={{ y: -2, scale: 1.01 }}
+                        whileTap={{ scale: 0.99 }}
+                        className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center border border-outline-variant/30 shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low hover:border-outline-variant/60 cursor-pointer w-fit shrink-0"
+                      >
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
+                          {(() => {
+                            const gameKey = (t.game || '').toLowerCase()
+                            const gameIcon = GAME_ICON_MAP[gameKey]
+                            return gameIcon ? (
+                              <img alt={t.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
+                            ) : (
+                              <img alt={t.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={t.bannerUrl || t.cover_image_url || FALLBACK_IMG} />
+                            )
+                          })()}
+                        </div>
+
+                        <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
+                          <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
+                            {t.title}
+                          </h3>
+
+                          <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
+                            <span className="truncate max-w-[120px] sm:max-w-[150px]">{t.orgName || 'Match District Organizer'}</span>
+                            <VerificationBadge tier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'} size="sm" />
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
+                            <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(t.prize || t.prizePool)}</span>
+                          </div>
+
+                          <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
+                            {modeLabel}
+                          </span>
+                        </div>
+                      </motion.div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <motion.div className="flex flex-nowrap overflow-x-auto items-start justify-start gap-4 sm:gap-6 w-full pb-4 snap-x scrollbar-hide">
+                  {filteredTournaments.map(t => (
+                    <TournamentCard
+                      key={`featured-${t.id}`}
+                      id={t.id}
+                      title={t.title}
+                      game={t.game}
+                      status={t.status}
+                      badgeTextColor="text-white"
+                      imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
+                      imgAlt={t.title}
+                      prizePool={t.prize}
+                      entryFee={t.entry}
+                      matchType={t.match_type}
+                      perspective={t.perspective}
+                      slotsTotal={t.slotsTotal}
+                      slotsFilled={t.slotsFilled}
+                      entryFeeAmount={t.entryFeeAmount}
+                      orgName={t.orgName}
+                      orgTier={t.orgTier}
+                      buttonText="JOIN NOW"
+                      onNavigate={onNavigate}
+                    />
+                  ))}
+                </motion.div>
+              )
             ) : (
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}

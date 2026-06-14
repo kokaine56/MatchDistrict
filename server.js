@@ -245,6 +245,8 @@ async function initDb() {
         ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS custom_subdomain BOOLEAN DEFAULT false;
         ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS automation_enabled BOOLEAN DEFAULT false;
         ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS priority_support BOOLEAN DEFAULT false;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase users and organizer tables schema verified and updated.');
     } catch (alterErr) {
@@ -1905,8 +1907,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const slug = decodeURIComponent(orgSlugMatch[1]);
       const dbRes = await pool.query(
-        `SELECT u.id, u.name, u.org_name, u.tier, u.bio, u.org_handle, u.avatar_url, u.wallet_balance,
-                u."customDashboardSlug", u.created_at
+        `SELECT u.id, u.name, u."orgName", u.tier, u.experience AS "bio", u."orgHandle", u.avatar, u.banner, u."orgImage", u."orgMotto", u.email, u.wallet_balance,
+                u."customDashboardSlug", u.created_at, u."orgBanner", u."orgBio"
          FROM users u
          WHERE u."customDashboardSlug" = $1 AND (u.role = 'organiser' OR u.role = 'admin')`,
         [slug]
@@ -1918,7 +1920,7 @@ const server = http.createServer(async (req, res) => {
       }
       const org = dbRes.rows[0];
       const tourneyRes = await pool.query(
-        `SELECT id, title, game, "startDate", status FROM tournaments WHERE "orgId" = $1 ORDER BY "createdAt" DESC LIMIT 6`,
+        `SELECT id, title, game, "startDate", status FROM tournaments WHERE "orgId" = $1 ORDER BY created_at DESC LIMIT 6`,
         [org.id]
       );
       org.recent_tournaments = tourneyRes.rows || [];
@@ -1928,6 +1930,133 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // --- Dedicated endpoint: Update Organization Profile (org-only fields) ---
+  if (urlPath === '/api/organization/update' && req.method === 'PUT') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        if (authUser.role !== 'organiser' && authUser.role !== 'admin') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only organizers can update organization profiles.' }));
+          return;
+        }
+
+        const updateData = JSON.parse(body);
+
+        // 30 days cooldown verification for organization name change
+        if (updateData.orgName !== undefined) {
+          const userCheckRes = await pool.query('SELECT "orgName", "orgname_last_changed" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+          const currentUserRecord = userCheckRes.rows[0];
+          if (currentUserRecord && currentUserRecord.orgName && updateData.orgName !== currentUserRecord.orgName) {
+            if (currentUserRecord.orgname_last_changed) {
+              const lastChanged = new Date(currentUserRecord.orgname_last_changed);
+              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
+              if (daysDiff < 30) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your organization name once every 30 days. Remaining: ${Math.ceil(30 - daysDiff)} days.` }));
+                return;
+              }
+            }
+          }
+        }
+
+        // 30 days cooldown and email OTP verification for orgHandle change
+        if (updateData.orgHandle !== undefined) {
+          const userCheckRes = await pool.query('SELECT "orgHandle", email, "orghandle_last_changed" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+          const currentUserRecord = userCheckRes.rows[0];
+          if (currentUserRecord && currentUserRecord.orgHandle && updateData.orgHandle !== currentUserRecord.orgHandle) {
+            if (currentUserRecord.orghandle_last_changed) {
+              const lastChanged = new Date(currentUserRecord.orghandle_last_changed);
+              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
+              if (daysDiff < 30) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your organization username once every 30 days. Remaining: ${Math.ceil(30 - daysDiff)} days.` }));
+                return;
+              }
+            }
+            const otpCode = updateData.otp;
+            if (!otpCode) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Verification code is required to change your organization username.' }));
+              return;
+            }
+            const now = new Date();
+            const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3', [currentUserRecord.email, otpCode, now]);
+            if (otpRes.rows.length === 0) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is incorrect or has expired.' }));
+              return;
+            }
+            await pool.query('DELETE FROM otps WHERE email = $1', [currentUserRecord.email]);
+          }
+        }
+
+        let orgNameLastChangedVal = undefined;
+        if (updateData.orgName !== undefined) {
+          const userCheckRes = await pool.query('SELECT "orgName" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+          if (userCheckRes.rows[0] && userCheckRes.rows[0].orgName !== updateData.orgName) {
+            orgNameLastChangedVal = new Date();
+          }
+        }
+
+        let orgHandleLastChangedVal = undefined;
+        if (updateData.orgHandle !== undefined) {
+          const userCheckRes = await pool.query('SELECT "orgHandle" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+          if (userCheckRes.rows[0] && userCheckRes.rows[0].orgHandle !== updateData.orgHandle) {
+            orgHandleLastChangedVal = new Date();
+          }
+        }
+
+        const orgImageUrl = sanitizeImageUrlForDb(updateData.orgImage);
+        const orgBannerUrl = sanitizeImageUrlForDb(updateData.orgBanner);
+
+        const dbRes = await pool.query(
+          `UPDATE users SET
+            "orgName" = COALESCE($1, "orgName"),
+            "orgMotto" = COALESCE($2, "orgMotto"),
+            "orgImage" = COALESCE($3, "orgImage"),
+            "orgBanner" = COALESCE($4, "orgBanner"),
+            "orgBio" = COALESCE($5, "orgBio"),
+            "orgHandle" = COALESCE($6, "orgHandle"),
+            "orgname_last_changed" = COALESCE($7, "orgname_last_changed"),
+            "orghandle_last_changed" = COALESCE($8, "orghandle_last_changed")
+           WHERE (id = $9 OR uid = $9) RETURNING *`,
+          [
+            updateData.orgName ?? null,
+            updateData.orgMotto ?? null,
+            orgImageUrl,
+            orgBannerUrl,
+            updateData.orgBio ?? null,
+            updateData.orgHandle ?? null,
+            orgNameLastChangedVal,
+            orgHandleLastChangedVal,
+            authUser.id
+          ]
+        );
+        if (dbRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile not found.' }));
+          return;
+        }
+        console.log(`\n📦 [MATCH DISTRICT DB] Organization profile for user "${authUser.id}" updated.\n`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, user: publicUserRow(dbRes.rows[0]) }));
+      } catch (err) {
+        console.warn('⚠️ [MATCH DISTRICT DB] Organization update failed:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
@@ -2328,57 +2457,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        // 30 days cooldown verification for organization name change
-        if (updateData.orgName !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgName", "orgname_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          if (currentUserRecord && currentUserRecord.orgName && updateData.orgName !== currentUserRecord.orgName) {
-            if (currentUserRecord.orgname_last_changed) {
-              const lastChanged = new Date(currentUserRecord.orgname_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 30) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your organization name once every 30 days. Remaining: ${Math.ceil(30 - daysDiff)} days.` }));
-                return;
-              }
-            }
-          }
-        }
-
-        // 30 days cooldown and email OTP verification for organization username (orgHandle) change
-        if (updateData.orgHandle !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgHandle", email, "orghandle_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          if (currentUserRecord && currentUserRecord.orgHandle && updateData.orgHandle !== currentUserRecord.orgHandle) {
-            if (currentUserRecord.orghandle_last_changed) {
-              const lastChanged = new Date(currentUserRecord.orghandle_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 30) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your organization username once every 30 days. Remaining: ${Math.ceil(30 - daysDiff)} days.` }));
-                return;
-              }
-            }
-
-            const otpCode = updateData.otp;
-            if (!otpCode) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Verification code is required to change your organization username.' }));
-              return;
-            }
-            const now = new Date();
-            const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3', [currentUserRecord.email, otpCode, now]);
-            if (otpRes.rows.length === 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is incorrect or has expired.' }));
-              return;
-            }
-            // Consume the OTP
-            await pool.query('DELETE FROM otps WHERE email = $1', [currentUserRecord.email]);
-          }
-        }
-
-        const avatarUrl = sanitizeImageUrlForDb(updateData.avatar) ?? sanitizeImageUrlForDb(updateData.logo);
+        const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
         const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
 
         let gamertagLastChangedVal = undefined;
@@ -2394,22 +2473,6 @@ const server = http.createServer(async (req, res) => {
           const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1 OR uid = $1', [id]);
           if (userCheckRes.rows[0] && userCheckRes.rows[0].email.trim().toLowerCase() !== updateData.email.trim().toLowerCase()) {
             emailLastChangedVal = new Date();
-          }
-        }
-
-        let orgNameLastChangedVal = undefined;
-        if (updateData.orgName !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgName" FROM users WHERE id = $1 OR uid = $1', [id]);
-          if (userCheckRes.rows[0] && userCheckRes.rows[0].orgName !== updateData.orgName) {
-            orgNameLastChangedVal = new Date();
-          }
-        }
-
-        let orgHandleLastChangedVal = undefined;
-        if (updateData.orgHandle !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgHandle" FROM users WHERE id = $1 OR uid = $1', [id]);
-          if (userCheckRes.rows[0] && userCheckRes.rows[0].orgHandle !== updateData.orgHandle) {
-            orgHandleLastChangedVal = new Date();
           }
         }
 
@@ -2430,15 +2493,9 @@ const server = http.createServer(async (req, res) => {
             "discordTag" = COALESCE($13, "discordTag"),
             banner = COALESCE($14, banner),
             "gamertag_last_changed" = COALESCE($15, "gamertag_last_changed"),
-            "email_last_changed" = COALESCE($17, "email_last_changed"),
-            role = COALESCE($18, role),
-            "orgName" = COALESCE($19, "orgName"),
-            "orgMotto" = COALESCE($20, "orgMotto"),
-            "orgImage" = COALESCE($21, "orgImage"),
-            "orgHandle" = COALESCE($22, "orgHandle"),
-            "orgname_last_changed" = COALESCE($23, "orgname_last_changed"),
-            "orghandle_last_changed" = COALESCE($24, "orghandle_last_changed")
-           WHERE (id = $16 OR uid = $16) RETURNING *`,
+            "email_last_changed" = COALESCE($16, "email_last_changed"),
+            role = COALESCE($17, role)
+           WHERE (id = $18 OR uid = $18) RETURNING *`,
           [
             updateData.name,
             updateData.gamerTag,
@@ -2455,15 +2512,9 @@ const server = http.createServer(async (req, res) => {
             updateData.discordTag !== undefined ? updateData.discordTag : null,
             bannerUrl,
             gamertagLastChangedVal,
-            id,
             emailLastChangedVal,
             updateData.role,
-            updateData.orgName !== undefined ? updateData.orgName : null,
-            updateData.orgMotto !== undefined ? updateData.orgMotto : null,
-            updateData.orgImage !== undefined ? updateData.orgImage : null,
-            updateData.orgHandle !== undefined ? updateData.orgHandle : null,
-            orgNameLastChangedVal,
-            orgHandleLastChangedVal
+            id
           ]
         );
         if (dbRes.rows.length === 0) {

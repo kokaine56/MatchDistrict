@@ -28,7 +28,7 @@ function InfoContent({
   onNavigate,
   id,
   buttonText,
-  isMobile
+  buttonClassName
 }) {
   return (
     <div className="flex flex-col bg-surface/50 text-on-surface h-full min-w-0">
@@ -86,9 +86,9 @@ function InfoContent({
 
       <button
         onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('tournament-detail', id) }}
-        className="w-full bg-primary text-on-primary text-xs font-bold py-0.5 rounded-md mt-1 transition-colors hover:bg-primary/90"
+        className={`w-full ${buttonClassName || 'bg-primary hover:bg-primary/90'} text-on-primary text-xs font-bold py-0.5 rounded-md mt-1 transition-colors`}
       >
-        {isMobile ? 'View Details' : (buttonText || 'Join Now')}
+        {buttonText || 'Join Now'}
       </button>
     </div>
   )
@@ -106,7 +106,8 @@ function TournamentCardBase({
   orgName, orgTier, buttonText,
   onNavigate,
   hasSponsors,
-  isPreview
+  isPreview,
+  buttonClassName
 }) {
   const statusBadge = !badgeText && status
     ? {
@@ -161,13 +162,14 @@ function TournamentCardBase({
     onNavigate,
     id,
     buttonText,
+    buttonClassName,
   }
 
   return (
     <motion.div
       whileHover={{ y: -4, scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
-      className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-[0_2px_8px_rgba(0,0,0,0.06)] overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px]`}
+      className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px]`}
     >
       <div
         onClick={handleCardClick}
@@ -226,7 +228,7 @@ function TournamentCardBase({
       </div>
 
       <div className={`flex flex-col justify-between h-[200px] overflow-hidden transition-[width,opacity,padding] duration-300 ease-in-out ${isExpanded ? 'w-[170px] opacity-100 p-2' : 'w-0 opacity-0 p-0'} sm:w-auto sm:flex-1 sm:opacity-100 sm:p-2.5`}>
-        <InfoContent {...infoProps} isMobile={!!isExpanded} />
+        <InfoContent {...infoProps} />
       </div>
     </motion.div>
   )

@@ -1325,8 +1325,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                   <div className="space-y-4">
                     <div className="flex items-center gap-3.5 p-3.5 sm:p-4 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 min-h-[64px] transition-shadow duration-200 hover:shadow-sm">
                       <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-primary/20">
-                        {currentUser?.avatar || currentUser?.orgImage ? (
-                          <img src={currentUser.avatar || currentUser.orgImage} alt="" className="w-full h-full object-cover" />
+                        {currentUser?.orgImage || currentUser?.avatar ? (
+                          <img src={currentUser.orgImage || currentUser.avatar} alt="" className="avatar-img" />
                         ) : (
                           <span className="material-symbols-outlined text-primary text-2xl">person</span>
                         )}
@@ -1385,7 +1385,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         >
                           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-transparent group-hover:ring-primary/20 transition-all">
                             {account.avatar ? (
-                              <img src={account.avatar} alt="" className="w-full h-full object-cover" />
+                              <img src={account.avatar} alt="" className="avatar-img" />
                             ) : (
                               <span className="material-symbols-outlined text-primary text-2xl">person</span>
                             )}

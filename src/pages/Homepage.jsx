@@ -14,6 +14,22 @@ import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
 import sponsorValorant from '../assets/sponsors/sponsor_valorant.png'
 import gameBgmi from '../assets/supported_games/bgmi.png'
+import gameFreeFire from '../assets/supported_games/freefire.png'
+import gameCodm from '../assets/supported_games/codm.png'
+import gameValorant from '../assets/supported_games/valorant.png'
+
+const formatINR = (val) => {
+  const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
+  return isNaN(n) ? (val || 'TBA') : `\u20B9${n.toLocaleString('en-IN')}`
+}
+
+const GAME_ICON_MAP = {
+  bgmi: gameBgmi,
+  'free fire': gameFreeFire,
+  codm: gameCodm,
+  'cod mobile': gameCodm,
+  valorant: gameValorant,
+}
 
 function Homepage({ onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -292,37 +308,37 @@ function Homepage({ onNavigate }) {
                   Supported Games
                 </h2>
                  <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
-                    <motion.div whileHover={{ y: -3 }} className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 hover:border-primary/40 transition-colors cursor-pointer group bg-surface-container-low/30 backdrop-blur-sm border border-outline-variant/20 shadow-sm">
+                    <motion.div whileHover={{ y: -3 }} className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 hover:border-primary/40 transition-colors cursor-pointer group bg-surface-container-low/30 backdrop-blur-sm border border-outline-variant/20 shadow-md">
                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
                          <img className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="BGMI" src={gameBgmi} />
                        </div>
                       <div className="font-label-caps text-[10px] sm:text-xs text-white font-bold tracking-wider">BGMI</div>
                       <div className="font-body-sm text-[9px] sm:text-[10px] text-on-surface-variant/80">8.7K Tourneys</div>
                     </motion.div>
-                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 opacity-40">
-                       <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest flex items-center justify-center">
-                         <span className="material-symbols-outlined text-on-surface-variant text-3xl sm:text-4xl">sports_esports</span>
-                       </div>
-                      <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                    </motion.div>
-                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 opacity-40">
-                       <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest flex items-center justify-center">
-                         <span className="material-symbols-outlined text-on-surface-variant text-3xl sm:text-4xl">sports_esports</span>
-                       </div>
-                      <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                    </motion.div>
-                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 opacity-40">
-                       <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest flex items-center justify-center">
-                         <span className="material-symbols-outlined text-on-surface-variant text-3xl sm:text-4xl">sports_esports</span>
-                       </div>
-                      <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                    </motion.div>
-                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 opacity-40">
-                       <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest flex items-center justify-center">
-                         <span className="material-symbols-outlined text-on-surface-variant text-3xl sm:text-4xl">sports_esports</span>
-                       </div>
-                      <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                    </motion.div>
+                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 shadow-md">
+                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
+                          <img className="w-full h-full object-cover opacity-40" alt="Free Fire" src={gameFreeFire} />
+                        </div>
+                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
+                     </motion.div>
+                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 shadow-md">
+                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
+                          <img className="w-full h-full object-cover opacity-40" alt="COD Mobile" src={gameCodm} />
+                        </div>
+                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
+                     </motion.div>
+                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 shadow-md">
+                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
+                          <img className="w-full h-full object-cover opacity-40" alt="Valorant" src={gameValorant} />
+                        </div>
+                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
+                     </motion.div>
+                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 border border-dashed border-outline-variant/20 shadow-md">
+                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
+                          <img className="w-full h-full object-cover opacity-40" alt="Free Fire" src={gameFreeFire} />
+                        </div>
+                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
+                     </motion.div>
                  </div>
               </motion.div>
               {/* Player Feedbacks Marquee (Desktop View) */}
@@ -345,10 +361,15 @@ function Homepage({ onNavigate }) {
                     <span className="material-symbols-outlined text-[#ff0000] text-lg dark:filter dark:drop-shadow-[0_0_8px_rgba(255,0,0,0.5)]" data-icon="sensors">sensors</span>
                     Live Matches
                   </h2>
-                  <a className="text-primary font-label-caps text-xs hover:underline font-bold" href="#">Full Scoreboard</a>
+                  <button onClick={() => onNavigate && onNavigate('tournaments')}
+                    className="group flex items-center gap-1 text-primary font-label-caps text-xs font-bold hover:text-primary/80 transition-colors">
+                    <span>View All</span>
+                    <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform" data-icon="arrow_forward">arrow_forward</span>
+                  </button>
                 </div>
-                <div className="space-y-2.5 sm:space-y-3">
-                  {tournamentsList.filter(t => t.status === 'live' || (t.startDate && new Date() >= new Date(t.startDate))).length === 0 ? (
+                {(() => {
+                  const liveMatches = tournamentsList.filter(t => t.status === 'live' || (t.startDate && new Date() >= new Date(t.startDate))).slice(0, 10)
+                  return liveMatches.length === 0 ? (
                     <div className="glass-card p-6 sm:p-8 text-center rounded-2xl border border-outline-variant/20 space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
                       <span className="material-symbols-outlined text-3xl text-on-surface-variant animate-pulse" data-icon="sensors">sensors</span>
                       <h3 className="font-headline-md text-sm sm:text-base text-on-background font-bold">No Live Matches Currently in Progress</h3>
@@ -357,56 +378,58 @@ function Homepage({ onNavigate }) {
                       </p>
                     </div>
                   ) : (
-                    tournamentsList.filter(t => t.status === 'live' || (t.startDate && new Date() >= new Date(t.startDate))).map((match, idx) => (
-                      <motion.div
-                        key={idx}
-                        onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
-                        whileHover={{ y: -2, scale: 1.01 }}
-                        whileTap={{ scale: 0.99 }}
-                        className="glass-card no-transition p-2 sm:p-3 rounded-xl sm:rounded-2xl flex gap-3 sm:gap-3.5 items-center border border-outline-variant/20 shadow-md bg-surface-container-low/40 backdrop-blur-md group hover:border-primary/40 hover:bg-surface-container-low/60 cursor-pointer relative overflow-hidden"
-                      >
-                        {/* Left side: Tournament Image with LIVE badge */}
-                        <div className="relative w-20 h-16 sm:w-24 sm:h-20 rounded-lg sm:rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-highest border border-white/10 shadow-inner">
-                          <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.banner || "https://lh3.googleusercontent.com/aida-public/AB6AXuDOX_R-7Xxgu4I61ERGHRRepGyPW7KC-9vmkDtcr5PNR7UTpmcvhm_4mIqO1fLva95ToWpBmUQFMM_DHYI2503hel-RMMq0eD_D-UUkep5HstEhxrsw9lcpiYKMNQGiYXm4OI_QUQPy56rgnu7S_vGRC7cg_kPR3Bn681RLDWY_GjIJ5kT5xCTTDXPY77HibhY3zFQEOYKbFyodIkVgcY8BRLiydmwJMgma9p9kDGxtufgewBZWBlQ5HS-3LFCEv-OkR5TLyfW1vq7Kh"} />
-                          <div className="absolute top-1 left-1 bg-[#ff0000] text-white px-1.5 py-0.5 rounded text-[8px] sm:text-[9px] font-label-caps font-bold flex items-center gap-1 shadow-[0_0_10px_#ff0000]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-                            LIVE
-                          </div>
-                        </div>
-
-                        {/* Right side: Tournament Details */}
-                        <div className="flex flex-col justify-between flex-grow min-w-0 py-0.5">
-                          <div className="space-y-0.5">
-                            {/* Game Name & Match Type */}
-                            <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-label-caps font-bold tracking-wider uppercase text-primary">
-                              <span>{match.game}</span>
-                              <span className="text-outline-variant">•</span>
-                              <span className="text-on-surface-variant">{match.teamsCount || 'Squad'}</span>
+                    <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                      {liveMatches.map((match, idx) => {
+                        const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
+                        return (
+                          <motion.div
+                            key={idx}
+                            onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
+                            layout
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3 }}
+                            whileHover={{ y: -2, scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                            className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center border border-outline-variant/30 shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low hover:border-outline-variant/60 cursor-pointer w-fit shrink-0"
+                          >
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
+                              {(() => {
+                                const gameKey = (match.game || '').toLowerCase()
+                                const gameIcon = GAME_ICON_MAP[gameKey]
+                                return gameIcon ? (
+                                  <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
+                                ) : (
+                                  <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80"} />
+                                )
+                              })()}
                             </div>
 
-                            {/* Tournament Name */}
-                            <h3 className="font-headline-md text-xs sm:text-sm text-on-background font-bold leading-snug line-clamp-2 group-hover:text-primary transition-colors">
-                              {match.title}
-                            </h3>
+                            <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
+                              <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
+                                {match.title}
+                              </h3>
 
-                            {/* Organiser with dynamic verified tick according to plan */}
-                            <div className="flex items-center gap-1 text-[10px] sm:text-[11px] pt-0.5">
-                              <span className="text-on-surface-variant/80 uppercase font-label-caps text-[8px] sm:text-[9px] tracking-wider">Organiser:</span>
-                              <span className="truncate font-medium text-on-surface max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
-                              <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
+                              <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
+                                <span className="truncate max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
+                                <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
+                                <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(match.prize || match.prizePool)}</span>
+                              </div>
+
+                              <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
+                                {modeLabel}
+                              </span>
                             </div>
-                          </div>
-
-                          {/* Prize Pool */}
-                          <div className="mt-1.5 flex items-baseline gap-1">
-                            <span className="text-[9px] sm:text-[10px] text-on-surface-variant/80 uppercase font-label-caps tracking-wider">Prize Pool:</span>
-                            <span className="text-xs sm:text-sm text-secondary font-semibold font-prize-display">{match.prize || match.prizePool || 'TBA'}</span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    ))
-                  )}
-                </div>
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
               </motion.div>
               {/* Player Feedbacks Marquee (Mobile View) */}
               {renderFeedbacksMarquee("block lg:hidden overflow-hidden pt-1 hardware-clip")}
@@ -464,7 +487,7 @@ function Homepage({ onNavigate }) {
                             {/* Logo */}
                             <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg overflow-hidden mx-auto mb-2 border border-outline-variant bg-surface-container-high group-hover:border-primary/30 transition-colors">
                               {org.orgImage || org.avatar ? (
-                                <img alt={org.orgName || org.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={org.orgImage || org.avatar} />
+                                <img alt={org.orgName || org.name} className="avatar-img group-hover:scale-105 transition-transform duration-300" src={org.orgImage || org.avatar} />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center bg-surface-container"><span className="material-symbols-outlined text-on-surface-variant text-base">business</span></div>
                               )}
@@ -676,7 +699,7 @@ function Homepage({ onNavigate }) {
             <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[18px] md:text-headline-md font-extrabold text-primary dark:text-primary tracking-tight hover:opacity-85 transition-opacity shrink-0">
               Match District
             </button>
-            <p className="font-body-sm text-[10px] sm:text-[12px] text-on-surface-variant opacity-40">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
+            <p className="font-body-sm text-[10px] sm:text-[12px] text-on-surface-variant">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
           </div>
         </div>
       </footer>

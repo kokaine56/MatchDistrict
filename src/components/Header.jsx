@@ -60,7 +60,7 @@ function Header({ activePage, onNavigate }) {
 
   const navLinks = [
     { id: 'home', label: 'Home' },
-    { id: 'tournaments', label: 'Tournaments' },
+    { id: 'my-tournaments', label: 'My Tournaments' },
     { id: 'about', label: 'About' },
     { id: 'help-support', label: 'Help & Support' },
     { id: 'privacy-policy', label: 'Privacy' },
@@ -215,7 +215,7 @@ function Header({ activePage, onNavigate }) {
                   <SafeImage 
                     src={currentUser.avatar} 
                     alt="avatar" 
-                    className="w-full h-full object-cover" 
+                    className="avatar-img" 
                   />
                 </div>
                 <button 
@@ -269,7 +269,7 @@ function Header({ activePage, onNavigate }) {
                         <SafeImage 
                           src={currentUser.avatar} 
                           alt="avatar" 
-                          className="w-full h-full object-cover" 
+                          className="avatar-img" 
                         />
                       </div>
                       <div className="overflow-hidden">

@@ -490,9 +490,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden bg-surface border border-outline-variant/20 shrink-0">
                   <img
-                    src={(orgProfile?.avatar || orgProfile?.profileImage || orgProfile?.image_url) || tourney.orgImage || tourney.logoUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80'}
+                    src={orgProfile?.orgImage || tourney.orgImage || tourney.logoUrl || orgProfile?.avatar || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80'}
                     alt={orgProfile?.orgName || tourney.orgName || orgProfile?.name}
-                    className="w-full h-full object-cover" />
+                    className="avatar-img" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">

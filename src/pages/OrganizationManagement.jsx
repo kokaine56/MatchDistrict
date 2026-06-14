@@ -106,10 +106,10 @@ function OrganizationManagement({ onNavigate }) {
       handle: currentUser.orgHandle || '@' + (currentUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
       email: currentUser.email,
       phone: currentUser.phone || '',
-      bio: currentUser.experience || currentUser.bio || '',
+      bio: currentUser.orgBio || currentUser.experience || currentUser.bio || '',
       tier: currentUser.tier || 'Free',
       logo: currentUser.orgImage || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=300&q=80',
-      banner: currentUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80',
+      banner: currentUser.orgBanner || currentUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80',
       website: parsedSocial.website || '',
       discord: parsedSocial.discord || '',
       twitter: parsedSocial.twitter || '',
@@ -274,7 +274,7 @@ function OrganizationManagement({ onNavigate }) {
     const token = await getAuthToken();
 
     try {
-      const res = await fetch(`/api/users/${currentUser.id}`, {
+      const res = await fetch('/api/organization/update', {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -284,19 +284,14 @@ function OrganizationManagement({ onNavigate }) {
           orgName: orgData.name,
           orgMotto: orgData.motto,
           orgImage: orgData.logo,
-          phone: orgData.phone,
-          experience: orgData.bio,
-          socialLinks: JSON.stringify({
-            website: orgData.website,
-            discord: orgData.discord,
-            twitter: orgData.twitter
-          })
+          orgBanner: orgData.banner,
+          orgBio: orgData.bio
         })
       });
       const data = await res.json();
       if (data.success) {
-        triggerToast('Organization profile settings saved successfully!');
         setCurrentUser(data.user);
+        triggerToast('Organization profile settings saved successfully!');
       } else {
         triggerToast(data.error || 'Failed to save settings.');
       }
@@ -390,8 +385,8 @@ function OrganizationManagement({ onNavigate }) {
           {/* Logo — overlaps banner edge 50/50 */}
           <div className="flex justify-center sm:justify-start px-4 sm:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
             <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-2xl p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] cursor-pointer">
-              <div className="w-full h-full rounded-2xl overflow-hidden border-2 border-surface bg-surface p-1.5 flex items-center justify-center">
-                <SafeImage src={orgData.logo} alt={orgData.name} className="w-full h-full object-contain rounded-xl" />
+              <div className="w-full h-full rounded-2xl overflow-hidden border-2 border-surface bg-surface">
+                <SafeImage src={orgData.logo} alt={orgData.name} className="avatar-img rounded-xl" />
               </div>
             </div>
           </div>
@@ -529,6 +524,7 @@ function OrganizationManagement({ onNavigate }) {
         {/* Dashboard component */}
         <OrganizerDashboard
           currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
           tournamentsList={tournamentsList}
           setTournamentsList={setTournamentsList}
           triggerToast={triggerToast}

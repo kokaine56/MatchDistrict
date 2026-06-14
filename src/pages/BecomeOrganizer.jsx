@@ -908,9 +908,9 @@ function BecomeOrganizer({ onNavigate }) {
       <div className="pt-2">
         <div className="glass-card p-4 rounded-xl border border-outline-variant/40 bg-gradient-to-r from-primary/[0.04] via-surface-container-high/30 to-secondary/[0.02] backdrop-blur-md flex items-center gap-4 relative overflow-hidden shadow-lg">
           <div className="absolute -top-10 -right-10 w-24 h-24 bg-primary/20 rounded-full blur-xl pointer-events-none"></div>
-          <div className="w-14 h-14 rounded-xl border border-outline-variant/40 bg-surface-container flex items-center justify-center overflow-hidden shrink-0 shadow-md">
-            {form.orgLogo ? (
-              <img src={form.orgLogo} alt="Logo preview" className="w-full h-full object-cover" />
+            <div className="w-14 h-14 rounded-xl border border-outline-variant/40 bg-surface-container overflow-hidden shrink-0 shadow-md">
+              {form.orgLogo ? (
+                <img src={form.orgLogo} alt="Logo preview" className="avatar-img" />
             ) : (
               <span className="material-symbols-outlined text-on-surface-variant/40 text-2xl">business</span>
             )}
@@ -1175,7 +1175,7 @@ function BecomeOrganizer({ onNavigate }) {
         {form.orgLogo && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/20">
             <div className="w-10 h-10 rounded-lg overflow-hidden border border-outline-variant/30 bg-surface-container shrink-0">
-              <img src={form.orgLogo} alt="Org logo" className="w-full h-full object-cover" />
+              <img src={form.orgLogo} alt="Org logo" className="avatar-img" />
             </div>
             <div className="text-[10px] text-on-surface-variant">
               <span className="text-white font-semibold">{form.orgLogoName || 'Logo'}</span>

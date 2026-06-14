@@ -15,6 +15,7 @@ import {
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
 import { getAuthToken } from '../utils/getAuthToken.js'
+import { uploadToImgbb } from '../utils/imgbbUpload'
 import VerificationBadge from '../components/VerificationBadge.jsx'
 
 const tabContentVariants = {
@@ -38,7 +39,7 @@ const statsCardVariants = {
   show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 300, damping: 25 } }
 }
 
-const getProfileBio = (user, fallback = '') => user?.experience ?? user?.bio ?? fallback ?? ''
+const getProfileBio = (user, fallback = '') => user?.orgBio ?? user?.experience ?? user?.bio ?? fallback ?? ''
 
 function CircularUploadProgress({ progress }) {
   const radius = 17
@@ -270,11 +271,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [activeUploadField, setActiveUploadField] = useState(null) // 'avatar' | 'banner' | 'orgLogo' | 'orgBanner'
   const [uploadPreviewUrls, setUploadPreviewUrls] = useState({})
 
-  const [cropState, setCropState] = useState(null) // { file, src, field, width, height }
+  const [cropState, setCropState] = useState(null) // { file, src, field, width, height, shape }
   const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 })
   const [cropZoom, setCropZoom] = useState(1)
   const cropImgRef = React.useRef(null)
   const uploadPreviewUrlsRef = React.useRef({})
+  const [profileImageVersion, setProfileImageVersion] = useState(Date.now())
   
   const dragStart = React.useRef({ x: 0, y: 0 })
   const isDragging = React.useRef(false)
@@ -294,8 +296,15 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   useEffect(() => {
     if (cropState) {
-      const minDimension = Math.min(cropState.width, cropState.height);
-      const startingZoom = minDimension > 0 ? Math.max(200 / minDimension, 1) : 1;
+      let startingZoom;
+      if (cropState.shape === 'rectangle') {
+        const fillZoomX = 360 / cropState.width;
+        const fillZoomY = 120 / cropState.height;
+        startingZoom = Math.max(fillZoomX, fillZoomY);
+      } else {
+        const minDimension = Math.min(cropState.width, cropState.height);
+        startingZoom = minDimension > 0 ? Math.max(200 / minDimension, 1) : 1;
+      }
       setCropZoom(startingZoom);
       setCropOffset({ x: 0, y: 0 });
     }
@@ -410,81 +419,36 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
     setCurrentUser(data.user)
     setCurrentUserFromContext(data.user)
+    setProfileImageVersion(Date.now())
   }
 
-  const handleImageUpload = (file) => {
-    if (!file) return Promise.resolve(null);
-    
+  const handleImageUpload = async (file) => {
+    if (!file) return null;
     if (!file.type.startsWith('image/')) {
       triggerToast('Please select a valid image file.');
-      return Promise.resolve(null);
+      return null;
     }
     if (file.size > 5 * 1024 * 1024) {
       triggerToast('Image file must be under 5MB.');
-      return Promise.resolve(null);
+      return null;
     }
-    
+
     setIsUploadingImage(true);
-    setProfileUploadProgress(0);
+    setProfileUploadProgress(40);
     triggerToast('Uploading image... Please wait.');
-    
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result;
-        const xhr = new XMLHttpRequest();
-        const token = await getAuthToken();
-        
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            const percent = Math.round((e.loaded * 100) / e.total);
-            setProfileUploadProgress(percent);
-          }
-        });
-        
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-              const data = JSON.parse(xhr.responseText);
-              if (data.success && data.url) {
-                const safeUrl = sanitizeImageUrl(data.url);
-                if (!safeUrl) {
-                  triggerToast('Upload returned an invalid image URL.');
-                  resolve(null);
-                  return;
-                }
-                setProfileUploadProgress(100);
-                resolve(safeUrl);
-              } else {
-                triggerToast(data.message || 'Image upload failed.');
-                resolve(null);
-              }
-            } catch (err) {
-              triggerToast('Invalid response format.');
-              resolve(null);
-            }
-          } else {
-            triggerToast(`Upload failed with status ${xhr.status}`);
-            resolve(null);
-          }
-        });
-        
-        xhr.addEventListener('error', () => {
-          setIsUploadingImage(false);
-          setProfileUploadProgress(null);
-          triggerToast('Error connecting to upload service.');
-          resolve(null);
-        });
-        
-        xhr.open('POST', '/api/upload');
-        xhr.setRequestHeader('Content-Type', 'application/json');
-        if (token) {
-          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-        }
-        xhr.send(JSON.stringify({ image: base64 }));
-      };
-      reader.readAsDataURL(file);
-    });
+
+    try {
+      const url = await uploadToImgbb(file);
+      if (!url || !sanitizeImageUrl(url)) {
+        triggerToast('Upload returned an invalid image URL.');
+        return null;
+      }
+      setProfileUploadProgress(100);
+      return url;
+    } catch (err) {
+      triggerToast(err.message || 'Image upload failed.');
+      return null;
+    }
   };
 
   const handleCropMouseDown = (e) => {
@@ -565,6 +529,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
       triggerToast('Please select a valid image file.');
       return;
     }
+    const shape = (field === 'banner' || field === 'orgBanner') ? 'rectangle' : 'circle';
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -575,7 +540,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
             src: event.target.result,
             width: img.width,
             height: img.height,
-            field
+            field,
+            shape
           });
         } else {
           performUpload(file, field);
@@ -592,28 +558,34 @@ function Profile({ onNavigate, selectedUserProfile }) {
     if (!img) return;
 
     const canvas = document.createElement('canvas');
-    canvas.width = 400;
-    canvas.height = 400;
     const ctx = canvas.getContext('2d');
 
-    const imgLeft = 140 + cropOffset.x - (cropState.width * cropZoom) / 2;
-    const imgTop = 140 + cropOffset.y - (cropState.height * cropZoom) / 2;
-    const cropX_img = (40 - imgLeft) / cropZoom;
-    const cropY_img = (40 - imgTop) / cropZoom;
-    const cropW_img = 200 / cropZoom;
-    const cropH_img = 200 / cropZoom;
+    if (cropState.shape === 'rectangle') {
+      const containerW = 360;
+      const containerH = 120;
+      const imgLeft = containerW / 2 + cropOffset.x - (cropState.width * cropZoom) / 2;
+      const imgTop = containerH / 2 + cropOffset.y - (cropState.height * cropZoom) / 2;
+      const srcX = Math.max(0, (0 - imgLeft) / cropZoom);
+      const srcY = Math.max(0, (0 - imgTop) / cropZoom);
+      const srcW = Math.min(cropState.width - srcX, containerW / cropZoom);
+      const srcH = Math.min(cropState.height - srcY, containerH / cropZoom);
 
-    ctx.drawImage(
-      img,
-      cropX_img,
-      cropY_img,
-      cropW_img,
-      cropH_img,
-      0,
-      0,
-      400,
-      400
-    );
+      canvas.width = 1200;
+      canvas.height = 400;
+      ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, 1200, 400);
+    } else {
+      canvas.width = 400;
+      canvas.height = 400;
+
+      const imgLeft = 140 + cropOffset.x - (cropState.width * cropZoom) / 2;
+      const imgTop = 140 + cropOffset.y - (cropState.height * cropZoom) / 2;
+      const cropX_img = (40 - imgLeft) / cropZoom;
+      const cropY_img = (40 - imgTop) / cropZoom;
+      const cropW_img = 200 / cropZoom;
+      const cropH_img = 200 / cropZoom;
+
+      ctx.drawImage(img, cropX_img, cropY_img, cropW_img, cropH_img, 0, 0, 400, 400);
+    }
 
     canvas.toBlob(async (blob) => {
       if (!blob) {
@@ -1008,24 +980,30 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }
 
   // --- PLAYER STATE ---
-  const [playerData, setPlayerData] = useState({
-    name: 'Alex "Viper" Mercer',
-    gamerTag: '@alex_viper',
-    email: 'alex.viper@elitesports.gg',
-    phone: '+91 98765 43210',
-    riotId: 'Viper#IND1',
-    bgmiId: '5598231409',
-    steamId: 'STEAM_0:1:5892341',
-    discordTag: 'ViperMercer#1337',
-    avatar: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80',
-    banner: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80',
-    bio: 'Professional Valorant & BGMI player for The Elite Crew. Former CS:GO Radiant rank equivalent.',
+  const [playerData, setPlayerData] = useState(() => ({
+    name: currentUserFromContext?.name || 'Gamer',
+    gamerTag: currentUserFromContext?.gamerTag || '@gamer',
+    email: currentUserFromContext?.email || '',
+    phone: currentUserFromContext?.phone || '+91 ',
+    riotId: currentUserFromContext?.riotId || '',
+    bgmiId: currentUserFromContext?.bgmiId || '',
+    steamId: currentUserFromContext?.steamId || '',
+    discordTag: currentUserFromContext?.discordTag || '',
+    avatar: currentUserFromContext?.avatar || '',
+    banner: currentUserFromContext?.banner || '',
+    bio: currentUserFromContext?.experience || currentUserFromContext?.bio || '',
     notifications: {
       matchReminders: true,
       prizePayouts: true,
       promotions: false
     }
-  })
+  }))
+
+  const [localMediaLoaded, setLocalMediaLoaded] = useState({ avatar: !playerData.avatar, banner: !playerData.banner })
+
+  useEffect(() => {
+    setLocalMediaLoaded({ avatar: !playerData.avatar, banner: !playerData.banner })
+  }, [playerData.avatar, playerData.banner])
 
   const [playerEditForm, setPlayerEditForm] = useState({ ...playerData })
 
@@ -1135,7 +1113,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
           bgmiId: targetUser.bgmiId || prev.bgmiId || '',
           steamId: targetUser.steamId || prev.steamId || '',
           discordTag: targetUser.discordTag || prev.discordTag || '',
-          bio: getProfileBio(targetUser, prev.bio),
+          bio: targetUser.experience || targetUser.bio || prev.bio,
           avatar: targetUser.avatar || prev.avatar,
           banner: targetUser.banner || prev.banner,
           notifications: storedNotifs
@@ -1151,7 +1129,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
             bgmiId: targetUser.bgmiId || prev.bgmiId || '',
             steamId: targetUser.steamId || prev.steamId || '',
             discordTag: targetUser.discordTag || prev.discordTag || '',
-            bio: getProfileBio(targetUser, prev.bio),
+            bio: targetUser.experience || targetUser.bio || prev.bio,
             avatar: targetUser.avatar || prev.avatar,
             banner: targetUser.banner || prev.banner,
             notifications: storedNotifs
@@ -1175,13 +1153,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
           setOrgData(prev => ({
             ...prev,
             name: targetUser.orgName || 'Organizer',
-            handle: targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
+            handle: targetUser.orgHandle || targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
             email: targetUser.email,
             phone: targetUser.phone || prev.phone,
-            bio: getProfileBio(targetUser, prev.bio),
+            bio: targetUser.orgBio || targetUser.experience || targetUser.bio || prev.bio,
             tier: targetUser.tier || 'Free',
-            logo: targetUser.avatar || prev.logo,
-            banner: targetUser.banner || prev.banner,
+            logo: targetUser.orgImage || prev.logo,
+            banner: targetUser.orgBanner || targetUser.banner || prev.banner,
             website: parsedSocial.website || prev.website || '',
             discord: parsedSocial.discord || prev.discord || '',
             twitter: parsedSocial.twitter || prev.twitter || '',
@@ -1194,12 +1172,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
             setOrgEditForm(prev => ({
               ...prev,
               name: targetUser.orgName || 'Organizer',
-              handle: targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
+              handle: targetUser.orgHandle || targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
               email: targetUser.email,
               tier: targetUser.tier || 'Free',
-              logo: targetUser.avatar || prev.logo,
-              banner: targetUser.banner || prev.banner,
-              bio: getProfileBio(targetUser, prev.bio),
+              logo: targetUser.orgImage || prev.logo,
+              banner: targetUser.orgBanner || targetUser.banner || prev.banner,
+              bio: targetUser.orgBio || targetUser.experience || targetUser.bio || prev.bio,
               website: parsedSocial.website || prev.website || '',
               discord: parsedSocial.discord || prev.discord || '',
               twitter: parsedSocial.twitter || prev.twitter || '',
@@ -1325,18 +1303,17 @@ function Profile({ onNavigate, selectedUserProfile }) {
     const token = await getAuthToken();
 
     try {
-      const res = await fetch(`/api/users/${currentUser.id}`, {
+      const res = await fetch('/api/organization/update', {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          name: orgEditForm.name,
-          tier: orgEditForm.tier,
-          avatar: sanitizeImageUrl(orgEditForm.logo),
-          banner: sanitizeImageUrl(orgEditForm.banner),
-          experience: orgEditForm.bio,
+          orgName: orgEditForm.name,
+          orgImage: sanitizeImageUrl(orgEditForm.logo),
+          orgBanner: sanitizeImageUrl(orgEditForm.banner),
+          orgBio: orgEditForm.bio,
         })
       })
       const data = await res.json()
@@ -1345,7 +1322,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
         const savedBanner = sanitizeImageUrl(orgEditForm.banner)
         const nextOrg = {
           ...orgEditForm,
-          bio: data.user.experience ?? orgEditForm.bio ?? '',
+          bio: data.user.orgBio ?? orgEditForm.bio ?? '',
           logo: savedLogo || orgData.logo,
           banner: savedBanner || orgData.banner,
         }
@@ -1484,7 +1461,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     const token = await getAuthToken();
 
     try {
-      const res = await fetch(`/api/users/${currentUser.id}`, {
+      const res = await fetch('/api/organization/update', {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -1492,44 +1469,22 @@ function Profile({ onNavigate, selectedUserProfile }) {
         },
         body: JSON.stringify({
           orgName: orgData.name,
-          gamerTag: orgData.handle,
-          email: orgData.email,
-          phone: orgData.phone,
-          avatar: orgData.logo,
-          experience: orgData.bio,
-          socialLinks: JSON.stringify({
-            website: orgData.website,
-            discord: orgData.discord,
-            twitter: orgData.twitter
-          })
+          orgImage: orgData.logo,
+          orgBanner: orgData.banner,
+          orgBio: orgData.bio
         })
       })
       const data = await res.json()
       if (data.success) {
-        const updatedUser = {
-          ...currentUser,
-          orgName: data.user.orgName,
-          gamerTag: data.user.gamerTag,
-          email: data.user.email,
-          phone: data.user.phone,
-          avatar: data.user.avatar,
-          experience: data.user.experience,
-          socialLinks: data.user.socialLinks
-        }
-        setCurrentUser(updatedUser)
-        setCurrentUserFromContext(updatedUser)
-
-        // Sync local orgData
+        setCurrentUser(data.user)
+        setCurrentUserFromContext(data.user)
         setOrgData(prev => ({
           ...prev,
           name: data.user.orgName,
-          handle: data.user.gamerTag,
-          email: data.user.email,
-          phone: data.user.phone,
-          logo: data.user.avatar,
-          bio: data.user.experience
+          logo: data.user.orgImage || prev.logo,
+          banner: data.user.orgBanner || prev.banner,
+          bio: data.user.orgBio || prev.bio
         }))
-
         triggerToast('Organization settings saved successfully to the database!')
       } else {
         triggerToast(`Failed to save organization settings: ${data.error}`)
@@ -2156,68 +2111,75 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               </button>
 
               {/* Public Organizer Profile Card */}
-              <div className="rounded-2xl border border-outline-variant/40 shadow-sm bg-surface-container-low/60 backdrop-blur-md overflow-hidden">
-                {/* Banner */}
-                <div className="h-40 sm:h-56 w-full relative overflow-hidden bg-surface-container">
-                  <img
-                    src={viewedUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'}
-                    alt="Organizer Banner"
-                    className="w-full h-full object-cover"
-                  />
-                </div>
+              <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden h-[420px] sm:h-[500px] lg:h-[540px]">
+                <div className="flex flex-col h-full">
+                  {/* Banner — 40% */}
+                  <div className="flex-[2] min-h-0 relative overflow-hidden bg-surface-container">
+                    <img
+                      src={viewedUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'}
+                      alt="Organizer Banner"
+                      className="w-full h-full object-cover absolute inset-0"
+                    />
+                  </div>
 
-                {/* Info */}
-                <div className="relative px-4 sm:px-6 pb-6 sm:pb-8 pt-0">
-                  <div className="flex flex-col sm:flex-row sm:items-end gap-4 -mt-4 sm:-mt-8 mb-4">
-                    <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-2xl overflow-hidden border-4 border-surface-container-low bg-surface-container shadow-lg shrink-0 p-1.5 bg-surface-container-highest">
-                      {viewedUser.avatar
-                        ? <img src={viewedUser.avatar} alt={viewedUser.orgName || viewedUser.name} className="w-full h-full object-contain" />
-                        : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-3xl">business</span></div>}
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-1 sm:pb-1">
-                      <h1 className="font-headline-lg text-xl sm:text-2xl font-bold text-on-background tracking-tight flex items-center gap-2 flex-wrap">
+                  {/* Content — 60%, centered column */}
+                  <div className="flex-[3] min-h-0 relative px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col items-center text-center md:items-start md:text-left">
+                    {/* Name & Handle — offset to clear avatar's bottom half */}
+                    <div className="mt-11 sm:mt-14 lg:mt-16 mb-3">
+                      <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight flex items-center justify-center md:justify-start gap-2 flex-wrap">
                         <span>{viewedUser.orgName || viewedUser.name}</span>
                         <VerificationBadge tier={viewedUser.tier} size="sm" />
                       </h1>
-                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60">{viewedUser.gamerTag || viewedUser.orgHandle}</p>
+                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">{viewedUser.gamerTag || viewedUser.orgHandle}</p>
+                    </div>
+
+                    {/* Bio */}
+                    {(viewedUser.orgBio || viewedUser.experience || viewedUser.bio) && (
+                      <p className="text-on-surface-variant text-xs sm:text-sm leading-relaxed mb-3 line-clamp-2 max-w-[90%] md:max-w-prose md:self-start">
+                        {viewedUser.orgBio || viewedUser.experience || viewedUser.bio}
+                      </p>
+                    )}
+
+                    {/* Stats row */}
+                    <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-3 w-full max-w-md md:mx-0">
+                      {[
+                        { label: 'Followers', value: viewedUser.followers ?? 0, icon: 'group' },
+                        { label: 'Events', value: viewedUser.tournamentsHosted ?? 0, icon: 'sports_esports' },
+                        { label: 'Rating', value: viewedUser.rating ?? '—', icon: 'star' },
+                      ].map(s => (
+                        <div key={s.label} className="rounded-xl px-2 py-2 sm:px-3 sm:py-3 text-center bg-surface-container border border-outline-variant/40">
+                          <span className="material-symbols-outlined text-primary text-sm sm:text-base block mb-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
+                          <div className="font-bold text-xs sm:text-sm text-on-background">{s.value}</div>
+                          <div className="text-on-surface-variant text-[9px] font-bold uppercase tracking-wider mt-0.5 opacity-50">{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Tier badge */}
+                    <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
+                      <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
+                        (viewedUser.tier || '').toLowerCase() === 'elite' ? 'text-primary border-primary/30 bg-primary/8' :
+                        (viewedUser.tier || '').toLowerCase() === 'pro'   ? 'text-amber-400 border-amber-400/30 bg-amber-400/8' :
+                        (viewedUser.tier || '').toLowerCase() === 'basic' ? 'text-[#1d9bf0] border-[#1d9bf0]/30 bg-[#1d9bf0]/8' :
+                        'text-on-surface-variant border-outline-variant bg-surface-container'
+                      }`}>{viewedUser.tier || 'Free'} Plan</span>
+                      {viewedUser.kycVerified && (
+                        <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border text-emerald-400 border-emerald-400/30 bg-emerald-400/8 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span> KYC Verified
+                        </span>
+                      )}
                     </div>
                   </div>
+                </div>
 
-                  {/* Bio */}
-                  {(viewedUser.experience || viewedUser.bio) && (
-                    <p className="text-on-surface-variant text-xs sm:text-sm leading-relaxed mb-4 max-w-2xl">
-                      {viewedUser.experience || viewedUser.bio}
-                    </p>
-                  )}
-
-                  {/* Stats row */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 mb-4">
-                    {[
-                      { label: 'Followers', value: viewedUser.followers ?? 0, icon: 'group' },
-                      { label: 'Events', value: viewedUser.tournamentsHosted ?? 0, icon: 'sports_esports' },
-                      { label: 'Rating', value: viewedUser.rating ?? '—', icon: 'star' },
-                    ].map(s => (
-                      <div key={s.label} className="rounded-xl px-3 py-3 text-center bg-surface-container border border-outline-variant/40">
-                        <span className="material-symbols-outlined text-primary text-base block mb-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>{s.icon}</span>
-                        <div className="font-bold text-sm text-on-background">{s.value}</div>
-                        <div className="text-on-surface-variant text-[9px] font-bold uppercase tracking-wider mt-0.5 opacity-50">{s.label}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Tier badge */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
-                      (viewedUser.tier || '').toLowerCase() === 'elite' ? 'text-primary border-primary/30 bg-primary/8' :
-                      (viewedUser.tier || '').toLowerCase() === 'pro'   ? 'text-amber-400 border-amber-400/30 bg-amber-400/8' :
-                      (viewedUser.tier || '').toLowerCase() === 'basic' ? 'text-[#1d9bf0] border-[#1d9bf0]/30 bg-[#1d9bf0]/8' :
-                      'text-on-surface-variant border-outline-variant bg-surface-container'
-                    }`}>{viewedUser.tier || 'Free'} Plan</span>
-                    {viewedUser.kycVerified && (
-                      <span className="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border text-emerald-400 border-emerald-400/30 bg-emerald-400/8 flex items-center gap-1">
-                        <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span> KYC Verified
-                      </span>
-                    )}
+                {/* Avatar — absolutely positioned at 40/60 boundary, float over both sections */}
+                <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 md:left-6 md:-translate-x-0 z-20" style={{ top: '40%' }}>
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] shrink-0">
+                    <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
+                      {viewedUser.orgImage || viewedUser.avatar
+                        ? <img src={viewedUser.orgImage || viewedUser.avatar} alt={viewedUser.orgName || viewedUser.name} className="avatar-img" />
+                        : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-3xl">business</span></div>}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2253,120 +2215,150 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 return (
                   <div className="space-y-6">
                     {/* Compact Player Header Hero Card */}
-                    <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-outline-variant/35 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
-                      {/* Banner — clean edge to edge, no overlays */}
-                      <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
-                        <img src={uploadPreviewUrls.banner || playerData.banner} alt="Profile Banner" className="w-full h-full object-cover object-center" />
-                        {activeUploadField === 'banner' && profileUploadProgress !== null && (
-                          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                            <CircularUploadProgress progress={profileUploadProgress} />
+                    <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden h-[420px] sm:h-[500px] lg:h-[540px]">
+                      <div className="flex flex-col h-full">
+                        {/* Banner — 40% */}
+                        <div className="flex-[2] min-h-0 relative overflow-hidden bg-slate-950">
+                          {(uploadPreviewUrls.banner || playerData.banner) ? (
+                            <>
+                              {!localMediaLoaded.banner && <div className="absolute inset-0 bg-slate-800 animate-pulse" />}
+                              <img
+                                src={(uploadPreviewUrls.banner || playerData.banner) + `?v=${profileImageVersion}`}
+                                alt="Profile Banner"
+                                className="w-full h-full object-cover object-center absolute inset-0"
+                                onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
+                                onError={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
+                                style={{ opacity: localMediaLoaded.banner ? 1 : 0 }}
+                              />
+                            </>
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
+                            </div>
+                          )}
+                          {activeUploadField === 'banner' && profileUploadProgress !== null && (
+                            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                              <CircularUploadProgress progress={profileUploadProgress} />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Content — 60%, centered column */}
+                        <div className="flex-[3] min-h-0 relative px-4 sm:px-6 pb-4 sm:pb-6 pt-0 flex flex-col items-center text-center md:items-start md:text-left">
+                          {/* Top row: text left + buttons right on desktop */}
+                          <div className="w-full mt-11 sm:mt-14 lg:mt-16 mb-3 flex flex-col md:flex-row md:justify-between md:items-start md:gap-6">
+                            {/* Left text block */}
+                            <div className="md:flex-1 md:min-w-0">
+                              <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{playerData.name}</h1>
+                              <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
+                                <span className="inline-flex items-center gap-0.5 text-primary font-bold">
+                                  <span className="material-symbols-outlined text-xs">alternate_email</span>
+                                  {playerData.gamerTag?.replace(/^@/, '')}
+                                </span>
+                                <span className="inline-flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
+                                  {playerData.email}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Desktop buttons — right side on desktop */}
+                            <div className="hidden sm:flex flex-row items-center justify-center md:justify-end gap-3 md:shrink-0 md:mt-0">
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
+                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
+                              >
+                                <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
+                              </motion.button>
+                              {currentUser?.role === 'organiser' ? (
+                                <motion.button
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={() => onNavigate && onNavigate('org-management')}
+                                  className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                                >
+                                  <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
+                                </motion.button>
+                              ) : (
+                                <motion.button
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={() => onNavigate && onNavigate('become-organizer')}
+                                  className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                                >
+                                  <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
+                                </motion.button>
+                              )}
+                            </div>
                           </div>
-                        )}
+
+                          {/* Description */}
+                          <p className="font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 leading-relaxed line-clamp-2 mb-3 max-w-[90%] md:max-w-prose md:self-start">
+                            {playerData.bio || 'Competitive Arena Contender. Defending champions in the esports league.'}
+                          </p>
+
+                          {/* Mobile buttons — centered */}
+                          <div className="flex sm:hidden flex-col items-center gap-3 mt-3 w-full">
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
+                              className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
+                            >
+                              <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
+                            </motion.button>
+                            {currentUser?.role === 'organiser' ? (
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => onNavigate && onNavigate('org-management')}
+                                className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                              >
+                                <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
+                              </motion.button>
+                            ) : (
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => onNavigate && onNavigate('become-organizer')}
+                                className="min-h-[44px] w-full max-w-xs px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                              >
+                                <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
+                              </motion.button>
+                            )}
+                          </div>
+                        </div>
                       </div>
 
-                      {/* Avatar — overlaps banner edge 50/50 */}
-                      <div className="flex justify-center sm:justify-start px-4 sm:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
-                        <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02]">
+                      {/* Avatar — absolutely positioned at 40/60 boundary, float over both sections */}
+                      <div className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 md:left-6 md:-translate-x-0 z-20" style={{ top: '40%' }}>
+                        <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] shrink-0">
                           <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
-                            <img src={uploadPreviewUrls.avatar || playerData.avatar} alt={playerData.name} className="w-full h-full object-cover" />
+                            {(uploadPreviewUrls.avatar || playerData.avatar) ? (
+                              <>
+                                {!localMediaLoaded.avatar && <div className="absolute inset-0 bg-surface-variant animate-pulse" />}
+                                <img
+                                  src={(uploadPreviewUrls.avatar || playerData.avatar) + `?v=${profileImageVersion}`}
+                                  alt={playerData.name}
+                                  className="avatar-img relative z-[1]"
+                                  onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, avatar: true }))}
+                                  onError={() => setLocalMediaLoaded(prev => ({ ...prev, avatar: true }))}
+                                  style={{ opacity: localMediaLoaded.avatar ? 1 : 0 }}
+                                />
+                              </>
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <span className="material-symbols-outlined text-on-surface-variant text-2xl">account_circle</span>
+                              </div>
+                            )}
                             {activeUploadField === 'avatar' && profileUploadProgress !== null && (
                               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 rounded-full">
                                 <CircularUploadProgress progress={profileUploadProgress} />
                               </div>
                             )}
                           </div>
-                        </div>
-                      </div>
-
-                      {/* Content section */}
-                      <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4 relative z-10">
-                        {/* Top row: Info + Buttons */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0 text-center sm:text-left">
-                            {/* Player Name */}
-                            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                              <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{playerData.name}</h1>
-                            </div>
-
-                            {/* Username + Email */}
-                            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
-                              <span className="inline-flex items-center gap-0.5 text-primary font-bold">
-                                <span className="material-symbols-outlined text-xs">alternate_email</span>
-                                {playerData.gamerTag?.replace(/^@/, '')}
-                              </span>
-                              <span className="inline-flex items-center gap-1">
-                                <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
-                                {playerData.email}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Desktop buttons — right side */}
-                          <div className="hidden sm:flex flex-row items-center gap-3 shrink-0">
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                            className="min-h-[48px] w-[240px] px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                          >
-                            <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                          </motion.button>
-                          {currentUser?.role === 'organiser' ? (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('org-management')}
-                              className="min-h-[48px] w-[240px] px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                            </motion.button>
-                          ) : (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('become-organizer')}
-                              className="min-h-[48px] w-[240px] px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                            </motion.button>
-                          )}
-                        </div>
-                        </div>
-
-                        {/* Description */}
-                        <p className="mt-4 font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 max-w-[700px] mx-auto sm:mx-0 leading-relaxed text-center sm:text-left">
-                          {playerData.bio || 'Competitive Arena Contender. Defending champions in the esports league.'}
-                        </p>
-
-                        {/* Mobile buttons — stacked, full width */}
-                        <div className="flex sm:hidden flex-col gap-3 mt-6">
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                            className="min-h-[48px] w-full px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                          >
-                            <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                          </motion.button>
-                          {currentUser?.role === 'organiser' ? (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('org-management')}
-                              className="min-h-[48px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                            </motion.button>
-                          ) : (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('become-organizer')}
-                              className="min-h-[48px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                            </motion.button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -3647,7 +3639,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                     <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Avatar Profile Pic</label>
                     <div className="relative w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shadow-[0_0_10px_rgba(90,93,250,0.2)] overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
                       {uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar) ? (
-                        <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="w-full h-full object-cover" />
+                        <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="avatar-img" />
                       ) : (
                         <span className="material-symbols-outlined text-on-surface-variant text-2xl">account_circle</span>
                       )}
@@ -3671,7 +3663,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
 
                   <div className="space-y-2 flex flex-col items-center">
                     <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Banner Background</label>
-                    <div className="relative w-full h-20 rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
+                    <div className="relative w-full aspect-[3/1] rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
                       {uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner) ? (
                         <img src={uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner)} alt="Banner" className="w-full h-full object-cover" />
                       ) : (
@@ -3688,7 +3680,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                           <span className="text-[8px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
                           <input 
                             type="file" accept="image/*" className="hidden" disabled={isUploadingImage}
-                            onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) performUpload(file, 'banner'); }} 
+                            onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleProfileImageSelect(file, 'banner'); }} 
                           />
                         </label>
                       )}
@@ -3756,9 +3748,9 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-2 border-b border-outline-variant/30">
                   <div className="space-y-2 flex flex-col items-center">
                     <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Organization Logo</label>
-                    <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center p-1 bg-surface-container-highest">
+                    <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center bg-surface-container-highest">
                       {uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo) ? (
-                        <img src={uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo)} alt="Logo Preview" className="w-full h-full object-contain" />
+                            <img src={uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo)} alt="Logo Preview" className="avatar-img" />
                       ) : (
                         <span className="material-symbols-outlined text-on-surface-variant text-2xl">business</span>
                       )}
@@ -3791,7 +3783,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
 
                   <div className="space-y-2 flex flex-col items-center">
                     <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Org Banner Background</label>
-                    <div className="relative w-full h-20 rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
+                    <div className="relative w-full aspect-[3/1] rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
                       {uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner) ? (
                         <img src={uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner)} alt="Banner Preview" className="w-full h-full object-cover" />
                       ) : (
@@ -3815,7 +3807,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                               const file = e.target.files?.[0];
                               e.target.value = '';
                               if (file) {
-                                performUpload(file, 'orgBanner');
+                                handleProfileImageSelect(file, 'orgBanner');
                               }
                             }} 
                           />
@@ -3886,7 +3878,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
             >
               <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
                 <h3 className="font-headline-md text-lg font-bold text-on-background flex items-center gap-2 tracking-tight">
-                  <span className="material-symbols-outlined text-primary text-xl">crop</span> Crop Profile Picture
+                  <span className="material-symbols-outlined text-primary text-xl">crop</span> Crop {cropState.shape === 'rectangle' ? 'Banner' : 'Profile Picture'}
                 </h3>
                 <button onClick={() => setCropState(null)} className="w-7 h-7 rounded-lg bg-surface-container hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors">
                   <span className="material-symbols-outlined text-lg">close</span>
@@ -3895,7 +3887,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
 
               <div className="flex flex-col items-center gap-4">
                 <div 
-                  className="relative w-full max-w-[280px] aspect-square bg-black border border-outline-variant rounded-xl overflow-hidden cursor-move select-none"
+                  className={`relative w-full ${cropState.shape === 'rectangle' ? 'max-w-[360px] aspect-[3/1]' : 'max-w-[280px] aspect-square'} bg-black border border-outline-variant rounded-xl overflow-hidden cursor-move select-none`}
                   onMouseDown={handleCropMouseDown}
                   onTouchStart={handleCropTouchStart}
                 >
@@ -3914,9 +3906,15 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                     }}
                     ref={cropImgRef}
                   />
-                  <div className="absolute inset-0 border-[40px] border-black/60 pointer-events-none flex items-center justify-center">
-                    <div className="w-[200px] h-[200px] rounded-full border border-dashed border-primary shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
-                  </div>
+                  {cropState.shape === 'rectangle' ? (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                      <div className="w-full h-full border-2 border-dashed border-primary/70"></div>
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 border-[40px] border-black/60 pointer-events-none flex items-center justify-center">
+                      <div className="w-[200px] h-[200px] rounded-full border border-dashed border-primary shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="w-full space-y-1">
@@ -3927,7 +3925,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                   <input
                     type="range"
                     min="0.1"
-                    max="3"
+                    max={cropState.shape === 'rectangle' ? 5 : 3}
                     step="0.05"
                     value={cropZoom}
                     onChange={(e) => setCropZoom(parseFloat(e.target.value))}

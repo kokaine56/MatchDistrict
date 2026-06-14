@@ -44,7 +44,7 @@ export default function ActivityFeed({ onNavigate }) {
         >
           <img
             alt="Organiser"
-            className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover shrink-0 border border-primary/20 bg-surface-container"
+            className="avatar-img w-7 h-7 sm:w-8 sm:h-8 rounded-full shrink-0 border border-primary/20 bg-surface-container"
             src={match.logo || match.logoUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=100&q=80"}
           />
           <div className="space-y-0.5 min-w-0 flex-grow">

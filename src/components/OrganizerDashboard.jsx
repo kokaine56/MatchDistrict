@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../ThemeContext.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAuthToken } from '../utils/getAuthToken.js'
+import { uploadToImgbb } from '../utils/imgbbUpload'
+import { sanitizeImageUrl } from '../utils/userStorage.js'
 import PricingSection from './PricingSection'
 import { useSubscription } from '../contexts/SubscriptionContext'
 import UpgradePrompt from './UpgradePrompt'
@@ -19,6 +21,7 @@ import FormBuilder from './FormBuilder'
 
 function OrganizerDashboard({
   currentUser,
+  setCurrentUser,
   tournamentsList,
   setTournamentsList,
   triggerToast,
@@ -66,6 +69,204 @@ function OrganizerDashboard({
   const [tournamentSubFilter, setTournamentSubFilter] = useState('all');
   const [manageDropdownOpen, setManageDropdownOpen] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  // --- Staged uploads (cropped blobs held until Save) ---
+  const [stagedUploads, setStagedUploads] = useState({ logo: null, banner: null })
+  const [isSavingSettings, setIsSavingSettings] = useState(false)
+
+  // --- Crop modal ---
+  const [cropState, setCropState] = useState(null)
+  const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 })
+  const [cropZoom, setCropZoom] = useState(1)
+  const cropImgRef = useRef(null)
+  const isDraggingRef = useRef(false)
+  const dragStartRef = useRef({ x: 0, y: 0 })
+  const offsetAtDragStartRef = useRef({ x: 0, y: 0 })
+
+  useEffect(() => {
+    if (cropState) {
+      let startingZoom = 1
+      if (cropState.shape === 'rectangle') {
+        const fillZoomX = 360 / cropState.width
+        const fillZoomY = 120 / cropState.height
+        startingZoom = Math.max(fillZoomX, fillZoomY)
+        startingZoom = Math.min(Math.max(startingZoom, 0.5), 5)
+      } else {
+        const minDimension = Math.min(cropState.width, cropState.height)
+        startingZoom = 280 / minDimension
+        startingZoom = Math.min(Math.max(startingZoom, 0.5), 3)
+      }
+      setCropZoom(startingZoom)
+      setCropOffset({ x: 0, y: 0 })
+    }
+  }, [cropState])
+
+  const handleOrgImageSelect = (file, field) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      triggerToast('Please select a valid image file.')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        if (img.width > 400 || img.height > 400) {
+          setCropState({ file, src: event.target.result, width: img.width, height: img.height, field, shape: field === 'banner' ? 'rectangle' : 'circle' })
+        } else {
+          setStagedUploads(prev => ({ ...prev, [field]: { blob: file, previewUrl: event.target.result } }))
+        }
+      }
+      img.src = event.target.result
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleCropMouseDown = (e) => {
+    isDraggingRef.current = true
+    dragStartRef.current = { x: e.clientX, y: e.clientY }
+    offsetAtDragStartRef.current = { ...cropOffset }
+    document.addEventListener('mousemove', handleCropMouseMove)
+    document.addEventListener('mouseup', handleCropMouseUp)
+  }
+  const handleCropMouseMove = (e) => {
+    if (!isDraggingRef.current) return
+    const dx = e.clientX - dragStartRef.current.x
+    const dy = e.clientY - dragStartRef.current.y
+    setCropOffset({ x: offsetAtDragStartRef.current.x + dx, y: offsetAtDragStartRef.current.y + dy })
+  }
+  const handleCropMouseUp = () => {
+    isDraggingRef.current = false
+    document.removeEventListener('mousemove', handleCropMouseMove)
+    document.removeEventListener('mouseup', handleCropMouseUp)
+  }
+  const handleCropTouchStart = (e) => {
+    if (e.touches.length !== 1) return
+    isDraggingRef.current = true
+    dragStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    offsetAtDragStartRef.current = { ...cropOffset }
+    document.addEventListener('touchmove', handleCropTouchMove)
+    document.addEventListener('touchend', handleCropTouchEnd)
+  }
+  const handleCropTouchMove = (e) => {
+    if (!isDraggingRef.current || e.touches.length !== 1) return
+    const dx = e.touches[0].clientX - dragStartRef.current.x
+    const dy = e.touches[0].clientY - dragStartRef.current.y
+    setCropOffset({ x: offsetAtDragStartRef.current.x + dx, y: offsetAtDragStartRef.current.y + dy })
+  }
+  const handleCropTouchEnd = () => {
+    isDraggingRef.current = false
+    document.removeEventListener('touchmove', handleCropTouchMove)
+    document.removeEventListener('touchend', handleCropTouchEnd)
+  }
+
+  const handleCropConfirm = () => {
+    if (!cropState) return
+    const img = cropImgRef.current
+    if (!img) return
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (cropState.shape === 'rectangle') {
+      const containerW = 360, containerH = 120
+      const imgLeft = containerW / 2 + cropOffset.x - (cropState.width * cropZoom) / 2
+      const imgTop = containerH / 2 + cropOffset.y - (cropState.height * cropZoom) / 2
+      const srcX = Math.max(0, (0 - imgLeft) / cropZoom)
+      const srcY = Math.max(0, (0 - imgTop) / cropZoom)
+      const srcW = Math.min(cropState.width - srcX, containerW / cropZoom)
+      const srcH = Math.min(cropState.height - srcY, containerH / cropZoom)
+      canvas.width = 1200
+      canvas.height = 400
+      ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, 1200, 400)
+    } else {
+      canvas.width = 400
+      canvas.height = 400
+      const imgLeft = 140 + cropOffset.x - (cropState.width * cropZoom) / 2
+      const imgTop = 140 + cropOffset.y - (cropState.height * cropZoom) / 2
+      const cropX_img = (40 - imgLeft) / cropZoom
+      const cropY_img = (40 - imgTop) / cropZoom
+      const cropW_img = 200 / cropZoom
+      const cropH_img = 200 / cropZoom
+      ctx.drawImage(img, cropX_img, cropY_img, cropW_img, cropH_img, 0, 0, 400, 400)
+    }
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        triggerToast('Failed to generate cropped image.')
+        setCropState(null)
+        return
+      }
+      const previewUrl = URL.createObjectURL(blob)
+      setStagedUploads(prev => ({ ...prev, [cropState.field]: { blob, previewUrl } }))
+      setCropState(null)
+    }, 'image/jpeg', 0.92)
+  }
+
+  const handleSettingsSave = async (e) => {
+    e.preventDefault()
+    if (!currentUser || isSavingSettings) return
+
+    if (handletagCooldownDays > 0 && orgData.name !== currentUser.orgName) {
+      triggerToast(`You can only change your organization name once every 30 days. Remaining: ${handletagCooldownDays} days.`)
+      return
+    }
+
+    setIsSavingSettings(true)
+
+    let finalLogo = orgData.logo
+    let finalBanner = orgData.banner
+
+    try {
+      if (stagedUploads.logo) {
+        const url = await uploadToImgbb(stagedUploads.logo.blob)
+        if (!url || !sanitizeImageUrl(url)) {
+          triggerToast('Logo upload returned an invalid URL.')
+          setIsSavingSettings(false)
+          return
+        }
+        finalLogo = url
+      }
+      if (stagedUploads.banner) {
+        const url = await uploadToImgbb(stagedUploads.banner.blob)
+        if (!url || !sanitizeImageUrl(url)) {
+          triggerToast('Banner upload returned an invalid URL.')
+          setIsSavingSettings(false)
+          return
+        }
+        finalBanner = url
+      }
+    } catch (err) {
+      triggerToast(err.message || 'Image upload failed.')
+      setIsSavingSettings(false)
+      return
+    }
+
+    const token = await getAuthToken()
+    try {
+      const res = await fetch('/api/organization/update', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          orgName: orgData.name,
+          orgMotto: orgData.motto,
+          orgImage: finalLogo,
+          orgBanner: finalBanner,
+          orgBio: orgData.bio
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setOrgData(prev => ({ ...prev, logo: finalLogo, banner: finalBanner }))
+        setStagedUploads({ logo: null, banner: null })
+        if (setCurrentUser) setCurrentUser(data.user)
+        triggerToast('Organization settings saved successfully!')
+      } else {
+        triggerToast(data.error || 'Failed to save settings.')
+      }
+    } catch (err) {
+      console.error(err)
+      triggerToast('Error saving settings.')
+    } finally {
+      setIsSavingSettings(false)
+    }
+  }
 
   // Filtered tournament list for current organizer
   const orgHostedTournaments = useMemo(() => {
@@ -1527,7 +1728,7 @@ function OrganizerDashboard({
             exit={{ opacity: 0, y: -15 }}
             transition={{ duration: 0.25 }}
           >
-            <form onSubmit={handleSaveOrgSettingsTab} className="space-y-6">
+            <form onSubmit={handleSettingsSave} className="space-y-6">
           {/* Organization Public Profile */}
           <div className="glass-card p-4 sm:p-6 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
             <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
@@ -1556,22 +1757,50 @@ function OrganizerDashboard({
                 <p className="text-[9px] text-on-surface-variant/60 mt-1">To change your org handle, use the section below.</p>
               </div>
               <div className="space-y-1">
-                <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Logo URL Link</label>
-                <input
-                  type="url"
-                  value={orgData.logo}
-                  onChange={(e) => setOrgData({ ...orgData, logo: e.target.value })}
-                  className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm"
-                />
+                <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Organization Logo</label>
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-xl border border-outline-variant bg-surface-container-low overflow-hidden shrink-0">
+                    {(stagedUploads.logo?.previewUrl || orgData.logo) ? (
+                      <img src={stagedUploads.logo?.previewUrl || orgData.logo} alt="" className="avatar-img" />
+                    ) : (
+                      <span className="material-symbols-outlined text-xl text-on-surface-variant/40">business</span>
+                    )}
+                  </div>
+                  <label className="cursor-pointer min-h-[44px] px-4 border border-outline-variant/40 hover:bg-surface-variant text-on-background text-xs font-semibold rounded-xl transition-all flex items-center gap-2">
+                    <span className="material-symbols-outlined text-sm">cloud_upload</span> Upload Logo
+                    <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleOrgImageSelect(f, 'logo') }}
+                    />
+                  </label>
+                  {stagedUploads.logo && (
+                    <button type="button" onClick={() => setStagedUploads(prev => ({ ...prev, logo: null }))}
+                      className="text-xs text-error/80 hover:text-error font-semibold whitespace-nowrap">Remove</button>
+                  )}
+                </div>
               </div>
               <div className="space-y-1">
-                <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Banner URL Link</label>
-                <input
-                  type="url"
-                  value={orgData.banner}
-                  onChange={(e) => setOrgData({ ...orgData, banner: e.target.value })}
-                  className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm"
-                />
+                <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Organization Banner</label>
+                <div className="flex flex-col gap-2">
+                  <div className="relative w-full aspect-[3/1] rounded-xl border border-outline-variant bg-surface-container-low flex items-center justify-center overflow-hidden">
+                    {(stagedUploads.banner?.previewUrl || orgData.banner) ? (
+                      <img src={stagedUploads.banner?.previewUrl || orgData.banner} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">image</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer self-start min-h-[44px] px-4 border border-outline-variant/40 hover:bg-surface-variant text-on-background text-xs font-semibold rounded-xl transition-all flex items-center gap-2">
+                      <span className="material-symbols-outlined text-sm">cloud_upload</span> Upload Banner
+                      <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleOrgImageSelect(f, 'banner') }}
+                      />
+                    </label>
+                    {stagedUploads.banner && (
+                      <button type="button" onClick={() => setStagedUploads(prev => ({ ...prev, banner: null }))}
+                        className="text-xs text-error/80 hover:text-error font-semibold">Remove</button>
+                    )}
+                  </div>
+                </div>
               </div>
               <div className="space-y-1">
                 <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Organization Motto</label>
@@ -1725,12 +1954,97 @@ function OrganizerDashboard({
             </button>
             <button
               type="submit"
-              className="px-6 py-2 bg-secondary hover:bg-secondary/90 active:scale-95 transition-all text-on-primary rounded-lg font-headline-md text-xs font-bold shadow-sm flex items-center gap-1.5"
+              disabled={isSavingSettings}
+              className="px-6 py-2 bg-secondary hover:bg-secondary/90 active:scale-95 disabled:opacity-50 transition-all text-on-primary rounded-lg font-headline-md text-xs font-bold shadow-sm flex items-center gap-1.5"
             >
-              <span className="material-symbols-outlined text-base">save</span> Save Settings
+              {isSavingSettings ? (
+                <><span className="w-3.5 h-3.5 rounded-full border-2 border-on-primary/30 border-t-on-primary animate-spin"></span> Saving…</>
+              ) : (
+                <><span className="material-symbols-outlined text-base">save</span> Save Settings</>
+              )}
             </button>
           </div>
             </form>
+
+          {cropState && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[9999] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+            >
+              <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
+                transition={{ type: 'spring', duration: 0.3 }}
+                className="glass-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4"
+              >
+                <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
+                  <h3 className="font-bold text-lg text-on-background flex items-center gap-2 tracking-tight">
+                    <span className="material-symbols-outlined text-primary text-xl">crop</span> Crop {cropState.shape === 'rectangle' ? 'Banner' : 'Logo'}
+                  </h3>
+                  <button type="button" onClick={() => setCropState(null)} className="w-7 h-7 rounded-lg bg-surface-container hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors">
+                    <span className="material-symbols-outlined text-lg">close</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-col items-center gap-4">
+                  <div
+                    className={`relative w-full ${cropState.shape === 'rectangle' ? 'max-w-[360px] aspect-[3/1]' : 'max-w-[280px] aspect-square'} bg-black border border-outline-variant rounded-xl overflow-hidden cursor-move select-none`}
+                    onMouseDown={handleCropMouseDown}
+                    onTouchStart={handleCropTouchStart}
+                  >
+                    <img
+                      src={cropState.src}
+                      alt="To Crop"
+                      className="absolute pointer-events-none origin-center"
+                      style={{
+                        transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom})`,
+                        left: '50%',
+                        top: '50%',
+                        marginLeft: `-${cropState.width / 2}px`,
+                        marginTop: `-${cropState.height / 2}px`,
+                        maxWidth: 'none',
+                        maxHeight: 'none',
+                      }}
+                      ref={cropImgRef}
+                    />
+                    {cropState.shape === 'rectangle' ? (
+                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+                        <div className="w-full h-full border-2 border-dashed border-primary/70"></div>
+                      </div>
+                    ) : (
+                      <div className="absolute inset-0 border-[40px] border-black/60 pointer-events-none flex items-center justify-center">
+                        <div className="w-[200px] h-[200px] rounded-full border border-dashed border-primary shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="w-full space-y-1">
+                    <div className="flex justify-between text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                      <span>Zoom</span>
+                      <span>{Math.round(cropZoom * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max={cropState.shape === 'rectangle' ? 5 : 3}
+                      step="0.05"
+                      value={cropZoom}
+                      onChange={(e) => setCropZoom(parseFloat(e.target.value))}
+                      className="w-full accent-primary bg-surface-container h-1 rounded-lg cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
+                  <button type="button" onClick={() => setCropState(null)}
+                    className="px-5 py-2 border border-outline hover:bg-surface-variant transition-all text-on-background rounded-lg text-xs font-semibold">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={handleCropConfirm}
+                    className="px-5 py-2 bg-primary hover:bg-primary/90 transition-all text-on-primary rounded-lg text-xs font-bold shadow-sm flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">check</span> Apply
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
           </motion.div>
         )}
       </AnimatePresence>

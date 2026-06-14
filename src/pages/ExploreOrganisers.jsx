@@ -334,8 +334,8 @@ export default function ExploreOrganisers({ onNavigate }) {
 
                         {/* Avatar */}
                         <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-outline-variant bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
-                          {org.avatar
-                            ? <img src={org.avatar} alt={org.name} className="w-full h-full object-cover" />
+                          {org.orgImage || org.avatar
+                            ? <img src={org.orgImage || org.avatar} alt={org.orgName || org.name} className="avatar-img" />
                             : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-base">business</span></div>}
                         </div>
 
@@ -398,8 +398,8 @@ export default function ExploreOrganisers({ onNavigate }) {
                       <div className="px-4 pb-4 pt-0 relative -mt-6">
                         <div className="flex items-end gap-3 mb-2.5">
                           <div className="w-14 h-14 rounded-xl overflow-hidden border-2 border-surface-container-low bg-surface-container bg-surface-container-highest shadow-md shrink-0">
-                            {activeOrg.avatar
-                              ? <img src={activeOrg.avatar} alt={activeOrg.name} className="w-full h-full object-cover" />
+                            {activeOrg.orgImage || activeOrg.avatar
+                              ? <img src={activeOrg.orgImage || activeOrg.avatar} alt={activeOrg.orgName || activeOrg.name} className="avatar-img" />
                               : <div className="w-full h-full flex items-center justify-center bg-surface-container"><span className="material-symbols-outlined text-on-surface-variant text-xl">business</span></div>}
                           </div>
                           <div className="min-w-0 flex-1">

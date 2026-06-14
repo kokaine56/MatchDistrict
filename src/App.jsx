@@ -32,6 +32,7 @@ const PaymentHistory       = lazy(() => import('./pages/PaymentHistory.jsx'))
 const TournamentPayment    = lazy(() => import('./pages/TournamentPayment.jsx'))
 const OrgPage              = lazy(() => import('./pages/OrgPage.jsx'))
 const TournamentManagement = lazy(() => import('./pages/TournamentManagement.jsx'))
+const MyTournaments        = lazy(() => import('./pages/MyTournaments.jsx'))
 
 // -------------------------------------------------------------------
 // URL map: page-key => path (used by the handleNavigate shim)
@@ -52,6 +53,7 @@ const PAGE_URL_MAP = {
   'become-organizer': '/become-organizer',
   'create-tournament':'/create-tournament',
   'manage-tournaments': '/manage/tournaments',
+  'my-tournaments':     '/my-tournaments',
   'explore-organisers':'/organisers',
   'org-management':    '/org-management',
   'subscription':      '/subscription/payment',
@@ -160,6 +162,28 @@ function AppInner() {
       <PageTransition>
         <TournamentDetail onNavigate={handleNavigate} tournamentId={id} />
       </PageTransition>
+    )
+  }
+
+  // MyTournaments adapter with auth guard
+  const MyTournamentsRoute = () => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login?redirect=/my-tournaments" replace />
+    }
+
+    return (
+      <>
+        <Header activePage="my-tournaments" onNavigate={handleNavigate} />
+        <PageTransition>
+          <MyTournaments onNavigate={handleNavigate} />
+        </PageTransition>
+      </>
     )
   }
 
@@ -288,6 +312,10 @@ function AppInner() {
                       <Tournaments onNavigate={handleNavigate} />
                     </PageTransition>
                   </>
+                } />
+
+                <Route path="/my-tournaments" element={
+                  <MyTournamentsRoute />
                 } />
 
                 <Route path="/tournaments/:id" element={

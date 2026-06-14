@@ -1322,7 +1322,7 @@ export default function AdminDashboard({ onNavigate }) {
                               <img 
                                 src={user.avatar || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80'} 
                                 alt={user.name} 
-                                className="w-7 h-7 rounded-full border border-outline-variant/30 object-cover shrink-0"
+                                className="avatar-img w-7 h-7 rounded-full border border-outline-variant/30 shrink-0"
                               />
                               <div className="leading-tight">
                                 <p className="font-bold text-slate-900 dark:text-white text-[12px] sm:text-xs">
