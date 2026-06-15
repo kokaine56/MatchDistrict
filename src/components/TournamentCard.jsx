@@ -2,6 +2,11 @@ import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
 import VerificationBadge from './VerificationBadge'
 import gameBgmi from '../assets/supported_games/bgmi.png'
+import {
+  getTournamentLifecycleStatus,
+  getStatusBadgeConfig,
+  getCTAButtonConfig
+} from '../utils/tournamentLifecycle'
 
 const MATCH_LABELS = { solo: 'Solo', duo: 'Duo', squad: 'Squad' }
 const PERSPECTIVE_LABELS = { tpp: 'TPP', fpp: 'FPP' }
@@ -28,7 +33,8 @@ function InfoContent({
   onNavigate,
   id,
   buttonText,
-  buttonClassName
+  buttonClassName,
+  disabled
 }) {
   return (
     <div className="flex flex-col bg-surface/50 text-on-surface h-full min-w-0">
@@ -85,10 +91,15 @@ function InfoContent({
       </div>
 
       <button
-        onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('tournament-detail', id) }}
-        className={`w-full ${buttonClassName || 'bg-primary hover:bg-primary/90'} text-on-primary text-xs font-bold py-0.5 rounded-md mt-1 transition-colors`}
+        disabled={disabled}
+        onClick={(e) => {
+          if (disabled) return
+          e.stopPropagation()
+          onNavigate && onNavigate('tournament-detail', id)
+        }}
+        className={`w-full text-xs font-bold py-1.5 rounded-md mt-2.5 transition-all flex items-center justify-center ${buttonClassName}`}
       >
-        {buttonText || 'Join Now'}
+        {buttonText}
       </button>
     </div>
   )
@@ -107,20 +118,33 @@ function TournamentCardBase({
   onNavigate,
   hasSponsors,
   isPreview,
-  buttonClassName
+  buttonClassName,
+  registrationOpenDate,
+  registrationCloseDate,
+  startDate,
+  date
 }) {
-  const statusBadge = !badgeText && status
-    ? {
-        open: { text: 'OPEN', bg: 'bg-green-500 text-white' },
-        upcoming: { text: 'UPCOMING', bg: 'bg-blue-500 text-white' },
-        registrations_open: { text: 'OPEN', bg: 'bg-green-500 text-white' },
-        closed: { text: 'CLOSED', bg: 'bg-red-500 text-white' },
-        live: { text: 'LIVE', bg: 'bg-rose-500 text-white' },
-      }[status.toLowerCase()] || null
-    : null
   const [isExpanded, setIsExpanded] = useState(false)
   const [imgError, setImgError] = useState(false)
   const [fallbackFailed, setFallbackFailed] = useState(false)
+
+  // Compute time lifecycle state machine
+  const lifecycleStatus = getTournamentLifecycleStatus({
+    registrationOpenDate,
+    registrationCloseDate,
+    startDate: startDate || date,
+    status
+  })
+
+  const badgeConfig = getStatusBadgeConfig(lifecycleStatus)
+  const buttonConfig = getCTAButtonConfig(lifecycleStatus)
+
+  const displayBadgeText = badgeText || badgeConfig.text
+  const displayBadgeBg = badgeBg || badgeConfig.bg
+
+  const finalButtonText = buttonText || buttonConfig.text
+  const finalButtonClass = buttonConfig.styleClass
+  const isCtaDisabled = buttonConfig.disabled
 
   const matchLabel = MATCH_LABELS[(matchType || '').toLowerCase()] || matchType || 'N/A'
   const perspLabel = PERSPECTIVE_LABELS[(perspective || '').toLowerCase()] || perspective || 'N/A'
@@ -161,8 +185,9 @@ function TournamentCardBase({
     fillPct,
     onNavigate,
     id,
-    buttonText,
-    buttonClassName,
+    buttonText: finalButtonText,
+    buttonClassName: finalButtonClass,
+    disabled: isCtaDisabled
   }
 
   return (
@@ -205,10 +230,8 @@ function TournamentCardBase({
           />
         )}
 
-        <div className={`absolute top-3 left-3 px-2 py-0.5 rounded-full font-label-caps text-[9px] sm:text-[10px] font-bold shadow-sm ${
-          statusBadge ? statusBadge.bg : (badgeBg || 'bg-primary text-white')
-        } ${badgeTextColor || 'text-white'}`}>
-          {statusBadge ? statusBadge.text : (badgeText || 'UPCOMING')}
+        <div className={`absolute top-3 left-3 px-2.5 py-0.5 rounded-full font-label-caps text-[9px] sm:text-[10px] font-bold shadow-sm ${displayBadgeBg} ${badgeTextColor || 'text-white'}`}>
+          {displayBadgeText}
         </div>
 
         {hasSponsors ? (

@@ -1,12 +1,18 @@
 import { motion } from 'framer-motion'
 
-export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp, onMoveDown, isFirst, isLast }) {
+const BGMI_MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Karakin', 'Nusa', 'Rondo']
+
+export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp, onMoveDown, isFirst, isLast, error }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -10 }}
-      className="bg-surface-container/60 border border-slate-200 dark:border-outline-variant/30 p-4 rounded-xl space-y-3"
+      className={`bg-surface-container/60 border p-4 rounded-xl space-y-3 transition-colors ${
+        error
+          ? 'border-error/40 dark:border-error/30'
+          : 'border-slate-200 dark:border-outline-variant/30'
+      }`}
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-primary uppercase tracking-wider">Round {index + 1}</span>
@@ -36,19 +42,25 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           </button>
         </div>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="col-span-2 sm:col-span-1">
-          <label className="block text-xs text-on-surface-variant mb-1">Round Name</label>
-          <input
-            type="text"
-            value={round.name || ''}
-            onChange={(e) => onChange({ ...round, name: e.target.value })}
-            placeholder="e.g. Qualifier"
-            className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
-          />
-        </div>
+
+      <div>
+        <label className="block text-xs text-on-surface-variant mb-1">
+          <span className="text-error mr-1">*</span>Round Name
+        </label>
+        <input
+          type="text"
+          value={round.name || ''}
+          onChange={(e) => onChange({ ...round, name: e.target.value })}
+          placeholder="e.g. Qualifier"
+          className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
         <div>
-          <label className="block text-xs text-on-surface-variant mb-1">Date</label>
+          <label className="block text-xs text-on-surface-variant mb-1">
+            <span className="text-error mr-1">*</span>Date
+          </label>
           <input
             type="date"
             value={round.date || ''}
@@ -57,7 +69,9 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           />
         </div>
         <div>
-          <label className="block text-xs text-on-surface-variant mb-1">Time</label>
+          <label className="block text-xs text-on-surface-variant mb-1">
+            <span className="text-error mr-1">*</span>Time
+          </label>
           <input
             type="time"
             value={round.time || ''}
@@ -66,17 +80,45 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           />
         </div>
         <div>
-          <label className="block text-xs text-on-surface-variant mb-1">Qualified Teams</label>
-          <input
-            type="number"
-            min="0"
-            value={round.qualified || ''}
-            onChange={(e) => onChange({ ...round, qualified: e.target.value })}
-            placeholder="e.g. 16"
-            className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
-          />
+          <label className="block text-xs text-on-surface-variant mb-1">
+            <span className="text-error mr-1">*</span>Select Map
+          </label>
+          <select
+            value={round.map || ''}
+            onChange={(e) => onChange({ ...round, map: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:border-primary/40 appearance-none cursor-pointer"
+          >
+            <option value="" disabled>Select map</option>
+            {BGMI_MAPS.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
         </div>
       </div>
+
+      <div>
+        <label className="block text-xs text-on-surface-variant mb-1">
+          <span className="text-error mr-1">*</span>Teams Advancing to Next Round
+        </label>
+        <input
+          type="number"
+          min="0"
+          value={round.qualified || ''}
+          onChange={(e) => onChange({ ...round, qualified: e.target.value })}
+          placeholder="e.g. 16"
+          className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
+        />
+        <p className="text-[11px] text-on-surface-variant/60 leading-snug mt-1">
+          The number of top-performing teams from this round's overall match standings that will advance into the subsequent round.
+        </p>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-error/10 border border-error/20">
+          <svg className="w-4 h-4 text-error shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+          <p className="text-[11px] text-error font-medium leading-snug">{error}</p>
+        </div>
+      )}
     </motion.div>
   )
 }

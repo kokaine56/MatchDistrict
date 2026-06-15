@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import CountUp from '../components/CountUp'
 import { useUser } from '../UserContext.jsx'
@@ -17,6 +17,7 @@ import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
+import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const formatINR = (val) => {
   const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
@@ -38,7 +39,16 @@ function Homepage({ onNavigate }) {
   const { currentUser, signOut } = useUser()
   const [tournamentsList, setTournamentsList] = useState([])
   const [organisersList, setOrganisersList] = useState([])
+  const [now, setNow] = useState(new Date())
   const pauseTimeoutRef = useRef(null)
+
+  // Real-time observer tick pipeline
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(new Date())
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const loadTournaments = useCallback(async () => {
     const { ok, data } = await fetchJsonWithRetry('/api/tournaments')
@@ -93,6 +103,15 @@ function Homepage({ onNavigate }) {
       pauseTimeoutRef.current = null
     }, 5000)
   }
+
+  // Filter lists based on real-time state machine transitions
+  const liveMatches = useMemo(() => {
+    return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) === 'live').slice(0, 10)
+  }, [tournamentsList, now])
+
+  const featuredTournaments = useMemo(() => {
+    return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) !== 'live').slice(0, 10)
+  }, [tournamentsList, now])
 
   const renderFeedbacksMarquee = (containerClassName) => (
     <div className={containerClassName}>
@@ -254,7 +273,7 @@ function Homepage({ onNavigate }) {
                   <button onClick={() => onNavigate && onNavigate('tournaments')} className="text-primary font-label-caps text-xs hover:underline flex items-center gap-1 font-bold">View All <span className="material-symbols-outlined text-sm">arrow_forward</span></button>
                 </div>
                 <div className="pt-1">
-                  {tournamentsList.length === 0 ? (
+                  {featuredTournaments.length === 0 ? (
                     <div className="glass-card p-8 sm:p-10 text-center rounded-2xl border border-outline-variant/30 space-y-3 w-full max-w-2xl mx-auto my-4 shadow-xl bg-surface-container-low/40 backdrop-blur-md animate-in fade-in duration-300">
                       <span className="material-symbols-outlined text-4xl text-primary animate-pulse" data-icon="stadium">stadium</span>
                       <h3 className="font-display-lg text-xl sm:text-2xl font-bold text-white tracking-tight">No Active Tournaments</h3>
@@ -267,7 +286,7 @@ function Homepage({ onNavigate }) {
                     </div>
                   ) : (
                     <div className="flex flex-nowrap overflow-x-auto items-start justify-start gap-4 sm:gap-6 w-full pb-4 snap-x scrollbar-hide">
-                      {tournamentsList.slice(0, 10).map((t) => (
+                      {featuredTournaments.map((t) => (
                         <TournamentCard
                           key={t.id}
                           id={t.id}
@@ -286,9 +305,11 @@ function Homepage({ onNavigate }) {
                           entryFeeAmount={t.entry_fee_amount}
                           orgName={t.orgName || "Match District Organizer"}
                           orgTier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'}
-                          buttonText="JOIN NOW"
                           onNavigate={onNavigate}
                           hasSponsors={t.hasApprovedSponsors || false}
+                          registrationOpenDate={t.registrationOpenDate}
+                          registrationCloseDate={t.registrationCloseDate}
+                          startDate={t.startDate}
                         />
                       ))}
                     </div>
@@ -367,69 +388,71 @@ function Homepage({ onNavigate }) {
                     <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform" data-icon="arrow_forward">arrow_forward</span>
                   </button>
                 </div>
-                {(() => {
-                  const liveMatches = tournamentsList.filter(t => t.status === 'live' || (t.startDate && new Date() >= new Date(t.startDate))).slice(0, 10)
-                  return liveMatches.length === 0 ? (
-                    <div className="glass-card p-6 sm:p-8 text-center rounded-2xl border border-outline-variant/20 space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
-                      <span className="material-symbols-outlined text-3xl text-on-surface-variant animate-pulse" data-icon="sensors">sensors</span>
-                      <h3 className="font-headline-md text-sm sm:text-base text-on-background font-bold">No Live Matches Currently in Progress</h3>
-                      <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">
-                        Tournaments scheduled by verified organizers will automatically appear here once their start time begins.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
-                      {liveMatches.map((match, idx) => {
-                        const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
-                        return (
-                          <motion.div
-                            key={idx}
-                            onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
-                            layout
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3 }}
-                            whileHover={{ y: -2, scale: 1.01 }}
-                            whileTap={{ scale: 0.99 }}
-                            className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center border border-outline-variant/30 shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low hover:border-outline-variant/60 cursor-pointer w-fit shrink-0"
-                          >
-                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
-                              {(() => {
-                                const gameKey = (match.game || '').toLowerCase()
-                                const gameIcon = GAME_ICON_MAP[gameKey]
-                                return gameIcon ? (
-                                  <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
-                                ) : (
-                                  <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80"} />
-                                )
-                              })()}
+                {liveMatches.length === 0 ? (
+                  <div className="glass-card p-6 sm:p-8 text-center rounded-2xl border border-outline-variant/20 space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
+                    <span className="material-symbols-outlined text-3xl text-on-surface-variant animate-pulse" data-icon="sensors">sensors</span>
+                    <h3 className="font-headline-md text-sm sm:text-base text-on-background font-bold">No Live Matches Currently in Progress</h3>
+                    <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">
+                      Tournaments scheduled by verified organizers will automatically appear here once their start time begins.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                    {liveMatches.map((match, idx) => {
+                      const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
+                      return (
+                        <motion.div
+                          key={idx}
+                          onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
+                          layout
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                          whileHover={{ y: -2, scale: 1.01 }}
+                          whileTap={{ scale: 0.99 }}
+                          className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center border border-outline-variant/30 shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low hover:border-outline-variant/60 cursor-pointer w-fit shrink-0"
+                        >
+                          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
+                            {(() => {
+                              const gameKey = (match.game || '').toLowerCase()
+                              const gameIcon = GAME_ICON_MAP[gameKey]
+                              return gameIcon ? (
+                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
+                              ) : (
+                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80"} />
+                              )
+                            })()}
+                          </div>
+
+                          <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
+                            <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
+                              {match.title}
+                            </h3>
+
+                            <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
+                              <span className="truncate max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
+                              <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
                             </div>
 
-                            <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
-                              <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
-                                {match.title}
-                              </h3>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
+                              <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(match.prize || match.prizePool)}</span>
+                            </div>
 
-                              <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
-                                <span className="truncate max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
-                                <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
-                              </div>
-
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
-                                <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(match.prize || match.prizePool)}</span>
-                              </div>
-
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse uppercase tracking-wider">
+                                LIVE MATCH
+                              </span>
                               <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
                                 {modeLabel}
                               </span>
                             </div>
-                          </motion.div>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
+                          </div>
+                        </motion.div>
+                      )
+                    })}
+                  </div>
+                )}
               </motion.div>
               {/* Player Feedbacks Marquee (Mobile View) */}
               {renderFeedbacksMarquee("block lg:hidden overflow-hidden pt-1 hardware-clip")}
@@ -619,7 +642,7 @@ function Homepage({ onNavigate }) {
                 </div>
               </div>
 
-              {/* Set 2 (Duplicate for seamless infinite marquee loop) */}
+              {/* Set 2 (Duplicated for seamless loop) */}
               <div className="flex items-center gap-4 pr-4 shrink-0">
                 <div className="flex items-start gap-2.5 glass-card p-3 sm:p-3.5 rounded-xl sm:rounded-2xl min-w-[240px] sm:min-w-[260px] border border-outline-variant/20 shadow-md bg-surface-container-low/40 backdrop-blur-md">
                   <div className="p-1.5 sm:p-2 bg-surface-container-high rounded-xl text-primary flex-shrink-0 border border-primary/20">
@@ -661,46 +684,23 @@ function Homepage({ onNavigate }) {
             </div>
           </div>
         </motion.section>
-        {/* Organizer Dashboard & Pricing Showcase */}
-        <OrganizerShowcase onNavigate={onNavigate} />
-        {/* Partners Section */}
-        <section className="w-full bg-surface-container-lowest pt-8 pb-6 sm:pt-12 sm:pb-8 border-t border-outline-variant/30">
-          <div className="max-w-container-max mx-auto px-4 sm:px-lg flex flex-col items-center justify-center gap-4 sm:gap-8">
-            <h2 className="font-headline-md text-xs sm:text-sm font-bold text-on-surface-variant/80 tracking-wider uppercase font-label-caps">
-              Our partners
-            </h2>
-            <div className="flex items-center justify-between sm:justify-center gap-3 sm:gap-16 md:gap-24 max-w-6xl mx-auto w-full px-1 sm:px-0">
-              {[
-                { name: 'ASUS', img: sponsorAsus },
-                { name: 'Lenovo', img: sponsorLenovo },
-                { name: 'NVIDIA', img: sponsorNvidia },
-                { name: 'Valorant', img: sponsorValorant },
-              ].map((partner, idx) => (
-                <img key={idx} alt={partner.name} className="h-10 sm:h-16 md:h-20 w-auto max-w-[70px] sm:max-w-none object-contain filter drop-shadow-md hover:scale-105 transition-transform duration-500 ease-out opacity-80 hover:opacity-100" src={partner.img} />
-              ))}
-            </div>
-          </div>
+
+        {/* Organizer showcase */}
+        <section id="organizer-showcase">
+          <OrganizerShowcase onBecomeOrganizer={handleBecomeOrganizer} />
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="w-full bg-surface-container-lowest dark:bg-surface-container-lowest border-t border-outline-variant py-8 px-3 sm:px-sm md:px-lg">
-        <div className="w-full max-w-container-max mx-auto flex flex-col gap-6 sm:gap-8">
-          {/* Top Row: Links */}
-          <div className="flex flex-wrap justify-center items-center gap-4 border-b border-outline-variant/30 pb-6 w-full">
-            <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
-              <button onClick={() => onNavigate && onNavigate('terms-service')} className="font-body-sm text-[12px] sm:text-body-sm text-on-surface-variant hover:text-primary transition-colors font-medium">Terms of Service</button>
-              <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="font-body-sm text-[12px] sm:text-body-sm text-on-surface-variant hover:text-primary transition-colors font-medium">Privacy Policy</button>
-              <button onClick={() => onNavigate && onNavigate('help-support')} className="font-body-sm text-[12px] sm:text-body-sm text-on-surface-variant hover:text-primary transition-colors font-medium">Contact Support</button>
-            </div>
+      {/* Footer Area */}
+      <footer className="w-full bg-[#030406] border-t border-outline-variant/15 py-8 px-4 sm:px-sm md:px-lg text-center font-body-sm text-xs text-on-surface-variant/60">
+        <div className="max-w-container-max mx-auto space-y-4">
+          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 font-bold text-white/80">
+            <button onClick={() => onNavigate && onNavigate('about')} className="hover:text-primary transition-colors">About Us</button>
+            <button onClick={() => onNavigate && onNavigate('terms')} className="hover:text-primary transition-colors">Terms of Service</button>
+            <button onClick={() => onNavigate && onNavigate('privacy')} className="hover:text-primary transition-colors">Privacy Policy</button>
+            <button onClick={() => onNavigate && onNavigate('help')} className="hover:text-primary transition-colors">Help &amp; Support</button>
           </div>
-          {/* Bottom Row: Title & Copyright */}
-          <div className="flex flex-col items-center justify-center gap-2 text-center pt-2 w-full">
-            <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[18px] md:text-headline-md font-extrabold text-primary dark:text-primary tracking-tight hover:opacity-85 transition-opacity shrink-0">
-              Match District
-            </button>
-            <p className="font-body-sm text-[10px] sm:text-[12px] text-on-surface-variant">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
-          </div>
+          <p>&copy; {new Date().getFullYear()} Match District Esports. All rights reserved. All tournament operations are managed by verified independent hosts.</p>
         </div>
       </footer>
     </>

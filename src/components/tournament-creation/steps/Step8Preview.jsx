@@ -15,7 +15,7 @@ function DetailRow({ label, value }) {
   )
 }
 
-export default function Step9Preview({ data, orgName, orgTier }) {
+export default function Step8Preview({ data, orgName, orgTier }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
   const teams = data.match_type === 'solo' ? totalSlots

@@ -11,13 +11,12 @@ import Step2MatchSetup from './steps/Step2MatchSetup'
 import Step3Slots from './steps/Step3Slots'
 import Step4PrizePool from './steps/Step4PrizePool'
 import Step5Media from './steps/Step5Media'
-import Step6Timing from './steps/Step6Timing'
-import Step7Roadmap from './steps/Step7Roadmap'
-import Step8Rules from './steps/Step8Rules'
-import Step9Preview from './steps/Step9Preview'
-import Step10Publish from './steps/Step10Publish'
+import Step6ScheduleRoadmap from './steps/Step6ScheduleRoadmap'
+import Step7Rules from './steps/Step7Rules'
+import Step8Preview from './steps/Step8Preview'
+import Step9Publish from './steps/Step9Publish'
 
-const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 const LS_KEY = 'md_tournament_draft'
 
 function emptyForm() {
@@ -107,8 +106,6 @@ function validateStep(step, data, planLimits, orgName, userTier) {
     case 8:
       break
     case 9:
-      break
-    case 10:
       if (!orgName || orgName === 'Match District Organizer') {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
@@ -340,7 +337,7 @@ export default function CreationWizard() {
         rules: formData.rules || '',
       }
 
-      // Use pre-uploaded ImgBB URL from Step10Publish if provided
+      // Use pre-uploaded ImgBB URL from Step9Publish if provided
       if (preUploadedImageUrl) {
         body.cover_image_url = preUploadedImageUrl
       } else {
@@ -475,7 +472,7 @@ export default function CreationWizard() {
     }
   }, [formData, planLimits, saveToServer, navigate, orgName, userTier])
 
-  const handlePublishStep10 = useCallback(async (preUploadedImageUrl) => {
+  const handlePublishStep9 = useCallback(async (preUploadedImageUrl) => {
     setPublishError(null)
     // Full validation across all steps
     let allErrors = {}
@@ -520,14 +517,13 @@ export default function CreationWizard() {
       case 3: return <Step3Slots {...props} />
       case 4: return <Step4PrizePool {...props} />
       case 5: return <Step5Media {...props} />
-      case 6: return <Step6Timing {...props} onValidationChange={(blocked) => handleValidationBlocked(6, blocked)} />
-      case 7: return <Step7Roadmap {...props} />
-      case 8: return <Step8Rules {...props} />
-      case 9: return <Step9Preview {...props} />
-      case 10: return <Step10Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep10={handlePublishStep10} publishError={publishError} />
+      case 6: return <Step6ScheduleRoadmap {...props} onValidationChange={(blocked) => handleValidationBlocked(6, blocked)} />
+      case 7: return <Step7Rules {...props} />
+      case 8: return <Step8Preview {...props} />
+      case 9: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} />
       default: return null
     }
-  }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, orgName, orgTier, handleValidationBlocked])
+  }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError])
 
   return (
     <div className="min-h-screen bg-background">

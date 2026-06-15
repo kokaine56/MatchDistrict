@@ -6,11 +6,10 @@ const STEPS = [
   { num: 3, label: 'Slots & Entry' },
   { num: 4, label: 'Prize Pool' },
   { num: 5, label: 'Media' },
-  { num: 6, label: 'Timing' },
-  { num: 7, label: 'Roadmap' },
-  { num: 8, label: 'Rules & Regulations' },
-  { num: 9, label: 'Preview' },
-  { num: 10, label: 'Publish' },
+  { num: 6, label: 'Schedule & Roadmap' },
+  { num: 7, label: 'Rules & Regulations' },
+  { num: 8, label: 'Preview' },
+  { num: 9, label: 'Publish' },
 ]
 
 export default function StepIndicator({ currentStep }) {

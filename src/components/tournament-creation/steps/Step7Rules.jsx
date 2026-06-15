@@ -123,7 +123,7 @@ export const DEFAULT_CATEGORIES = [
   }
 ]
 
-export default function Step8Rules({ data, onChange }) {
+export default function Step7Rules({ data, onChange }) {
   // Initialize state from data.rules if it exists
   const initialRules = data.rules ? (typeof data.rules === 'string' ? JSON.parse(data.rules) : data.rules) : {}
   const [selectedDefaultIds, setSelectedDefaultIds] = useState(

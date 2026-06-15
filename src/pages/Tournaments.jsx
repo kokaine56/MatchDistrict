@@ -10,6 +10,7 @@ import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
+import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live']
 const GAME_OPTIONS = ['All Games', 'BGMI']
@@ -39,6 +40,15 @@ function Tournaments({ onNavigate }) {
   const [gameFilter, setGameFilter] = useState('All Games');
   const [entryTypeFilter, setEntryTypeFilter] = useState('All');
   const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
+  const [now, setNow] = useState(new Date())
+
+  // Real-time observer tick pipeline
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(new Date())
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const loadTournaments = React.useCallback(async () => {
     const { ok, data } = await fetchJsonWithRetry('/api/tournaments')
@@ -93,6 +103,8 @@ function Tournaments({ onNavigate }) {
         game: t.game,
         status: t.status || 'upcoming',
         startDate: t.startDate || t.date || null,
+        registrationOpenDate: t.registrationOpenDate || t.registration_open_date || null,
+        registrationCloseDate: t.registrationCloseDate || t.registration_close_date || null,
         badgeBg: '',
         badgeText: '',
         date: t.startDate || t.date || new Date().toISOString(),
@@ -118,8 +130,8 @@ function Tournaments({ onNavigate }) {
   }, [dbTournaments]);
 
   const featuredTournaments = useMemo(() => {
-    return tournaments.filter(t => t.featured || t.status === 'live' || t.status === 'active');
-  }, [tournaments]);
+    return tournaments.filter(t => t.featured && getTournamentLifecycleStatus(t, now) !== 'live');
+  }, [tournaments, now]);
 
   const filteredTournaments = useMemo(() => {
     return tournaments.filter(t => {
@@ -129,10 +141,18 @@ function Tournaments({ onNavigate }) {
         t.orgName.toLowerCase().includes(searchLower) ||
         t.game.toLowerCase().includes(searchLower);
 
+      const status = getTournamentLifecycleStatus(t, now);
+
       let matchStatus = true;
-      if (statusFilter === 'Live') matchStatus = t.status === 'live' || t.status === 'active' || (t.startDate && new Date() >= new Date(t.startDate) && t.status !== 'completed' && t.status !== 'archived');
-      else if (statusFilter === 'Upcoming') matchStatus = t.status === 'upcoming';
-      else if (statusFilter === 'Registrations Open') matchStatus = t.status === 'registrations_open';
+      if (statusFilter === 'Live') {
+        matchStatus = status === 'live';
+      } else if (statusFilter === 'Upcoming') {
+        matchStatus = status === 'upcoming' || status === 'closed';
+      } else if (statusFilter === 'Registrations Open') {
+        matchStatus = status === 'open';
+      } else if (statusFilter === 'All') {
+        matchStatus = status !== 'live';
+      }
 
       const matchGame = gameFilter === 'All Games' || t.game.toLowerCase() === gameFilter.toLowerCase();
 
@@ -142,7 +162,7 @@ function Tournaments({ onNavigate }) {
 
       return matchSearch && matchStatus && matchGame && matchEntry;
     });
-  }, [tournaments, searchQuery, statusFilter, gameFilter, entryTypeFilter]);
+  }, [tournaments, searchQuery, statusFilter, gameFilter, entryTypeFilter, now]);
 
   const capsuleLabel = useMemo(() => {
     const parts = [];
@@ -169,8 +189,6 @@ function Tournaments({ onNavigate }) {
   if (isLoading) {
     return <LoadingScreen message="Loading Tournaments..." />;
   }
-
-  console.log("Tournament Data:", tournaments);
 
   return (
     <div className="min-h-screen bg-[#07080C] relative overflow-x-hidden text-white pb-16 font-body-lg">
@@ -212,7 +230,7 @@ function Tournaments({ onNavigate }) {
                     game={t.game}
                     status={t.status}
                     badgeTextColor="text-white"
-                    imgSrc={t.cover_image_url || t.coverImage || "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=500&q=80"}
+                    imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
                     imgAlt={t.title}
                     prizePool={t.prize}
                     entryFee={t.entry}
@@ -223,8 +241,10 @@ function Tournaments({ onNavigate }) {
                     entryFeeAmount={t.entryFeeAmount}
                     orgName={t.orgName}
                     orgTier={t.orgTier}
-                    buttonText="JOIN NOW"
                     onNavigate={onNavigate}
+                    registrationOpenDate={t.registrationOpenDate}
+                    registrationCloseDate={t.registrationCloseDate}
+                    startDate={t.startDate}
                   />
                 </div>
               ))}
@@ -544,9 +564,14 @@ function Tournaments({ onNavigate }) {
                             <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(t.prize || t.prizePool)}</span>
                           </div>
 
-                          <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
-                            {modeLabel}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse uppercase tracking-wider">
+                              LIVE MATCH
+                            </span>
+                            <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
+                              {modeLabel}
+                            </span>
+                          </div>
                         </div>
                       </motion.div>
                     )
@@ -573,8 +598,10 @@ function Tournaments({ onNavigate }) {
                       entryFeeAmount={t.entryFeeAmount}
                       orgName={t.orgName}
                       orgTier={t.orgTier}
-                      buttonText="JOIN NOW"
                       onNavigate={onNavigate}
+                      registrationOpenDate={t.registrationOpenDate}
+                      registrationCloseDate={t.registrationCloseDate}
+                      startDate={t.startDate}
                     />
                   ))}
                 </motion.div>

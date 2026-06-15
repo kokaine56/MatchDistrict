@@ -10,7 +10,7 @@ import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
-import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step8Rules.jsx';
+import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 
 const GAME_BADGE = {
   bgmi: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
