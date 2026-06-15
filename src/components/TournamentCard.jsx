@@ -169,7 +169,7 @@ function TournamentCardBase({
     <motion.div
       whileHover={{ y: -4, scale: 1.01 }}
       whileTap={{ scale: 0.99 }}
-      className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px]`}
+      className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px] md:max-w-[320px]`}
     >
       <div
         onClick={handleCardClick}
@@ -227,7 +227,7 @@ function TournamentCardBase({
         ) : null}
       </div>
 
-      <div className={`flex flex-col justify-between h-[200px] overflow-hidden transition-[width,opacity,padding] duration-300 ease-in-out ${isExpanded ? 'w-[170px] opacity-100 p-2' : 'w-0 opacity-0 p-0'} sm:w-auto sm:flex-1 sm:opacity-100 sm:p-2.5`}>
+      <div className={`flex flex-col justify-between h-[200px] overflow-hidden transition-[width,opacity,padding] duration-300 ease-in-out ${isExpanded ? 'w-[170px] opacity-100 p-2' : 'w-0 opacity-0 p-0'} sm:w-auto sm:flex-1 sm:opacity-100 sm:p-2.5 md:w-[170px] md:max-w-[170px]`}>
         <InfoContent {...infoProps} />
       </div>
     </motion.div>
