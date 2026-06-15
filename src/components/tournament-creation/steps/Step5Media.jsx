@@ -140,12 +140,6 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
     pendingUpload.current = null
   }, [cropSrc])
 
-  const handleRemove = () => {
-    onChange({ ...data, cover_image_url: '' })
-    setUploadStatus('idle')
-    setUploadFile(null)
-  }
-
   const handleReplace = () => {
     fileRef.current?.click()
   }
@@ -185,7 +179,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
         <label className="block text-sm font-medium text-on-surface-variant">Cover Image</label>
 
         {uploadStatus === 'completed' && data.cover_image_url ? (
-          <div className="rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-surface-container/30 p-4 space-y-3">
+          <div className="rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-surface-container/30 p-4">
             <div className="flex items-center gap-3">
               <div className="w-12 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-surface-container-highest">
                 <img src={data.cover_image_url} alt="" className="w-full h-full object-cover" />
@@ -200,18 +194,12 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
                     {uploadFile.name} ({formatSize(uploadFile.size)})
                   </p>
                 )}
+                <div className="mt-2">
+                  <button type="button" onClick={handleReplace}
+                    className="px-4 py-1.5 rounded-lg text-xs font-semibold border border-outline-variant/30 text-on-surface-variant hover:bg-surface/50 transition-colors"
+                  >Replace Image</button>
+                </div>
               </div>
-            </div>
-            <div className="h-48 rounded-lg overflow-hidden bg-surface-container-highest">
-              <img src={data.cover_image_url} alt="Cover" className="w-full h-full object-cover" />
-            </div>
-            <div className="flex gap-2">
-              <button type="button" onClick={handleReplace}
-                className="px-4 py-2 rounded-lg text-xs font-medium border border-outline-variant/30 text-on-surface-variant hover:bg-surface/50 transition-colors"
-              >Replace Image</button>
-              <button type="button" onClick={handleRemove}
-                className="px-4 py-2 rounded-lg text-xs font-medium border border-error/30 text-error hover:bg-error/10 transition-colors"
-              >Remove Image</button>
             </div>
           </div>
         ) : (

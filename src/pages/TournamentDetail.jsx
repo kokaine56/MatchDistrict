@@ -10,6 +10,7 @@ import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
+import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step8Rules.jsx';
 
 const GAME_BADGE = {
   bgmi: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -40,7 +41,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   // Search and tabs states
   const [searchQuery, setSearchQuery] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
-  const [mobileTab, setMobileTab] = useState('overview'); // 'overview' | 'teams' | 'prizes_slots'
+  const [mobileTab, setMobileTab] = useState('overview'); // 'overview' | 'rules' | 'teams' | 'prizes_slots'
+  const [desktopTab, setDesktopTab] = useState('brief'); // 'brief' | 'rules'
   const [currentPage, setCurrentPage] = useState(1);
   const teamsPerPage = 6;
 
@@ -538,49 +540,38 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const renderSlotTracker = () => {
     const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
     return (
-      <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-6">
-        <div>
-          <h3 className="text-base font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary text-lg">grid_view</span>
-            Slot Allocations
-          </h3>
-          <p className="text-xs text-on-surface-variant mt-1">Live entry mapping and tactical lobby layout</p>
-        </div>
+      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 p-4 space-y-3">
+        <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-sm">grid_view</span>
+          Slot Allocations
+        </h3>
 
-        {/* Progress Bar */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center text-xs">
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-[10px]">
             <span className="font-bold text-on-surface-variant">Lobby Occupancy</span>
-            <span className="font-black text-primary tabular-nums">{slotFilled} / {slotTotal} Slots Filled</span>
+            <span className="font-bold text-primary tabular-nums">{slotFilled}/{slotTotal}</span>
           </div>
-          <div className="w-full h-3 rounded-full bg-surface-container-high border border-outline-variant/35 overflow-hidden relative">
-            <div
-              className="h-full bg-gradient-to-r from-primary via-secondary to-tertiary transition-all duration-500 rounded-full"
-              style={{ width: `${fillPercent}%` }}
-            />
+          <div className="w-full h-2 rounded-full bg-surface-container-high overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-primary to-secondary transition-all duration-500 rounded-full"
+              style={{ width: `${fillPercent}%` }} />
           </div>
         </div>
 
-        {/* 100 slots occupied vs empty grid map */}
-        <div className="space-y-3">
-          <div className="flex justify-between items-center text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
-            <span>Visual Roster Map</span>
-            <div className="flex items-center gap-3">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-primary/45 border border-primary/50" /> Occupied</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-surface-variant/20 border border-outline-variant/30" /> Empty</span>
+        <div className="space-y-2">
+          <div className="flex justify-between text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">
+            <span>Roster Map</span>
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded bg-primary/45" /> Taken</span>
+              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded bg-surface-variant/20 border border-outline-variant/30" /> Open</span>
             </div>
           </div>
-          <div className="grid grid-cols-10 gap-1.5 max-w-[320px] mx-auto p-4 bg-surface-container-lowest/50 rounded-xl border border-outline-variant/20">
+          <div className="grid grid-cols-10 gap-1 max-w-[280px] mx-auto">
             {gridCells.map((occupied, idx) => (
-              <div
-                key={idx}
-                className={`aspect-square rounded-[4px] transition-all duration-300 ${
-                  occupied
-                    ? 'bg-gradient-to-br from-primary to-secondary shadow-[0_0_8px_rgba(59,130,246,0.35)] border border-primary/40'
-                    : 'bg-surface-variant/20 border border-outline-variant/20 hover:border-outline-variant/40'
+              <div key={idx}
+                className={`aspect-square rounded-[3px] transition-all ${
+                  occupied ? 'bg-primary/45 border border-primary/40' : 'bg-surface-variant/20 border border-outline-variant/20'
                 }`}
-                title={occupied ? `Slot ${idx + 1}: Occupied` : `Slot ${idx + 1}: Available`}
-              />
+                title={occupied ? `Slot ${idx + 1}: Occupied` : `Slot ${idx + 1}: Available`} />
             ))}
           </div>
         </div>
@@ -590,165 +581,202 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const renderPrizeTable = () => {
     return (
-      <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-        <div>
-          <h3 className="text-base font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-            <span className="material-symbols-outlined text-amber-400 text-lg">emoji_events</span>
+      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-outline-variant/10">
+          <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-amber-400 text-sm">emoji_events</span>
             Prize Distribution
           </h3>
-          <p className="text-xs text-on-surface-variant mt-1">Podium splits and match achievements bounty matrix</p>
         </div>
+        <div className="divide-y divide-outline-variant/10">
+          {prizeDistributions.map((row, i) => (
+            <div key={i} className="flex items-center justify-between px-4 py-2 hover:bg-surface-container-low/20 transition-all">
+              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${row.badgeBg}`}>
+                {row.badge} {row.position}
+              </span>
+              <span className="text-[11px] font-black text-secondary tabular-nums">
+                {row.prize}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
-        <div className="overflow-hidden border border-outline-variant/20 rounded-xl">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="bg-surface-container border-b border-outline-variant/20">
-                <th className="px-4 py-3 font-bold text-on-surface-variant uppercase tracking-wider">Placement</th>
-                <th className="px-4 py-3 font-bold text-on-surface-variant uppercase tracking-wider text-right">Prize Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/10">
-              {prizeDistributions.map((row, i) => (
-                <tr key={i} className="hover:bg-surface-container/30 transition-all">
-                  <td className="px-4 py-3 flex items-center gap-2 font-bold text-on-background">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.badgeBg}`}>
-                      {row.badge} {row.position}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right font-black text-secondary tabular-nums">
-                    {row.prize}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  const getParsedRules = (rulesData) => {
+    if (!rulesData) return null;
+
+    try {
+      const parsed = typeof rulesData === 'string' ? JSON.parse(rulesData) : rulesData;
+      
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed.selectedDefaultIds || parsed.customRules)) {
+        const selectedIds = parsed.selectedDefaultIds || [];
+        const customRules = parsed.customRules || [];
+        
+        const activeCategories = DEFAULT_CATEGORIES.map(cat => {
+          const activeItems = cat.items.filter((_, idx) => selectedIds.includes(`${cat.id}-${idx}`));
+          return {
+            title: cat.title,
+            items: activeItems
+          };
+        }).filter(cat => cat.items.length > 0);
+        
+        return {
+          type: 'structured',
+          categories: activeCategories,
+          custom: customRules.filter(r => r && r.trim() !== '')
+        };
+      }
+
+      if (Array.isArray(parsed)) {
+        return {
+          type: 'flat',
+          items: parsed
+        };
+      }
+    } catch (e) {}
+
+    if (typeof rulesData === 'string') {
+      const items = rulesData.split('\n').map(r => r.trim()).filter(Boolean);
+      if (items.length > 1) {
+        return {
+          type: 'flat',
+          items
+        };
+      }
+    }
+
+    return null;
+  };
+
+  const renderRulesContent = () => {
+    const parsedRules = getParsedRules(tourney?.rules);
+    
+    if (!parsedRules) {
+      return (
+        <div className="text-xs text-on-surface-variant leading-relaxed">
+          {tourney?.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.'}
         </div>
+      );
+    }
+
+    if (parsedRules.type === 'flat') {
+      return (
+        <ul className="list-disc pl-4 space-y-1.5 text-xs text-on-surface-variant">
+          {parsedRules.items.map((item, idx) => (
+            <li key={idx} className="leading-relaxed">{item}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {parsedRules.categories.map((cat, idx) => (
+          <div key={idx} className="space-y-1">
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">{cat.title}</h4>
+            <ul className="list-disc pl-5 space-y-1 text-[11px] text-on-surface-variant">
+              {cat.items.map((item, i) => (
+                <li key={i} className="leading-relaxed">{item}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {parsedRules.custom.length > 0 && (
+          <div className="space-y-1">
+            <h4 className="text-xs font-bold text-primary uppercase tracking-wider">Custom Rules</h4>
+            <ul className="list-disc pl-5 space-y-1 text-[11px] text-on-surface-variant">
+              {parsedRules.custom.map((item, i) => (
+                <li key={i} className="leading-relaxed">{item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     );
   };
 
   const renderTeamsList = () => {
     return (
-      <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h3 className="text-base font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-lg">groups</span>
-              Registered Teams
-            </h3>
-            <p className="text-xs text-on-surface-variant mt-1">Verified rosters competing in this event</p>
-          </div>
-          
-          {/* Search bar */}
-          <div className="relative shrink-0 w-full sm:w-64">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-sm text-on-surface-variant">search</span>
-            <input
-              type="text"
-              placeholder="Search team or captain..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-surface border border-outline-variant/35 rounded-xl text-xs text-on-background placeholder:text-on-surface-variant focus:outline-none focus:border-primary transition-all"
-            />
-          </div>
+      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-outline-variant/10">
+          <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-sm">groups</span>
+            Registered Teams
+          </h3>
         </div>
 
-        {/* Filter pills */}
-        <div className="flex flex-wrap gap-2 pb-2">
-          {[
-            { id: 'all', label: 'All Teams' },
-            { id: 'verified', label: 'Verified Only' },
-            { id: 'approved', label: 'Approved' },
-            { id: 'pending', label: 'Verification Pending' }
-          ].map(f => (
-            <button
-              key={f.id}
-              onClick={() => setTeamFilter(f.id)}
-              className={`px-3 py-1 rounded-lg text-[10px] font-bold border transition-all ${
-                teamFilter === f.id
-                  ? 'bg-primary border-primary text-on-primary shadow-sm'
-                  : 'bg-surface-container/60 hover:bg-surface-container border-outline-variant/20 text-on-surface-variant'
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Table list */}
-        {paginatedTeams.length === 0 ? (
-          <div className="text-center py-8 bg-surface-container-lowest/30 rounded-xl border border-outline-variant/15 text-xs text-on-surface-variant">
-            No registered teams found matching the filters.
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="overflow-x-auto border border-outline-variant/20 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
-                <thead>
-                  <tr className="bg-surface-container border-b border-outline-variant/20">
-                    <th className="px-4 py-3 font-bold text-on-surface-variant uppercase tracking-wider">Team Name</th>
-                    <th className="px-4 py-3 font-bold text-on-surface-variant uppercase tracking-wider">Captain / Roster</th>
-                    <th className="px-4 py-3 font-bold text-on-surface-variant uppercase tracking-wider text-center">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-outline-variant/10">
-                  {paginatedTeams.map((team, idx) => (
-                    <tr key={idx} className="hover:bg-surface-container/30 transition-all">
-                      <td className="px-4 py-3 font-black text-on-background flex items-center gap-2">
-                        <img src={team.logo} className="w-6 h-6 rounded-md object-cover border border-outline-variant/20 shrink-0" alt="" />
-                        <span>{team.name}</span>
-                      </td>
-                      <td className="px-4 py-3 text-on-surface-variant">
-                        <div className="font-bold text-on-background">{team.captain}</div>
-                        <div className="text-[10px] truncate max-w-[200px]">
-                          {team.members && team.members.length > 0
-                            ? team.members.join(', ')
-                            : 'No other players registered'}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                          team.status === 'Approved' || team.status === 'Confirmed'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            : team.status === 'Waitlisted'
-                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
-                        }`}>
-                          {team.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <div className="p-3 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-on-surface-variant">search</span>
+              <input type="text" placeholder="Search team or captain..." value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-7 pr-3 py-1.5 bg-surface border border-outline-variant/20 rounded-lg text-[10px] text-on-background placeholder:text-on-surface-variant focus:outline-none focus:border-primary transition-all" />
             </div>
-
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between mt-4 px-2">
-                <span className="text-[10px] font-bold text-on-surface-variant">
-                  Showing {(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length} teams
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1 rounded-lg bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface-container transition-all"
-                  >
-                    <span className="material-symbols-outlined text-sm">chevron_left</span>
-                  </button>
-                  <span className="text-[10px] font-bold text-on-surface-variant">Page {currentPage} / {totalPages}</span>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1 rounded-lg bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface-container transition-all"
-                  >
-                    <span className="material-symbols-outlined text-sm">chevron_right</span>
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
-        )}
+
+          <div className="flex gap-1.5 flex-wrap">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'verified', label: 'Verified' },
+              { id: 'approved', label: 'Approved' },
+              { id: 'pending', label: 'Pending' }
+            ].map(f => (
+              <button key={f.id} onClick={() => setTeamFilter(f.id)}
+                className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
+                  teamFilter === f.id
+                    ? 'bg-primary border-primary text-on-primary'
+                    : 'bg-surface-container/60 hover:bg-surface-container border-outline-variant/20 text-on-surface-variant'
+                }`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {paginatedTeams.length === 0 ? (
+            <div className="text-center py-6 text-[10px] text-on-surface-variant/60">No teams found matching filters.</div>
+          ) : (
+            <div className="space-y-2">
+              <div className="divide-y divide-outline-variant/10 border border-outline-variant/20 rounded-lg overflow-hidden">
+                {paginatedTeams.map((team, idx) => (
+                  <div key={idx} className="flex items-center gap-2 px-3 py-2 hover:bg-surface-container-low/20 transition-all">
+                    <img src={team.logo} className="w-5 h-5 rounded object-cover border border-outline-variant/20 shrink-0" alt="" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-bold text-on-background truncate">{team.name}</div>
+                      <div className="text-[8px] text-on-surface-variant/60 truncate">{team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}</div>
+                    </div>
+                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                      team.status === 'Approved' || team.status === 'Confirmed'
+                        ? 'bg-emerald-500/10 text-emerald-400'
+                        : team.status === 'Waitlisted'
+                        ? 'bg-amber-500/10 text-amber-400'
+                        : 'bg-slate-500/10 text-slate-400'
+                    }`}>{team.status}</span>
+                  </div>
+                ))}
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-on-surface-variant/60">{(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}</span>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
+                      className="p-0.5 rounded bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span className="material-symbols-outlined text-sm">chevron_left</span>
+                    </button>
+                    <span className="text-[9px] text-on-surface-variant">Pg {currentPage}/{totalPages}</span>
+                    <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
+                      className="p-0.5 rounded bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span className="material-symbols-outlined text-sm">chevron_right</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -759,18 +787,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     
     if (!currentUser || (!isApprovedRoster && !isPendingPaymentStatus)) {
       return (
-        <div className="glass-card rounded-2xl p-6 border border-rose-500/10 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/5 blur-xl pointer-events-none" />
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-              <span className="material-symbols-outlined text-lg">lock</span>
+        <div className="bg-surface-container-low/20 rounded-xl border border-rose-500/10 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+              <span className="material-symbols-outlined text-sm">lock</span>
             </div>
-            <div className="space-y-1">
-              <h4 className="text-sm font-black uppercase text-rose-400 tracking-wider">Room Coordinates Locked</h4>
-              <p className="text-[11px] text-on-surface-variant leading-relaxed">
+            <div className="space-y-0.5">
+              <h4 className="text-[10px] font-bold uppercase text-rose-400 tracking-wider">Room Coordinates Locked</h4>
+              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
                 {currentUser 
-                  ? "Access is gated. Successfully complete the registration process to unlock the match room coordinates."
-                  : "Sign in with a verified participant account to access the match credentials."
+                  ? "Complete registration to unlock match credentials."
+                  : "Sign in with a verified account to access credentials."
                 }
               </p>
             </div>
@@ -781,16 +808,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
     if (isPendingPaymentStatus) {
       return (
-        <div className="glass-card rounded-2xl p-6 border border-amber-500/15 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 blur-xl pointer-events-none" />
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-              <span className="material-symbols-outlined text-lg">hourglass_empty</span>
+        <div className="bg-surface-container-low/20 rounded-xl border border-amber-500/15 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+              <span className="material-symbols-outlined text-sm">hourglass_empty</span>
             </div>
-            <div className="space-y-1 flex-1">
-              <h4 className="text-sm font-black uppercase text-amber-400 tracking-wider">Payment Verification Pending</h4>
-              <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                Your payment validation is pending review. Match room details will unlock as soon as the organizer approves your transaction.
+            <div className="space-y-0.5 flex-1">
+              <h4 className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">Payment Verification Pending</h4>
+              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
+                Match room details unlock once the organizer approves your transaction.
               </p>
             </div>
           </div>
@@ -801,21 +827,20 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     // If verified roster approved/confirmed
     if (!revealTimeReached) {
       return (
-        <div className="glass-card rounded-2xl p-6 border border-primary/20 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 blur-xl pointer-events-none" />
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
-              <span className="material-symbols-outlined text-lg">hourglass_top</span>
+        <div className="bg-surface-container-low/20 rounded-xl border border-primary/20 p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
+              <span className="material-symbols-outlined text-sm">hourglass_top</span>
             </div>
-            <div className="space-y-1.5 flex-1 min-w-0">
-              <h4 className="text-sm font-black uppercase text-primary tracking-wider">Decrypting Coordinates...</h4>
-              <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                Room details will be revealed 15 minutes before the match starts.
+            <div className="space-y-1 flex-1 min-w-0">
+              <h4 className="text-[10px] font-bold uppercase text-primary tracking-wider">Decrypting Coordinates...</h4>
+              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
+                Room details revealed 15 minutes before match start.
               </p>
               {revealCountdown && (
-                <div className="text-[10px] font-mono font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded border border-secondary/20 inline-block mt-2">
+                <span className="text-[9px] font-mono font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded border border-secondary/20 inline-block mt-1">
                   Decrypts in: {revealCountdown}
-                </div>
+                </span>
               )}
             </div>
           </div>
@@ -825,64 +850,55 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
     // Unlocked and decrypted credentials
     return (
-      <div className="glass-card rounded-2xl p-6 border border-emerald-500/20 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 blur-xl pointer-events-none" />
-        <div className="space-y-4">
-          <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <span className="material-symbols-outlined text-sm">lock_open</span>
+      <div className="bg-surface-container-low/20 rounded-xl border border-emerald-500/20 p-4">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b border-outline-variant/20 pb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                <span className="material-symbols-outlined text-xs">lock_open</span>
               </div>
-              <span className="text-xs font-black uppercase text-emerald-400 tracking-wider">Lobby Decrypted</span>
+              <span className="text-[9px] font-bold uppercase text-emerald-400 tracking-wider">Lobby Decrypted</span>
             </div>
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
           </div>
 
           {isLobbyLoading ? (
-            <div className="flex items-center justify-center py-4 gap-2">
-              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent spinner loading-spinner" />
-              <span className="text-xs text-on-surface-variant">Decrypting cords...</span>
+            <div className="flex items-center justify-center py-3 gap-2">
+              <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent spinner loading-spinner" />
+              <span className="text-[10px] text-on-surface-variant">Decrypting cords...</span>
             </div>
           ) : lobbyError ? (
-            <div className="text-[11px] text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20 flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm shrink-0">error</span>
+            <div className="text-[10px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20 flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-xs shrink-0">error</span>
               <span>{lobbyError}</span>
             </div>
           ) : lobbyCredentials ? (
-            <div className="grid grid-cols-1 gap-2.5">
-              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-xl p-3">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-lg p-2.5">
                 <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Room ID</span>
-                  <span className="text-xs font-mono font-black text-on-background select-all block">{lobbyCredentials.roomID || 'TBD'}</span>
+                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Room ID</span>
+                  <span className="text-[10px] font-mono font-bold text-on-background select-all block">{lobbyCredentials.roomID || 'TBD'}</span>
                 </div>
-                <button
-                  onClick={() => handleCopyCredentials(lobbyCredentials.roomID, 'Room ID')}
-                  className="p-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all"
-                  title="Copy Room ID"
-                >
-                  <span className="material-symbols-outlined text-sm">content_copy</span>
+                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomID, 'Room ID')}
+                  className="p-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all" title="Copy">
+                  <span className="material-symbols-outlined text-xs">content_copy</span>
                 </button>
               </div>
-              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-xl p-3">
+              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-lg p-2.5">
                 <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Password</span>
-                  <span className="text-xs font-mono font-black text-on-background select-all block">{lobbyCredentials.roomPassword || 'TBD'}</span>
+                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Password</span>
+                  <span className="text-[10px] font-mono font-bold text-on-background select-all block">{lobbyCredentials.roomPassword || 'TBD'}</span>
                 </div>
-                <button
-                  onClick={() => handleCopyCredentials(lobbyCredentials.roomPassword, 'Password')}
-                  className="p-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all"
-                  title="Copy Password"
-                >
-                  <span className="material-symbols-outlined text-sm">content_copy</span>
+                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomPassword, 'Password')}
+                  className="p-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all" title="Copy">
+                  <span className="material-symbols-outlined text-xs">content_copy</span>
                 </button>
               </div>
             </div>
           ) : (
-            <button
-              onClick={fetchLobbyCredentials}
-              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-1.5"
-            >
-              <span className="material-symbols-outlined text-sm">refresh</span>
+            <button onClick={fetchLobbyCredentials}
+              className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg transition-all active:scale-[0.98] flex items-center justify-center gap-1">
+              <span className="material-symbols-outlined text-xs">refresh</span>
               Fetch Lobby Details
             </button>
           )}
@@ -893,505 +909,524 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const gameBadgeClasses = getGameBadge(tourney.game);
 
+  const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
+
   return (
     <div className="min-h-screen bg-background text-on-background relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
       <Header activePage="tournament-detail" onNavigate={onNavigate} />
 
-      <main className="w-full max-w-7xl mx-auto px-5 sm:px-8 md:px-10 pt-16 pb-16 sm:pt-20">
+      {/* ══════════ DESKTOP: 2-COLUMN LAYOUT (hidden on mobile) ══════════ */}
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-16 pb-24 sm:pt-20">
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
-          className="mt-4 space-y-8 lg:space-y-10">
+          className="mt-4">
 
-          {/* ═══════════════════ HERO SECTION ═══════════════════ */}
-          <section className="flex flex-col lg:flex-row gap-6 lg:gap-10">
-            {/* Poster image */}
-            <div className="w-full lg:w-[260px] shrink-0">
-              <div className="aspect-[3/4] rounded-2xl overflow-hidden bg-surface-container-low border border-outline-variant/20 shadow-md">
-                <img src={tourney.cover_image_url || tourney.bannerUrl || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80'} alt={tourney.title}
-                  className="w-full h-full object-cover" />
-              </div>
-            </div>
+          {/* ── Desktop: Header + Sidebar ── */}
+          <div className="hidden md:grid grid-cols-12 gap-8">
+            {/* Left: 8/12 = ~67% */}
+            <div className="col-span-8 space-y-6">
 
-            {/* Summary Details Info */}
-            <div className="flex-1 min-w-0 space-y-5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1.5 min-w-0 flex-1">
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${gameBadgeClasses}`}>
+              {/* Tournament Header */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${gameBadgeClasses}`}>
                     {tourney.game}
                   </span>
-                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-on-background leading-tight truncate">
-                    {tourney.title}
-                  </h1>
-                </div>
-                <button onClick={handleShare}
-                  className="px-3 py-2 min-h-[36px] rounded-xl bg-surface border border-outline-variant/30 hover:bg-surface-container-higher transition-all text-xs font-bold flex items-center gap-1.5 shrink-0 self-start">
-                  <span className="material-symbols-outlined text-sm">share</span>
-                  <span className="hidden sm:inline">Share</span>
-                </button>
-              </div>
-
-              <hr className="border-outline-variant/20 my-2" />
-
-              {/* Organizer details */}
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl overflow-hidden bg-surface border border-outline-variant/20 shrink-0">
-                  <img
-                    src={orgProfile?.orgImage || tourney.orgImage || tourney.logoUrl || orgProfile?.avatar || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80'}
-                    alt={orgProfile?.orgName || tourney.orgName || orgProfile?.name}
-                    className="avatar-img" />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm sm:text-base font-bold text-on-background truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
-                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                  </div>
-                  <div className="flex items-center gap-2.5 text-[11px] sm:text-xs text-on-surface-variant mt-0.5">
-                    <span className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[12px]">group</span>
-                      {followerCount} followers
+                  {countdown.type === 'live' && (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold uppercase tracking-wider">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      LIVE
                     </span>
-                    <span className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[12px]">event</span>
-                      {orgEventsCount} events
-                    </span>
-                    {currentUser && (
-                      <button onClick={handleFollow} disabled={followLoading}
-                        className={`ml-1 px-2.5 py-0.5 min-h-[26px] rounded-lg text-[10px] font-bold transition-all ${
-                          isFollowing
-                            ? 'bg-surface text-on-background border border-outline-variant/30'
-                            : 'bg-primary hover:bg-primary/95 text-on-primary'
-                        }`}>
-                        {followLoading ? '\u2026' : isFollowing ? 'Following' : 'Follow'}
-                      </button>
-                    )}
+                  )}
+                </div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-2xl lg:text-3xl font-black tracking-tight text-on-background leading-tight">
+                      {tourney.title}
+                    </h1>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-xs text-on-surface-variant/70">by</span>
+                      <span className="text-sm font-bold text-on-background truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                      <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                      <span className="text-[10px] text-on-surface-variant/50">&middot; {followerCount} followers</span>
+                      {currentUser && (
+                        <button onClick={handleFollow} disabled={followLoading}
+                          className={`text-[10px] font-bold transition-all px-2 py-0.5 rounded-md ${
+                            isFollowing ? 'text-on-surface-variant' : 'text-primary hover:text-primary/80'
+                          }`}>
+                          {followLoading ? '\u2026' : isFollowing ? 'Following' : '+ Follow'}
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  <button onClick={handleShare}
+                    className="px-2.5 py-1.5 min-h-[32px] rounded-lg bg-surface border border-outline-variant/20 hover:bg-surface-container-higher transition-all text-[10px] font-bold flex items-center gap-1 shrink-0">
+                    <span className="material-symbols-outlined text-sm">share</span>
+                    Share
+                  </button>
                 </div>
               </div>
 
-              <hr className="border-outline-variant/20 my-2" />
-
-              {/* Stats overview matrix */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-surface-container-low/30 p-3 rounded-2xl border border-outline-variant/10">
-                <div className="bg-surface/50 rounded-xl p-3 border border-outline-variant/10">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Prize Pool</span>
-                  <span className="text-base font-black text-secondary mt-0.5 block">{prizeDisplay}</span>
-                </div>
-                <div className="bg-surface/50 rounded-xl p-3 border border-outline-variant/10">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Entry Fee</span>
-                  <span className="text-base font-black text-on-background mt-0.5 block">{entryDisplay}</span>
-                </div>
-                <div className="bg-surface/50 rounded-xl p-3 border border-outline-variant/10">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Lobby Type</span>
-                  <span className="text-base font-black text-on-background mt-0.5 block uppercase">{tourney.match_type}</span>
-                </div>
-                <div className="bg-surface/50 rounded-xl p-3 border border-outline-variant/10">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Perspective</span>
-                  <span className="text-base font-black text-on-background mt-0.5 block uppercase">{tourney.perspective || 'TPP'}</span>
-                </div>
+              {/* Line Tab Bar */}
+              <div className="flex border-b border-outline-variant/15 gap-6">
+                {[
+                  { id: 'brief', label: 'Overview', icon: 'info' },
+                  { id: 'rules', label: 'Rules & Regulations', icon: 'gavel' },
+                  { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
+                ].filter(t => !t.hidden).map(tab => (
+                  <button key={tab.id}
+                    onClick={() => setDesktopTab(tab.id)}
+                    className={`pb-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-1.5 ${
+                      desktopTab === tab.id
+                        ? 'border-primary text-on-background'
+                        : 'border-transparent text-on-surface-variant/60 hover:text-on-background'
+                    }`}>
+                    <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
+                    {tab.label}
+                  </button>
+                ))}
               </div>
-            </div>
-          </section>
 
-          {/* ═══════════════════ DASHBOARD PANEL LAYOUTS ═══════════════════ */}
+              {/* Tab Content */}
+              {desktopTab === 'brief' && (
+                <div className="space-y-6">
+                  {/* Hero Prize Row */}
+                  <div className="grid grid-cols-3 gap-4 bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10">
+                    <div>
+                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
+                      <p className="text-xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Entry Fee</span>
+                      <p className="text-xl font-black text-on-background mt-0.5">{entryDisplay}</p>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
+                      <p className="text-xl font-black text-on-background mt-0.5">{slotFilled}/{slotTotal} <span className="text-xs font-bold text-on-surface-variant">filled</span></p>
+                      <p className="text-[10px] text-on-surface-variant/60">{slotAvailable} slots left</p>
+                    </div>
+                  </div>
 
-          {/* Mobile view Tab Menu selector */}
-          <div className="flex md:hidden border-b border-outline-variant/20 mb-4 bg-surface-container-low/50 rounded-xl p-1">
-            {[
-              { id: 'overview', label: 'Overview', icon: 'info' },
-              { id: 'teams', label: 'Registered Teams', icon: 'groups' },
-              { id: 'prizes_slots', label: 'Prize & Slots', icon: 'emoji_events' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setMobileTab(tab.id)}
-                className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                  mobileTab === tab.id
-                    ? 'bg-primary text-on-primary shadow-sm'
-                    : 'text-on-surface-variant hover:text-on-background'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[14px]">{tab.icon}</span>
-                {tab.label}
-              </button>
-            ))}
-          </div>
+                  {/* Prize Distribution Table */}
+                  {renderPrizeTable()}
 
-          {/* Mobile view layout stack */}
-          <div className="block md:hidden">
-            {mobileTab === 'overview' && (
-              <div className="space-y-6">
-                {/* Registration Action card */}
-                <div className="bg-surface-container-low/60 p-5 rounded-2xl border border-outline-variant/20 space-y-4">
-                  {(countdown.type === 'registration' || countdown.type === 'start') && (
+                  {/* Slot Tracker */}
+                  {renderSlotTracker()}
+
+                  {/* Registered Teams */}
+                  {renderTeamsList()}
+
+                  {/* Event Brief */}
+                  {tourney.description && (
                     <div className="space-y-2">
-                      <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">{countdown.label}</span>
-                      <div className="grid grid-cols-4 gap-2">
+                      <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
+                      <p className="text-xs text-on-surface-variant/80 leading-relaxed whitespace-pre-line">{tourney.description}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {desktopTab === 'rules' && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
+                  <div className="text-xs text-on-surface-variant/80 leading-relaxed">
+                    {renderRulesContent()}
+                  </div>
+                </div>
+              )}
+
+              {desktopTab === 'sponsors' && (
+                <div className="space-y-4">
+                  {/* Sponsor Wall */}
+                  {sponsorList.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
+                      <div className="flex flex-wrap gap-2">
+                        {sponsorList.map((s, i) => (
+                          <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                            <span className="text-warning text-[11px]">&#9733;</span>
+                            {s.name}
+                            {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                          </span>
+                        ))}
+                      </div>
+                      {totalSponsorAmount > 0 && (
+                        <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Sponsor Contribution Form */}
+                  {isSponsorsEnabled && (
+                    <div className="bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10 space-y-3">
+                      <div>
+                        <h3 className="text-xs font-bold text-on-background">Sponsor This Tournament</h3>
+                        <p className="text-[10px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool and get featured above.</p>
+                      </div>
+                      {!showSponsorForm ? (
+                        <button onClick={() => setShowSponsorForm(true)}
+                          className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
+                          Support with UPI
+                        </button>
+                      ) : (
+                        <form onSubmit={handleSponsorContribute} className="space-y-2.5">
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                              placeholder="Your name" required
+                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                            <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
+                              placeholder="Email" type="email"
+                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                              placeholder="Amount (₹)" type="number" min="1" required
+                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                            <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                              placeholder="UPI Transaction ID / UTR" required
+                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                          </div>
+                          <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
+                            placeholder="Payment app (Google Pay / PhonePe / Paytm)"
+                            className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                          <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                            placeholder="Message (optional)"
+                            className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
+                          <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
+                          <div className="flex gap-2">
+                            <button type="submit" disabled={sponsorSubmitting}
+                              className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
+                              {sponsorSubmitting ? 'Submitting...' : 'Submit'}
+                            </button>
+                            <button type="button" onClick={() => setShowSponsorForm(false)}
+                              className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Right: 4/12 = ~33% — Sticky Entry Card */}
+            <div className="col-span-4">
+              <div className="sticky top-20 space-y-4">
+                {/* Compact Entry Card */}
+                <div className="bg-surface-container-low/30 rounded-xl border border-outline-variant/10 p-4 space-y-4">
+                  {/* Prize - Hero */}
+                  <div className="text-center pb-3 border-b border-outline-variant/10">
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
+                    <p className="text-2xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div className="bg-surface/40 rounded-lg py-2 border border-outline-variant/10">
+                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Entry</span>
+                      <span className="text-sm font-black text-on-background">{entryDisplay}</span>
+                    </div>
+                    <div className="bg-surface/40 rounded-lg py-2 border border-outline-variant/10">
+                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Slots Left</span>
+                      <span className="text-sm font-black text-on-background">{slotAvailable}</span>
+                    </div>
+                  </div>
+
+                  {/* Slot Progress Bar */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[9px] text-on-surface-variant">
+                      <span>{slotFilled}/{slotTotal} filled</span>
+                      <span>{Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-surface-container-high overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%` }} />
+                    </div>
+                  </div>
+
+                  {/* Countdown */}
+                  {(countdown.type === 'registration' || countdown.type === 'start') && (
+                    <div className="bg-surface/40 rounded-lg p-2.5 border border-outline-variant/10">
+                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block text-center">{countdown.label}</span>
+                      <div className="grid grid-cols-4 gap-1.5 mt-1.5">
                         {[
-                          { val: countdown.days, lbl: 'Days' },
-                          { val: countdown.hours, lbl: 'Hrs' },
-                          { val: countdown.minutes, lbl: 'Mins' },
-                          { val: countdown.seconds, lbl: 'Secs' }
+                          { val: countdown.days, lbl: 'D' },
+                          { val: countdown.hours, lbl: 'H' },
+                          { val: countdown.minutes, lbl: 'M' },
+                          { val: countdown.seconds, lbl: 'S' }
                         ].map((s, idx) => (
-                          <div key={idx} className="bg-surface rounded-xl py-2 text-center border border-outline-variant/10">
-                            <span className="text-sm font-black tabular-nums block text-primary">{String(s.val).padStart(2, '0')}</span>
-                            <span className="text-[8px] font-bold text-on-surface-variant uppercase block mt-0.5">{s.lbl}</span>
+                          <div key={idx} className="bg-surface-container-low rounded py-1 text-center border border-outline-variant/10">
+                            <span className="text-xs font-black tabular-nums text-primary block">{String(s.val).padStart(2, '0')}</span>
+                            <span className="text-[7px] font-bold text-on-surface-variant uppercase block">{s.lbl}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
                   {countdown.type === 'live' && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-rose-500/10 border border-rose-500/20 rounded-xl">
-                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                      <span className="text-xs font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
+                    <div className="flex items-center justify-center gap-2 py-2 bg-rose-500/10 rounded-lg border border-rose-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                      <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
                     </div>
                   )}
-                  
+
+                  {/* CTA Button */}
                   <button onClick={handleRegister} disabled={btn.disabled}
-                    className={`w-full py-3.5 min-h-[46px] rounded-xl font-bold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${btnStyles[btn.style]}`}>
+                    className={`w-full py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${btnStyles[btn.style]}`}>
                     {btn.text}
                     {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
                   </button>
                 </div>
 
-                {/* Secured coordinates credentials card */}
+                {/* Room Credentials */}
                 {renderRoomCredentialsCard()}
 
-                {/* Support this Tournament — Mobile */}
-                <div className="glass-card rounded-2xl p-5 border border-outline-variant/10 space-y-4">
-                  <h3 className="text-xs font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">handshake</span>
-                    Sponsor This Tournament
+                {/* Timeline Schedule */}
+                <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 p-4 space-y-3">
+                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm">schedule</span>
+                    Timeline
                   </h3>
-                  <p className="text-[10px] text-on-surface-variant leading-relaxed">
-                    Contribute to the prize pool and get featured on the Sponsor Wall.
-                  </p>
-                  {!showSponsorForm ? (
-                    <button onClick={() => setShowSponsorForm(true)}
-                      className="w-full py-2.5 min-h-[44px] rounded-xl bg-primary text-white text-[11px] font-bold transition-all hover:bg-primary/90">
-                      Support with UPI
-                    </button>
-                  ) : (
-                    <form onSubmit={handleSponsorContribute} className="space-y-3">
-                      <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                        placeholder="Your name" required
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                      <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
-                        placeholder="Email (optional)" type="email"
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                      <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                        placeholder="Amount (₹)" type="number" min="1" required
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                      <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                        placeholder="UPI Transaction ID / UTR" required
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                      <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
-                        placeholder="Payment app (Google Pay / PhonePe / Paytm)"
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                      <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                        placeholder="Message (optional)"
-                        className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50 resize-none h-16" />
-                      <p className="text-[9px] text-on-surface-variant/60">
-                        Pay to <span className="font-bold text-primary">matchdistrict@upi</span> and enter the transaction ID.
-                      </p>
-                      <div className="flex gap-2">
-                        <button type="submit" disabled={sponsorSubmitting}
-                          className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 text-white text-[10px] font-bold transition-all hover:bg-emerald-600 disabled:opacity-50">
-                          {sponsorSubmitting ? 'Submitting...' : 'Submit'}
-                        </button>
-                        <button type="button" onClick={() => setShowSponsorForm(false)}
-                          className="px-3 py-2.5 min-h-[44px] rounded-xl border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-
-                {/* Event timeline Roadmap */}
-                <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">schedule</span>
-                    Tournament Schedule
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3 border-l-2 border-outline-variant/30 pl-4 py-1.5 ml-2">
+                  <div className="space-y-2.5 border-l border-outline-variant/20 pl-3 ml-1">
                     {[
-                      { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Decryption coordinates unlock' },
-                      { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks & match begins' }
+                      { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
+                      { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
                     ].map((step, idx) => {
                       const dateObj = step.date ? new Date(step.date) : null;
                       return (
-                        <div key={idx} className="relative space-y-0.5">
-                          <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-primary border-2 border-background" />
-                          <div className="text-xs font-black text-on-background">{step.label}</div>
-                          <div className="text-[10px] font-bold text-primary">
+                        <div key={idx} className="relative">
+                          <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
+                          <div className="text-[10px] font-bold text-on-background">{step.label}</div>
+                          <div className="text-[9px] font-bold text-primary">
                             {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
                           </div>
-                          <p className="text-[9px] text-on-surface-variant leading-relaxed">{step.desc}</p>
+                          <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
                         </div>
                       );
                     })}
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
 
-                {/* Rules accordion */}
-                <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">gavel</span>
-                    Tournament Rules
-                  </h3>
-                  <div className="text-xs text-on-surface-variant leading-relaxed space-y-2 whitespace-pre-line">
-                    {tourney.rules || 'No specific rules are set for this tournament yet. Standard fair play rules apply.'}
+          {/* ══════════ MOBILE: FLUID STACK (hidden on desktop) ══════════ */}
+          <div className="block md:hidden space-y-4">
+
+            {/* Mobile Header */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider border ${gameBadgeClasses}`}>
+                  {tourney.game}
+                </span>
+                {countdown.type === 'live' && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[8px] font-bold uppercase tracking-wider">
+                    <span className="w-1 h-1 rounded-full bg-rose-500 animate-ping" />
+                    LIVE
+                  </span>
+                )}
+              </div>
+              <h1 className="text-xl font-black tracking-tight text-on-background leading-tight">
+                {tourney.title}
+              </h1>
+              <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant/70">
+                <span>by</span>
+                <span className="font-bold text-on-background truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                <span className="text-on-surface-variant/50">&middot; {followerCount} followers</span>
+              </div>
+            </div>
+
+            {/* Mobile Tab Bar */}
+            <div className="flex overflow-x-auto border-b border-outline-variant/15 gap-4 no-scrollbar">
+              {[
+                { id: 'overview', label: 'Overview', icon: 'info' },
+                { id: 'rules', label: 'Rules', icon: 'gavel' },
+                { id: 'teams', label: 'Teams', icon: 'groups' },
+                { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
+              ].filter(t => !t.hidden).map(tab => (
+                <button key={tab.id}
+                  onClick={() => setMobileTab(tab.id)}
+                  className={`pb-2 text-[10px] font-bold uppercase tracking-wider border-b-2 shrink-0 transition-all flex items-center gap-1 ${
+                    mobileTab === tab.id
+                      ? 'border-primary text-on-background'
+                      : 'border-transparent text-on-surface-variant/60'
+                  }`}>
+                  <span className="material-symbols-outlined text-[13px]">{tab.icon}</span>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Mobile Tab Content */}
+            {mobileTab === 'overview' && (
+              <div className="space-y-4">
+                {/* Compact Prize/Entry/Slots Row */}
+                <div className="grid grid-cols-3 gap-2 bg-surface-container-low/20 rounded-lg p-3 border border-outline-variant/10">
+                  <div className="text-center">
+                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Prize</span>
+                    <p className="text-sm font-black text-secondary">{prizeDisplay}</p>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Entry</span>
+                    <p className="text-sm font-black text-on-background">{entryDisplay}</p>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
+                    <p className="text-sm font-black text-on-background">{slotFilled}/{slotTotal}</p>
+                    <p className="text-[9px] text-on-surface-variant/60">{slotAvailable} left</p>
                   </div>
                 </div>
 
-                {/* Description details */}
-                <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-3">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">description</span>
-                    Event Brief
-                  </h3>
-                  <p className="text-xs text-on-surface-variant leading-relaxed">
-                    {tourney.description || 'No tournament brief has been provided by the organizer.'}
-                  </p>
-                </div>
+                {/* Prize Distribution (compact) */}
+                {renderPrizeTable()}
 
-                {/* Sponsor Wall — Mobile */}
+                {/* Slot Tracker */}
+                {renderSlotTracker()}
+
+                {/* Registered Teams */}
+                {renderTeamsList()}
+
+                {/* Event Brief */}
+                {tourney.description && (
+                  <div className="space-y-1.5">
+                    <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
+                    <p className="text-[11px] text-on-surface-variant/80 leading-relaxed">{tourney.description}</p>
+                  </div>
+                )}
+
+                {/* Room Credentials */}
+                {renderRoomCredentialsCard()}
+
+                {/* Timeline */}
+                <div className="bg-surface-container-low/20 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
+                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">schedule</span>
+                    Timeline
+                  </h3>
+                  <div className="space-y-2 border-l border-outline-variant/20 pl-3">
+                    {[
+                      { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
+                      { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
+                    ].map((step, idx) => {
+                      const dateObj = step.date ? new Date(step.date) : null;
+                      return (
+                        <div key={idx} className="relative">
+                          <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
+                          <div className="text-[10px] font-bold text-on-background">{step.label}</div>
+                          <div className="text-[9px] font-bold text-primary">
+                            {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
+                          </div>
+                          <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {mobileTab === 'rules' && (
+              <div className="space-y-2">
+                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
+                <div className="text-xs text-on-surface-variant/80 leading-relaxed">
+                  {renderRulesContent()}
+                </div>
+              </div>
+            )}
+
+            {mobileTab === 'teams' && renderTeamsList()}
+
+            {mobileTab === 'sponsors' && (
+              <div className="space-y-4">
                 {sponsorList.length > 0 && (
-                  <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                    <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-base">handshake</span>
-                      Our Sponsors
-                    </h3>
+                  <div className="space-y-2.5">
+                    <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
                     <div className="flex flex-wrap gap-2">
                       {sponsorList.map((s, i) => (
-                        <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container-higher/50 border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
-                          <span className="text-warning text-[12px]">&#9733;</span>
+                        <span key={i} className="inline-flex items-center gap-1.5 px-2 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                          <span className="text-warning text-[11px]">&#9733;</span>
                           {s.name}
                           {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
                         </span>
                       ))}
                     </div>
                     {totalSponsorAmount > 0 && (
-                      <p className="text-[10px] text-on-surface-variant/60">Total sponsor contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+                      <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+                    )}
+                  </div>
+                )}
+                {isSponsorsEnabled && (
+                  <div className="bg-surface-container-low/20 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
+                    <div>
+                      <h3 className="text-[10px] font-bold text-on-background">Sponsor This Tournament</h3>
+                      <p className="text-[9px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool.</p>
+                    </div>
+                    {!showSponsorForm ? (
+                      <button onClick={() => setShowSponsorForm(true)}
+                        className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
+                        Support with UPI
+                      </button>
+                    ) : (
+                      <form onSubmit={handleSponsorContribute} className="space-y-2.5">
+                        <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                          placeholder="Your name" required
+                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                        <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                          placeholder="Amount (₹)" type="number" min="1" required
+                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                        <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                          placeholder="UPI Transaction ID / UTR" required
+                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                        <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                          placeholder="Message (optional)"
+                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
+                        <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
+                        <div className="flex gap-2">
+                          <button type="submit" disabled={sponsorSubmitting}
+                            className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
+                            {sponsorSubmitting ? 'Submitting...' : 'Submit'}
+                          </button>
+                          <button type="button" onClick={() => setShowSponsorForm(false)}
+                            className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
                     )}
                   </div>
                 )}
               </div>
             )}
-
-            {mobileTab === 'teams' && renderTeamsList()}
-
-            {mobileTab === 'prizes_slots' && (
-              <div className="space-y-6">
-                {renderSlotTracker()}
-                {renderPrizeTable()}
-              </div>
-            )}
-          </div>
-
-          {/* PC view dashboard grid layout (2 Columns - Left 65% / Right 35%) */}
-          <div className="hidden md:grid grid-cols-12 gap-6 items-start">
-            
-            {/* Left panels (65%) */}
-            <div className="col-span-8 space-y-6">
-              {/* Prize matrix */}
-              {renderPrizeTable()}
-
-              {/* Slot grid */}
-              {renderSlotTracker()}
-
-              {/* Registered teams */}
-              {renderTeamsList()}
-
-              {/* Description & rules */}
-              <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-base">description</span>
-                      Event Brief
-                    </h3>
-                    <p className="text-xs text-on-surface-variant leading-relaxed whitespace-pre-line">
-                      {tourney.description || 'No tournament brief has been provided by the organizer.'}
-                    </p>
-                  </div>
-                  <div className="space-y-3">
-                    <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                      <span className="material-symbols-outlined text-primary text-base">gavel</span>
-                      Tournament Rules
-                    </h3>
-                    <div className="text-xs text-on-surface-variant leading-relaxed whitespace-pre-line">
-                      {tourney.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Sponsor Wall — Desktop */}
-              {sponsorList.length > 0 && (
-                <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">handshake</span>
-                    Our Sponsors
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {sponsorList.map((s, i) => (
-                      <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-container-higher/50 border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
-                        <span className="text-warning text-[12px]">&#9733;</span>
-                        {s.name}
-                        {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
-                      </span>
-                    ))}
-                  </div>
-                  {totalSponsorAmount > 0 && (
-                    <p className="text-[10px] text-on-surface-variant/60">Total sponsor contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Right panels (35%) */}
-            <div className="col-span-4 space-y-6 sticky top-20">
-              
-              {/* Join Registration card */}
-              <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-5">
-                <div>
-                  <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-base">schedule</span>
-                    Lobby Registration
-                  </h3>
-                  <p className="text-[11px] text-on-surface-variant mt-0.5">Secure your roster match slot coordinates</p>
-                </div>
-
-                {/* Main countdown details */}
-                {(countdown.type === 'registration' || countdown.type === 'start') && (
-                  <div className="bg-surface/50 border border-outline-variant/15 p-3.5 rounded-xl space-y-2">
-                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider block">{countdown.label}</span>
-                    <div className="grid grid-cols-4 gap-2">
-                      {[
-                        { val: countdown.days, lbl: 'Days' },
-                        { val: countdown.hours, lbl: 'Hrs' },
-                        { val: countdown.minutes, lbl: 'Mins' },
-                        { val: countdown.seconds, lbl: 'Secs' }
-                      ].map((s, idx) => (
-                        <div key={idx} className="bg-surface-container-low rounded-lg py-1.5 text-center border border-outline-variant/10">
-                          <span className="text-sm font-black tabular-nums block text-primary">{String(s.val).padStart(2, '0')}</span>
-                          <span className="text-[8px] font-bold text-on-surface-variant uppercase block mt-0.5">{s.lbl}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {countdown.type === 'live' && (
-                  <div className="flex items-center gap-2.5 px-3 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
-                    <span className="text-xs font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
-                  </div>
-                )}
-
-                <div className="border-t border-outline-variant/25 pt-4">
-                  <button onClick={handleRegister} disabled={btn.disabled}
-                    className={`w-full py-3.5 min-h-[46px] rounded-xl font-bold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${btnStyles[btn.style]}`}>
-                    {btn.text}
-                    {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
-                  </button>
-                </div>
-              </div>
-
-              {/* Secured room details gate card */}
-              {renderRoomCredentialsCard()}
-
-              {/* Timeline schedule */}
-              <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-base">schedule</span>
-                  Timeline Schedule
-                </h3>
-                <div className="grid grid-cols-1 gap-4 border-l-2 border-outline-variant/30 pl-4 py-1 ml-2">
-                  {[
-                    { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Decryption coordinates unlock' },
-                    { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks & match begins' }
-                  ].map((step, idx) => {
-                    const dateObj = step.date ? new Date(step.date) : null;
-                    return (
-                      <div key={idx} className="relative space-y-0.5">
-                        <span className="absolute -left-[23px] top-1 w-2.5 h-2.5 rounded-full bg-primary border-2 border-background" />
-                        <div className="text-xs font-black text-on-background">{step.label}</div>
-                        <div className="text-[10px] font-bold text-primary">
-                          {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-                        </div>
-                        <p className="text-[9px] text-on-surface-variant leading-relaxed">{step.desc}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Support this Tournament — Desktop */}
-              <div className="glass-card rounded-2xl p-6 border border-outline-variant/10 space-y-4">
-                <h3 className="text-sm font-black uppercase tracking-wider text-on-background flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-base">handshake</span>
-                  Sponsor This Tournament
-                </h3>
-                <p className="text-[10px] text-on-surface-variant leading-relaxed">
-                  Contribute to the prize pool and get featured on the Sponsor Wall.
-                </p>
-                {!showSponsorForm ? (
-                  <button onClick={() => setShowSponsorForm(true)}
-                    className="w-full py-2.5 min-h-[44px] rounded-xl bg-primary text-white text-xs font-bold transition-all hover:bg-primary/90">
-                    Support with UPI
-                  </button>
-                ) : (
-                  <form onSubmit={handleSponsorContribute} className="space-y-3">
-                    <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                      placeholder="Your name" required
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                    <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
-                      placeholder="Email (optional)" type="email"
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                    <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                      placeholder="Amount (₹)" type="number" min="1" required
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                    <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                      placeholder="UPI Transaction ID / UTR" required
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                    <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
-                      placeholder="Payment app (Google Pay / PhonePe / Paytm)" 
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50" />
-                    <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                      placeholder="Message (optional)"
-                      className="w-full bg-surface border border-outline-variant/30 rounded-lg px-3 py-2 text-xs text-on-background placeholder:text-on-surface-variant/50 resize-none h-16" />
-                    <p className="text-[9px] text-on-surface-variant/60">
-                      Pay to <span className="font-bold text-primary">matchdistrict@upi</span> (UPI) and enter the transaction ID.
-                    </p>
-                    <div className="flex gap-2">
-                      <button type="submit" disabled={sponsorSubmitting}
-                        className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-emerald-500 text-white text-[10px] font-bold transition-all hover:bg-emerald-600 disabled:opacity-50">
-                        {sponsorSubmitting ? 'Submitting...' : 'Submit Contribution'}
-                      </button>
-                      <button type="button" onClick={() => setShowSponsorForm(false)}
-                        className="px-3 py-2.5 min-h-[44px] rounded-xl border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-
-            </div>
           </div>
 
         </motion.div>
       </main>
 
-      {/* Toast Notification */}
+      {/* ══════════ MOBILE STICKY BOTTOM ACTION BAR ══════════ */}
+      <div className="block md:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface border-t border-outline-variant/15 px-4 py-2.5">
+        <div className="flex items-center justify-between gap-3 max-w-7xl mx-auto">
+          <div className="min-w-0">
+            <p className="text-xs font-black text-secondary">{prizeDisplay}</p>
+            <p className="text-[9px] text-on-surface-variant">{slotAvailable} slot{slotAvailable !== 1 ? 's' : ''} left &middot; {entryDisplay}</p>
+          </div>
+          <button onClick={handleRegister} disabled={btn.disabled}
+            className={`shrink-0 px-5 py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 ${btnStyles[btn.style]}`}>
+            {btn.text}
+            {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
+          </button>
+        </div>
+      </div>
+
+      {/* ══════════ TOAST ══════════ */}
       <AnimatePresence>
         {showToast && (
           <motion.div initial={{ opacity: 0, y: 20, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }} transition={{ duration: 0.2 }}
-            className="fixed bottom-6 right-6 z-50 bg-surface border border-primary/30 text-on-background px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 max-w-xs sm:bottom-6 sm:right-6">
-            <span className="material-symbols-outlined text-primary text-lg shrink-0">check_circle</span>
-            <span className="text-sm font-bold">{toastMessage}</span>
+            className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-50 bg-surface border border-primary/30 text-on-background px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-[300px] text-xs font-bold">
+            <span className="material-symbols-outlined text-primary text-base shrink-0">check_circle</span>
+            {toastMessage}
           </motion.div>
         )}
       </AnimatePresence>

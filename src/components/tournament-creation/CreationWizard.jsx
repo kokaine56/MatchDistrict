@@ -13,10 +13,11 @@ import Step4PrizePool from './steps/Step4PrizePool'
 import Step5Media from './steps/Step5Media'
 import Step6Timing from './steps/Step6Timing'
 import Step7Roadmap from './steps/Step7Roadmap'
-import Step8Preview from './steps/Step8Preview'
-import Step9Publish from './steps/Step9Publish'
+import Step8Rules from './steps/Step8Rules'
+import Step9Preview from './steps/Step9Preview'
+import Step10Publish from './steps/Step10Publish'
 
-const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 const LS_KEY = 'md_tournament_draft'
 
 function emptyForm() {
@@ -46,6 +47,7 @@ function emptyForm() {
     startDate: '',
     roadmap: [],
     sponsors: [],
+    rules: '',
   }
 }
 
@@ -105,6 +107,8 @@ function validateStep(step, data, planLimits, orgName, userTier) {
     case 8:
       break
     case 9:
+      break
+    case 10:
       if (!orgName || orgName === 'Match District Organizer') {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
@@ -152,7 +156,7 @@ export default function CreationWizard() {
   const [stepValidationBlocked, setStepValidationBlocked] = useState({})
   const isNavigationBlocked = stepValidationBlocked[currentStep] === true
 
-  // Auth guard — redirect if not authorized (defense in depth)
+  // Auth guard
   useEffect(() => {
     if (loading) return
     if (!currentUser) {
@@ -169,7 +173,7 @@ export default function CreationWizard() {
     }
   }, [currentUser, loading, navigate])
 
-  // Sync userTier from currentUser immediately (fixes Free default for Pro/Basic users)
+  // Sync userTier
   useEffect(() => {
     if (currentUser?.tier) {
       setUserTier(currentUser.tier)
@@ -199,7 +203,7 @@ export default function CreationWizard() {
       .catch(() => {})
   }, [])
 
-  // Check for edit mode from URL params
+  // Check edit mode
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const editId = params.get('edit')
@@ -251,6 +255,7 @@ export default function CreationWizard() {
           startDate: t.startDate || '',
           roadmap,
           sponsors: t.sponsors_data || [],
+          rules: t.rules || '',
         })
         setDraftId(id)
       }
@@ -283,7 +288,7 @@ export default function CreationWizard() {
   const recoverDraft = () => { setCurrentStep(recoveredStep); setShowRecovery(false) }
   const startNew = () => { localStorage.removeItem(LS_KEY); setFormData(emptyForm()); setCurrentStep(1); setShowRecovery(false) }
 
-  // Save to server — returns { tournament, error }
+  // Save to server
   const saveToServer = useCallback(async (publish = false, preUploadedImageUrl = null) => {
     setIsSubmitting(true)
     try {
@@ -332,13 +337,14 @@ export default function CreationWizard() {
         cover_image_url: '',
         slotsTotal: parseInt(formData.slotsTotal) || 100,
         sponsors_enabled: formData.sponsors_enabled ?? false,
+        rules: formData.rules || '',
       }
 
-      // Use pre-uploaded ImgBB URL from Step9Publish if provided
+      // Use pre-uploaded ImgBB URL from Step10Publish if provided
       if (preUploadedImageUrl) {
         body.cover_image_url = preUploadedImageUrl
       } else {
-        // Upload cover image to ImgBB if a local file or blob URL is pending
+        // Upload cover image to ImgBB if local file is pending
         const hasNewFile = !!formData.cover_image_file
         const hasBlobUrl = typeof formData.cover_image_url === 'string' && formData.cover_image_url.startsWith('blob:')
         if (hasNewFile || hasBlobUrl) {
@@ -402,7 +408,6 @@ export default function CreationWizard() {
             })
           } catch {}
         }
-
       }
       setIsSubmitting(false)
       return { tournament: json.tournament, error: null, message: null }
@@ -410,7 +415,7 @@ export default function CreationWizard() {
       setIsSubmitting(false)
       return { tournament: null, error: 'NETWORK', message: 'Network error saving tournament. Please check your connection and try again.' }
     }
-  }, [formData, draftId, editingId, navigate])
+  }, [formData, draftId, editingId])
 
   const handleValidationBlocked = useCallback((step, blocked) => {
     setStepValidationBlocked(prev => ({ ...prev, [step]: blocked }))
@@ -430,6 +435,10 @@ export default function CreationWizard() {
     setCurrentStep((s) => Math.max(s - 1, 1))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
+
+  const [recoveredStep, setRecoveredStep] = useState(1)
+  const [toast, setToast] = useState(null)
+  const [publishError, setPublishError] = useState(null)
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type })
@@ -466,11 +475,7 @@ export default function CreationWizard() {
     }
   }, [formData, planLimits, saveToServer, navigate, orgName, userTier])
 
-  const [publishError, setPublishError] = useState(null)
-  const [recoveredStep, setRecoveredStep] = useState(1)
-  const [toast, setToast] = useState(null)
-
-  const handlePublishStep9 = useCallback(async (preUploadedImageUrl) => {
+  const handlePublishStep10 = useCallback(async (preUploadedImageUrl) => {
     setPublishError(null)
     // Full validation across all steps
     let allErrors = {}
@@ -517,8 +522,9 @@ export default function CreationWizard() {
       case 5: return <Step5Media {...props} />
       case 6: return <Step6Timing {...props} onValidationChange={(blocked) => handleValidationBlocked(6, blocked)} />
       case 7: return <Step7Roadmap {...props} />
-      case 8: return <Step8Preview {...props} />
-      case 9: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} />
+      case 8: return <Step8Rules {...props} />
+      case 9: return <Step9Preview {...props} />
+      case 10: return <Step10Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep10={handlePublishStep10} publishError={publishError} />
       default: return null
     }
   }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, orgName, orgTier, handleValidationBlocked])

@@ -42,7 +42,7 @@ const uploadToImgBB = async (imageState) => {
   }
 }
 
-export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError }) {
+export default function Step10Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep10, publishError }) {
   const navigate = useNavigate()
   const [published, setPublished] = useState(null)
   const [isPublishing, setIsPublishing] = useState(false)
@@ -84,7 +84,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
       }
     }
 
-    const result = await onPublishStep9(finalImageUrl)
+    const result = await onPublishStep10(finalImageUrl)
     if (result?.tournament) {
       setPublished(result.tournament)
     } else if (result?.error) {
