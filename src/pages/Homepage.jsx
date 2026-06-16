@@ -178,7 +178,7 @@ function Homepage({ onNavigate }) {
                 <div className="flex justify-between items-center">
                   <h2 className="font-headline-lg text-lg sm:text-xl md:text-2xl uppercase flex items-center gap-2 sm:gap-2.5 font-bold text-white tracking-tight">
                     <span className="w-1 h-5 sm:h-6 bg-primary rounded-full shadow-[0_0_10px_rgba(192,193,255,0.5)]"></span>
-                    Featured Tournaments
+Tournaments
                   </h2>
                   <button onClick={() => onNavigate && onNavigate('tournaments')} className="text-primary font-label-caps text-xs hover:underline flex items-center gap-1 font-bold">View All <span className="material-symbols-outlined text-sm">arrow_forward</span></button>
                 </div>
@@ -625,15 +625,19 @@ function Homepage({ onNavigate }) {
       </main>
 
       {/* Footer Area */}
-      <footer className="w-full bg-[#030406] border-t border-outline-variant/15 py-8 px-4 sm:px-sm md:px-lg text-center font-body-sm text-xs text-on-surface-variant/60">
-        <div className="max-w-container-max mx-auto space-y-4">
-          <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 font-bold text-white/80">
-            <button onClick={() => onNavigate && onNavigate('about')} className="hover:text-primary transition-colors">About Us</button>
-            <button onClick={() => onNavigate && onNavigate('terms')} className="hover:text-primary transition-colors">Terms of Service</button>
-            <button onClick={() => onNavigate && onNavigate('privacy')} className="hover:text-primary transition-colors">Privacy Policy</button>
-            <button onClick={() => onNavigate && onNavigate('help')} className="hover:text-primary transition-colors">Help &amp; Support</button>
+      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6 px-4 mt-20">
+        <div className="w-full max-w-container-max mx-auto flex flex-col gap-5">
+          <div className="flex justify-center items-center gap-5 border-b border-outline-variant/20 pb-4">
+            <button onClick={() => onNavigate && onNavigate('terms-service')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Terms</button>
+            <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Privacy</button>
+            <button onClick={() => onNavigate && onNavigate('help-support')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Support</button>
           </div>
-          <p>&copy; {new Date().getFullYear()} Match District Esports. All rights reserved. All tournament operations are managed by verified independent hosts.</p>
+          <div className="flex flex-col items-center justify-center gap-1.5 text-center">
+            <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[16px] font-extrabold text-primary tracking-tight hover:opacity-85 transition-opacity">
+               Match District
+            </button>
+            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">&copy; {new Date().getFullYear()} MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
+          </div>
         </div>
       </footer>
     </>

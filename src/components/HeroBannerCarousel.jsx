@@ -98,11 +98,45 @@ function HeroBannerCarousel({ onNavigate }) {
 
   const current = slides[currentIndex]
 
+  const renderTrophyIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.45 1-1 1H4v2h16v-2h-5c-.55 0-1-.45-1-1v-2.34" />
+      <path d="M12 2a7 7 0 0 0-7 7v4a7 7 0 0 0 14 0V9a7 7 0 0 0-7-7z" />
+    </svg>
+  )
+
+  const renderTicketIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2z" />
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="9" y1="10" x2="15" y2="10" />
+      <line x1="9" y1="14" x2="15" y2="14" />
+    </svg>
+  )
+
+  const renderCalendarIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  )
+
+  const getTagIcon = (label) => {
+    const l = (label || '').toLowerCase()
+    if (l.includes('prize')) return renderTrophyIcon()
+    if (l.includes('entry')) return renderTicketIcon()
+    return renderCalendarIcon()
+  }
+
   return (
     <section
       ref={containerRef}
-      style={{ touchAction: 'pan-y' }}
-      className="relative w-full overflow-hidden isolate"
+      style={{ touchAction: 'pan-y !important' }}
+      className="relative w-full overflow-hidden isolate !touch-pan-y"
     >
       {/* Hero background images - persistent across all slides */}
       <div className="absolute inset-0 z-0 overflow-hidden bg-background">
@@ -124,9 +158,9 @@ function HeroBannerCarousel({ onNavigate }) {
       </div>
 
       {/* Ambient cinematic glows */}
-      <div className="absolute top-1/4 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-primary/15 blur-[120px] rounded-full pointer-events-none z-0 hidden sm:block" />
-      <div className="absolute top-1/3 right-1/4 w-[300px] h-[300px] bg-indigo-500/10 blur-[100px] rounded-full pointer-events-none z-0 hidden sm:block" />
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-primary/10 blur-[80px] rounded-full pointer-events-none z-0 block sm:hidden" />
+      <div className="absolute top-1/4 left-1/3 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-primary/5 blur-[120px] rounded-full pointer-events-none z-0 hidden sm:block" />
+      <div className="absolute top-1/3 right-1/4 w-[300px] h-[300px] bg-indigo-500/5 blur-[100px] rounded-full pointer-events-none z-0 hidden sm:block" />
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-primary/5 blur-[80px] rounded-full pointer-events-none z-0 block sm:hidden" />
 
       {/* Main content wrapper */}
       <div className="relative z-10 max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-11 md:pt-14">
@@ -138,9 +172,12 @@ function HeroBannerCarousel({ onNavigate }) {
         </div>
 
         {/* Slide container */}
-        <div className="pb-4 sm:pb-6 md:pb-8">
+        <div className="pb-6 sm:pb-8 flex justify-center w-full !touch-pan-y" style={{ touchAction: 'pan-y !important' }}>
           {/* Slides area */}
-          <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-white/10 shadow-2xl">
+          <div 
+            className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-slate-200 ring-1 ring-slate-900/5 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] shadow-slate-300/60 bg-white/95 backdrop-blur-md w-full max-w-[800px] !touch-pan-y"
+            style={{ touchAction: 'pan-y !important' }}
+          >
             <AnimatePresence initial={false} mode="wait" custom={direction}>
               <motion.div
                 key={current.id}
@@ -149,121 +186,72 @@ function HeroBannerCarousel({ onNavigate }) {
                 initial="enter"
                 animate="center"
                 exit="exit"
-                className="relative flex flex-col sm:flex-row justify-between items-stretch min-h-[320px] sm:min-h-[280px] md:min-h-[300px] lg:min-h-[340px]"
+                className="relative flex flex-col md:flex-row md:items-center justify-between py-6 px-6 md:py-8 md:px-10 gap-6 md:gap-8 min-h-fit !touch-pan-y overflow-hidden"
+                style={{ touchAction: 'pan-y !important' }}
               >
-                {/* Slide gradient background */}
-                <div className={`absolute inset-0 bg-gradient-to-br ${current.bgGradient}`} />
-
-                {/* Geometric cyber-mesh overlay pattern */}
-                <div
-                  className="absolute inset-0 opacity-30 pointer-events-none"
-                  style={{
-                    backgroundImage: `
-                      linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%),
-                      linear-gradient(-45deg, rgba(255,255,255,0.03) 25%, transparent 25%),
-                      linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.03) 75%),
-                      linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.03) 75%)
-                    `,
-                    backgroundSize: '40px 40px',
-                    backgroundPosition: '0 0, 0 20px, 20px -20px, -20px 0px',
-                  }}
-                />
-
-                {/* Radial ambient glow per slide */}
-                <div
-                  className={`absolute -top-20 -right-20 w-64 h-64 rounded-full bg-gradient-to-br ${current.accentColor} opacity-[0.12] blur-[80px] pointer-events-none`}
-                />
-                <div
-                  className={`absolute -bottom-20 -left-20 w-48 h-48 rounded-full bg-gradient-to-tr ${current.accentColor} opacity-[0.08] blur-[60px] pointer-events-none`}
-                />
-
-                {/* Horizontal neon divider accent */}
-                <div className="absolute top-0 left-0 right-0 h-[2px]">
-                  <div className={`w-full h-full bg-gradient-to-r ${current.accentColor} opacity-60`} />
-                </div>
-
-                {/* Content - Left */}
-                <div className="relative z-10 flex flex-col justify-center flex-grow p-6 sm:p-8 md:p-10 lg:p-12 space-y-4">
-                  {/* Badge */}
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-extrabold uppercase tracking-[0.15em] bg-white/10 text-white/90 border border-white/20 backdrop-blur-md w-fit shadow-lg">
-                      <span className={`w-2 h-2 rounded-full bg-gradient-to-r ${current.accentColor} animate-pulse`} />
-                      {current.badge}
-                    </span>
+                {/* Content - Left side: Title & Stats */}
+                <div className="relative z-10 flex flex-col items-start gap-4 md:gap-5 flex-grow text-left">
+                  {/* Tournament Title */}
+                  <div>
+                    <h2 className="font-display-lg text-2xl sm:text-3xl font-extrabold text-slate-900 uppercase tracking-tight leading-none">
+                      {current.title}
+                    </h2>
                   </div>
 
-                  {/* Title */}
-                  <h2 className="font-display-lg text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white uppercase tracking-tight leading-tight">
-                    {current.title}
-                    <br />
-                    <span className={`bg-gradient-to-r ${current.accentColor} bg-clip-text text-transparent`}>
-                      {current.titleAccent}
-                    </span>
-                  </h2>
-
-                  {/* Description */}
-                  <p className="font-body-md text-xs sm:text-sm md:text-base text-white/70 max-w-xl leading-relaxed">
-                    {current.description}
-                  </p>
-
-                  {/* Tags */}
-                  <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                  {/* Data Panels Row */}
+                  <div className="flex flex-wrap items-center gap-4 sm:gap-6 w-full">
                     {current.tags.map((tag, tIdx) => (
-                      <div key={tIdx} className="flex flex-col">
-                        <span className="text-[9px] sm:text-[10px] font-bold text-white/40 uppercase tracking-[0.15em] leading-none mb-1">
-                          {tag.label}
-                        </span>
-                        <span className={`text-sm sm:text-base font-black leading-none ${
-                          tag.value ? 'text-white' : 'text-white/60'
-                        }`}>
-                          {tag.value || tag.label}
-                        </span>
+                      <div 
+                        key={tIdx} 
+                        className="flex items-center gap-2.5 py-1"
+                      >
+                        <div className="shrink-0 text-primary">
+                          {getTagIcon(tag.label)}
+                        </div>
+                        <div className="flex flex-col text-left">
+                          <span className="text-[8px] sm:text-[9px] font-bold text-slate-500 tracking-widest leading-none mb-1 uppercase font-display-lg">
+                            {tag.label}
+                          </span>
+                          <span className="text-xs sm:text-sm font-black text-slate-900 leading-none">
+                            {tag.value}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* CTA - Right/Bottom */}
-                <div className="relative z-10 flex items-center justify-start sm:justify-end shrink-0 p-6 sm:p-8 md:p-10 lg:p-12 pt-0 sm:pt-6">
+                {/* Content - Right side: CTA Button */}
+                <div className="relative z-10 flex items-center justify-start md:justify-end shrink-0 py-2 md:py-0">
                   <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
+                    whileHover={{ scale: 1.01 }}
+                    whileTap={{ scale: 0.98 }}
                     onClick={() => onNavigate && onNavigate('tournaments')}
-                    className={`
-                      group relative px-6 sm:px-8 py-3 sm:py-3.5
-                      rounded-xl font-headline-md text-xs sm:text-sm font-black uppercase tracking-wider
-                      transition-all duration-300
-                      bg-white text-gray-900
-                      hover:bg-white/95
-                      shadow-[0_0_24px_rgba(255,255,255,0.12)]
-                      hover:shadow-[0_0_40px_rgba(255,255,255,0.2)]
-                      flex items-center justify-center gap-2.5
-                      min-h-[44px]
-                    `}
+                    className="group relative px-6 py-2.5 sm:px-8 sm:py-3 rounded-xl font-headline-md text-xs sm:text-sm font-semibold uppercase tracking-wider transition-all duration-300 bg-primary hover:bg-primary/90 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/25 active:translate-y-0 text-white shadow-lg shadow-primary/30 flex items-center justify-center gap-3 min-h-[42px]"
                   >
-                    <span className="relative">{current.buttonText}</span>
-                    <span className={`material-symbols-outlined text-base sm:text-lg group-hover:translate-x-0.5 transition-transform`}>
-                      {current.buttonIcon}
-                    </span>
+                    <span>{current.buttonText}</span>
+                    
+                    <svg className="w-4 h-4 text-white group-hover:translate-x-1 transition-transform duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                      <polyline points="12 5 19 12 12 19" />
+                    </svg>
                   </motion.button>
                 </div>
-
-                {/* Bottom neon glow bar */}
-                <div className={`absolute bottom-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-white/20 to-transparent`} />
               </motion.div>
             </AnimatePresence>
 
-            {/* Dots navigation */}
-            <div className="absolute bottom-4 right-4 sm:bottom-5 sm:right-6 flex items-center gap-2 z-20">
+            {/* Pagination dots container centered at the bottom */}
+            <div className="absolute bottom-3.5 left-1/2 -translate-x-1/2 flex items-center gap-2.5 z-20">
               {slides.map((_, dotIdx) => (
                 <button
                   key={dotIdx}
                   onClick={() => goToSlide(dotIdx)}
-                  className={`rounded-full transition-all duration-500 ${
+                  className={`w-2.5 h-2.5 rounded-full transition-all duration-300 focus:outline-none ${
                     currentIndex === dotIdx
-                      ? 'w-6 sm:w-8 h-2 sm:h-2.5 bg-white shadow-[0_0_12px_rgba(255,255,255,0.4)]'
-                      : 'w-2 sm:w-2.5 h-2 sm:h-2.5 bg-white/30 hover:bg-white/50'
+                      ? 'bg-primary shadow-[0_0_8px_rgba(90,93,250,0.4)] scale-110'
+                      : 'bg-gray-200 hover:bg-gray-300'
                   }`}
+                  aria-label={`Go to slide ${dotIdx + 1}`}
                 />
               ))}
             </div>
