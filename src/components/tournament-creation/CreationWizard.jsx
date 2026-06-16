@@ -90,22 +90,27 @@ function validateStep(step, data, planLimits, orgName, userTier) {
     }
     case 5:
       break
-    case 6:
+    case 6: {
       if (!data.registrationOpenDate) errs.registrationOpenDate = 'Registration open date is required.'
       if (!data.registrationCloseDate) errs.registrationCloseDate = 'Registration close date is required.'
       else if (data.registrationOpenDate && new Date(data.registrationCloseDate) <= new Date(data.registrationOpenDate)) {
         errs.registrationCloseDate = 'Must be after registration opens.'
       }
-      if (!data.startDate) errs.startDate = 'Match start date is required.'
-      else if (data.registrationCloseDate && new Date(data.startDate) <= new Date(data.registrationCloseDate)) {
+      const firstRound = (data.roadmap || [])[0]
+      const matchStartDate = (firstRound?.date && firstRound?.time)
+        ? `${firstRound.date}T${firstRound.time}`
+        : data.startDate || ''
+      if (!matchStartDate) errs.startDate = 'Match start date is required.'
+      else if (data.registrationCloseDate && new Date(matchStartDate) <= new Date(data.registrationCloseDate)) {
         errs.startDate = 'Must be after registration closes.'
       }
       break
+    }
     case 7:
       break
     case 8:
       break
-    case 9:
+    case 9: {
       if (!orgName || orgName === 'Match District Organizer') {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
@@ -115,10 +120,15 @@ function validateStep(step, data, planLimits, orgName, userTier) {
       if (!data.perspective) errs.perspective = 'Perspective mode must be selected.'
       if (!data.registrationOpenDate) errs.registrationOpenDate = 'Registration open date is required.'
       if (!data.registrationCloseDate) errs.registrationCloseDate = 'Registration close date is required.'
-      if (!data.startDate) errs.startDate = 'Match start date is required.'
+      const firstRound = (data.roadmap || [])[0]
+      const matchStartDate = (firstRound?.date && firstRound?.time)
+        ? `${firstRound.date}T${firstRound.time}`
+        : data.startDate || ''
+      if (!matchStartDate) errs.startDate = 'Match start date is required.'
       if (!data.cover_image_url) errs.cover_image_url = 'Cover image required. Please upload a banner in the Media step.'
       if (!data.slotsTotal || parseInt(data.slotsTotal) < 2) errs.slotsTotal = 'Minimum 2 slots required.'
       break
+    }
   }
   return errs
 }
@@ -298,6 +308,11 @@ export default function CreationWizard() {
         .reduce((sum, s) => sum + (s.amount || 0), 0)
       const finalPrizePool = basePrizePool + sponsorContribs
 
+      const firstRound = (formData.roadmap || [])[0]
+      const derivedStartDate = (firstRound?.date && firstRound?.time)
+        ? `${firstRound.date}T${firstRound.time}`
+        : formData.startDate || ''
+
       const body = {
         title: formData.title,
         game: formData.game,
@@ -314,7 +329,7 @@ export default function CreationWizard() {
         timeline: JSON.stringify({ roadmap: formData.roadmap || [] }),
         registrationOpenDate: formData.registrationOpenDate || '',
         registrationCloseDate: formData.registrationCloseDate || '',
-        startDate: formData.startDate || '',
+        startDate: derivedStartDate,
         match_type: formData.match_type || 'squad',
         perspective: formData.perspective || 'tpp',
         reserved_slots: parseInt(formData.reserved_slots) || 0,
