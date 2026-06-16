@@ -50,6 +50,10 @@ function computeRoundErrors(regClose, rounds) {
   return errs
 }
 
+function hasBlockingErrors(errs) {
+  return Object.values(errs).some(msg => !msg.startsWith('Suggestion:'))
+}
+
 function DateInput({ label, value, onChange, min, subtext }) {
   return (
     <div className="relative pb-5">
@@ -107,7 +111,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, onValidationChang
     onChange({ ...data, [field]: value })
   }, [data, onChange])
 
-  const blocked = Object.keys(roundErrors).length > 0
+  const blocked = hasBlockingErrors(roundErrors)
 
   useEffect(() => {
     if (onValidationChange) {

@@ -2,8 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
 import CropModal from '../CropModal'
-
-const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY
+import { uploadToImgbb } from '../../../utils/imgbbUpload'
 
 export default function Step5Media({ data, onChange, orgName, orgTier }) {
   const [uploadStatus, setUploadStatus] = useState('idle')
@@ -14,39 +13,6 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
   const [isImgUploading, setIsImgUploading] = useState(false)
   const fileRef = useRef(null)
   const pendingUpload = useRef(null)
-
-  const uploadToImgBB = useCallback(async (imageState) => {
-    console.log('[ImgBB Step5] Starting upload...')
-    console.log('[ImgBB Step5] API Key present:', !!IMGBB_API_KEY, '| length:', IMGBB_API_KEY?.length)
-    console.log('[ImgBB Step5] Key prefix:', IMGBB_API_KEY?.substring(0, 4) + '...')
-    console.log('[ImgBB Step5] Image type:', typeof imageState, imageState instanceof File ? `File(${imageState.name}, ${imageState.size}bytes)` : (typeof imageState === 'string' ? imageState.substring(0, 50) + '...' : imageState?.constructor?.name))
-
-    let fileToUpload = imageState
-
-    if (typeof fileToUpload === 'string' && fileToUpload.startsWith('blob:')) {
-      const response = await fetch(fileToUpload)
-      fileToUpload = await response.blob()
-      console.log('[ImgBB Step5] Blob converted, size:', fileToUpload.size)
-    }
-
-    const formData = new FormData()
-    formData.append('image', fileToUpload)
-    const uploadUrl = `https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`
-    console.log('[ImgBB Step5] POST', uploadUrl)
-    const res = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
-    })
-    console.log('[ImgBB Step5] Response status:', res.status, res.statusText)
-    const json = await res.json()
-    console.log('[ImgBB Step5] Full response:', JSON.stringify(json, null, 2))
-    if (!json.success) {
-      console.error('[ImgBB Step5] Error:', json.error?.message)
-      throw new Error(json.error?.message || 'ImgBB upload failed')
-    }
-    console.log('[ImgBB Step5] Success! URL:', json.data.display_url)
-    return json.data.display_url
-  }, [])
 
   const handleUpload = useCallback(async (e) => {
     const file = e.target.files?.[0]
@@ -93,7 +59,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
       URL.revokeObjectURL(tempUrl)
       setIsImgUploading(true)
       try {
-        const publicUrl = await uploadToImgBB(file)
+        const publicUrl = await uploadToImgbb(file)
         onChange({ ...data, cover_image_url: publicUrl })
         setUploadStatus('completed')
       } catch (err) {
@@ -109,7 +75,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
     setCropSrc(tempUrl)
     pendingUpload.current = file
     setShowCrop(true)
-  }, [data, onChange, uploadToImgBB])
+  }, [data, onChange, uploadToImgbb])
 
   const handleCropDone = useCallback(async (blob) => {
     setShowCrop(false)
@@ -120,7 +86,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
 
     setIsImgUploading(true)
     try {
-      const publicUrl = await uploadToImgBB(croppedFile)
+      const publicUrl = await uploadToImgbb(croppedFile)
       onChange({ ...data, cover_image_url: publicUrl })
       setUploadStatus('completed')
     } catch (err) {
@@ -129,7 +95,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
     } finally {
       setIsImgUploading(false)
     }
-  }, [data, onChange, cropSrc, uploadToImgBB])
+  }, [data, onChange, cropSrc, uploadToImgbb])
 
   const handleCropCancel = useCallback(() => {
     setShowCrop(false)

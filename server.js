@@ -140,6 +140,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth@matchdistrict.in>';
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const IMGBB_API_KEY_SERVER = process.env.IMGBB_API_KEY || process.env.VITE_IMGBB_API_KEY || '';
 
 // Initialize Resend
 const resend = new Resend(RESEND_API_KEY);
@@ -4311,6 +4312,67 @@ const server = http.createServer(async (req, res) => {
         console.error(`❌ [UPLOAD SERVICE] Exception during upload:`, err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'UPLOAD_ERROR', message: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7r. ImgBB Upload Proxy (CORS-safe)
+  if (req.url === '/api/imgbb-upload' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to upload images.' }));
+          return;
+        }
+
+        const payload = JSON.parse(body);
+        if (!payload.image) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'No image data provided.' }));
+          return;
+        }
+
+        if (!IMGBB_API_KEY_SERVER) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'ImgBB API key not configured on server.' }));
+          return;
+        }
+
+        let base64 = payload.image;
+        if (base64.includes(';base64,')) {
+          base64 = base64.split(';base64,')[1];
+        }
+        const imgBuffer = Buffer.from(base64, 'base64');
+        const blob = new Blob([imgBuffer], { type: 'image/png' });
+
+        const imgbbForm = new FormData();
+        imgbbForm.append('image', blob, 'upload.png');
+
+        const imgbbRes = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY_SERVER}`, {
+          method: 'POST',
+          body: imgbbForm,
+        });
+
+        const imgbbData = await imgbbRes.json();
+        if (!imgbbData.success) {
+          console.error('❌ [IMGBB PROXY] ImgBB error:', imgbbData.error?.message);
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'IMGBB_ERROR', message: imgbbData.error?.message || 'ImgBB upload failed' }));
+          return;
+        }
+
+        console.log(`📸 [IMGBB PROXY] Upload success: ${imgbbData.data.display_url}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, url: imgbbData.data.display_url }));
+      } catch (err) {
+        console.error('❌ [IMGBB PROXY] Exception:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PROXY_ERROR', message: err.message }));
       }
     });
     return;

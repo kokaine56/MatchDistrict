@@ -10,7 +10,9 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
       exit={{ opacity: 0, y: -10 }}
       className={`bg-surface-container/60 border p-4 rounded-xl space-y-3 transition-colors ${
         error
-          ? 'border-error/40 dark:border-error/30'
+          ? error.startsWith('Suggestion:')
+            ? 'border-amber-500/30 dark:border-amber-500/20'
+            : 'border-error/40 dark:border-error/30'
           : 'border-slate-200 dark:border-outline-variant/30'
       }`}
     >
@@ -114,9 +116,19 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-error/10 border border-error/20">
-          <svg className="w-4 h-4 text-error shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-          <p className="text-[11px] text-error font-medium leading-snug">{error}</p>
+        <div className={`flex items-start gap-2 p-2.5 rounded-lg border ${
+          error.startsWith('Suggestion:')
+            ? 'bg-amber-500/10 border-amber-500/20'
+            : 'bg-error/10 border-error/20'
+        }`}>
+          {error.startsWith('Suggestion:') ? (
+            <svg className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          ) : (
+            <svg className="w-4 h-4 text-error shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+          )}
+          <p className={`text-[11px] font-medium leading-snug ${
+            error.startsWith('Suggestion:') ? 'text-amber-300' : 'text-error'
+          }`}>{error}</p>
         </div>
       )}
     </motion.div>

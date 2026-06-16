@@ -1,46 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-
-const uploadToImgBB = async (imageState) => {
-  try {
-    console.log("1. Starting upload. Raw image state type:", typeof imageState)
-    let fileToUpload = imageState
-
-    if (typeof imageState === 'string') {
-      console.log("2. Image is a string. Converting via fetch...")
-      const res = await fetch(imageState)
-      fileToUpload = await res.blob()
-      console.log("3. Conversion successful. Blob size:", fileToUpload.size)
-    }
-
-    const formData = new FormData()
-    formData.append('image', fileToUpload)
-
-    const apiKey = import.meta.env.VITE_IMGBB_API_KEY
-    if (!apiKey) {
-      console.error("CRITICAL: VITE_IMGBB_API_KEY is missing from environment variables.")
-    }
-
-    console.log("4. Sending to ImgBB API...")
-    const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
-      method: 'POST',
-      body: formData,
-    })
-
-    const data = await response.json()
-    console.log("5. ImgBB Full Response:", data)
-
-    if (data.success) {
-      return data.data.display_url
-    } else {
-      throw new Error(data.error?.message || "Unknown ImgBB Server Error")
-    }
-  } catch (error) {
-    console.error("IMGBB UPLOAD CATCH ERROR:", error)
-    throw error
-  }
-}
+import { uploadToImgbb } from '../../../utils/imgbbUpload'
 
 export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError }) {
   const navigate = useNavigate()
@@ -73,7 +34,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
     if (finalImageUrl && !finalImageUrl.includes('imgbb.com') && !finalImageUrl.includes('unsplash.com')) {
       setMediaUploading(true)
       try {
-        finalImageUrl = await uploadToImgBB(finalImageUrl)
+        finalImageUrl = await uploadToImgbb(finalImageUrl)
       } catch (err) {
         setMediaUploading(false)
         setIsPublishing(false)
