@@ -225,7 +225,7 @@ function Tournaments({ onNavigate }) {
             <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
               {/* ── SCROLL VIEWPORT: controls the scrollable window, width anchored to 100% ── */}
               <div
-                className="pb-8 pt-4 custom-scrollbar scroll-pl-1 md:scroll-pl-2"
+                className="pb-8 pt-4 custom-scrollbar scroll-pl-1 md:scroll-pl-2 !touch-pan-x"
                 style={{
                   overflowX: 'auto',
                   overflowY: 'visible',
@@ -544,7 +544,7 @@ function Tournaments({ onNavigate }) {
           <AnimatePresence mode="popLayout">
             {filteredTournaments.length > 0 ? (
               statusFilter === 'Live' ? (
-                <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-pan-x" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}>
                   {filteredTournaments.map(t => {
                     const modeLabel = [t.match_type === 'solo' ? 'Solo' : t.match_type === 'duo' ? 'Duo' : 'Squad', t.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
                     return (
@@ -604,7 +604,7 @@ function Tournaments({ onNavigate }) {
                 <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
                   {/* ── SCROLL VIEWPORT ── */}
                   <div
-                  className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2"
+                  className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-pan-x"
                   style={{
                     overflowX: 'auto',
                     overflowY: 'visible',

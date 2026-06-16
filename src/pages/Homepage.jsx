@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import CountUp from '../components/CountUp'
 import { useUser } from '../UserContext.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
@@ -21,7 +21,7 @@ import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const formatINR = (val) => {
   const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
-  return isNaN(n) ? (val || 'TBA') : `\u20B9${n.toLocaleString('en-IN')}`
+  return isNaN(n) ? (val || 'TBA') : `₹${n.toLocaleString('en-IN')}`
 }
 
 const GAME_ICON_MAP = {
@@ -112,6 +112,81 @@ function Homepage({ onNavigate }) {
   const featuredTournaments = useMemo(() => {
     return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) !== 'live').slice(0, 10)
   }, [tournamentsList, now])
+
+  // Looping Promo Banner Data & Logic
+  const promoCards = useMemo(() => [
+    {
+      id: 'welcome',
+      title: 'Welcome to the District',
+      description: 'The ultimate hub for competitive gaming. Join premium tournaments, form elite squads, and compete for massive prize pools.',
+      bgGradient: 'from-[#1e1b4b] via-[#311042] to-[#07080c]',
+      tags: [
+        { label: 'EST. 2026' },
+        { label: '100% SECURE' },
+        { label: 'INSTANT PAYOUTS' }
+      ],
+      buttonText: 'Explore Events',
+      action: () => onNavigate && onNavigate('tournaments')
+    },
+    {
+      id: 'bgis-2026',
+      title: 'Promoted Tournament: BGIS 2026',
+      description: 'The grandest stage of mobile battle royale. Register your squad now and lock horns with the nation’s top tier esports teams.',
+      bgGradient: 'from-[#4c1d95] via-[#451a03] to-[#07080c]',
+      tags: [
+        { label: 'PRIZE POOL', value: '₹50,00,000' },
+        { label: 'ENTRY FEE', value: 'Free Entry' },
+        { label: 'STARTS IN', value: 'July 15, 2026' }
+      ],
+      buttonText: 'Register Now',
+      action: () => onNavigate && onNavigate('tournaments')
+    },
+    {
+      id: 'val-challenger',
+      title: 'Promoted Tournament: Valorant Challenger Cup',
+      description: '5v5 tactical shooter showdown. Bring your team, execute your strategies, and claim the championship title.',
+      bgGradient: 'from-[#881337] via-[#2d0615] to-[#07080c]',
+      tags: [
+        { label: 'PRIZE POOL', value: '₹10,00,000' },
+        { label: 'ENTRY FEE', value: '₹500 / Team' },
+        { label: 'STARTS IN', value: 'July 28, 2026' }
+      ],
+      buttonText: 'View Details',
+      action: () => onNavigate && onNavigate('tournaments')
+    }
+  ], [onNavigate])
+
+  const [currentPromoIndex, setCurrentPromoIndex] = useState(0)
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentPromoIndex((prev) => (prev + 1) % promoCards.length)
+    }, 10000)
+    return () => clearInterval(timer)
+  }, [promoCards.length])
+
+  const promoVariants = {
+    enter: {
+      opacity: 0,
+      x: 40,
+    },
+    center: {
+      opacity: 1,
+      x: 0,
+      transition: {
+        x: { type: 'spring', stiffness: 300, damping: 30 },
+        opacity: { duration: 0.4 }
+      }
+    },
+    exit: {
+      opacity: 0,
+      x: -40,
+      transition: {
+        x: { type: 'spring', stiffness: 300, damping: 30 },
+        opacity: { duration: 0.4 }
+      }
+    }
+  }
 
   const renderFeedbacksMarquee = (containerClassName) => (
     <div className={containerClassName}>
@@ -252,6 +327,83 @@ function Homepage({ onNavigate }) {
             </div>
           </div>
         </section>
+
+        {/* High-visibility automated looping Advertisement and Promoted Tournaments section */}
+        <section className="max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-6 overflow-hidden">
+          <div className="relative overflow-hidden rounded-2xl border border-outline-variant/20 bg-[#07080C] h-[260px] sm:h-[180px] md:h-[200px] shadow-2xl">
+            <AnimatePresence initial={false} mode="wait">
+              <motion.div
+                key={currentPromoIndex}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                variants={promoVariants}
+                className={`absolute inset-0 flex flex-col sm:flex-row justify-between items-stretch bg-gradient-to-r ${promoCards[currentPromoIndex].bgGradient} p-5 sm:p-6 md:p-8`}
+              >
+                {/* Left Side: Content */}
+                <div className="flex flex-col justify-between flex-grow z-10 space-y-3 sm:space-y-0">
+                  <div className="space-y-1">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-widest bg-primary/20 text-primary border border-primary/30 w-fit">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping"></span>
+                      Promoted
+                    </span>
+                    <h2 className="font-display-lg text-lg sm:text-xl md:text-2xl font-black text-white uppercase tracking-tight leading-tight mt-1">
+                      {promoCards[currentPromoIndex].title}
+                    </h2>
+                    <p className="font-body-md text-xs text-on-surface-variant/80 max-w-xl leading-relaxed">
+                      {promoCards[currentPromoIndex].description}
+                    </p>
+                  </div>
+
+                  {/* Metadata Tags */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    {promoCards[currentPromoIndex].tags.map((tag, tIdx) => (
+                      <div key={tIdx} className="flex flex-col">
+                        {tag.value ? (
+                          <>
+                            <span className="text-[8px] font-bold text-on-surface-variant/50 uppercase tracking-widest leading-none mb-0.5">{tag.label}</span>
+                            <span className="text-[11px] font-black text-white leading-none uppercase">{tag.value}</span>
+                          </>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-white/5 border border-white/10 rounded-md text-[9px] font-extrabold text-on-surface-variant/80 uppercase tracking-wider">{tag.label}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right Side: Interactive Action */}
+                <div className="flex items-center justify-start sm:justify-end shrink-0 z-10 mt-3 sm:mt-0">
+                  <motion.button
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={promoCards[currentPromoIndex].action}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-white text-black font-headline-md text-xs font-black uppercase tracking-wider rounded-xl hover:bg-white/90 transition-all shadow-[0_0_20px_rgba(255,255,255,0.15)] flex items-center justify-center gap-2"
+                  >
+                    <span>{promoCards[currentPromoIndex].buttonText}</span>
+                    <span className="material-symbols-outlined text-sm font-bold">arrow_forward</span>
+                  </motion.button>
+                </div>
+
+                {/* Ambient graphic elements */}
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-white/5 via-transparent to-transparent pointer-events-none" />
+                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
+              </motion.div>
+            </AnimatePresence>
+
+            {/* Dots navigation indicator overlay */}
+            <div className="absolute bottom-3 right-4 flex items-center gap-1.5 z-20">
+              {promoCards.map((_, dotIdx) => (
+                <button
+                  key={dotIdx}
+                  onClick={() => setCurrentPromoIndex(dotIdx)}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${currentPromoIndex === dotIdx ? 'w-4 bg-white' : 'w-1.5 bg-white/30 hover:bg-white/50'}`}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* Main Content Area */}
         <section className="max-w-container-max mx-auto px-4 sm:px-sm md:px-lg py-8 sm:py-10 md:py-12 grid grid-cols-12 gap-4 sm:gap-5 md:gap-6 overflow-visible">
           {/* Left 8 Columns */}
@@ -288,7 +440,7 @@ function Homepage({ onNavigate }) {
                     <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
                       {/* ── SCROLL VIEWPORT: width anchored to 100%, scrolls horizontally ── */}
                       <div
-                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2"
+                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-pan-x"
                         style={{
                           overflowX: 'auto',
                           overflowY: 'visible',
@@ -420,7 +572,7 @@ function Homepage({ onNavigate }) {
                     </p>
                   </div>
                 ) : (
-                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide">
+                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-pan-x" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}>
                     {liveMatches.map((match, idx) => {
                       const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
                       return (
@@ -502,7 +654,7 @@ function Homepage({ onNavigate }) {
                   </button>
                 </div>
                 {/* Horizontal snap carousel on mobile, 2-col grid on desktop */}
-                <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar pb-2 md:pb-0 -mx-3 px-3 sm:-mx-4 sm:px-4">
+                <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar pb-2 md:pb-0 -mx-3 px-3 sm:-mx-4 sm:px-4 !touch-pan-x" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}>
                   {organisersList.length > 0 ? (
                     organisersList.slice(0, 4).map((org, idx) => {
                       const formatFollowersLocal = (n) => {

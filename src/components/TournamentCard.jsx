@@ -118,7 +118,8 @@ function WalletPassCard({
       style={{
         perspective: '1000px',
         transform: 'rotate3d(1, -1, 0, 4deg)',
-        transformStyle: 'preserve-3d'
+        transformStyle: 'preserve-3d',
+        touchAction: 'manipulation'
       }}
     >
       {/* The Pocket Sleeve Container */}
@@ -438,6 +439,7 @@ function TournamentCardBase({
       <motion.div
         whileHover={{ y: -4, scale: 1.01 }}
         whileTap={{ scale: 0.99 }}
+        style={{ touchAction: 'manipulation' }}
         className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px] md:max-w-[320px]`}
       >
         <div
