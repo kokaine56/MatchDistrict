@@ -114,7 +114,7 @@ function WalletPassCard({
 
   return (
     <div 
-      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
+      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 mr-1 md:mr-2 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
       style={{
         perspective: '1000px',
         transform: 'rotate3d(1, -1, 0, 4deg)',
