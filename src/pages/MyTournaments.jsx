@@ -177,7 +177,7 @@ export default function MyTournaments({ onNavigate }) {
             variants={containerVariants}
             initial="hidden"
             animate="show"
-            className="flex flex-wrap gap-4"
+            className="flex flex-wrap gap-4 pb-8 overflow-visible"
           >
             {filteredData.map(t => (
               <motion.div key={t.id} variants={cardVariants}>

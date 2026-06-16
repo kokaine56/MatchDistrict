@@ -285,32 +285,33 @@ function Homepage({ onNavigate }) {
                       </button>
                     </div>
                   ) : (
-                    <div className="flex flex-nowrap overflow-x-auto items-start justify-start gap-4 sm:gap-6 w-full pb-4 snap-x scrollbar-hide">
+                    <div className="flex flex-nowrap overflow-x-auto overflow-y-visible items-start justify-start gap-4 sm:gap-6 w-full pb-8 pt-4 px-6 snap-x scrollbar-hide">
                       {featuredTournaments.map((t) => (
-                        <TournamentCard
-                          key={t.id}
-                          id={t.id}
-                          title={t.title}
-                          game={t.game}
-                          status={t.status}
-                          badgeTextColor="text-white"
-                          imgSrc={t.cover_image_url || t.bannerUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"}
-                          imgAlt={t.title}
-                          prizePool={t.prize}
-                          entryFee={t.entry}
-                          matchType={t.match_type || t.matchType || 'Squad'}
-                          perspective={t.perspective || 'TPP'}
-                          slotsTotal={t.slotsTotal}
-                          slotsFilled={t.slotsFilled}
-                          entryFeeAmount={t.entry_fee_amount}
-                          orgName={t.orgName || "Match District Organizer"}
-                          orgTier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'}
-                          onNavigate={onNavigate}
-                          hasSponsors={t.hasApprovedSponsors || false}
-                          registrationOpenDate={t.registrationOpenDate}
-                          registrationCloseDate={t.registrationCloseDate}
-                          startDate={t.startDate}
-                        />
+                        <div key={t.id} className="shrink-0 snap-start scroll-pl-6">
+                          <TournamentCard
+                            id={t.id}
+                            title={t.title}
+                            game={t.game}
+                            status={t.status}
+                            badgeTextColor="text-white"
+                            imgSrc={t.cover_image_url || t.bannerUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"}
+                            imgAlt={t.title}
+                            prizePool={t.prize}
+                            entryFee={t.entry}
+                            matchType={t.match_type || t.matchType || 'Squad'}
+                            perspective={t.perspective || 'TPP'}
+                            slotsTotal={t.slotsTotal}
+                            slotsFilled={t.slotsFilled}
+                            entryFeeAmount={t.entry_fee_amount}
+                            orgName={t.orgName || "Match District Organizer"}
+                            orgTier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'}
+                            onNavigate={onNavigate}
+                            hasSponsors={t.hasApprovedSponsors || false}
+                            registrationOpenDate={t.registrationOpenDate}
+                            registrationCloseDate={t.registrationCloseDate}
+                            startDate={t.startDate}
+                          />
+                        </div>
                       ))}
                     </div>
                   )}

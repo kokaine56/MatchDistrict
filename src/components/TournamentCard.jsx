@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import VerificationBadge from './VerificationBadge'
 import gameBgmi from '../assets/supported_games/bgmi.png'
@@ -35,6 +35,15 @@ function getGameLogo(game) {
   return GAME_LOGOS[key] || null
 }
 
+const formatStatusHeaderText = (text) => {
+  const t = (text || '').toLowerCase().trim()
+  if (t === 'upcoming') return 'Upcoming'
+  if (t === 'reg. open' || t === 'registrations open' || t === 'open') return 'Registration Open'
+  if (t === 'reg. closed' || t === 'closed') return 'Registration Closed'
+  if (t === 'live') return 'Live'
+  return text || 'Upcoming'
+}
+
 function WalletPassCard({
   id,
   title,
@@ -59,6 +68,32 @@ function WalletPassCard({
   const [isPassPopped, setIsPassPopped] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
 
+  useEffect(() => {
+    if (!isPassPopped) return
+
+    const handleCloseOthers = (e) => {
+      if (e.detail?.id !== id) {
+        setIsPassPopped(false)
+      }
+    }
+
+    window.addEventListener('md-close-other-passes', handleCloseOthers)
+    return () => {
+      window.removeEventListener('md-close-other-passes', handleCloseOthers)
+    }
+  }, [isPassPopped, id])
+
+  const togglePass = () => {
+    const nextState = !isPassPopped
+    setIsPassPopped(nextState)
+    if (nextState) {
+      const event = new CustomEvent('md-close-other-passes', {
+        detail: { id }
+      })
+      window.dispatchEvent(event)
+    }
+  }
+
   const handleMouseEnter = () => {
     if (window.innerWidth >= 640) {
       setIsHovered(true)
@@ -79,7 +114,7 @@ function WalletPassCard({
 
   return (
     <div 
-      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 transition-all duration-300 ${isPassPopped || isHovered ? 'z-50' : 'z-10'}`}
+      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
       style={{
         perspective: '1000px',
         transform: 'rotate3d(1, -1, 0, 4deg)',
@@ -88,7 +123,7 @@ function WalletPassCard({
     >
       {/* The Pocket Sleeve Container */}
       <div 
-        onClick={() => setIsPassPopped(!isPassPopped)}
+        onClick={togglePass}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         className="z-10 relative w-full h-full bg-surface-container-low rounded-2xl flex-shrink-0 transform shadow-[0_12px_24px_rgba(0,0,0,0.6)] cursor-pointer hover:scale-[1.01] transition-all duration-300"
@@ -120,8 +155,8 @@ function WalletPassCard({
           <div className="space-y-1">
             {/* Top row with target SVG decoration */}
             <div className="flex items-center justify-between border-b border-slate-200 pb-0.5">
-              <span className="text-[7px] tracking-widest text-slate-500 font-extrabold uppercase leading-none">
-                PASS
+              <span className="text-[7px] tracking-wider text-slate-500 font-extrabold uppercase leading-none">
+                {formatStatusHeaderText(displayBadgeText)}
               </span>
               <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-amber-600">
                 <circle cx="12" cy="12" r="9" />
@@ -206,12 +241,6 @@ function WalletPassCard({
             alt={title}
             className="w-full h-full object-cover"
           />
-          {/* Status Badge overlay on cover sleeve */}
-          {displayBadgeText && (
-            <div className={`absolute top-2 left-2 rounded px-1.5 py-0.5 text-[8px] tracking-wider uppercase font-semibold leading-none shadow-sm ${displayBadgeBg}`}>
-              {displayBadgeText}
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -221,9 +221,9 @@ function Tournaments({ onNavigate }) {
               Trending &amp; Featured Events
             </h3>
 
-            <div className="flex gap-4 overflow-x-auto snap-x snap-mandatory pb-3 py-4 custom-scrollbar scroll-smooth">
+            <div className="flex gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory pb-8 pt-4 px-6 custom-scrollbar scroll-smooth">
               {featuredTournaments.map(t => (
-                <div key={`featured-${t.id}`} className="shrink-0 flex items-start">
+                <div key={`featured-${t.id}`} className="shrink-0 flex items-start snap-start scroll-pl-6">
                   <TournamentCard
                     id={t.id}
                     title={t.title}
@@ -578,31 +578,32 @@ function Tournaments({ onNavigate }) {
                   })}
                 </div>
               ) : (
-                <motion.div className="flex flex-nowrap overflow-x-auto items-start justify-start gap-4 sm:gap-6 w-full pb-4 snap-x scrollbar-hide">
+                <motion.div className="flex flex-nowrap overflow-x-auto overflow-y-visible items-start justify-start gap-4 sm:gap-6 w-full pb-8 pt-4 px-6 snap-x scrollbar-hide">
                   {filteredTournaments.map(t => (
-                    <TournamentCard
-                      key={`featured-${t.id}`}
-                      id={t.id}
-                      title={t.title}
-                      game={t.game}
-                      status={t.status}
-                      badgeTextColor="text-white"
-                      imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
-                      imgAlt={t.title}
-                      prizePool={t.prize}
-                      entryFee={t.entry}
-                      matchType={t.match_type}
-                      perspective={t.perspective}
-                      slotsTotal={t.slotsTotal}
-                      slotsFilled={t.slotsFilled}
-                      entryFeeAmount={t.entryFeeAmount}
-                      orgName={t.orgName}
-                      orgTier={t.orgTier}
-                      onNavigate={onNavigate}
-                      registrationOpenDate={t.registrationOpenDate}
-                      registrationCloseDate={t.registrationCloseDate}
-                      startDate={t.startDate}
-                    />
+                    <div key={`explore-${t.id}`} className="shrink-0 snap-start scroll-pl-6">
+                      <TournamentCard
+                        id={t.id}
+                        title={t.title}
+                        game={t.game}
+                        status={t.status}
+                        badgeTextColor="text-white"
+                        imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
+                        imgAlt={t.title}
+                        prizePool={t.prize}
+                        entryFee={t.entry}
+                        matchType={t.match_type}
+                        perspective={t.perspective}
+                        slotsTotal={t.slotsTotal}
+                        slotsFilled={t.slotsFilled}
+                        entryFeeAmount={t.entryFeeAmount}
+                        orgName={t.orgName}
+                        orgTier={t.orgTier}
+                        onNavigate={onNavigate}
+                        registrationOpenDate={t.registrationOpenDate}
+                        registrationCloseDate={t.registrationCloseDate}
+                        startDate={t.startDate}
+                      />
+                    </div>
                   ))}
                 </motion.div>
               )
