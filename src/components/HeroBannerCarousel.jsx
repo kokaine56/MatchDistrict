@@ -131,14 +131,14 @@ function HeroBannerCarousel({ onNavigate }) {
       {/* Main content wrapper */}
       <div className="relative z-10 max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-11 md:pt-14">
         {/* Top static greeting area */}
-        <div className="text-left sm:text-center pb-6 pt-4">
-          <h1 className="font-display-lg text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-white uppercase tracking-tight leading-tight">
-            Welcome to the district.
+        <div className="text-left sm:text-center pb-3 md:pb-5 pt-3 sm:pt-4">
+          <h1 className="font-display-lg text-xl sm:text-2xl md:text-3xl lg:text-4xl font-semibold text-white tracking-wide leading-tight">
+            Welcome to the District.
           </h1>
         </div>
 
         {/* Slide container */}
-        <div className="pb-6 sm:pb-8 md:pb-12">
+        <div className="pb-4 sm:pb-6 md:pb-8">
           {/* Slides area */}
           <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-white/10 shadow-2xl">
             <AnimatePresence initial={false} mode="wait" custom={direction}>
