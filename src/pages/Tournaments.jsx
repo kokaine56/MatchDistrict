@@ -242,7 +242,7 @@ function Tournaments({ onNavigate }) {
                   {featuredTournaments.map((t, idx) => (
                     <div
                       key={`featured-${t.id}`}
-                      className="snap-start flex items-start first:ml-3 pr-2 md:pr-3"
+                      className="snap-start flex items-start first:ml-3"
                       style={{ flexShrink: 0, minWidth: '150px' }}
                     >
                       <TournamentCard
@@ -621,7 +621,7 @@ function Tournaments({ onNavigate }) {
                       {filteredTournaments.map((t, idx) => (
                         <div
                           key={`explore-${t.id}`}
-                          className="snap-start first:ml-3 pr-2 md:pr-3"
+                          className="snap-start first:ml-3"
                           style={{ flexShrink: 0, minWidth: '150px' }}
                         >
                           <TournamentCard
