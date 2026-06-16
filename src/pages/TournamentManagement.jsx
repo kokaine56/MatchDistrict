@@ -373,7 +373,7 @@ export default function TournamentManagement({ onNavigate }) {
                     entryFeeAmount={entryFee}
                     orgName={t.orgName || 'My Organization'}
                     orgTier={t.orgTier || 'pro'}
-                    buttonText="Manage"
+                    buttonText="View Details"
                     onNavigate={(route, id) => handleAction('view', t)}
                     hasSponsors={t.hasApprovedSponsors || false}
                   />

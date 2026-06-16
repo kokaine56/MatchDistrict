@@ -62,36 +62,9 @@ export function getStatusBadgeConfig(status) {
 }
 
 export function getCTAButtonConfig(status) {
-  switch (status) {
-    case 'upcoming':
-      return {
-        text: 'Registration Not Started',
-        disabled: true,
-        styleClass: 'opacity-60 cursor-not-allowed bg-blue-500/10 text-blue-400/80 border border-blue-500/20'
-      };
-    case 'open':
-      return {
-        text: 'Join Now',
-        disabled: false,
-        styleClass: 'bg-primary hover:bg-primary/95 text-white active:scale-95 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
-      };
-    case 'closed':
-      return {
-        text: 'Registration Closed',
-        disabled: true,
-        styleClass: 'opacity-60 cursor-not-allowed bg-slate-500/10 text-slate-400/80 border border-slate-500/25'
-      };
-    case 'live':
-      return {
-        text: 'View Match',
-        disabled: false,
-        styleClass: 'bg-rose-600 hover:bg-rose-500 text-white font-bold animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.25)]'
-      };
-    default:
-      return {
-        text: 'Join Now',
-        disabled: false,
-        styleClass: 'bg-primary hover:bg-primary/95 text-white'
-      };
-  }
+  return {
+    text: 'View Details',
+    disabled: false,
+    styleClass: 'bg-primary hover:bg-primary/95 text-white active:scale-95 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+  };
 }

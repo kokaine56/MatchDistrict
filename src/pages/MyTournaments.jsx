@@ -6,12 +6,12 @@ import { getAuthToken } from '../utils/getAuthToken'
 import { fetchJsonWithRetry } from '../utils/api'
 
 const REG_STATUS_CONFIG = {
-  'approved': { label: 'Registered', bg: 'bg-green-500 text-white', btnText: 'Registered', btnClassName: 'bg-green-500 hover:bg-green-600', group: 'Registered' },
-  'confirmed': { label: 'Registered', bg: 'bg-green-500 text-white', btnText: 'Registered', btnClassName: 'bg-green-500 hover:bg-green-600', group: 'Registered' },
-  'pending': { label: 'Pending Verification', bg: 'bg-amber-500 text-white', btnText: 'Pending', group: 'Pending' },
-  'pending_payment': { label: 'Pending Verification', bg: 'bg-amber-500 text-white', btnText: 'Pending', group: 'Pending' },
-  'waitlisted': { label: 'Waitlisted', bg: 'bg-amber-500/80 text-white', btnText: 'Waitlisted', group: 'Pending' },
-  'rejected': { label: 'Rejected', bg: 'bg-red-500 text-white', btnText: 'Rejected', group: 'Rejected' },
+  'approved': { label: 'Registered', bg: 'bg-green-500 text-white', btnText: 'View Details', group: 'Registered' },
+  'confirmed': { label: 'Registered', bg: 'bg-green-500 text-white', btnText: 'View Details', group: 'Registered' },
+  'pending': { label: 'Pending Verification', bg: 'bg-amber-500 text-white', btnText: 'View Details', group: 'Pending' },
+  'pending_payment': { label: 'Pending Verification', bg: 'bg-amber-500 text-white', btnText: 'View Details', group: 'Pending' },
+  'waitlisted': { label: 'Waitlisted', bg: 'bg-amber-500/80 text-white', btnText: 'View Details', group: 'Pending' },
+  'rejected': { label: 'Rejected', bg: 'bg-red-500 text-white', btnText: 'View Details', group: 'Rejected' },
   'cancelled': { label: 'Cancelled', bg: 'bg-surface-variant text-on-surface-variant', btnText: 'View Details', group: 'Rejected' },
   'expired': { label: 'Expired', bg: 'bg-surface-variant text-on-surface-variant', btnText: 'View Details', group: 'Rejected' },
 }
