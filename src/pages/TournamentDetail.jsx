@@ -12,6 +12,13 @@ import { getAuthToken } from '../utils/getAuthToken.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 
+import gameBgmi from '../assets/supported_games/bgmi.png';
+import gameFreeFire from '../assets/supported_games/freefire.png';
+import gameCodm from '../assets/supported_games/codm.png';
+import gameValorant from '../assets/supported_games/valorant.png';
+
+const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80';
+
 const GAME_BADGE = {
   bgmi: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   'battlegrounds mobile india': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -23,9 +30,23 @@ const GAME_BADGE = {
   'counter-strike 2': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
 };
 
+const GAME_LOGOS = {
+  bgmi: gameBgmi,
+  'battlegrounds mobile india': gameBgmi,
+  'free fire': gameFreeFire,
+  codm: gameCodm,
+  'cod mobile': gameCodm,
+  valorant: gameValorant
+};
+
 function getGameBadge(game) {
   const key = (game || '').toLowerCase().trim();
   return GAME_BADGE[key] || 'bg-primary/20 text-primary border-primary/25';
+}
+
+function getGameLogo(game) {
+  const key = (game || '').toLowerCase().trim();
+  return GAME_LOGOS[key] || null;
 }
 
 function TournamentDetail({ onNavigate, tournamentId }) {
@@ -74,6 +95,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [currentUser] = useCurrentUser();
   const { signOut } = useUser();
   const [slotsData, setSlotsData] = useState({ slotsTotal: 100, slotsFilled: 0, slotsAvailable: 100, slots: [] });
+  const [isPassPopped, setIsPassPopped] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
 
   useEffect(() => {
     if (!tournamentId) return;
@@ -407,7 +430,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     finally { setFollowLoading(false); }
   };
 
-  // Fetch decrypted credentials if approved and revealed
+  // Decrypted credentials endpoint helper
   const fetchLobbyCredentials = useCallback(async () => {
     if (!tournamentId || !currentUser || !isApprovedRoster) return;
     setIsLobbyLoading(true);
@@ -463,7 +486,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const formattedDate = startDateStr ? startDateStr.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const formattedTime = startDateStr ? startDateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
 
-  // Generate dynamically calculated prize list table
+  // Generate prize distribution split lists
   const prizeDistributions = useMemo(() => {
     if (!tourney) return [];
     const list = [];
@@ -569,7 +592,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {gridCells.map((occupied, idx) => (
               <div key={idx}
                 className={`aspect-square rounded-[3px] transition-all ${
-                  occupied ? 'bg-primary/45 border border-primary/40' : 'bg-surface-variant/20 border border-outline-variant/20'
+                  occupied ? 'bg-primary/45 border border-primary/40' : 'bg-surface-variant/20 border border-outline-variant/30'
                 }`}
                 title={occupied ? `Slot ${idx + 1}: Occupied` : `Slot ${idx + 1}: Available`} />
             ))}
@@ -700,7 +723,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const renderTeamsList = () => {
     return (
       <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-outline-variant/10">
+        <div className="px-4 py-2.5 border-b border-outline-variant/15">
           <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
             <span className="material-symbols-outlined text-sm">groups</span>
             Registered Teams
@@ -713,7 +736,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-on-surface-variant">search</span>
               <input type="text" placeholder="Search team or captain..." value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 bg-surface border border-outline-variant/20 rounded-lg text-[10px] text-on-background placeholder:text-on-surface-variant focus:outline-none focus:border-primary transition-all" />
+                className="w-full pl-7 pr-3 py-1.5 bg-surface border border-outline-variant/20 rounded-lg text-[10px] text-on-background placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary transition-all" />
             </div>
           </div>
 
@@ -735,7 +758,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             ))}
           </div>
 
-          {paginatedTeams.length === 0 ? (
+          {filteredTeams.length === 0 ? (
             <div className="text-center py-6 text-[10px] text-on-surface-variant/60">No teams found matching filters.</div>
           ) : (
             <div className="space-y-2">
@@ -782,7 +805,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   const renderRoomCredentialsCard = () => {
-    // 1. Check registration status
     const isPendingPaymentStatus = rosterStatus === 'pending_payment' || rosterStatus === 'PENDING_PAYMENT_VERIFICATION';
     
     if (!currentUser || (!isApprovedRoster && !isPendingPaymentStatus)) {
@@ -824,7 +846,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       );
     }
 
-    // If verified roster approved/confirmed
     if (!revealTimeReached) {
       return (
         <div className="bg-surface-container-low/20 rounded-xl border border-primary/20 p-4">
@@ -848,7 +869,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       );
     }
 
-    // Unlocked and decrypted credentials
     return (
       <div className="bg-surface-container-low/20 rounded-xl border border-emerald-500/20 p-4">
         <div className="space-y-3">
@@ -908,378 +928,324 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   const gameBadgeClasses = getGameBadge(tourney.game);
-
   const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
 
+  const renderFlowchart = () => {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Match Roadmap</h3>
+          <p className="text-[11px] text-on-surface-variant/70 leading-relaxed">
+            Follow the path of matches and qualify through rounds to reach the Grand Finals.
+          </p>
+        </div>
+
+        {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
+          <div className="w-full overflow-x-auto py-6 px-4 bg-[#0d0e12]/40 border border-outline-variant/10 rounded-2xl flex items-center gap-6 scrollbar-thin">
+            {parsedTimeline.roadmap.map((round, idx) => (
+              <React.Fragment key={round.id || idx}>
+                {/* Node Card */}
+                <div className="flex-shrink-0 w-[200px] bg-[#0d0e12] border border-outline-variant/20 rounded-xl p-4 relative group hover:border-primary/40 transition-all duration-300 shadow-md">
+                  <div className="absolute top-[-9px] left-4 bg-primary text-on-primary text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-sm">
+                    ROUND {idx + 1}
+                  </div>
+                  <div className="space-y-2 pt-1">
+                    <div className="text-xs font-black text-white truncate uppercase">{round.name || `Round ${idx + 1}`}</div>
+                    <div className="space-y-1.5 text-[10px] text-on-surface-variant">
+                      <div className="flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[12px] text-primary">calendar_today</span>
+                        <span>{round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'TBD'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[12px] text-primary">schedule</span>
+                        <span>{round.time || 'TBD'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[12px] text-primary">map</span>
+                        <span>Map: <strong className="text-white">{round.map || 'Erangel'}</strong></span>
+                      </div>
+                      {round.qualified && (
+                        <div className="flex items-center gap-1.5 mt-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[9px] font-bold uppercase">
+                          <span className="material-symbols-outlined text-[12px]">emoji_events</span>
+                          <span>Qualifies: {round.qualified}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Connecting Arrow */}
+                {idx < parsedTimeline.roadmap.length - 1 && (
+                  <div className="flex-shrink-0 flex items-center justify-center text-primary/40 animate-pulse">
+                    <span className="material-symbols-outlined text-xl">arrow_forward</span>
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8 bg-surface-container-low/10 border border-dashed border-outline-variant/10 rounded-xl">
+            <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">sports_esports</span>
+            <p className="text-[10px] text-on-surface-variant mt-2 font-bold uppercase">No match rounds scheduled yet.</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderSponsorsContent = () => {
+    return (
+      <div className="space-y-4">
+        {/* Sponsor Wall */}
+        {sponsorList.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
+            <div className="flex flex-wrap gap-2">
+              {sponsorList.map((s, i) => (
+                <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                  <span className="text-warning text-[11px]">&#9733;</span>
+                  {s.name}
+                  {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                </span>
+              ))}
+            </div>
+            {totalSponsorAmount > 0 && (
+              <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+            )}
+          </div>
+        )}
+
+        {/* Sponsor Contribution Form */}
+        {isSponsorsEnabled && (
+          <div className="bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10 space-y-3">
+            <div>
+              <h3 className="text-xs font-bold text-on-background">Sponsor This Tournament</h3>
+              <p className="text-[10px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool and get featured above.</p>
+            </div>
+            {!showSponsorForm ? (
+              <button onClick={() => setShowSponsorForm(true)}
+                className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
+                Support with UPI
+              </button>
+            ) : (
+              <form onSubmit={handleSponsorContribute} className="space-y-2.5">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Your name" required
+                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                  <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
+                    placeholder="Email" type="email"
+                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                    placeholder="Amount (₹)" type="number" min="1" required
+                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                  <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                    placeholder="UPI Transaction ID / UTR" required
+                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                </div>
+                <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
+                  placeholder="Payment app (Google Pay / PhonePe / Paytm)"
+                  className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                  placeholder="Message (optional)"
+                  className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
+                <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
+                <div className="flex gap-2">
+                  <button type="submit" disabled={sponsorSubmitting}
+                    className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
+                    {sponsorSubmitting ? 'Submitting...' : 'Submit'}
+                  </button>
+                  <button type="button" onClick={() => setShowSponsorForm(false)}
+                    className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-background text-on-background relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
+    <div className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
       <Header activePage="tournament-detail" onNavigate={onNavigate} />
 
-      {/* ══════════ DESKTOP: 2-COLUMN LAYOUT (hidden on mobile) ══════════ */}
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-16 pb-24 sm:pt-20">
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
-          className="mt-4">
+      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-16 pb-24 sm:pt-20 space-y-8">
+        
+        {/* Wallet Pass Hero Component Container with perspective and 3D tilt */}
+        <div 
+          className="flex flex-col sm:flex-row relative items-center justify-center gap-4 sm:gap-0 select-none py-6 sm:py-10 max-w-4xl sm:ml-0 w-full"
+          style={{
+            perspective: '1000px',
+            transform: 'rotate3d(1, -1, 0, 4deg)',
+            transformStyle: 'preserve-3d'
+          }}
+        >
+          {/* The Pocket Sleeve Container */}
+          <div 
+            onClick={() => setIsPassPopped(!isPassPopped)}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+            className="z-10 relative w-full max-w-[280px] sm:max-w-[260px] aspect-[3/4] bg-surface-container-low rounded-2xl flex-shrink-0 transform shadow-[0_20px_50px_rgba(0,0,0,0.8)] cursor-pointer hover:scale-[1.01] transition-all duration-300"
+            style={{
+              transform: isPassPopped ? 'rotateY(-6deg) translateX(-8px) translateZ(10px)' : 'rotateY(0deg) translateX(0) translateZ(10px)',
+              transition: 'transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+              transformStyle: 'preserve-3d'
+            }}
+          >
+            {/* Layer A: The Pouch Backing (z-0) */}
+            <div 
+              className="absolute inset-0 rounded-2xl bg-[#0c0d12] border border-outline-variant/15 shadow-[inset_0_4px_20px_rgba(0,0,0,0.9)] z-0"
+            />
 
-          {/* ── Desktop: Header + Sidebar ── */}
-          <div className="hidden md:grid grid-cols-12 gap-8">
-            {/* Left: 8/12 = ~67% */}
-            <div className="col-span-8 space-y-6">
-
-              {/* Tournament Header */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${gameBadgeClasses}`}>
-                    {tourney.game}
+            {/* Layer B: The White Pass Card (z-10) */}
+            <div
+              className="z-10 bg-white border border-slate-200 rounded-2xl p-5 pl-12 shadow-[0_20px_50px_rgba(0,0,0,0.4)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform"
+              style={{
+                transform: isPassPopped
+                  ? 'translateX(85%) translateZ(-5px)'
+                  : (isHovered ? 'translateX(40px) translateZ(-5px)' : 'translateX(12px) translateZ(-5px)'),
+                transition: 'transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                opacity: isPassPopped ? 1 : 0.95
+              }}
+            >
+              <div className="space-y-3.5">
+                {/* Top row with target SVG decoration */}
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-[9px] tracking-widest text-slate-500 font-extrabold uppercase">
+                    TOURNAMENT PASS
                   </span>
-                  {countdown.type === 'live' && (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[9px] font-bold uppercase tracking-wider">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                      LIVE
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-amber-600">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="3" />
+                    <line x1="12" y1="1" x2="12" y2="23" />
+                    <line x1="1" y1="12" x2="23" y2="12" />
+                  </svg>
+                </div>
+
+                {/* Title & Organizer */}
+                <div className="space-y-0.5">
+                  <h2 className="text-lg sm:text-xl font-black text-slate-955 tracking-tight uppercase leading-tight truncate w-full">
+                    {tourney.title}
+                  </h2>
+                  <div className="flex items-center gap-1 text-[10px] text-slate-800 font-bold leading-none mt-1">
+                    <span>by {orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                  </div>
+                </div>
+
+                {/* Prize & Entry Rows */}
+                <div className="grid grid-cols-2 gap-2 py-1.5 border-y border-slate-200 text-center">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg py-1 px-1.5 flex items-center justify-center">
+                    <span className="text-[10px] font-extrabold text-emerald-600 tracking-tight uppercase">
+                      PRIZE: {prizeDisplay}
                     </span>
-                  )}
-                </div>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <h1 className="text-2xl lg:text-3xl font-black tracking-tight text-on-background leading-tight">
-                      {tourney.title}
-                    </h1>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <span className="text-xs text-on-surface-variant/70">by</span>
-                      <span className="text-sm font-bold text-on-background truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
-                      <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                      <span className="text-[10px] text-on-surface-variant/50">&middot; {followerCount} followers</span>
-                      {currentUser && (
-                        <button onClick={handleFollow} disabled={followLoading}
-                          className={`text-[10px] font-bold transition-all px-2 py-0.5 rounded-md ${
-                            isFollowing ? 'text-on-surface-variant' : 'text-primary hover:text-primary/80'
-                          }`}>
-                          {followLoading ? '\u2026' : isFollowing ? 'Following' : '+ Follow'}
-                        </button>
-                      )}
-                    </div>
                   </div>
-                  <button onClick={handleShare}
-                    className="px-2.5 py-1.5 min-h-[32px] rounded-lg bg-surface border border-outline-variant/20 hover:bg-surface-container-higher transition-all text-[10px] font-bold flex items-center gap-1 shrink-0">
-                    <span className="material-symbols-outlined text-sm">share</span>
-                    Share
-                  </button>
-                </div>
-              </div>
-
-              {/* Line Tab Bar */}
-              <div className="flex border-b border-outline-variant/15 gap-6">
-                {[
-                  { id: 'brief', label: 'Overview', icon: 'info' },
-                  { id: 'rules', label: 'Rules & Regulations', icon: 'gavel' },
-                  { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
-                ].filter(t => !t.hidden).map(tab => (
-                  <button key={tab.id}
-                    onClick={() => setDesktopTab(tab.id)}
-                    className={`pb-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-1.5 ${
-                      desktopTab === tab.id
-                        ? 'border-primary text-on-background'
-                        : 'border-transparent text-on-surface-variant/60 hover:text-on-background'
-                    }`}>
-                    <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Tab Content */}
-              {desktopTab === 'brief' && (
-                <div className="space-y-6">
-                  {/* Hero Prize Row */}
-                  <div className="grid grid-cols-3 gap-4 bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10">
-                    <div>
-                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
-                      <p className="text-xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
-                    </div>
-                    <div>
-                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Entry Fee</span>
-                      <p className="text-xl font-black text-on-background mt-0.5">{entryDisplay}</p>
-                    </div>
-                    <div>
-                      <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
-                      <p className="text-xl font-black text-on-background mt-0.5">{slotFilled}/{slotTotal} <span className="text-xs font-bold text-on-surface-variant">filled</span></p>
-                      <p className="text-[10px] text-on-surface-variant/60">{slotAvailable} slots left</p>
-                    </div>
-                  </div>
-
-                  {/* Prize Distribution Table */}
-                  {renderPrizeTable()}
-
-                  {/* Slot Tracker */}
-                  {renderSlotTracker()}
-
-                  {/* Registered Teams */}
-                  {renderTeamsList()}
-
-                  {/* Event Brief */}
-                  {tourney.description && (
-                    <div className="space-y-2">
-                      <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
-                      <p className="text-xs text-on-surface-variant/80 leading-relaxed whitespace-pre-line">{tourney.description}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {desktopTab === 'rules' && (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
-                  <div className="text-xs text-on-surface-variant/80 leading-relaxed">
-                    {renderRulesContent()}
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg py-1 px-1.5 flex items-center justify-center">
+                    <span className="text-[10px] font-extrabold text-amber-600 tracking-tight uppercase">
+                      ENTRY: {entryDisplay}
+                    </span>
                   </div>
                 </div>
-              )}
 
-              {desktopTab === 'sponsors' && (
-                <div className="space-y-4">
-                  {/* Sponsor Wall */}
-                  {sponsorList.length > 0 && (
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
-                      <div className="flex flex-wrap gap-2">
-                        {sponsorList.map((s, i) => (
-                          <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
-                            <span className="text-warning text-[11px]">&#9733;</span>
-                            {s.name}
-                            {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
-                          </span>
-                        ))}
-                      </div>
-                      {totalSponsorAmount > 0 && (
-                        <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Sponsor Contribution Form */}
-                  {isSponsorsEnabled && (
-                    <div className="bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10 space-y-3">
-                      <div>
-                        <h3 className="text-xs font-bold text-on-background">Sponsor This Tournament</h3>
-                        <p className="text-[10px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool and get featured above.</p>
-                      </div>
-                      {!showSponsorForm ? (
-                        <button onClick={() => setShowSponsorForm(true)}
-                          className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
-                          Support with UPI
-                        </button>
-                      ) : (
-                        <form onSubmit={handleSponsorContribute} className="space-y-2.5">
-                          <div className="grid grid-cols-2 gap-2.5">
-                            <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                              placeholder="Your name" required
-                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                            <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
-                              placeholder="Email" type="email"
-                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                          </div>
-                          <div className="grid grid-cols-2 gap-2.5">
-                            <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                              placeholder="Amount (₹)" type="number" min="1" required
-                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                            <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                              placeholder="UPI Transaction ID / UTR" required
-                              className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                          </div>
-                          <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
-                            placeholder="Payment app (Google Pay / PhonePe / Paytm)"
-                            className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                          <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                            placeholder="Message (optional)"
-                            className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
-                          <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
-                          <div className="flex gap-2">
-                            <button type="submit" disabled={sponsorSubmitting}
-                              className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
-                              {sponsorSubmitting ? 'Submitting...' : 'Submit'}
-                            </button>
-                            <button type="button" onClick={() => setShowSponsorForm(false)}
-                              className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
-                              Cancel
-                            </button>
-                          </div>
-                        </form>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Right: 4/12 = ~33% — Sticky Entry Card */}
-            <div className="col-span-4">
-              <div className="sticky top-20 space-y-4">
-                {/* Compact Entry Card */}
-                <div className="bg-surface-container-low/30 rounded-xl border border-outline-variant/10 p-4 space-y-4">
-                  {/* Prize - Hero */}
-                  <div className="text-center pb-3 border-b border-outline-variant/10">
-                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
-                    <p className="text-2xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
+                {/* Format & Slots tracker (Shifted up to empty center quadrant) */}
+                <div className="space-y-2.5">
+                  <div className="space-y-0.5">
+                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block leading-none">FORMAT</span>
+                    <span className="text-[11px] font-bold text-slate-900 block leading-none mt-0.5">
+                      {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
+                    </span>
                   </div>
-
-                  {/* Stats row */}
-                  <div className="grid grid-cols-2 gap-3 text-center">
-                    <div className="bg-surface/40 rounded-lg py-2 border border-outline-variant/10">
-                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Entry</span>
-                      <span className="text-sm font-black text-on-background">{entryDisplay}</span>
+                  <div className="space-y-0.5">
+                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block leading-none">SLOTS</span>
+                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-900 leading-none mt-0.5">
+                      <span className="material-symbols-outlined text-[13px] text-slate-500 leading-none">group</span>
+                      <span>{slotFilled}/{slotTotal} &bull; {Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%</span>
                     </div>
-                    <div className="bg-surface/40 rounded-lg py-2 border border-outline-variant/10">
-                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block">Slots Left</span>
-                      <span className="text-sm font-black text-on-background">{slotAvailable}</span>
-                    </div>
-                  </div>
-
-                  {/* Slot Progress Bar */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[9px] text-on-surface-variant">
-                      <span>{slotFilled}/{slotTotal} filled</span>
-                      <span>{Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%</span>
-                    </div>
-                    <div className="w-full h-1.5 rounded-full bg-surface-container-high overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%` }} />
-                    </div>
-                  </div>
-
-                  {/* Countdown */}
-                  {(countdown.type === 'registration' || countdown.type === 'start') && (
-                    <div className="bg-surface/40 rounded-lg p-2.5 border border-outline-variant/10">
-                      <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider block text-center">{countdown.label}</span>
-                      <div className="grid grid-cols-4 gap-1.5 mt-1.5">
-                        {[
-                          { val: countdown.days, lbl: 'D' },
-                          { val: countdown.hours, lbl: 'H' },
-                          { val: countdown.minutes, lbl: 'M' },
-                          { val: countdown.seconds, lbl: 'S' }
-                        ].map((s, idx) => (
-                          <div key={idx} className="bg-surface-container-low rounded py-1 text-center border border-outline-variant/10">
-                            <span className="text-xs font-black tabular-nums text-primary block">{String(s.val).padStart(2, '0')}</span>
-                            <span className="text-[7px] font-bold text-on-surface-variant uppercase block">{s.lbl}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {countdown.type === 'live' && (
-                    <div className="flex items-center justify-center gap-2 py-2 bg-rose-500/10 rounded-lg border border-rose-500/20">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                      <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
-                    </div>
-                  )}
-
-                  {/* CTA Button */}
-                  <button onClick={handleRegister} disabled={btn.disabled}
-                    className={`w-full py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${btnStyles[btn.style]}`}>
-                    {btn.text}
-                    {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
-                  </button>
-                </div>
-
-                {/* Room Credentials */}
-                {renderRoomCredentialsCard()}
-
-                {/* Timeline Schedule */}
-                <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 p-4 space-y-3">
-                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-sm">schedule</span>
-                    Timeline
-                  </h3>
-                  <div className="space-y-2.5 border-l border-outline-variant/20 pl-3 ml-1">
-                    {[
-                      { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
-                      { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
-                    ].map((step, idx) => {
-                      const dateObj = step.date ? new Date(step.date) : null;
-                      return (
-                        <div key={idx} className="relative">
-                          <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
-                          <div className="text-[10px] font-bold text-on-background">{step.label}</div>
-                          <div className="text-[9px] font-bold text-primary">
-                            {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-                          </div>
-                          <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
-                        </div>
-                      );
-                    })}
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* ══════════ MOBILE: FLUID STACK (hidden on desktop) ══════════ */}
-          <div className="block md:hidden space-y-4">
-
-            {/* Mobile Header */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-wider border ${gameBadgeClasses}`}>
-                  {tourney.game}
-                </span>
-                {countdown.type === 'live' && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 text-[8px] font-bold uppercase tracking-wider">
-                    <span className="w-1 h-1 rounded-full bg-rose-500 animate-ping" />
-                    LIVE
-                  </span>
+              {/* Bottom Row framing the Game Icon */}
+              <div className="flex justify-end items-end w-full pt-2">
+                {getGameLogo(tourney.game) && (
+                  <div className="rounded-lg overflow-hidden bg-slate-100/50 p-1 border border-slate-200/40 shadow-sm shrink-0">
+                    <img 
+                      src={getGameLogo(tourney.game)} 
+                      alt={tourney.game} 
+                      className="w-12 h-12 rounded-lg object-contain select-none grayscale opacity-40 mix-blend-multiply" 
+                    />
+                  </div>
                 )}
               </div>
-              <h1 className="text-xl font-black tracking-tight text-on-background leading-tight">
-                {tourney.title}
-              </h1>
-              <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant/70">
-                <span>by</span>
-                <span className="font-bold text-on-background truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
-                <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                <span className="text-on-surface-variant/50">&middot; {followerCount} followers</span>
-              </div>
             </div>
 
-            {/* Mobile Tab Bar */}
-            <div className="flex overflow-x-auto border-b border-outline-variant/15 gap-4 no-scrollbar">
+            {/* Layer C: The Wallet Front Envelope Face (z-20) */}
+            <div 
+              className="absolute inset-0 rounded-2xl overflow-hidden border border-outline-variant/30 bg-surface-container-low z-20 pointer-events-none"
+            >
+              <img
+                src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
+                alt={tourney.title}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Divider line */}
+        <hr className="border-outline-variant/15" />
+
+        {/* ══════════ PC VIEW: 70/30 GRID ══════════ */}
+        <div className="hidden md:grid grid-cols-10 gap-8 items-start">
+          {/* Left Column (70%) */}
+          <div className="col-span-7 space-y-6">
+            {/* Minimal Line Tab Bar Switcher */}
+            <div className="flex border-b border-outline-variant/15 gap-6">
               {[
-                { id: 'overview', label: 'Overview', icon: 'info' },
-                { id: 'rules', label: 'Rules', icon: 'gavel' },
-                { id: 'teams', label: 'Teams', icon: 'groups' },
+                { id: 'brief', label: 'Overview', icon: 'info' },
+                { id: 'rules', label: 'Rules & Regulations', icon: 'gavel' },
+                { id: 'matches', label: 'Matches', icon: 'sports_esports' },
                 { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
               ].filter(t => !t.hidden).map(tab => (
                 <button key={tab.id}
-                  onClick={() => setMobileTab(tab.id)}
-                  className={`pb-2 text-[10px] font-bold uppercase tracking-wider border-b-2 shrink-0 transition-all flex items-center gap-1 ${
-                    mobileTab === tab.id
+                  onClick={() => setDesktopTab(tab.id)}
+                  className={`pb-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-1.5 ${
+                    desktopTab === tab.id
                       ? 'border-primary text-on-background'
-                      : 'border-transparent text-on-surface-variant/60'
+                      : 'border-transparent text-on-surface-variant/60 hover:text-on-background'
                   }`}>
-                  <span className="material-symbols-outlined text-[13px]">{tab.icon}</span>
+                  <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
                   {tab.label}
                 </button>
               ))}
             </div>
 
-            {/* Mobile Tab Content */}
-            {mobileTab === 'overview' && (
-              <div className="space-y-4">
-                {/* Compact Prize/Entry/Slots Row */}
-                <div className="grid grid-cols-3 gap-2 bg-surface-container-low/20 rounded-lg p-3 border border-outline-variant/10">
-                  <div className="text-center">
-                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Prize</span>
-                    <p className="text-sm font-black text-secondary">{prizeDisplay}</p>
+            {/* Tab Contents */}
+            {desktopTab === 'brief' && (
+              <div className="space-y-6">
+                {/* Hero Prize Row */}
+                <div className="grid grid-cols-3 gap-4 bg-[#0d0e12]/40 rounded-xl p-4 border border-outline-variant/10">
+                  <div>
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
+                    <p className="text-xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
                   </div>
-                  <div className="text-center">
-                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Entry</span>
-                    <p className="text-sm font-black text-on-background">{entryDisplay}</p>
+                  <div>
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Entry Fee</span>
+                    <p className="text-xl font-black text-on-background mt-0.5">{entryDisplay}</p>
                   </div>
-                  <div className="text-center">
-                    <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
-                    <p className="text-sm font-black text-on-background">{slotFilled}/{slotTotal}</p>
-                    <p className="text-[9px] text-on-surface-variant/60">{slotAvailable} left</p>
+                  <div>
+                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
+                    <p className="text-xl font-black text-on-background mt-0.5">{slotFilled}/{slotTotal} <span className="text-xs font-bold text-on-surface-variant">filled</span></p>
+                    <p className="text-[10px] text-on-surface-variant/60">{slotAvailable} slots left</p>
                   </div>
                 </div>
 
-                {/* Prize Distribution (compact) */}
+                {/* Prize Distribution Table */}
                 {renderPrizeTable()}
 
                 {/* Slot Tracker */}
@@ -1290,141 +1256,238 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                 {/* Event Brief */}
                 {tourney.description && (
-                  <div className="space-y-1.5">
-                    <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
-                    <p className="text-[11px] text-on-surface-variant/80 leading-relaxed">{tourney.description}</p>
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
+                    <p className="text-xs text-on-surface-variant/80 leading-relaxed whitespace-pre-line">{tourney.description}</p>
                   </div>
                 )}
-
-                {/* Room Credentials */}
-                {renderRoomCredentialsCard()}
-
-                {/* Timeline */}
-                <div className="bg-surface-container-low/20 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
-                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm">schedule</span>
-                    Timeline
-                  </h3>
-                  <div className="space-y-2 border-l border-outline-variant/20 pl-3">
-                    {[
-                      { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
-                      { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
-                    ].map((step, idx) => {
-                      const dateObj = step.date ? new Date(step.date) : null;
-                      return (
-                        <div key={idx} className="relative">
-                          <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
-                          <div className="text-[10px] font-bold text-on-background">{step.label}</div>
-                          <div className="text-[9px] font-bold text-primary">
-                            {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-                          </div>
-                          <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
               </div>
             )}
 
-            {mobileTab === 'rules' && (
+            {desktopTab === 'rules' && (
               <div className="space-y-2">
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
+                <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
                 <div className="text-xs text-on-surface-variant/80 leading-relaxed">
                   {renderRulesContent()}
                 </div>
               </div>
             )}
 
-            {mobileTab === 'teams' && renderTeamsList()}
+            {desktopTab === 'matches' && renderFlowchart()}
 
-            {mobileTab === 'sponsors' && (
-              <div className="space-y-4">
-                {sponsorList.length > 0 && (
-                  <div className="space-y-2.5">
-                    <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {sponsorList.map((s, i) => (
-                        <span key={i} className="inline-flex items-center gap-1.5 px-2 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
-                          <span className="text-warning text-[11px]">&#9733;</span>
-                          {s.name}
-                          {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
-                        </span>
-                      ))}
-                    </div>
-                    {totalSponsorAmount > 0 && (
-                      <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
-                    )}
-                  </div>
-                )}
-                {isSponsorsEnabled && (
-                  <div className="bg-surface-container-low/20 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
-                    <div>
-                      <h3 className="text-[10px] font-bold text-on-background">Sponsor This Tournament</h3>
-                      <p className="text-[9px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool.</p>
-                    </div>
-                    {!showSponsorForm ? (
-                      <button onClick={() => setShowSponsorForm(true)}
-                        className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
-                        Support with UPI
-                      </button>
-                    ) : (
-                      <form onSubmit={handleSponsorContribute} className="space-y-2.5">
-                        <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                          placeholder="Your name" required
-                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                        <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                          placeholder="Amount (₹)" type="number" min="1" required
-                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                        <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                          placeholder="UPI Transaction ID / UTR" required
-                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
-                        <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                          placeholder="Message (optional)"
-                          className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
-                        <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
-                        <div className="flex gap-2">
-                          <button type="submit" disabled={sponsorSubmitting}
-                            className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
-                            {sponsorSubmitting ? 'Submitting...' : 'Submit'}
-                          </button>
-                          <button type="button" onClick={() => setShowSponsorForm(false)}
-                            className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            {desktopTab === 'sponsors' && renderSponsorsContent()}
           </div>
 
-        </motion.div>
+          {/* Right Column (30% Sticky Sidebar) */}
+          <div className="col-span-3 sticky top-24 space-y-6">
+            <div className="bg-[#0d0e12]/40 rounded-xl border border-outline-variant/10 p-4 space-y-4 shadow-sm">
+              {/* Countdown Container */}
+              {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
+                <div className="bg-[#07080C] rounded-lg p-3 border border-outline-variant/10">
+                  <span className="text-[8px] font-black text-on-surface-variant uppercase tracking-widest block text-center mb-2">
+                    {countdown.type === 'registration' ? 'REGISTRATION CLOSES IN' : 'TOURNAMENT STARTS IN'}
+                  </span>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { val: countdown.days, lbl: 'DAYS' },
+                      { val: countdown.hours, lbl: 'HRS' },
+                      { val: countdown.minutes, lbl: 'MINS' },
+                      { val: countdown.seconds, lbl: 'SECS' }
+                    ].map((s, idx) => (
+                      <div key={idx} className="bg-[#0d0e12] rounded py-1.5 text-center border border-outline-variant/10 shadow-inner">
+                        <span className="text-sm font-black tabular-nums text-primary block leading-none">{String(s.val).padStart(2, '0')}</span>
+                        <span className="text-[7px] font-bold text-on-surface-variant uppercase block mt-1 leading-none">{s.lbl}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : countdown.type === 'live' ? (
+                <div className="flex items-center justify-center gap-2 py-3 bg-rose-500/10 rounded-lg border border-rose-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                  <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
+                </div>
+              ) : (
+                <div className="bg-[#0d0e12]/40 rounded-lg py-2.5 border border-outline-variant/10 text-center">
+                  <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest">REGISTRATION CLOSED</span>
+                </div>
+              )}
+
+              {/* Primary Active Dynamic CTA Button */}
+              <button onClick={handleRegister} disabled={btn.disabled}
+                className={`w-full py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-md ${btnStyles[btn.style]}`}>
+                {btn.text}
+                {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
+              </button>
+            </div>
+
+            {/* Room Credentials */}
+            {renderRoomCredentialsCard()}
+
+            {/* Timeline Schedule */}
+            <div className="bg-[#0d0e12]/40 rounded-xl border border-outline-variant/10 p-4 space-y-3">
+              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-sm">schedule</span>
+                Timeline
+              </h3>
+              <div className="space-y-2.5 border-l border-outline-variant/20 pl-3 ml-1">
+                {[
+                  { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
+                  { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
+                ].map((step, idx) => {
+                  const dateObj = step.date ? new Date(step.date) : null;
+                  return (
+                    <div key={idx} className="relative">
+                      <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
+                      <div className="text-[10px] font-bold text-on-background">{step.label}</div>
+                      <div className="text-[9px] font-bold text-primary">
+                        {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
+                      </div>
+                      <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ══════════ MOBILE VIEW: FLUID STACK ══════════ */}
+        <div className="block md:hidden space-y-6">
+          {/* Mobile Tab Bar Switcher */}
+          <div className="flex overflow-x-auto border-b border-outline-variant/15 gap-4 no-scrollbar">
+            {[
+              { id: 'overview', label: 'Overview', icon: 'info' },
+              { id: 'rules', label: 'Rules', icon: 'gavel' },
+              { id: 'matches', label: 'Matches', icon: 'sports_esports' },
+              { id: 'teams', label: 'Teams', icon: 'groups' },
+              { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
+            ].filter(t => !t.hidden).map(tab => (
+              <button key={tab.id}
+                onClick={() => setMobileTab(tab.id)}
+                className={`pb-2 text-[10px] font-bold uppercase tracking-wider border-b-2 shrink-0 transition-all flex items-center gap-1.5 ${
+                  mobileTab === tab.id
+                    ? 'border-primary text-on-background'
+                    : 'border-transparent text-on-surface-variant/60'
+                }`}>
+                <span className="material-symbols-outlined text-[13px]">{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Mobile Tab Content */}
+          {mobileTab === 'overview' && (
+            <div className="space-y-4">
+              {/* Prize distribution */}
+              {renderPrizeTable()}
+
+              {/* Slot Tracker */}
+              {renderSlotTracker()}
+
+              {/* Registered Teams */}
+              {renderTeamsList()}
+
+              {/* Event Brief */}
+              {tourney.description && (
+                <div className="space-y-1.5">
+                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
+                  <p className="text-[11px] text-on-surface-variant/80 leading-relaxed">{tourney.description}</p>
+                </div>
+              )}
+
+              {/* Room Credentials */}
+              {renderRoomCredentialsCard()}
+
+              {/* Timeline */}
+              <div className="bg-[#0d0e12]/40 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
+                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
+                  <span className="material-symbols-outlined text-sm">schedule</span>
+                  Timeline
+                </h3>
+                <div className="space-y-2 border-l border-outline-variant/20 pl-3">
+                  {[
+                    { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
+                    { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
+                  ].map((step, idx) => {
+                    const dateObj = step.date ? new Date(step.date) : null;
+                    return (
+                      <div key={idx} className="relative">
+                        <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
+                        <div className="text-[10px] font-bold text-on-background">{step.label}</div>
+                        <div className="text-[9px] font-bold text-primary">
+                          {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
+                        </div>
+                        <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {mobileTab === 'rules' && (
+            <div className="space-y-2">
+              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
+              <div className="text-xs text-on-surface-variant/80 leading-relaxed">
+                {renderRulesContent()}
+              </div>
+            </div>
+          )}
+
+          {mobileTab === 'matches' && renderFlowchart()}
+
+          {mobileTab === 'teams' && renderTeamsList()}
+
+          {mobileTab === 'sponsors' && renderSponsorsContent()}
+        </div>
+
       </main>
 
-      {/* ══════════ MOBILE STICKY BOTTOM ACTION BAR ══════════ */}
-      <div className="block md:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface border-t border-outline-variant/15 px-4 py-2.5">
-        <div className="flex items-center justify-between gap-3 max-w-7xl mx-auto">
-          <div className="min-w-0">
-            <p className="text-xs font-black text-secondary">{prizeDisplay}</p>
-            <p className="text-[9px] text-on-surface-variant">{slotAvailable} slot{slotAvailable !== 1 ? 's' : ''} left &middot; {entryDisplay}</p>
+      {/* MOBILE STICKY BOTTOM ACTION BAR */}
+      <div className="block md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#07080C]/90 backdrop-blur-xl border-t border-outline-variant/20 px-4 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.8)]">
+        <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
+          {/* Countdown & slots info */}
+          <div className="min-w-0 flex-1">
+            {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
+              <div className="text-[10px] font-bold text-primary flex items-center gap-1 mb-0.5 truncate uppercase">
+                <span className="material-symbols-outlined text-xs">schedule</span>
+                <span>
+                  {countdown.type === 'registration' ? 'Reg Closes' : 'Starts'} in:{' '}
+                  {countdown.days > 0 ? `${countdown.days}d ` : ''}
+                  {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
+                </span>
+              </div>
+            ) : countdown.type === 'live' ? (
+              <div className="text-[10px] font-bold text-rose-500 flex items-center gap-1 mb-0.5 animate-pulse uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping mr-1" />
+                <span>LIVE NOW</span>
+              </div>
+            ) : (
+              <div className="text-[10px] font-bold text-rose-500 mb-0.5">CLOSED</div>
+            )}
+            <p className="text-[10px] text-on-surface-variant font-medium leading-none">
+              {slotAvailable} slots left &bull; {entryDisplay}
+            </p>
           </div>
-          <button onClick={handleRegister} disabled={btn.disabled}
-            className={`shrink-0 px-5 py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 ${btnStyles[btn.style]}`}>
+          {/* CTA */}
+          <button
+            onClick={handleRegister}
+            disabled={btn.disabled}
+            className={`shrink-0 px-4 py-2.5 rounded-xl font-bold text-xs transition-all active:scale-[0.95] flex items-center justify-center gap-1.5 shadow-md ${btnStyles[btn.style]}`}
+          >
             {btn.text}
             {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
           </button>
         </div>
       </div>
 
-      {/* ══════════ TOAST ══════════ */}
+      {/* TOAST */}
       <AnimatePresence>
         {showToast && (
           <motion.div initial={{ opacity: 0, y: 20, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }} transition={{ duration: 0.2 }}
-            className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-50 bg-surface border border-primary/30 text-on-background px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-[300px] text-xs font-bold">
+            className="fixed bottom-24 md:bottom-6 right-4 md:right-6 z-50 bg-surface border border-primary/30 text-on-background px-3.5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 max-w-[300px] text-xs font-bold">
             <span className="material-symbols-outlined text-primary text-base shrink-0">check_circle</span>
             {toastMessage}
           </motion.div>
