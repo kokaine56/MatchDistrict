@@ -35,27 +35,27 @@ export function getStatusBadgeConfig(status) {
   switch (status) {
     case 'upcoming':
       return {
-        text: 'UPCOMING',
+        text: 'Upcoming',
         bg: 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
       };
     case 'open':
       return {
-        text: 'REGISTRATION OPEN',
+        text: 'Reg. open',
         bg: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
       };
     case 'closed':
       return {
-        text: 'REGISTRATION CLOSED',
+        text: 'Reg. closed',
         bg: 'bg-slate-500/25 text-slate-400 border border-slate-500/30'
       };
     case 'live':
       return {
-        text: 'LIVE',
+        text: 'Live',
         bg: 'bg-rose-500/20 text-rose-400 border border-rose-500/30 font-black animate-pulse'
       };
     default:
       return {
-        text: 'UPCOMING',
+        text: 'Upcoming',
         bg: 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
       };
   }

@@ -65,14 +65,14 @@ function InfoContent({
             <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400 shrink-0"><circle cx="12" cy="8" r="6"/><path d="M8.21 13.89 7 23l5-3 5 3-1.21-9.12"/></svg>
             Prize
           </span>
-          <span className="text-[11px] sm:text-xs font-bold text-yellow-500 bg-yellow-500/10 px-1.5 py-0.5 rounded mt-0.5 inline-block leading-none">{prizePool ? formatINR(prizePool) : 'TBA'}</span>
+          <span className="text-[11px] sm:text-xs font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded mt-0.5 inline-block leading-none">{prizePool ? formatINR(prizePool) : 'TBA'}</span>
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-[9px] sm:text-[10px] font-semibold text-on-surface-variant uppercase flex items-center gap-1 leading-none">
             <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary shrink-0"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
             Entry
           </span>
-          <span className={`text-[11px] sm:text-xs font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block leading-none ${entryFeeAmount > 0 ? 'text-green-500 bg-green-500/10' : 'text-on-surface-variant bg-white/5'}`}>{entryDisplay}</span>
+          <span className={`text-[11px] sm:text-xs font-bold px-1.5 py-0.5 rounded mt-0.5 inline-block leading-none ${entryFeeAmount > 0 ? 'text-amber-500 bg-amber-500/10' : 'text-on-surface-variant bg-white/5'}`}>{entryDisplay}</span>
         </div>
       </div>
 
@@ -82,7 +82,7 @@ function InfoContent({
           <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary shrink-0"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
           Match Type
         </span>
-        <div className="flex gap-1">
+        <div className="flex gap-1 ml-[13px]">
           <span className="text-[9px] sm:text-[10px] font-bold bg-surface-variant/50 text-on-surface px-1.5 py-0.5 rounded-full leading-none">{matchLabel}</span>
           <span className="text-[9px] sm:text-[10px] font-bold bg-surface-variant/50 text-on-surface px-1.5 py-0.5 rounded-full leading-none">{perspLabel}</span>
         </div>
@@ -91,7 +91,10 @@ function InfoContent({
       {/* 4. Slots Tracker */}
       <div className="flex flex-col gap-y-1">
         <div className="flex items-center justify-between text-[9px] sm:text-[10px] leading-none">
-          <span className="font-semibold text-on-surface-variant">{filled}/{total} Slots</span>
+          <span className="font-semibold text-on-surface-variant flex items-center gap-1">
+            <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary shrink-0"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            {filled}/{total} Slots
+          </span>
           <span className="font-bold text-primary">{fillPct}%</span>
         </div>
         <div className="w-full h-1 rounded-full bg-surface-container-high overflow-hidden">
