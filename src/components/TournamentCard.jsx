@@ -135,7 +135,7 @@ function WalletPassCard({
       >
         {/* Layer A: The Pouch Backing (z-0) */}
         <div 
-          className="absolute inset-0 rounded-2xl bg-[#0c0d12] border border-outline-variant/15 shadow-[inset_0_4px_20px_rgba(0,0,0,0.9)] z-0"
+          className="absolute inset-0 rounded-2xl bg-[#0c0d12] border border-outline-variant/15 shadow-[inset_0_4px_20px_rgba(0,0,0,0.9)] z-0 pointer-events-none"
         />
 
         {/* Layer B: The White Pass Card (z-10) */}

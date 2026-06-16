@@ -11,18 +11,18 @@ import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
-
+ 
 const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live']
 const GAME_OPTIONS = ['All Games', 'BGMI']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
-
+ 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
-
+ 
 const formatINR = (val) => {
   const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
   return isNaN(n) ? (val || 'TBA') : `\u20B9${n.toLocaleString('en-IN')}`
 }
-
+ 
 const GAME_ICON_MAP = {
   bgmi: gameBgmi,
   'free fire': gameFreeFire,
@@ -30,18 +30,18 @@ const GAME_ICON_MAP = {
   'cod mobile': gameCodm,
   valorant: gameValorant,
 }
-
+ 
 function Tournaments({ onNavigate }) {
   const [dbTournaments, setDbTournaments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-
+ 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [gameFilter, setGameFilter] = useState('All Games');
   const [entryTypeFilter, setEntryTypeFilter] = useState('All');
   const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
   const [now, setNow] = useState(new Date())
-
+ 
   // Real-time observer tick pipeline
   useEffect(() => {
     const interval = setInterval(() => {
@@ -49,7 +49,7 @@ function Tournaments({ onNavigate }) {
     }, 1000)
     return () => clearInterval(interval)
   }, [])
-
+ 
   const loadTournaments = React.useCallback(async () => {
     const { ok, data } = await fetchJsonWithRetry('/api/tournaments')
     if (ok && data?.success && data.tournaments) {
@@ -57,13 +57,13 @@ function Tournaments({ onNavigate }) {
     }
     setIsLoading(false)
   }, [])
-
+ 
   useRefetchOnFocus(loadTournaments)
-
+ 
   useEffect(() => {
     setIsLoading(true)
     loadTournaments()
-
+ 
     const channel = supabase
       .channel('tournaments-realtime')
       .on(
@@ -88,12 +88,12 @@ function Tournaments({ onNavigate }) {
         }
       )
       .subscribe();
-
+ 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [loadTournaments]);
-
+ 
   const tournaments = useMemo(() => {
     const processedDb = dbTournaments
       .filter(t => !t.isDraft)
@@ -125,14 +125,14 @@ function Tournaments({ onNavigate }) {
         orgTier: ['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro',
         coverImage: t.coverImage || ''
       }));
-
+ 
     return processedDb;
   }, [dbTournaments]);
-
+ 
   const featuredTournaments = useMemo(() => {
     return tournaments.filter(t => t.featured && getTournamentLifecycleStatus(t, now) !== 'live');
   }, [tournaments, now]);
-
+ 
   const filteredTournaments = useMemo(() => {
     return tournaments.filter(t => {
       const searchLower = searchQuery.toLowerCase();
@@ -140,9 +140,9 @@ function Tournaments({ onNavigate }) {
         t.title.toLowerCase().includes(searchLower) || 
         t.orgName.toLowerCase().includes(searchLower) ||
         t.game.toLowerCase().includes(searchLower);
-
+ 
       const status = getTournamentLifecycleStatus(t, now);
-
+ 
       let matchStatus = true;
       if (statusFilter === 'Live') {
         matchStatus = status === 'live';
@@ -153,17 +153,17 @@ function Tournaments({ onNavigate }) {
       } else if (statusFilter === 'All') {
         matchStatus = status !== 'live';
       }
-
+ 
       const matchGame = gameFilter === 'All Games' || t.game.toLowerCase() === gameFilter.toLowerCase();
-
+ 
       let matchEntry = true;
       if (entryTypeFilter === 'Free') matchEntry = parseInt(t.entryFeeAmount) === 0;
       else if (entryTypeFilter === 'Paid') matchEntry = parseInt(t.entryFeeAmount) > 0;
-
+ 
       return matchSearch && matchStatus && matchGame && matchEntry;
     });
   }, [tournaments, searchQuery, statusFilter, gameFilter, entryTypeFilter, now]);
-
+ 
   const capsuleLabel = useMemo(() => {
     const parts = [];
     if (statusFilter !== 'All') parts.push(statusFilter);
@@ -174,30 +174,30 @@ function Tournaments({ onNavigate }) {
     }
     return `Showing: ${parts.join(' ')} (${filteredTournaments.length})`;
   }, [statusFilter, entryTypeFilter, gameFilter, filteredTournaments.length]);
-
+ 
   const hasActiveFilters = statusFilter !== 'All' || gameFilter !== 'All Games' || entryTypeFilter !== 'All' || searchQuery !== '';
-
+ 
   const activeFilterCount = [statusFilter !== 'All', gameFilter !== 'All Games', entryTypeFilter !== 'All'].filter(Boolean).length;
-
+ 
   const handleClearFilters = () => {
     setSearchQuery('');
     setStatusFilter('All');
     setGameFilter('All Games');
     setEntryTypeFilter('All');
   };
-
+ 
   if (isLoading) {
     return <LoadingScreen message="Loading Tournaments..." />;
   }
-
+ 
   return (
-    <div className="min-h-screen bg-[#07080C] relative overflow-x-hidden text-white pb-16 font-body-lg">
+    <div className="min-h-screen bg-[#07080C] relative text-white pb-16 font-body-lg">
       
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-grid-pattern" />
         <div className="absolute top-[-10%] left-[20%] w-[450px] h-[450px] bg-primary/10 rounded-full blur-[130px] pointer-events-none" />
       </div>
-
+ 
       <main className="relative z-10 w-full max-w-container-max mx-auto px-4 sm:px-6 lg:px-8 pt-16 sm:pt-24 space-y-8">
         
         <section className="text-center space-y-4 max-w-2xl mx-auto pt-2">
@@ -205,7 +205,7 @@ function Tournaments({ onNavigate }) {
             <span className="material-symbols-outlined text-sm">visibility</span>
             {capsuleLabel}
           </div>
-
+ 
           <h2 className="font-display-lg text-2xl sm:text-4xl font-black uppercase text-white tracking-tight leading-none">
             TOURNAMENTS
           </h2>
@@ -213,50 +213,73 @@ function Tournaments({ onNavigate }) {
             Assemble your squad, lock in match coordinates, and showcase your skill inside premium esports prize pools.
           </p>
         </section>
-
+ 
         {featuredTournaments.length > 0 && (
-          <section className="space-y-3 pt-2">
+          <section className="space-y-3 pt-2 overflow-visible">
             <h3 className="font-headline-md text-xs font-bold text-white uppercase tracking-widest flex items-center gap-1.5">
               <span className="material-symbols-outlined text-secondary text-sm">local_fire_department</span>
               Trending &amp; Featured Events
             </h3>
-
-            <div className="flex gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory pb-8 pt-4 px-6 custom-scrollbar scroll-smooth">
-              {featuredTournaments.map(t => (
-                <div key={`featured-${t.id}`} className="shrink-0 flex items-start snap-start scroll-pl-6">
-                  <TournamentCard
-                    id={t.id}
-                    title={t.title}
-                    game={t.game}
-                    status={t.status}
-                    badgeTextColor="text-white"
-                    imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
-                    imgAlt={t.title}
-                    prizePool={t.prize}
-                    entryFee={t.entry}
-                    matchType={t.match_type}
-                    perspective={t.perspective}
-                    slotsTotal={t.slotsTotal}
-                    slotsFilled={t.slotsFilled}
-                    entryFeeAmount={t.entryFeeAmount}
-                    orgName={t.orgName}
-                    orgTier={t.orgTier}
-                    onNavigate={onNavigate}
-                    registrationOpenDate={t.registrationOpenDate}
-                    registrationCloseDate={t.registrationCloseDate}
-                    startDate={t.startDate}
-                  />
+ 
+            {/* ── CAROUSEL: bleed wrapper removes page padding via negative margin ── */}
+            <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
+              {/* ── SCROLL VIEWPORT: controls the scrollable window, width anchored to 100% ── */}
+              <div
+                className="pb-8 pt-4 custom-scrollbar"
+                style={{
+                  overflowX: 'scroll',
+                  overflowY: 'visible',
+                  WebkitOverflowScrolling: 'touch',
+                  touchAction: 'pan-x',
+                  width: '100%',
+                }}
+              >
+                {/* ── INNER TRACK: expands to true max-content so browser sees overflow ── */}
+                <div
+                  className="flex flex-row gap-4 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
+                  style={{ width: 'max-content' }}
+                >
+                  {featuredTournaments.map((t, idx) => (
+                    <div
+                      key={`featured-${t.id}`}
+                      className="snap-start flex items-start first:ml-3 lg:first:ml-4"
+                      style={{ flexShrink: 0, minWidth: '150px' }}
+                    >
+                      <TournamentCard
+                        id={t.id}
+                        title={t.title}
+                        game={t.game}
+                        status={t.status}
+                        badgeTextColor="text-white"
+                        imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
+                        imgAlt={t.title}
+                        prizePool={t.prize}
+                        entryFee={t.entry}
+                        matchType={t.match_type}
+                        perspective={t.perspective}
+                        slotsTotal={t.slotsTotal}
+                        slotsFilled={t.slotsFilled}
+                        entryFeeAmount={t.entryFeeAmount}
+                        orgName={t.orgName}
+                        orgTier={t.orgTier}
+                        onNavigate={onNavigate}
+                        registrationOpenDate={t.registrationOpenDate}
+                        registrationCloseDate={t.registrationCloseDate}
+                        startDate={t.startDate}
+                      />
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
           </section>
         )}
-
+ 
         {/* Desktop: Unified Control Bar */}
         <section className="pt-2 hidden sm:block">
           <div className="sticky top-[55px] z-30 bg-surface/40 backdrop-blur-md border border-outline-variant/20 p-3 rounded-2xl shadow-lg w-full">
             <div className="flex items-center gap-4 overflow-x-auto snap-x" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-
+ 
               <div className="relative min-w-[200px] sm:w-[220px] shrink-0 snap-start">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm select-none">
                   search
@@ -277,9 +300,9 @@ function Tournaments({ onNavigate }) {
                   </button>
                 )}
               </div>
-
+ 
               <div className="border-l border-outline-variant/20 h-6 shrink-0" />
-
+ 
               <div className="flex items-center gap-2 shrink-0 snap-start">
                 <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">STATUS</span>
                 {STATUS_OPTIONS.map(s => (
@@ -296,9 +319,9 @@ function Tournaments({ onNavigate }) {
                   </button>
                 ))}
               </div>
-
+ 
               <div className="border-l border-outline-variant/20 h-6 shrink-0" />
-
+ 
               <div className="flex items-center gap-2 shrink-0 snap-start">
                 <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">GAME</span>
                 {GAME_OPTIONS.map(g => (
@@ -315,9 +338,9 @@ function Tournaments({ onNavigate }) {
                   </button>
                 ))}
               </div>
-
+ 
               <div className="border-l border-outline-variant/20 h-6 shrink-0" />
-
+ 
               <div className="flex items-center gap-2 shrink-0 snap-start">
                 <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">ENTRY FEE</span>
                 {ENTRY_OPTIONS.map(e => (
@@ -334,7 +357,7 @@ function Tournaments({ onNavigate }) {
                   </button>
                 ))}
               </div>
-
+ 
               {hasActiveFilters && (
                 <>
                   <div className="border-l border-outline-variant/20 h-6 shrink-0" />
@@ -346,11 +369,11 @@ function Tournaments({ onNavigate }) {
                   </button>
                 </>
               )}
-
+ 
             </div>
           </div>
         </section>
-
+ 
         {/* Mobile: Compact control row */}
         <section className="pt-2 sm:hidden">
           <div className="sticky top-[43px] z-30 bg-surface/40 backdrop-blur-md border border-outline-variant/20 p-2 rounded-2xl shadow-lg w-full">
@@ -394,7 +417,7 @@ function Tournaments({ onNavigate }) {
             </div>
           </div>
         </section>
-
+ 
         {/* Mobile Filter Drawer — bottom sheet */}
         <AnimatePresence>
           {isMobileFilterOpen && (
@@ -426,7 +449,7 @@ function Tournaments({ onNavigate }) {
                     </svg>
                   </button>
                 </div>
-
+ 
                 <div className="overflow-y-auto flex-1 px-5 py-4 space-y-6">
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Status</span>
@@ -446,7 +469,7 @@ function Tournaments({ onNavigate }) {
                       ))}
                     </div>
                   </div>
-
+ 
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Game</span>
                     <div className="flex flex-wrap gap-2">
@@ -465,7 +488,7 @@ function Tournaments({ onNavigate }) {
                       ))}
                     </div>
                   </div>
-
+ 
                   <div className="space-y-3">
                     <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Entry Fee</span>
                     <div className="flex flex-wrap gap-2">
@@ -485,7 +508,7 @@ function Tournaments({ onNavigate }) {
                     </div>
                   </div>
                 </div>
-
+ 
                 <div className="px-5 py-3 border-t border-outline-variant/10 space-y-2">
                   {hasActiveFilters && (
                     <button
@@ -506,9 +529,9 @@ function Tournaments({ onNavigate }) {
             </>
           )}
         </AnimatePresence>
-
+ 
         {/* Tournament Grid */}
-        <section className="space-y-4 pt-2">
+        <section className="space-y-4 pt-2 overflow-visible">
           <div className="flex justify-between items-center text-xs text-on-surface-variant font-semibold">
             <span>Showing {filteredTournaments.length} esports matches</span>
             {hasActiveFilters && (
@@ -517,7 +540,7 @@ function Tournaments({ onNavigate }) {
               </button>
             )}
           </div>
-
+ 
           <AnimatePresence mode="popLayout">
             {filteredTournaments.length > 0 ? (
               statusFilter === 'Live' ? (
@@ -548,22 +571,22 @@ function Tournaments({ onNavigate }) {
                             )
                           })()}
                         </div>
-
+ 
                         <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
                           <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
                             {t.title}
                           </h3>
-
+ 
                           <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
                             <span className="truncate max-w-[120px] sm:max-w-[150px]">{t.orgName || 'Match District Organizer'}</span>
                             <VerificationBadge tier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'} size="sm" />
                           </div>
-
+ 
                           <div className="flex items-center gap-1">
                             <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
                             <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(t.prize || t.prizePool)}</span>
                           </div>
-
+ 
                           <div className="flex items-center gap-2">
                             <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse uppercase tracking-wider">
                               LIVE MATCH
@@ -578,34 +601,56 @@ function Tournaments({ onNavigate }) {
                   })}
                 </div>
               ) : (
-                <motion.div className="flex flex-nowrap overflow-x-auto overflow-y-visible items-start justify-start gap-4 sm:gap-6 w-full pb-8 pt-4 px-6 snap-x scrollbar-hide">
-                  {filteredTournaments.map(t => (
-                    <div key={`explore-${t.id}`} className="shrink-0 snap-start scroll-pl-6">
-                      <TournamentCard
-                        id={t.id}
-                        title={t.title}
-                        game={t.game}
-                        status={t.status}
-                        badgeTextColor="text-white"
-                        imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
-                        imgAlt={t.title}
-                        prizePool={t.prize}
-                        entryFee={t.entry}
-                        matchType={t.match_type}
-                        perspective={t.perspective}
-                        slotsTotal={t.slotsTotal}
-                        slotsFilled={t.slotsFilled}
-                        entryFeeAmount={t.entryFeeAmount}
-                        orgName={t.orgName}
-                        orgTier={t.orgTier}
-                        onNavigate={onNavigate}
-                        registrationOpenDate={t.registrationOpenDate}
-                        registrationCloseDate={t.registrationCloseDate}
-                        startDate={t.startDate}
-                      />
-                    </div>
-                  ))}
-                </motion.div>
+                <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
+                  {/* ── SCROLL VIEWPORT ── */}
+                  <div
+                    className="pb-8 pt-4 scrollbar-hide"
+                    style={{
+                      overflowX: 'scroll',
+                      overflowY: 'visible',
+                      WebkitOverflowScrolling: 'touch',
+                      touchAction: 'pan-x',
+                      width: '100%',
+                    }}
+                  >
+                    {/* ── INNER TRACK ── */}
+                    <motion.div
+                      className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
+                      style={{ width: 'max-content' }}
+                    >
+                      {filteredTournaments.map((t, idx) => (
+                        <div
+                          key={`explore-${t.id}`}
+                          className="snap-start first:ml-3 lg:first:ml-4"
+                          style={{ flexShrink: 0, minWidth: '150px' }}
+                        >
+                          <TournamentCard
+                            id={t.id}
+                            title={t.title}
+                            game={t.game}
+                            status={t.status}
+                            badgeTextColor="text-white"
+                            imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
+                            imgAlt={t.title}
+                            prizePool={t.prize}
+                            entryFee={t.entry}
+                            matchType={t.match_type}
+                            perspective={t.perspective}
+                            slotsTotal={t.slotsTotal}
+                            slotsFilled={t.slotsFilled}
+                            entryFeeAmount={t.entryFeeAmount}
+                            orgName={t.orgName}
+                            orgTier={t.orgTier}
+                            onNavigate={onNavigate}
+                            registrationOpenDate={t.registrationOpenDate}
+                            registrationCloseDate={t.registrationCloseDate}
+                            startDate={t.startDate}
+                          />
+                        </div>
+                      ))}
+                    </motion.div>
+                  </div>
+                </div>
               )
             ) : (
               <motion.div
@@ -629,11 +674,11 @@ function Tournaments({ onNavigate }) {
             )}
           </AnimatePresence>
         </section>
-
+ 
       </main>
-
+ 
     </div>
   )
 }
-
+ 
 export default Tournaments
