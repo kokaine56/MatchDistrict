@@ -1,14 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import CountUp from '../components/CountUp'
+import { motion } from 'framer-motion'
+import HeroBannerCarousel from '../components/HeroBannerCarousel'
 import { useUser } from '../UserContext.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
 import VerificationBadge from '../components/VerificationBadge'
-import heroImg from '../assets/background/hero.png'
-import heroImgMobile from '../assets/background/hero_mobile.png'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
@@ -113,80 +111,6 @@ function Homepage({ onNavigate }) {
     return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) !== 'live').slice(0, 10)
   }, [tournamentsList, now])
 
-  // Looping Promo Banner Data & Logic
-  const promoCards = useMemo(() => [
-    {
-      id: 'welcome',
-      title: 'Welcome to the District',
-      description: 'The ultimate hub for competitive gaming. Join premium tournaments, form elite squads, and compete for massive prize pools.',
-      bgGradient: 'from-[#1e1b4b] via-[#311042] to-[#07080c]',
-      tags: [
-        { label: 'EST. 2026' },
-        { label: '100% SECURE' },
-        { label: 'INSTANT PAYOUTS' }
-      ],
-      buttonText: 'Explore Events',
-      action: () => onNavigate && onNavigate('tournaments')
-    },
-    {
-      id: 'bgis-2026',
-      title: 'Promoted Tournament: BGIS 2026',
-      description: 'The grandest stage of mobile battle royale. Register your squad now and lock horns with the nation’s top tier esports teams.',
-      bgGradient: 'from-[#4c1d95] via-[#451a03] to-[#07080c]',
-      tags: [
-        { label: 'PRIZE POOL', value: '₹50,00,000' },
-        { label: 'ENTRY FEE', value: 'Free Entry' },
-        { label: 'STARTS IN', value: 'July 15, 2026' }
-      ],
-      buttonText: 'Register Now',
-      action: () => onNavigate && onNavigate('tournaments')
-    },
-    {
-      id: 'val-challenger',
-      title: 'Promoted Tournament: Valorant Challenger Cup',
-      description: '5v5 tactical shooter showdown. Bring your team, execute your strategies, and claim the championship title.',
-      bgGradient: 'from-[#881337] via-[#2d0615] to-[#07080c]',
-      tags: [
-        { label: 'PRIZE POOL', value: '₹10,00,000' },
-        { label: 'ENTRY FEE', value: '₹500 / Team' },
-        { label: 'STARTS IN', value: 'July 28, 2026' }
-      ],
-      buttonText: 'View Details',
-      action: () => onNavigate && onNavigate('tournaments')
-    }
-  ], [onNavigate])
-
-  const [currentPromoIndex, setCurrentPromoIndex] = useState(0)
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentPromoIndex((prev) => (prev + 1) % promoCards.length)
-    }, 10000)
-    return () => clearInterval(timer)
-  }, [promoCards.length])
-
-  const promoVariants = {
-    enter: {
-      opacity: 0,
-      x: 40,
-    },
-    center: {
-      opacity: 1,
-      x: 0,
-      transition: {
-        x: { type: 'spring', stiffness: 300, damping: 30 },
-        opacity: { duration: 0.4 }
-      }
-    },
-    exit: {
-      opacity: 0,
-      x: -40,
-      transition: {
-        x: { type: 'spring', stiffness: 300, damping: 30 },
-        opacity: { duration: 0.4 }
-      }
-    }
-  }
 
   const renderFeedbacksMarquee = (containerClassName) => (
     <div className={containerClassName}>
@@ -236,174 +160,8 @@ function Homepage({ onNavigate }) {
 
   return (
     <>
-      <main className="w-full pt-11 md:pt-14">
-        {/* Hero Section */}
-        <section className="relative w-full pt-8 pb-6 sm:pt-12 sm:pb-8 md:pt-16 md:pb-12 flex flex-col items-start sm:items-center text-left sm:text-center px-4 sm:px-sm overflow-hidden isolate">
-          <div className="absolute inset-0 z-0 overflow-hidden bg-background">
-            <img alt="Match District Esports Arena" fetchpriority="high" decoding="async" className="w-full h-full object-cover opacity-100 hidden sm:block mix-blend-luminosity" src={heroImg} />
-            <img alt="Match District Esports Arena Mobile" loading="lazy" decoding="async" className="w-full h-full object-cover opacity-100 block sm:hidden mix-blend-luminosity" src={heroImgMobile} />
-            <div className="absolute inset-0 bg-gradient-to-b from-background/70 via-background/90 to-background"></div>
-
-            {/* Ambient cinematic glows */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-primary/20 blur-[100px] rounded-full pointer-events-none z-0 hidden sm:block"></div>
-            <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-primary/10 blur-[80px] rounded-full pointer-events-none z-0 block sm:hidden"></div>
-          </div>
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, ease: 'easeOut' }}
-            className="relative z-10 max-w-3xl sm:mx-auto space-y-3 sm:space-y-4 w-full"
-          >
-            <h1 className="font-display-lg text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-tight text-white">
-              Welcome to <span className="inline-block pl-2 bg-gradient-to-r from-blue-600 to-indigo-700 bg-clip-text text-transparent drop-shadow-[0_4px_10px_rgba(99,102,241,0.2)] dark:bg-gradient-to-r dark:from-blue-400 dark:to-indigo-500 dark:bg-clip-text dark:text-transparent dark:drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]">The District</span>
-            </h1>
-            <p className="font-body-lg text-xs sm:text-sm md:text-base text-on-surface-variant/80 max-w-lg sm:max-w-xl mx-auto leading-relaxed">
-              The ultimate esports tournament platform. Where players, teams, and organizers battle for glory and massive prize pools across the globe's top titles.
-            </p>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-start sm:justify-center gap-3 sm:gap-4 pt-4 sm:pt-6 w-full sm:w-auto">
-              <motion.button 
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => onNavigate && onNavigate('tournaments')} 
-                className="flex items-center justify-center gap-1.5 px-5 py-2.5 sm:px-6 sm:py-3 bg-primary text-white font-headline-md text-xs sm:text-sm font-bold rounded-xl hover:bg-primary/95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.2)]"
-              >
-                Explore Tournaments <span className="material-symbols-outlined text-base" data-icon="arrow_forward">arrow_forward</span>
-              </motion.button>
-              <motion.button 
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.97 }}
-                onClick={() => {
-                  const el = document.getElementById('organizer-showcase');
-                  if (el) el.scrollIntoView({ behavior: 'smooth' });
-                }} 
-                className="flex items-center justify-center gap-1.5 px-5 py-2.5 sm:px-6 sm:py-3 text-on-surface dark:text-white font-headline-md text-xs sm:text-sm font-bold rounded-xl hover:bg-surface-container-highest dark:hover:bg-white/10 transition-all bg-surface-container-high dark:bg-white/5 border border-outline-variant/30 dark:border-white/10 backdrop-blur-md"
-              >
-                Organize Event <span className="material-symbols-outlined text-base" data-icon="add_circle">add_circle</span>
-              </motion.button>
-            </div>
-          </motion.div>
-          {/* Stats Bar */}
-          <div className="relative z-10 mt-8 sm:mt-12 md:mt-16 max-w-4xl mx-auto w-full px-4 sm:px-lg">
-            <div className="grid grid-cols-4 divide-x divide-outline-variant/10 pt-6 border-t border-outline-variant/10">
-              {/* Stat 1 */}
-              <div className="flex flex-col items-center justify-center px-1">
-                <div className="font-headline-lg text-sm sm:text-base md:text-lg text-white font-bold tracking-tight">
-                  <CountUp endValue={2.4} suffix="K+" decimals={1} />
-                </div>
-                <div className="font-label-caps text-[9px] sm:text-[10px] text-on-surface-variant/70 uppercase tracking-wider mt-1 text-center">
-                  Tourneys
-                </div>
-              </div>
-
-              {/* Stat 2 */}
-              <div className="flex flex-col items-center justify-center px-1">
-                <div className="font-headline-lg text-sm sm:text-base md:text-lg text-white font-bold tracking-tight">
-                  <CountUp endValue={187} suffix="K+" decimals={0} />
-                </div>
-                <div className="font-label-caps text-[9px] sm:text-[10px] text-on-surface-variant/70 uppercase tracking-wider mt-1 text-center">
-                  Players
-                </div>
-              </div>
-
-              {/* Stat 3 */}
-              <div className="flex flex-col items-center justify-center px-1">
-                <div className="font-headline-lg text-sm sm:text-base md:text-lg text-white font-bold tracking-tight">
-                  <CountUp endValue={1.2} suffix="K+" decimals={1} />
-                </div>
-                <div className="font-label-caps text-[9px] sm:text-[10px] text-on-surface-variant/70 uppercase tracking-wider mt-1 text-center">
-                  Orgs
-                </div>
-              </div>
-
-              {/* Stat 4 */}
-              <div className="flex flex-col items-center justify-center px-1">
-                <div className="font-headline-lg text-sm sm:text-base md:text-lg text-white font-bold tracking-tight">
-                  <CountUp endValue={2.8} prefix="$" suffix="M+" decimals={1} />
-                </div>
-                <div className="font-label-caps text-[9px] sm:text-[10px] text-on-surface-variant/70 uppercase tracking-wider mt-1 text-center">
-                  Prizes
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* High-visibility automated looping Advertisement and Promoted Tournaments section */}
-        <section className="max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-6 overflow-hidden">
-          <div className="relative overflow-hidden rounded-2xl border border-outline-variant/20 bg-[#07080C] h-[260px] sm:h-[180px] md:h-[200px] shadow-2xl">
-            <AnimatePresence initial={false} mode="wait">
-              <motion.div
-                key={currentPromoIndex}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                variants={promoVariants}
-                className={`absolute inset-0 flex flex-col sm:flex-row justify-between items-stretch bg-gradient-to-r ${promoCards[currentPromoIndex].bgGradient} p-5 sm:p-6 md:p-8`}
-              >
-                {/* Left Side: Content */}
-                <div className="flex flex-col justify-between flex-grow z-10 space-y-3 sm:space-y-0">
-                  <div className="space-y-1">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-widest bg-primary/20 text-primary border border-primary/30 w-fit">
-                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping"></span>
-                      Promoted
-                    </span>
-                    <h2 className="font-display-lg text-lg sm:text-xl md:text-2xl font-black text-white uppercase tracking-tight leading-tight mt-1">
-                      {promoCards[currentPromoIndex].title}
-                    </h2>
-                    <p className="font-body-md text-xs text-on-surface-variant/80 max-w-xl leading-relaxed">
-                      {promoCards[currentPromoIndex].description}
-                    </p>
-                  </div>
-
-                  {/* Metadata Tags */}
-                  <div className="flex flex-wrap items-center gap-3">
-                    {promoCards[currentPromoIndex].tags.map((tag, tIdx) => (
-                      <div key={tIdx} className="flex flex-col">
-                        {tag.value ? (
-                          <>
-                            <span className="text-[8px] font-bold text-on-surface-variant/50 uppercase tracking-widest leading-none mb-0.5">{tag.label}</span>
-                            <span className="text-[11px] font-black text-white leading-none uppercase">{tag.value}</span>
-                          </>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-white/5 border border-white/10 rounded-md text-[9px] font-extrabold text-on-surface-variant/80 uppercase tracking-wider">{tag.label}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right Side: Interactive Action */}
-                <div className="flex items-center justify-start sm:justify-end shrink-0 z-10 mt-3 sm:mt-0">
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={promoCards[currentPromoIndex].action}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-white text-black font-headline-md text-xs font-black uppercase tracking-wider rounded-xl hover:bg-white/90 transition-all shadow-[0_0_20px_rgba(255,255,255,0.15)] flex items-center justify-center gap-2"
-                  >
-                    <span>{promoCards[currentPromoIndex].buttonText}</span>
-                    <span className="material-symbols-outlined text-sm font-bold">arrow_forward</span>
-                  </motion.button>
-                </div>
-
-                {/* Ambient graphic elements */}
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,var(--tw-gradient-stops))] from-white/5 via-transparent to-transparent pointer-events-none" />
-                <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-              </motion.div>
-            </AnimatePresence>
-
-            {/* Dots navigation indicator overlay */}
-            <div className="absolute bottom-3 right-4 flex items-center gap-1.5 z-20">
-              {promoCards.map((_, dotIdx) => (
-                <button
-                  key={dotIdx}
-                  onClick={() => setCurrentPromoIndex(dotIdx)}
-                  className={`h-1.5 rounded-full transition-all duration-300 ${currentPromoIndex === dotIdx ? 'w-4 bg-white' : 'w-1.5 bg-white/30 hover:bg-white/50'}`}
-                />
-              ))}
-            </div>
-          </div>
-        </section>
-
+      <HeroBannerCarousel onNavigate={onNavigate} />
+      <main className="w-full">
         {/* Main Content Area */}
         <section className="max-w-container-max mx-auto px-4 sm:px-sm md:px-lg py-8 sm:py-10 md:py-12 grid grid-cols-12 gap-4 sm:gap-5 md:gap-6 overflow-visible">
           {/* Left 8 Columns */}
@@ -440,12 +198,12 @@ function Homepage({ onNavigate }) {
                     <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
                       {/* ── SCROLL VIEWPORT: width anchored to 100%, scrolls horizontally ── */}
                       <div
-                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-pan-x"
+                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-auto"
                         style={{
                           overflowX: 'auto',
                           overflowY: 'visible',
                           WebkitOverflowScrolling: 'touch',
-                          touchAction: 'pan-x',
+                          touchAction: 'pan-x pan-y',
                           width: '100%',
                         }}
                       >
@@ -572,7 +330,7 @@ function Homepage({ onNavigate }) {
                     </p>
                   </div>
                 ) : (
-                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-pan-x" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}>
+                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-auto" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
                     {liveMatches.map((match, idx) => {
                       const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
                       return (
@@ -654,7 +412,7 @@ function Homepage({ onNavigate }) {
                   </button>
                 </div>
                 {/* Horizontal snap carousel on mobile, 2-col grid on desktop */}
-                <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar pb-2 md:pb-0 -mx-3 px-3 sm:-mx-4 sm:px-4 !touch-pan-x" style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}>
+                <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar pb-2 md:pb-0 -mx-3 px-3 sm:-mx-4 sm:px-4 !touch-auto" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
                   {organisersList.length > 0 ? (
                     organisersList.slice(0, 4).map((org, idx) => {
                       const formatFollowersLocal = (n) => {
@@ -702,7 +460,7 @@ function Homepage({ onNavigate }) {
                                 <span className="material-symbols-outlined text-[11px] text-primary/70">group</span>
                                 <span className="font-semibold text-on-background">{formatFollowersLocal(org.followers || 0)}</span>
                               </div>
-                              <span className="text-on-surface-variant/30">•</span>
+                              <span className="text-on-surface-variant/30">â€¢</span>
                               <div className="flex items-center gap-0.5">
                                 <span className="material-symbols-outlined text-[11px] text-amber-400" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
                                 <span className="font-semibold text-on-background">{org.rating || '4.5'}</span>

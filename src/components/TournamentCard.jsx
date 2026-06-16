@@ -114,11 +114,12 @@ function WalletPassCard({
 
   return (
     <div 
-      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 pr-1.5 md:pr-3 transition-all duration-300 !touch-pan-y ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
+      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 pr-1.5 md:pr-3 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
       style={{
         perspective: '1000px',
         transform: 'rotate3d(1, -1, 0, 4deg)',
-        transformStyle: 'preserve-3d'
+        transformStyle: 'preserve-3d',
+        touchAction: 'pan-x pan-y'
       }}
     >
       {/* The Pocket Sleeve Container */}
@@ -126,7 +127,7 @@ function WalletPassCard({
         onClick={togglePass}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="z-10 relative w-full h-full bg-surface-container-low rounded-2xl flex-shrink-0 transform shadow-[0_12px_24px_rgba(0,0,0,0.6)] cursor-pointer hover:scale-[1.01] transition-all duration-300 !touch-pan-y"
+        className="z-10 relative w-full h-full bg-surface-container-low rounded-2xl flex-shrink-0 transform shadow-[0_12px_24px_rgba(0,0,0,0.6)] cursor-pointer hover:scale-[1.01] transition-all duration-300 !touch-auto"
         style={{
           transform: isPassPopped ? 'rotateY(-6deg) translateX(-8px) translateZ(10px)' : 'rotateY(0deg) translateX(0) translateZ(10px)',
           transition: 'transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -234,12 +235,12 @@ function WalletPassCard({
 
         {/* Layer C: The Wallet Front Envelope Face (z-20) */}
         <div 
-          className="absolute inset-0 rounded-2xl overflow-hidden border border-outline-variant/30 bg-surface-container-low z-20 pointer-events-none !touch-pan-y"
+          className="absolute inset-0 rounded-2xl overflow-hidden border border-outline-variant/30 bg-surface-container-low z-20 pointer-events-none !touch-auto"
         >
           <img
             src={imgSrc || FALLBACK_IMG}
             alt={title}
-            className="w-full h-full object-cover !touch-pan-y"
+            className="w-full h-full object-cover !touch-auto"
           />
         </div>
       </div>
@@ -282,7 +283,7 @@ function InfoContent({
         {/* Organizer */}
         <div className="text-[10px] text-on-surface-variant flex items-center gap-1">
           <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary shrink-0"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <span className="truncate text-[9px] sm:text-[10px]">{orgName || 'Match District'}</span>
+          <span className="truncate text-[9px] sm:text-[10px]">{orgName || 'Match District Arena'}</span>
           {orgTier && <VerificationBadge tier={orgTier} size="xs" />}
         </div>
       </div>
@@ -438,7 +439,8 @@ function TournamentCardBase({
       <motion.div
         whileHover={{ y: -4, scale: 1.01 }}
         whileTap={{ scale: 0.99 }}
-        className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out !touch-pan-y ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px] md:max-w-[320px]`}
+        className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px] md:max-w-[320px]`}
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         <div
           onClick={handleCardClick}
@@ -467,7 +469,7 @@ function TournamentCardBase({
             <img
               loading="lazy"
               decoding="async"
-              className="absolute inset-0 w-full h-full object-cover !touch-pan-y"
+              className="absolute inset-0 w-full h-full object-cover !touch-auto"
               alt={imgAlt || title}
               src={imgError ? FALLBACK_IMG : (imgSrc || FALLBACK_IMG)}
               onError={handleImgError}
@@ -482,7 +484,7 @@ function TournamentCardBase({
           ) : game ? (
             <div className="absolute bottom-2 left-2 select-none">
               {game.toLowerCase() === 'bgmi' ? (
-                <img src={gameBgmi} alt={game} className="w-6 h-6 sm:w-8 sm:h-8 rounded-md shadow-sm object-cover bg-surface !touch-pan-y" />
+                <img src={gameBgmi} alt={game} className="w-6 h-6 sm:w-8 sm:h-8 rounded-md shadow-sm object-cover bg-surface !touch-auto" />
               ) : (
                 <span className="px-1.5 py-0.5 rounded-md bg-surface/80 text-[7px] sm:text-[8px] font-bold text-on-surface-variant border border-outline-variant/30 uppercase tracking-wider">Coming Soon</span>
               )}
