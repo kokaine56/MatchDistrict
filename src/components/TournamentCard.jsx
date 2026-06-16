@@ -114,7 +114,7 @@ function WalletPassCard({
 
   return (
     <div 
-      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 mr-1 md:mr-2 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
+      className={`relative select-none py-2 w-[150px] h-[200px] shrink-0 transition-all duration-300 ${isHovered ? 'z-40' : isPassPopped ? 'z-30' : 'z-10'}`}
       style={{
         perspective: '1000px',
         transform: 'rotate3d(1, -1, 0, 4deg)',
@@ -140,7 +140,7 @@ function WalletPassCard({
 
         {/* Layer B: The White Pass Card (z-10) */}
         <div
-          className={`bg-white border border-slate-200 rounded-2xl p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isPassPopped ? 'z-50' : 'z-10'}`}
+          className={`bg-white border border-slate-200 border-r-[6px] border-transparent bg-clip-padding md:border-r-[12px] rounded-2xl p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isPassPopped ? 'z-50' : 'z-10'}`}
           style={{
             transform: isPassPopped
               ? 'translateX(100%) translateZ(-5px)'

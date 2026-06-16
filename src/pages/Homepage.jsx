@@ -288,9 +288,9 @@ function Homepage({ onNavigate }) {
                     <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
                       {/* ── SCROLL VIEWPORT: width anchored to 100%, scrolls horizontally ── */}
                       <div
-                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 scroll-pr-1 md:scroll-pr-2"
+                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2"
                         style={{
-                          overflowX: 'scroll',
+                          overflowX: 'auto',
                           overflowY: 'visible',
                           WebkitOverflowScrolling: 'touch',
                           touchAction: 'pan-x',
@@ -305,7 +305,7 @@ function Homepage({ onNavigate }) {
                           {featuredTournaments.map((t, idx) => (
                             <div
                               key={t.id}
-                              className="snap-start first:ml-1 md:first:ml-2 scroll-mr-1 md:scroll-mr-2"
+                              className="snap-start first:ml-3 pr-2 md:pr-3"
                               style={{ flexShrink: 0, minWidth: '150px' }}
                             >
                               <TournamentCard
@@ -333,7 +333,6 @@ function Homepage({ onNavigate }) {
                               />
                             </div>
                           ))}
-                          <div className="w-1 shrink-0 block md:w-2" aria-hidden="true"></div>
                         </div>
                       </div>
                     </div>
