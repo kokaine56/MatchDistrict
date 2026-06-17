@@ -2,6 +2,9 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
+# Update system packages for security
+RUN apk update && apk upgrade --no-cache
+
 # Copy package files first for Docker layer caching
 COPY package*.json ./
 
@@ -29,8 +32,8 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 
-# Install tini for proper SIGTERM/SIGINT handling
-RUN apk add --no-cache tini
+# Update system packages and install tini for proper SIGTERM/SIGINT handling
+RUN apk update && apk upgrade --no-cache && apk add --no-cache tini
 
 # Install only production dependencies
 COPY package*.json ./

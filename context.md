@@ -1,6 +1,6 @@
 # Match District — Complete Platform Reference
 
-> **Single source of truth** for the entire Match District platform. Every API endpoint, database table, React component, auth flow, subscription rule, UI token, security check, background worker, and configuration value is documented here. Update this file whenever any aspect of the platform changes.
+> **Single source of truth** for the entire Match District platform. Every API endpoint, database table, React component, auth flow, subscription rule, UI token, security check, background worker, design token, and configuration value is documented here. **Update this file whenever any aspect of the platform changes.**
 
 ---
 
@@ -22,14 +22,18 @@
 14. [Organizer System](#14-organizer-system)
 15. [Profile System](#15-profile-system)
 16. [Design System & UI](#16-design-system--ui)
-17. [Background Workers](#17-background-workers)
-18. [Web Workers (Client-Side)](#18-web-workers-client-side)
-19. [Context Providers & State Management](#19-context-providers--state-management)
-20. [Utility Functions](#20-utility-functions)
-21. [Security Rules & Defenses](#21-security-rules--defenses)
-22. [Asset Inventory](#22-asset-inventory)
-23. [Known Constraints & Gaps](#23-known-constraints--gaps)
-24. [Future Roadmap](#24-future-roadmap)
+17. [Touch-Gesture Management (CRITICAL)](#17-touch-gesture-management-critical)
+18. [Hero Section & Ads](#18-hero-section--ads)
+19. [Tournament Cards — Wallet Pass Metaphor](#19-tournament-cards--wallet-pass-metaphor)
+20. [Global Footer](#20-global-footer)
+21. [Background Workers](#21-background-workers)
+22. [Web Workers (Client-Side)](#22-web-workers-client-side)
+23. [Context Providers & State Management](#23-context-providers--state-management)
+24. [Utility Functions](#24-utility-functions)
+25. [Security Rules & Defenses](#25-security-rules--defenses)
+26. [Asset Inventory](#26-asset-inventory)
+27. [Known Constraints & Gaps](#27-known-constraints--gaps)
+28. [Future Roadmap](#28-future-roadmap)
 
 ---
 
@@ -37,6 +41,8 @@
 
 ### What is Match District?
 Match District is a premium, high-fidelity esports tournament discovery and management SaaS platform. It streamlines competitive gaming operations by offering tournament organizers powerful setup, dashboard, and lobby orchestration tools, while providing players a clean, immersive command center to discover, register, and coordinate matches.
+
+The platform is optimized heavily for **both PC and mobile touch interfaces**, with a "Premium Light" design aesthetic that favors crisp whites, light-blue grid backgrounds, deep navy/slate typography, and a primary brand blue for all active states and CTAs.
 
 ### Vision
 To bridge the gap between casual gaming and professional esports infrastructure by delivering a highly automated, visually stunning, and mobile-optimized dashboard. Match District acts as the reliable escrow, coordinator, and lobby manager that removes administrative overhead from competitive events.
@@ -96,7 +102,7 @@ Game badge colors defined in `src/components/TournamentCard.jsx` (`GAME_BADGE` m
 | **Resend** | Email sending (OTP, password reset, notifications) |
 | **ImgBB API** | Image hosting (tournament covers, avatars) |
 
-### Key Dependencies (`package.json` lines 10-42)
+### Key Dependencies (`package.json`)
 ```json
 "dependencies": {
   "pg": "^8.13.1",
@@ -117,53 +123,67 @@ Game badge colors defined in `src/components/TournamentCard.jsx` (`GAME_BADGE` m
 
 ### Environment Variables (`.env`)
 ```
-# Supabase
-SUPABASE_URL=https://ahgokqbjrpeotqzwilts.supabase.co
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+# Application
+APP_NAME="Match District"
+APP_VERSION="1.0.0"
+APP_ENV="development"
+
+# API & Gateway
+API_BASE_URL="http://localhost:5000/api"
+SOCKET_URL="http://localhost:5000"
+
+# Security & Auth
+AUTH_DOMAIN="matchdistrict.in"
+OTP_EXPIRY_MINUTES=5
+ADMIN_EMAIL=matchdistrict.in@gmail.com
+ADMIN_PASSWORD=101010
+JWT_SECRET=matchdistrict_super_secure_jwt_secret_key_2026
+
+# Services
+RESEND_API_KEY=re_<resend-api-key>
+RESEND_FROM_EMAIL="Match District <auth@matchdistrict.in>"
 
 # Database
 DATABASE_URL=postgresql://postgres.ahgokqbjrpeotqzwilts:kiNimESK6Z71b3CM@aws-1-ap-south-1.pooler.supabase.com:5432/postgres
 
-# Auth Secrets
-JWT_SECRET=matchdistrict_super_secure_jwt_secret_key_2026
-SESSION_ENCRYPTION_KEY=<hex-64-chars> (AES-256-CBC)
+# Supabase
+SUPABASE_URL=https://ahgokqbjrpeotqzwilts.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
-# Services
-RESEND_API_KEY=re_<resend-api-key>
-IMGBB_API_KEY=<imgbb-api-key>
-
-# Admin Credentials
-ADMIN_EMAIL=matchdistrict.in@gmail.com
-ADMIN_PASSWORD=101010
-
-# Application
-APP_NAME=Match District
-APP_URL=https://matchdistrict.in
-UPI_ID=matchdistrict@upi
-UPI_HOLDER=Match District
+# Image Upload (VITE_ prefix required for client-side access in Vite)
+VITE_IMGBB_API_KEY=05cd784fb7ca69e2f0c8eefb78ff9506
+IMGBB_API_KEY=05cd784fb7ca69e2f0c8eefb78ff9506
 
 # Feature Flags
-ENABLE_ANALYTICS=true
-ENABLE_ESCROW=false
+ENABLE_ESCROW_CONTRACTS=true
+ENABLE_DISCORD_WEBHOOKS=true
+ENABLE_ANTI_CHEAT_LOGS=true
 ```
+
+### Vite Configuration (`vite.config.js`)
+- **envPrefix**: Extended to include `APP_`, `API_`, `SOCKET_`, `AUTH_`, `OTP_`, `ADMIN_`, `JWT_`, `ENABLE_`, `ANALYTICS_`, `DATABASE_`, `SUPABASE_`, and `VITE_` prefixes.
+- **Proxy**: All `/api` requests proxied to `http://localhost:10000` in dev. In production (Render, etc.), third-party API keys like ImgBB require the `VITE_` prefix to be accessible via `import.meta.env.VITE_IMGBB_API_KEY`. The upload utility also attempts a server-side proxy (`/api/imgbb-upload`) first for security, falling back to direct ImgBB API v1 calls.
+- **Build chunking**: React/Framer-Motion/React-Router → `vendor` chunk; all other `node_modules` → `dependencies` chunk.
+- **historyApiFallback**: Enabled for SPA routing.
 
 ### Project Structure
 ```
 E:\MatchDistrict\
-├── server.js                    # Main Node.js HTTP server (7779 lines)
+├── server.js                    # Main Node.js HTTP server (7779+ lines)
 ├── server/
 │   └── subscriptionMiddleware.js # Plan feature flags & limit checks
 ├── src/
 │   ├── main.jsx                 # Entry point / boot sequence
-│   ├── App.jsx                  # Routes, guards, layout
+│   ├── App.jsx                  # Routes, guards, layout (468 lines)
 │   ├── App.css                  # Scrollbar & animation utilities
-│   ├── index.css                # Design system (2078 lines)
+│   ├── index.css                # Design system (2109 lines)
 │   ├── UserContext.jsx           # Auth context provider
 │   ├── ThemeContext.jsx          # Dark/light theme provider
 │   ├── pages/                   # Page components (18 files)
 │   ├── components/              # Shared components
-│   │   └── tournament-creation/ # 9-step wizard sub-components
+│   │   ├── HeroBannerCarousel.jsx  # Hero with 10s carousel
+│   │   ├── TournamentCard.jsx      # "Wallet Pass" card (528 lines)
+│   │   └── tournament-creation/    # 9-step wizard sub-components
 │   ├── contexts/
 │   │   └── SubscriptionContext.jsx
 │   ├── hooks/                   # Custom hooks
@@ -176,6 +196,7 @@ E:\MatchDistrict\
 │   └── slotManagerWorker.js     # Server-side slot daemon
 ├── schema.sql                   # Supabase migration schema
 ├── .env                         # Environment configuration
+├── vite.config.js               # Build & proxy configuration
 └── CONTEXT.md                   # This file
 ```
 
@@ -189,7 +210,7 @@ Browser
   │
   ├── Static Assets ──► Vite Dev Server / Build Output
   │
-  ├── API Requests ──► server.js (port 10000)
+  ├── API Requests ──► Vite Proxy ──► server.js (port 10000)
   │                       │
   │                       ├── getAuthUser()   ← JWT verification
   │                       ├── requireOrganizer()
@@ -233,7 +254,7 @@ Browser
 ### Server Architecture (server.js)
 - **Raw Node.js HTTP server** (no Express). Manual `if/else if` routing based on `req.url` and `req.method`.
 - Database pool via `pg.Pool` connected to Supabase pooler.
-- Two-phase route matching: first match attempts using `===`, wider matches using `startsWith`.
+- Two-phase route matching: first exact matches (`===`), wider matches using `startsWith`.
 - File uploads handled as base64 strings in JSON bodies (no multer).
 - Cross-origin: manual CORS headers.
 
@@ -352,12 +373,12 @@ The platform uses **33+ tables** in a Supabase PostgreSQL database. Tables are c
 ### 4.2 Transactional Tables
 
 #### `payment_verifications` — UPI payment proofs
-**Defined**: `schema.sql:141` | **Primary Key**: `id VARCHAR(50)`
+**Defined**: `schema.sql:141` | **Primary Key**: `id VARCHAR(50)` | **Cascade**: `user_id → users(id) ON DELETE CASCADE`
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `VARCHAR(50)` | `PAY-...` |
-| `user_id` | `VARCHAR(50)` | FK → `users(id) ON DELETE CASCADE` |
+| `user_id` | `VARCHAR(50)` | FK → `users(id)` |
 | `plan_name` | `VARCHAR(50)` | NOT NULL |
 | `billing_cycle` | `VARCHAR(20)` | `'monthly'` |
 | `amount` | `INT` | NOT NULL |
@@ -369,12 +390,12 @@ The platform uses **33+ tables** in a Supabase PostgreSQL database. Tables are c
 | `created_at` | `TIMESTAMPTZ` | `NOW()` |
 
 #### `billing_history` — Billing records
-**Defined**: `schema.sql:159` | **Primary Key**: `id VARCHAR(50)`
+**Defined**: `schema.sql:159` | **Primary Key**: `id VARCHAR(50)` | **Cascade**: `organizer_id → users(id) ON DELETE CASCADE`
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `VARCHAR(50)` | `BILL-...` |
-| `organizer_id` | `VARCHAR(50)` | FK → `users(id) ON DELETE CASCADE` |
+| `organizer_id` | `VARCHAR(50)` | FK → `users(id)` |
 | `plan_name` | `VARCHAR(50)` | NOT NULL |
 | `billing_cycle` | `VARCHAR(20)` | |
 | `amount` | `INT` | NOT NULL |
@@ -407,7 +428,6 @@ The platform uses **33+ tables** in a Supabase PostgreSQL database. Tables are c
 | `registration_cooldowns` | `client_key VARCHAR(64)` | Escalating spam cooldowns |
 
 ### 4.4 Organizer Feature Tables
-*(No CREATE TABLE found — created manually in Supabase)*
 
 | Table | Primary Key | Unique | Purpose |
 |---|---|---|---|
@@ -521,13 +541,11 @@ The server runs on **port 10000** as a raw Node.js HTTP server with manual routi
 
 ### 5.3 Registration Flow Detail
 
-The registration endpoints at lines 3750-4010 handle:
-
 **POST `/api/tournaments/:id/register`** (line ~3750):
-- Requires auth (getAuthUser)
+- Requires auth (`getAuthUser`)
 - Verifies tournament exists, slots available, not duplicate team name
 - Authenticated user ID is used (never trusts client payload for user identity)
-- For paid tournaments (entry_fee_amount > 0): sets status = `'pending_payment'`
+- For paid tournaments (`entry_fee_amount > 0`): sets status = `'pending_payment'`
 - For free tournaments: sets status = `'pending'`
 - Stores `user_id` from auth, `team_name`, `captain`, `captain_uid`, `email`, `phone`, `members` from body
 - Returns `{ success, registration: { id, status } }` or error
@@ -539,7 +557,7 @@ The registration endpoints at lines 3750-4010 handle:
 **PUT `/api/tournaments/:id/register/:regId/status`** (line ~3900):
 - Organizer updates registration status (approve/reject/waitlist/cancel)
 - Validates status transitions
-- On approval: updates slotsFilled in tournaments table
+- On approval: updates `slotsFilled` in tournaments table
 - On rejection: supports re-registration
 
 ### 5.4 Payment Endpoints (server.js)
@@ -671,6 +689,7 @@ The registration endpoints at lines 3750-4010 handle:
 | POST | `/api/inject-dummy-registrations` | Admin | 7550 | Test inject dummy registrations |
 | POST | `/api/admin/toggle-early-access` | Admin | 7600 | Toggle user early access |
 | POST | `/api/admin/save-feature-flag` | Admin | 7650 | Save feature flag |
+| POST | `/api/imgbb-upload` | Auth | ~7700 | Server-side ImgBB proxy (base64 → ImgBB via API key) |
 
 ---
 
@@ -747,6 +766,7 @@ All defined in `server.js`:
 | `/register` | `Auth (register)` | None | — |
 | `/reset-password` | `Auth (reset-password)` | None | — |
 | `/profile` | `ProfileRoute` | **Auth** | `loading` → spinner; `!currentUser` → `/login` |
+| `/my-tournaments` | `MyTournamentsRoute` | **Auth** | `loading` → spinner; `!currentUser` → `/login` |
 | `/org-management` | `OrganizationManagementRoute` | **Auth + Role** | `!currentUser` → `/login`; `role !== organiser/admin` → `/profile` |
 | `/admin` | `AdminDashboard` | (self-guarded) | — |
 | `/admin/payments` | `AdminPayments` | None | — |
@@ -761,24 +781,28 @@ All defined in `server.js`:
 
 ### 7.2 Guard Adapter Components (defined inline in App.jsx)
 
-**`ProfileRoute`** (lines 166-184):
+**`ProfileRoute`** (lines 191-209):
 - Reads `location.state?.selectedUserProfile` for viewing other users' profiles
 - Guards: loading → `LoadingArena`, `!currentUser` → `/login`
 - Renders: `<Profile onNavigate={handleNavigate} selectedUserProfile={selectedUserProfile} />`
 
-**`OrganizationManagementRoute`** (lines 187-207):
+**`MyTournamentsRoute`** (lines 169-188):
+- Guards: loading → `LoadingArena`, `!currentUser` → `/login?redirect=/my-tournaments`
+- Renders header + `<MyTournaments onNavigate={handleNavigate} />`
+
+**`OrganizationManagementRoute`** (lines 212-232):
 - Guards: loading → `LoadingArena`, `!currentUser` → `/login`, role check → `/profile`
 - Renders: `<OrganizationManagement onNavigate={handleNavigate} />`
 
-**`CreateTournamentRoute`** (lines 210-234):
+**`CreateTournamentRoute`** (lines 235-259):
 - Three-layer guard: `loading → spinner` → `!currentUser → /login` → `!organiser && !admin → /profile` → `!approved && !admin → /become-organizer`
 - Renders: `<CreateTournament />`
 
-**`RegistrationRoute`** (lines 237-255):
+**`RegistrationRoute`** (lines 262-279):
 - Guards: `loading → LoadingArena`, `!currentUser → /login?redirect=/tournaments/{id}/register`
 - Renders: `<RegistrationPage />`
 
-**`TournamentDetailRoute`** (lines 156-163):
+**`TournamentDetailRoute`** (lines 159-166):
 - No guard, reads `useParams().id`, renders `<TournamentDetail tournamentId={id} onNavigate={handleNavigate} />`
 
 ### 7.3 Shared Layout Components
@@ -787,11 +811,12 @@ All defined in `server.js`:
 |---|---|---|
 | `Header` | Homepage, Tournaments, About, Help, Privacy, Terms | Fixed top nav with logo, links, alerts, user dropdown |
 | `LoadingScreen` | All routes via Suspense fallback | Animated spinner with pulsing text |
+| `LoadingArena` | Route guards | `LoadingScreen message="Loading Arena..."` |
 | `RouteErrorBoundary` | Wraps all routes | Class component error boundary with retry/reset |
-| `PageTransition` | Wraps each route | framer-motion fade + slide up |
-| `AnimatePresence` | Wraps Routes | `mode="wait"`, scroll-to-top on exit |
+| `PageTransition` | Wraps each route | framer-motion fade + slide up (y: 20, scale: 0.98) |
+| `AnimatePresence` | Wraps Routes | `mode="wait"`, `onExitComplete` scroll-to-top |
 
-### 7.4 PAGE_URL_MAP (`App.jsx:38-57`)
+### 7.4 PAGE_URL_MAP (`App.jsx:40-60`)
 Maps page keys for the `handleNavigate` compat shim:
 ```js
 { home: '/', tournaments: '/tournaments', tournament-detail: '/tournaments/',
@@ -799,9 +824,13 @@ Maps page keys for the `handleNavigate` compat shim:
   terms-service: '/terms', login: '/login', register: '/register', auth: '/login',
   profile: '/profile', admin: '/admin', become-organizer: '/become-organizer',
   create-tournament: '/create-tournament', manage-tournaments: '/manage/tournaments',
-  explore-organisers: '/organisers', org-management: '/org-management',
-  subscription: '/subscription/payment' }
+  my-tournaments: '/my-tournaments', explore-organisers: '/organisers',
+  org-management: '/org-management', subscription: '/subscription/payment' }
 ```
+
+### 7.5 Header Visibility
+- **HEADER_PAGES**: Only `/`, `/tournaments`, `/about`, `/help`, `/privacypolicy`, `/terms` show the persistent `Header` component.
+- All other routes (profile, admin, create-tournament, etc.) render without the header — those pages provide their own navigation.
 
 ---
 
@@ -974,7 +1003,7 @@ Persisted to localStorage key `match-district-subscription`:
 
 ## 10. Tournament Creation System
 
-### 10.1 9-Step Wizard (`CreationWizard.jsx` — 612 lines)
+### 10.1 9-Step Wizard (`CreationWizard.jsx` — 641 lines)
 
 | Step | Component | Validates |
 |---|---|---|
@@ -982,40 +1011,53 @@ Persisted to localStorage key `match-district-subscription`:
 | 2 — Match Setup | `Step2MatchSetup` | Match Type (Solo/Duo/Squad), Perspective (TPP/FPP) |
 | 3 — Slots & Entry | `Step3Slots` | Total slots (2 to plan max), Reserved slots |
 | 4 — Prize Pool | `Step4PrizePool` | Entry fee, MVP/Kill reward budget, Prize distribution % |
-| 5 — Media | `Step5Media` | Image upload validation (type, size, resolution) |
-| 6 — Timing | `Step6Timing` | Registration opens/closes, Start date (sequential) |
-| 7 — Roadmap | `Step7Roadmap` | (pass-through, no validation) |
+| 5 — Media | `Step5Media` | Image upload validation (type, size, resolution, 3:4 crop) |
+| 6 — Schedule & Roadmap | `Step6ScheduleRoadmap` | Registration opens/closes, sequential round dates, match start inherits from first round |
+| 7 — Rules | `Step7Rules` | (pass-through, no validation) |
 | 8 — Preview | `Step8Preview` | (pass-through, renders TournamentCard) |
-| 9 — Publish | `Step9Publish` | Full cross-step validation, org profile, cover image |
+| 9 — Publish | `Step9Publish` | Full cross-step validation, org profile check, cover image uploaded, share actions |
 
-### 10.2 Validation (`CreationWizard.jsx` lines 51-125)
+### 10.2 Match Start Time — Silent Inheritance Rule (CRITICAL)
+The global "Match Start Time" field (`startDate`) silently and automatically inherits its data from the first round's start time. This prevents redundant validation blocks:
+
+```js
+// CreationWizard.jsx:311-314
+const firstRound = (formData.roadmap || [])[0]
+const derivedStartDate = (firstRound?.date && firstRound?.time)
+  ? `${firstRound.date}T${firstRound.time}`
+  : formData.startDate || ''
+```
+
+This same pattern is used in both the `saveToServer()` payload construction (line 311-314) and in the `validateStep()` function for step 6 and step 9 (lines 99-106, 123-127). The first round's date+time is the **authoritative source** for the match start; the standalone `startDate` field acts only as a fallback when no roadmap rounds exist.
+
+### 10.3 Validation (`CreationWizard.jsx` lines 53-134)
 Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 - Step 1: title 5-100 chars, game required
 - Step 2: match_type, perspective required
 - Step 3: slotsTotal min 2, max by plan tier (Free=100, Basic=300, Pro=1000), reserved_slots ≤ slotsTotal
 - Step 4: MVP + Kill Rewards ≤ total prize pool, prize distribution ≤ 100%
-- Step 6: registrationCloseDate > registrationOpenDate, startDate > registrationCloseDate
-- Step 9: orgName required, cover_image_url required, all prior fields rechecked
+- Step 6: registrationCloseDate > registrationOpenDate, matchStartDate > registrationCloseDate (uses first round's date or standalone startDate)
+- Step 9: orgName required (must have org profile), cover_image_url required, all prior fields rechecked
 
-### 10.3 Navigation
+### 10.4 Navigation
 - Fixed bottom bar (`StepNavigation.jsx`) with `backdrop-blur-xl`
 - Three buttons: Previous (disabled on step 1), **Save Draft** (solid `bg-primary text-white` with glow), Continue/Publish
-- Continue button shows tooltip when blocked: "Fix schedule errors before continuing."
-- Publish button on step 9 triggers full validation
+- Continue button blocked when `isNavigationBlocked` is true (set by Step6ScheduleRoadmap when rounds have blocking errors)
+- Publish button on step 9 triggers full cross-step validation via server
 
-### 10.4 State Management
+### 10.5 State Management
 - `formData` — full tournament form state (initialized by `emptyForm()`)
 - `errors` — validation error object
 - `draftId` — server-side draft record ID
 - `editingId` / `isEditMode` — for editing existing tournaments
 - Step rendering uses `useMemo` switch
 
-### 10.5 Auth Guards (`CreationWizard.jsx` lines 157-171)
+### 10.6 Auth Guards (`CreationWizard.jsx` lines 167-181)
 1. Redirect to `/login` if unauthenticated
 2. Redirect to `/profile` if not organiser/admin
 3. Redirect to `/become-organizer` if `orgApplicationStatus !== 'approved'`
 
-### 10.6 Draft System
+### 10.7 Draft System
 **Client-side** (`localStorage` key: `md_tournament_draft`):
 - Manual save only via "Save Draft" button (no auto-save to localStorage)
 - On mount (non-edit mode): checks for existing draft
@@ -1028,25 +1070,25 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 - Drafts **skip** `notifyFollowersOfTournament()` on save
 - Published tournaments (`isDraft: false`) have plan limits checked
 
-### 10.7 Draft Endpoints
+### 10.8 Draft Endpoints
 - `POST /api/tournaments` — Create draft (isDraft defaults to true)
 - `PUT /api/tournaments/:id` — Update draft or publish
 - `GET /api/tournaments/draft/:userId` — Load latest draft
 - `DELETE /api/tournaments/:id/draft` — Discard draft
 - `PUT /api/tournaments/:id/auto-save` — Partial field update (increments version)
 
-### 10.8 Edit Mode
+### 10.9 Edit Mode
 - Detected via URL `?edit=<tournamentId>`
 - Fetches full tournament via `GET /api/tournaments/:id`
 - Maps server fields (handles JSON parsing for timeline/roadmap)
 - Sets `draftId` to existing ID so saves issue PUT instead of POST
 
-### 10.9 Image Upload System (`Step5Media.jsx` + `CropModal.jsx`)
+### 10.10 Image Upload System (`Step5Media.jsx` + `CropModal.jsx`)
 1. User clicks dashed upload zone (accepts `image/jpeg, image/png, image/webp`)
-2. Validation: type must be JPEG/PNG/WebP, max 5MB, min resolution 600×800
-3. If ratio is already 3:4 (within 0.02 tolerance) → upload directly
+2. Validation: type must be JPEG/PNG/WebP, max 5MB, min resolution 600×800 (inferred from crop logic)
+3. If ratio is already 3:4 (within 0.02 tolerance) → upload to ImgBB directly via `uploadToImgbb()`
 4. If ratio differs → open CropModal with locked 3:4 frame
-5. Upload via XMLHttpRequest (progress tracking), sends base64 to `POST /api/upload`
+5. Upload via `uploadToImgbb()` which first tries server-side proxy (`/api/imgbb-upload`), then falls back to direct ImgBB API using `VITE_IMGBB_API_KEY`
 6. On success: `cover_image_url` updated in form data
 
 **CropModal**:
@@ -1054,6 +1096,13 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 - Drag reposition, scroll/zoom (0.5x–5x)
 - Cannot change crop ratio, resize crop box, use freeform crop
 - Canvas output: JPEG at 92% quality
+
+### 10.11 Image Upload — Server Proxy & Fallback (`src/utils/imgbbUpload.js`)
+The `uploadToImgbb()` function uses a dual-approach strategy:
+1. **Proxy (preferred)**: Sends base64 data to `/api/imgbb-upload` server endpoint which uses the server-side API key to upload. This avoids exposing the key and avoids CORS issues.
+2. **Direct fallback**: If the proxy fails, uses `import.meta.env.VITE_IMGBB_API_KEY` to call `https://api.imgbb.com/1/upload` directly.
+
+**Important for production (Render, etc.)**: The env var **must** be prefixed with `VITE_` (i.e., `VITE_IMGBB_API_KEY`) to be available to `import.meta.env` in the client bundle. Both `VITE_IMGBB_API_KEY` and `IMGBB_API_KEY` are present in `.env`.
 
 ---
 
@@ -1114,7 +1163,7 @@ ANY:
 Statuses that count as slot-occupying: `confirmed`, `pending_payment`
 
 ### 11.4 Client-Side Responsible Re-Registration
-Users with status `Cancelled`, `Expired`, or `Rejected` can re-register for the same tournament (checked in `TournamentDetail.jsx`.
+Users with status `Cancelled`, `Expired`, or `Rejected` can re-register for the same tournament (checked in `TournamentDetail.jsx`).
 
 ### 11.5 Registration Route Guard
 Route `/tournaments/:id/register` is wrapped in `RegistrationRoute`:
@@ -1304,12 +1353,33 @@ Embedded component used in `Profile.jsx` and `OrganizationManagement.jsx`:
 - Cross-tab sync via `window.addEventListener('storage')`
 - Polls `GET /api/settings/theme` every 60 seconds for admin changes
 
-### 16.2 CSS Custom Properties (`src/index.css` lines 29-130)
+### 16.2 The "Premium Light" Aesthetic
+Match District uses a **"Premium Light"** design language that avoids heavy dark metals or flat layouts. The key visual principles are:
+
+1. **Crisp backgrounds**: Light mode uses `--background: 248 250 252` (#F8FAFC — near-white), dark mode uses `--background: 11 16 32` (#0B1020 — deep navy).
+2. **Light-blue grid overlay**: All `bg-background` pages overlay a subtle dot grid:
+   ```css
+   background-image:
+     linear-gradient(to right, rgb(var(--primary) / 0.06) 2px, transparent 2px),
+     linear-gradient(to bottom, rgb(var(--primary) / 0.06) 2px, transparent 2px);
+   background-size: 32px 32px;
+   ```
+3. **Deep navy/slate typography**: `text-slate-900` (#0F172A) in light mode for high-contrast readability; white in dark mode.
+4. **Primary brand blue**: `--primary: 59 130 246` (#3B82F6) in dark mode, `--primary: 37 99 235` (#2563EB) in light mode. Used for all CTAs, active states, links, and accents.
+5. **3D Elevation via soft shadows**: Floating elements use soft, wide, tinted drop shadows combined with crisp micro-borders:
+   ```
+   shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] shadow-slate-300/60
+   border border-slate-200
+   ```
+6. **Crisp micro-borders**: `border-slate-200` in light mode, `border-outline-variant/20` in dark mode. Every card and container has a subtle 1px border.
+
+### 16.3 CSS Custom Properties (`src/index.css`)
 
 **Dark Mode** (`:root`):
 ```css
 --background: 11 16 32;         /* #0B1020 */
 --surface: 17 24 39;            /* #111827 */
+--surface-container-low: 17 24 39;
 --surface-container-lowest: 7 8 12;
 --primary: 59 130 246;          /* #3B82F6 */
 --secondary: 96 165 250;        /* #60A5FA */
@@ -1324,81 +1394,68 @@ Embedded component used in `Profile.jsx` and `OrganizationManagement.jsx`:
 ```css
 --background: 248 250 252;      /* #F8FAFC */
 --surface: 255 255 255;         /* #FFFFFF */
+--surface-container-low: 255 255 255;
+--surface-container-lowest: 255 255 255;
 --primary: 37 99 235;           /* #2563EB */
 --secondary: 71 85 105;         /* #475569 */
 --error: 220 38 38;
---on-background: 15 23 42;     /* #0F172A */
+--on-background: 15 23 42;     /* #0F172A (slate-900) */
 --on-surface-variant: 71 85 105;
 --outline-variant: 226 232 240; /* #E2E8F0 */
 ```
 
 All values are RGB triplets used via `rgb(var(--name))`.
 
-### 16.3 Background Grid
-All `.bg-background` pages get a subtle dot grid:
-```css
-background-image: linear-gradient(to right, rgb(var(--primary) / 0.06) 2px, transparent 2px),
-                  linear-gradient(to bottom, rgb(var(--primary) / 0.06) 2px, transparent 2px);
-background-size: 32px 32px;
-```
-
 ### 16.4 Card System
 
 **`.glass-card`**:
 - `background-color: rgba(var(--surface-container-low), 0.55)`
 - `backdrop-filter: blur(12px)`
-- Multi-layered box shadows
+- Multi-layered box shadows: `0 4px 24px rgba(0,0,0,0.45)`, `0 0 45px rgb(var(--primary)/0.18)`, `0 0 90px rgb(var(--primary)/0.08)`
+- Hover: brighter background, stronger shadow, translateY(-2px)
 
 **`.solid-card`**:
 - Same as glass but no backdrop filter
 - `background-color: rgb(var(--surface-container-low))`
 
-### 16.5 Tournament Card Design (`TournamentCard.jsx` — 239 lines)
+### 16.5 Tournament Card Design (`TournamentCard.jsx` — 528 lines)
 
-```
-┌──────────────────────────┐
-│  STATUS     [GAME BADGE] │  ← absolute overlay
-│                          │
-│       FULL IMAGE         │  ← aspect-[3/4], object-fit: cover
-│                          │
-├──────────────────────────┤
-│ Tournament Name          │  ← line-clamp-2, font-extrabold
-│                          │
-│ Prize Pool   │ Entry Fee │  ← two-column
-│                          │
-│ Organizer    │Match Type │  ← two-column, gold ★ for Pro
-│                          │
-│ 120 / 300 Slots          │
-│ ████████░░░░░           │  ← progress bar, NO percentage
-│                          │
-│ [      Join Now      ]   │  ← full-width primary CTA
-└──────────────────────────┘
-```
+The TournamentCard has two rendering modes depending on lifecycle status:
 
-- Mobile: `w-full`, Desktop: `sm:w-[300px]`
-- Image: `aspect-[3/4]` (1200×1600 ratio)
-- Card: `solid-card`, `rounded-2xl`, `overflow-hidden`, `shadow-lg`
-- **Only Pro Plan receives gold verification** (`★` star)
-- No blue verification exists anywhere on the platform
-- No duplicate information, no percentage labels, no "Slots Filled" text
+**For non-LIVE tournaments** — the "Wallet Pass" metaphor (see [Section 19](#19-tournament-cards--wallet-pass-metaphor)):
+- A 3D-layered sleeve/pass card with a dark backing pouch and a sliding white information card
+- Click/tap to pop out the white card, revealing full tournament details
+- Touch actions: `touch-action: pan-x pan-y` on outer wrapper, `!touch-auto` on interactive inner elements
+
+**For LIVE tournaments**:
+- A bi-fold card with a fixed 150px thumbnail and expandable info panel
+- Desktop: always expanded (flex-1). Mobile: click to toggle between 150px and 320px width.
+- Priority: green LIVE badge, pulsing `animate-pulse` status indicator
+
+**Shared visual rules**:
+- Image cover: `aspect-[3/4]`, `object-fit: cover`
+- All cards use `solid-card` styling with `rounded-2xl`, `overflow-hidden`, `shadow-lg`
+- **Only Pro Plan** receives gold verification (`★` VerificationBadge)
+- No duplicate information, no percentage labels, no "Slots Filled" text redundancy
 
 ### 16.6 Button Consistency
 - All primary buttons: `bg-primary text-white rounded-xl font-bold`
 - Glow shadow: `shadow-[0_0_20px_rgba(99,102,241,0.3)]`
 - Min height: `min-h-[44px]` (touch-friendly)
+- Hover interactions: `hover:-translate-y-0.5 hover:shadow-xl`
 - No page-specific button styles
 
 ### 16.7 Animation Guidelines
 - All animations use Framer Motion
-- Page reveals: fade + slide up (y: 15 → 0, 0.3s)
+- Page reveals: fade + slide up (y: 20 → 0, opacity: 0 → 1, 0.4s easeInOut)
 - Card hovers: scale 1.02, y: -4
 - Progress bars: animate width with easeOut
 - Pulsing badges: `animate-ping` for LIVE/active states
 - Respects `prefers-reduced-motion` (opacity fades only)
 
 ### 16.8 Typography & Spacing
-- High-contrast white headlines on dark mode
-- Secondary muted labels (`text-on-surface-variant`)
+- High-contrast white headlines on dark mode, `text-slate-900` on light mode
+- Secondary muted labels (`text-on-surface-variant` / `text-slate-500`)
 - Consistent spacing scale: 8/12/16/24/32px
 - Card sections use `gap-2.5` for vertical spacing
 - Two-column layouts use `gap-2` between columns
@@ -1407,10 +1464,12 @@ background-size: 32px 32px;
 - Global hiding: `*::-webkit-scrollbar { display: none }`, `* { scrollbar-width: none }`
 - `.custom-scrollbar`: thin (6px), rounded, semi-transparent
 - `.no-scrollbar`: hides entirely with `contain: paint`
+- `.scrollbar-hide`: utility class for hiding scrollbars while preserving scrolling
+- `.scrollbar-thin`: thin scrollbar variant (used in TournamentDetail)
 
 ### 16.10 Mobile UI Rules
 - Single-column below 640px
-- No horizontal scrolling
+- No horizontal scrolling of the page itself
 - Touch-friendly spacing (≥44px interactive elements)
 - Fixed bottom CTA on detail pages
 - Full-width cards on mobile
@@ -1428,11 +1487,220 @@ background-size: 32px 32px;
 - `VerificationBadge` component: returns gold `★` for Pro, `null` for all others
 - Sizes: `xs` (12px), `sm` (14px), `md` (20px), `lg` (28px)
 
+### 16.13 Avatar & Image Containment
+All profile/org images use the `.avatar-img` class:
+```css
+.avatar-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+```
+This forces every avatar to fill its frame without distortion.
+
+### 16.14 Light Mode Specific Overrides (index.css lines 2001-2069)
+- `text-on-surface-variant`: `#475569` (slate-600 for higher contrast)
+- `bg-surface-container`: `#F1F5F9`
+- `border-slate-200`: `#E2E8F0`
+- Input backgrounds: `#FFFFFF` with `#D1D5DB` borders and `#111827` text
+- Selection cards: white bg, slate-200 borders, blue-600 hover
+- Sponsor cards: white bg, slate-200 borders
+- Prize breakdown cards: blue gradient (`#EFF6FF → #DBEAFE`)
+
 ---
 
-## 17. Background Workers
+## 17. Touch-Gesture Management (CRITICAL)
 
-### 17.1 Slot Manager Worker (`workers/slotManagerWorker.js`)
+### 17.1 General Principle
+Match District must prevent scroll hijacking on mobile. The touch-action CSS property is used to explicitly declare which gestures the browser should handle natively vs. which should be captured by the component.
+
+### 17.2 Horizontal Scrolling Containers
+All `overflow-x: auto` or horizontal scroll carousels MUST use:
+```css
+touch-action: pan-x !important;
+-webkit-overflow-scrolling: touch;
+```
+This ensures vertical thumb swipes are NOT captured by the horizontal container — they pass through to the main page scroll instantly.
+
+Example implementations:
+- `src/pages/Homepage.jsx:206-208` — Featured tournaments carousel
+- `src/pages/Homepage.jsx:333` — Live matches horizontal list
+- `src/pages/Homepage.jsx:415` — Top organizations carousel
+- `src/pages/Tournaments.jsx:233` — Featured tournaments carousel
+- `src/pages/Tournaments.jsx:547` — Filtered tournaments grid
+- `src/pages/Tournaments.jsx:612` — View toggle list
+
+### 17.3 Card Wrappers (Vertical Scroll Should Work)
+Individual card wrappers, hero banners, and wallet images MUST use:
+```css
+touch-action: pan-x pan-y;
+```
+This allows both horizontal and vertical scrolling to pass through naturally.
+
+Example:
+- `src/components/TournamentCard.jsx:122` — Wallet card outer wrapper
+- `src/components/TournamentCard.jsx:443` — LIVE card container
+
+### 17.4 Interactive Inner Elements (Wallet Pass Cards)
+Interactive elements within the wallet pass card (the sliding white card face, the click-to-pop interaction) MUST use `!touch-auto` to restore browser default touch behaviors for the interactive area:
+```css
+touch-action: auto; /* via !touch-auto utility */
+```
+Example: `TournamentCard.jsx:130` — The pocket sleeve container, `TournamentCard.jsx:244` — The wallet front envelope face.
+
+### 17.5 Hero Banner Area
+The HeroBannerCarousel applies:
+```css
+touch-action: pan-y !important;
+```
+To the entire hero section and slide container (lines 138, 175, 178, 189). This prevents horizontal scroll hijacking while allowing vertical page scroll.
+
+### 17.6 Common Pattern Summary
+
+| Element | touch-action | Why |
+|---|---|---|
+| Horizontal scroll container (`overflow-x: auto`) | `pan-x` | Vertical swipes pass through |
+| Individual card outer wrapper | `pan-x pan-y` | Both directions pass through |
+| Interactive inner card elements | `auto` | Full native touch for taps/clicks |
+| Hero banner / slide container | `pan-y` | Only vertical scroll allowed |
+| Game logo images on cards | `auto` | No gesture interception needed |
+
+---
+
+## 18. Hero Section & Ads
+
+### 18.1 Structure (`HeroBannerCarousel.jsx` — 265 lines)
+
+The hero section consists of two visual layers:
+
+**1. Static "Welcome to the District" Header**
+```
+┌────────────────────────────────────────────┐
+│  Welcome to the District.                  │
+│                                            │
+│  ┌──────────────────────────────────────┐  │
+│  │  BGIS 2026        │ [CLAIM SLOTS]   │  │
+│  │  PRIZE │ ENTRY │ STARTS              │  │
+│  └──────────────────────────────────────┘  │
+│      ● ○                                   │
+└────────────────────────────────────────────┘
+```
+- Fixed greeting text: "Welcome to the District."
+- Always visible, sits above the carousel
+
+**2. 10-Second Infinite-Looping Carousel**
+- Two slides defined: `BGIS 2026` and `Valorant Challenger`
+- Auto-advances every 10 seconds via `setInterval`
+- Manual pagination via dots at bottom
+- Framed in a white card: `bg-white/95 backdrop-blur-md`, `border border-slate-200 ring-1 ring-slate-900/5`
+- Soft shadow: `shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] shadow-slate-300/60`
+
+**Promo Card Content**:
+- Compact horizontal layout: left side has title + data panels (prize, entry, starts), right side has CTA button
+- No bulky descriptions — just key stats
+- Tags rendered as icon+label pairs with trophy, ticket, and calendar SVG icons
+- CTA button: `bg-primary text-white` with hover arrow animation
+
+### 18.2 Carousel Slide Transitions
+- Uses Framer Motion `AnimatePresence` with `mode="wait"`
+- Custom `slideVariants`: enter from right (+60px, opacity 0, scale 0.97), center, exit to left (-60px)
+- Cubic bezier easing: `[0.16, 1, 0.3, 1]`
+- Direction tracked for enter/exit based on forward/backward navigation
+
+### 18.3 Background
+- Two persistent hero background images: `hero.png` (desktop), `hero_mobile.png` (mobile)
+- Hidden behind gradient overlays: `bg-gradient-to-b from-background/60 via-background/85 to-background`
+- Ambient cinematic glows: large blurred circles in primary/indigo colors at low opacity
+
+---
+
+## 19. Tournament Cards — Wallet Pass Metaphor
+
+### 19.1 The "Wallet Pass" Design
+For all non-LIVE tournaments, the card behaves like a physical wallet pass with a leather sleeve:
+
+```
+┌──────────────────────┐
+│  Leather Sleeve      │  ← Dark backing (Layer A) — z-0
+│  ┌───────────────┐   │
+│  │               │   │
+│  │  Game Image   │   │  ← Envelope face (Layer C) — z-20
+│  │               │   │
+│  └───────────────┘   │
+│         ┌────────────┤
+│         │ White Card │  ← Slide-out pass (Layer B) — z-10/50
+│         │ Stats      │
+│         │ CTA        │
+│         └────────────┘
+└──────────────────────┘
+```
+
+**Layer A** (z-0): The pouch backing — `bg-[#0c0d12]` with dark inset shadow
+**Layer B** (z-10, pops to z-50): The white information card — `bg-white border-slate-200`
+**Layer C** (z-20): The front envelope face — `bg-surface-container-low` with game cover image
+
+**3D Transform Mechanics**:
+- Outer wrapper: `perspective: 1000px`, `transform: rotate3d(1, -1, 0, 4deg)`, `transformStyle: preserve-3d`
+- On click: the sleeve rotates `rotateY(-6deg) translateX(-8px) translateZ(10px)`, the white card slides out `translateX(100%) translateZ(-5px)`
+- On hover (desktop): the white card peeks out slightly `translateX(40px) translateZ(-5px)`
+- Transition: `500ms cubic-bezier(0.34, 1.56, 0.64, 1)` — spring-like
+
+### 19.2 White Card Content (Layer B)
+When popped out, the white card reveals:
+1. Status header line with crosshair SVG decoration
+2. Tournament title (truncated) + organizer name + verification badge
+3. Prize & Entry grid (green/amber badge backgrounds)
+4. Format (Match Type • Perspective) and Slots (filled/total %) 
+5. Bottom row: CTA button + game logo (desaturated, grayscale, `mix-blend-multiply`)
+
+### 19.3 Horizontal Scroll Carousels
+- All tournament card collections use horizontal scroll: `overflow-x: auto`, `width: max-content` on inner track
+- Outer viewport uses a negative margin wrapper (`-mx-4 sm:-mx-sm`) to bleed past page padding
+- Inner track padding: `pl-4 sm:pl-sm md:pl-lg` to maintain edge gaps
+- Card padding: `pr-1.5 md:pr-3` on expanded white card states
+- Snap scrolling: `snap-x snap-mandatory`, `snap-start` on each card
+
+### 19.4 Card Padding & Gap Rules
+- Outer scroll viewport: `pb-8 pt-4` (8 padding-bottom for shadow visibility)
+- Inner track gap: `gap-4 sm:gap-6`
+- Card wrapper: `py-2 w-[150px] h-[200px]` with `pr-1.5 md:pr-3`
+- First card offset: `first:ml-3`
+
+---
+
+## 20. Global Footer
+
+### 20.1 Current Implementation
+There is **no standalone `Footer.jsx` component**. The footer is rendered inline within `src/pages/Homepage.jsx` (lines 628-642):
+
+```jsx
+<footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6 px-4 mt-20">
+  <div className="w-full max-w-container-max mx-auto flex flex-col gap-5">
+    <div className="flex justify-center items-center gap-5 border-b border-outline-variant/20 pb-4">
+      <button onClick={() => onNavigate('terms-service')}>Terms</button>
+      <button onClick={() => onNavigate('privacy-policy')}>Privacy</button>
+      <button onClick={() => onNavigate('help-support')}>Support</button>
+    </div>
+    <div className="flex flex-col items-center justify-center gap-1.5 text-center">
+      <button onClick={() => onNavigate('home')} className="font-headline-md text-[16px] font-extrabold text-primary">
+        Match District
+      </button>
+      <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">
+        &copy; {new Date().getFullYear()} MATCH DISTRICT. ALL RIGHTS RESERVED.
+      </p>
+    </div>
+  </div>
+</footer>
+```
+
+### 20.2 Rule: Root Layout Placement
+The `<Footer />` component must always be placed at the **absolute root layout level** to span edge-to-edge seamlessly. Currently, the footer only appears on the homepage. When extracted to a standalone component, it should be rendered in `App.jsx` at the same level as `<RouteErrorBoundary>` or after `<AnimatePresence>` to guarantee it appears on every route.
+
+---
+
+## 21. Background Workers
+
+### 21.1 Slot Manager Worker (`workers/slotManagerWorker.js`)
 - **File**: `E:\MatchDistrict\workers\slotManagerWorker.js` (98 lines)
 - **Mechanism**: `setInterval` loop running every 30 seconds
 - **Function**: `startSlotManagerWorker(pool)`:
@@ -1445,15 +1713,15 @@ background-size: 32px 32px;
   4. Slot-occupying statuses: `confirmed`, `pending_payment`
 - **Note**: Not cron-based — uses `setInterval` in the main server process
 
-### 17.2 Automation Processor (in server.js)
+### 21.2 Automation Processor (in server.js)
 - Processes `automation_rules` table every 60 seconds
 - Supports trigger events: `auto_publish`, `auto_open_registration`, `auto_close_registration`, `auto_reminder`, `auto_notification`, `auto_status_update`
 
 ---
 
-## 18. Web Workers (Client-Side)
+## 22. Web Workers (Client-Side)
 
-### 18.1 Abuse Tracker Worker (`src/workers/abuseTrackerWorker.js` — 99 lines)
+### 22.1 Abuse Tracker Worker (`src/workers/abuseTrackerWorker.js` — 99 lines)
 - Module-level singleton shared across the entire app
 - Message protocol:
   - `INIT` (wordList): loads banned words
@@ -1464,7 +1732,7 @@ background-size: 32px 32px;
 - Response: `{ fieldId, hasBadWord, blockedWord, message }`
 - Used by: `useAbuseTracker.js` hook → `AbuseFieldWrapper.jsx` component
 
-### 18.2 Tournament Creation Worker (`src/workers/tournamentCreationWorker.js` — 117 lines)
+### 22.2 Tournament Creation Worker (`src/workers/tournamentCreationWorker.js` — 117 lines)
 - Offloads tournament setup generation to background thread
 - Handles `generateSetup` action:
   - Game-specific map pools (BGMI: Erangel, Miramar, Sanhok; Valorant: Ascent, Bind, Haven; CS2: Dust2, Mirage, Inferno; Free Fire: Bermuda, Kalahari, Purgatory)
@@ -1474,9 +1742,9 @@ background-size: 32px 32px;
 
 ---
 
-## 19. Context Providers & State Management
+## 23. Context Providers & State Management
 
-### 19.1 Boot Sequence (`main.jsx`)
+### 23.1 Boot Sequence (`main.jsx`)
 ```jsx
 <StrictMode>
   <BrowserRouter>
@@ -1491,25 +1759,25 @@ background-size: 32px 32px;
 </StrictMode>
 ```
 
-### 19.2 Theme Context (`ThemeContext.jsx`)
+### 23.2 Theme Context (`ThemeContext.jsx`)
 - **Provided**: `{ theme, setTheme, toggleTheme }`
 - **Init**: Reads `matchdistrict_theme` from localStorage (defaults to `'dark'`), applies class to `<html>` immediately
 - **Polling**: Fetches `GET /api/settings/theme` every 60s (for admin theme changes)
 - **Cross-tab**: Listens for `storage` events
 
-### 19.3 User Context (`UserContext.jsx`)
+### 23.3 User Context (`UserContext.jsx`)
 - **Provided**: `{ currentUser, setCurrentUser, userState, setUserState, updateProfile, refetchUser, signOut, loading }`
 - **Init**: `initializeAuth()` reads `md_persistent_session` → `POST /api/auth/restore-session` → fallback Supabase `onAuthStateChange`
 - **Admin preservation**: Admin state (`matchdistrict.in@gmail.com`) preserved across auth events
 - **Methods**: `updateProfile()` (Supabase), `refetchUser()` (API), `signOut()` (full cleanup + reload)
 - **Focus listener**: Refetches user on tab focus
 
-### 19.4 Subscription Context (`SubscriptionContext.jsx`)
+### 23.4 Subscription Context (`SubscriptionContext.jsx`)
 - **Provided**: `{ subscription, usage, planDetails, billingHistory, loading, error, refresh, features, tier, hasFeature(), getLimit(), isUnlimited() }`
 - **Init**: Fetches `GET /api/subscription/my` on mount
 - **Refresh**: On tab focus, plus Supabase realtime subscription on `subscriptions` table
 
-### 19.5 Zustand Store (`stores/subscriptionStore.js`)
+### 23.5 Zustand Store (`stores/subscriptionStore.js`)
 - **Persisted** to `localStorage` key `match-district-subscription`
 - Fields persisted: `plan`, `status`, `billingCycle`, `renewalDate`
 - Actions: `setSubscription()`, `setUsage()`, `setBillingHistory()`, `syncFromServer()`
@@ -1517,45 +1785,47 @@ background-size: 32px 32px;
 
 ---
 
-## 20. Utility Functions
+## 24. Utility Functions
 
-### 20.1 API Utilities (`src/utils/api.js`)
+### 24.1 API Utilities (`src/utils/api.js`)
 - `fetchJsonWithRetry(url, options, retries=3, baseDelayMs=500)` — fetch with exponential backoff
 - `normalizeTournamentRow(matched)` — Normalizes DB row with defaults for all fields (30+ fields)
 
-### 20.2 Feature Gates (`src/utils/featureGates.js`)
+### 24.2 Feature Gates (`src/utils/featureGates.js`)
 - `PLAN_FEATURES`, `PLAN_PRICES`, `PLAN_ORDER` constants
 - `getPlanFeatures(tier)`, `hasFeature(tier, feature)`, `getFeatureLimit(tier, key)`
 - `getNextPlan(tier)`, `getUpgradeMessage(limitType)`
 
-### 20.3 Subscription Plans (`src/utils/subscriptionPlans.js`)
+### 24.3 Subscription Plans (`src/utils/subscriptionPlans.js`)
 - `PLANS` — Full plan definitions with limits and features
 - `getPlan(name)`, `hasFeature(name, key)`, `getLimit(name, key)`, `isUnlimited(name, key)`
 - `getNextPlan(name)`, `getRequiredPlanForFeature(key)`, `getUpgradeMessage(key)`
 
-### 20.4 Auth Token (`src/utils/getAuthToken.js`)
+### 24.4 Auth Token (`src/utils/getAuthToken.js`)
 - `getAuthToken()` — Async: gets Supabase session access_token, falls back to `token` cookie
 - `getAuthTokenSync()` — Synchronous: reads `token` cookie only
 
-### 20.5 User Storage (`src/utils/userStorage.js`)
+### 24.5 User Storage (`src/utils/userStorage.js`)
 - `sanitizeImageUrl(value)` — Only http(s) URLs, rejects base64, max 2048 chars
 - `sanitizeUserRecord(user)` — Strips password, sanitizes avatar/banner
 - `parseStoredUser(raw)`, `setStoredUser(user)`
 - `buildPlayerProfilePayload(form)`, `buildOrgProfilePayload(form)`
 
-### 20.6 Image Upload (`src/utils/imgbbUpload.js`)
-- `uploadToImgbb(image)` — Uploads to ImgBB API using `VITE_IMGBB_API_KEY`
+### 24.6 Image Upload (`src/utils/imgbbUpload.js`)
+- `uploadToImgbb(image)` — Two-phase upload: server proxy (`/api/imgbb-upload`) first, direct ImgBB API as fallback using `import.meta.env.VITE_IMGBB_API_KEY`
+- Supports File/Blob, base64 strings, and remote URLs as input
+- Transforms blobs to base64 for proxy transport
 
-### 20.7 Test Injector (`src/utils/testInjector.js`)
+### 24.7 Test Injector (`src/utils/testInjector.js`)
 - `injectDummyRegistrations(tournamentId, targetSlots=1000)` — Inserts dummy teams in chunks of 500 via Supabase
 
-### 20.8 Supabase Client (`src/utils/supabaseClient.js`)
+### 24.8 Supabase Client (`src/utils/supabaseClient.js`)
 - `supabase` — Singleton Supabase client instance using `import.meta.env.SUPABASE_URL` and `SUPABASE_ANON_KEY`
 
-### 20.9 API Services (`src/services/subscriptionApi.js` — 226 lines)
+### 24.9 API Services (`src/services/subscriptionApi.js` — 226 lines)
 Full client API service with methods for all subscription/organizer/admin endpoints. All use `getAuthToken()` for Bearer token authentication.
 
-### 20.10 Custom Hooks (`src/hooks/`)
+### 24.10 Custom Hooks (`src/hooks/`)
 | Hook | Purpose |
 |---|---|
 | `useCurrentUser.js` | Returns `[currentUser, setCurrentUser]` from UserContext |
@@ -1563,23 +1833,28 @@ Full client API service with methods for all subscription/organizer/admin endpoi
 | `usePermission.js` | Permission checks based on subscription plan (uses Zustand store) |
 | `useAbuseTracker.js` | Web Worker-based abuse detection with `checkField()`, `getFieldError()`, `reloadWordList()` |
 
+### 24.11 Tournament Lifecycle (`src/utils/tournamentLifecycle.js`)
+- `getTournamentLifecycleStatus(tournament, now)` — Computes lifecycle state machine: `open`, `closed`, `upcoming`, `live`, `completed`, `archived`
+- `getStatusBadgeConfig(status)` — Returns `{ text, bg, textColor }` for each lifecycle state
+- `getCTAButtonConfig(status)` — Returns `{ text, styleClass }` for each lifecycle state
+
 ---
 
-## 21. Security Rules & Defenses
+## 25. Security Rules & Defenses
 
-### 21.1 Authentication Security
+### 25.1 Authentication Security
 1. All protected API routes call `getAuthUser(req)` — returns 401 if JWT invalid/missing
 2. Organizer-only routes call `requireOrganizer()` — returns 403 if not organiser/admin
 3. Tournament create/update calls `requireApprovedOrganizer()` — DB check for `orgApplicationStatus === 'approved'` (admins bypass)
 4. Admin-only routes check `authUser.role !== 'admin'` — returns 403
 5. Ownership verified for user-specific resource modification
 
-### 21.2 Tournament Creation Security
+### 25.2 Tournament Creation Security
 1. Route `/create-tournament` guarded by 3-layer check: auth → role → approval
 2. Server independently validates approval status on every POST/PUT
 3. `orgName` never accepted from client — always fetched from DB by authenticated user ID
 
-### 21.3 Registration Security
+### 25.3 Registration Security
 1. Server verifies `authUser.id` for registration — never trusts frontend state
 2. Duplicate team name check per tournament
 3. Slot limit enforcement on registration
@@ -1588,7 +1863,7 @@ Full client API service with methods for all subscription/organizer/admin endpoi
 6. Abuse/profanity detection via Web Worker on name and gamerTag fields
 7. Leet-speak detection: common letter→number substitutions matched against banned word list
 
-### 21.4 Data Integrity Security
+### 25.4 Data Integrity Security
 1. OTP verification required for registration (5-minute expiry in `otps` table)
 2. Password reset tokens expire after 1 hour (`password_resets` table)
 3. Session data encrypted with AES-256-CBC
@@ -1596,17 +1871,17 @@ Full client API service with methods for all subscription/organizer/admin endpoi
 5. PBKDF2 with SHA-512, 1000 iterations, random 16-byte salt
 6. No plaintext storage (legacy plaintext fallback exists for migration)
 
-### 21.5 Password Security
+### 25.5 Password Security
 - Hashing: PBKDF2 with SHA-512, 1000 iterations, 16-byte random salt
 - Minimum length: 6 characters
 - Complexity: requires letter + number + symbol
 
-### 21.6 Registration Anti-Abuse
+### 25.6 Registration Anti-Abuse
 - Escalating cooldowns tracked per `client_key` in `registration_cooldowns` table
 - Web Worker scans for profanity in name and gamerTag
 - Leet-speak variant generation catches common substitutions (a→4, e→3, i→1, o→0, s→$)
 
-### 21.7 Frontend Route Guards
+### 25.7 Frontend Route Guards
 - Protected routes use `<Navigate>` redirects with proper cascade
 - `CreateTournamentRoute` in App.jsx: checks `loading` → `currentUser` → `role` → `orgApplicationStatus`
 - `CreationWizard.jsx` has duplicate in-component guard as defense-in-depth
@@ -1614,7 +1889,7 @@ Full client API service with methods for all subscription/organizer/admin endpoi
 
 ---
 
-## 22. Asset Inventory
+## 26. Asset Inventory
 
 ```
 src/assets/
@@ -1642,7 +1917,7 @@ src/assets/
 
 ---
 
-## 23. Known Constraints & Gaps
+## 27. Known Constraints & Gaps
 
 1. **No temporary email blacklist** — planned domain blacklist for disposable email providers not implemented
 2. **No escrow/payout fee implementation** — Free 5%, Basic 2.5%, Pro 1% fees documented but not coded
@@ -1653,16 +1928,19 @@ src/assets/
 7. **Admin credentials hardcoded** — `matchdistrict.in@gmail.com` hardcoded in `.env`
 8. **JWT secret fallback** — hardcoded fallback in code: `matchdistrict_super_secure_jwt_secret_key_2026`
 9. **`orgName` 30-day change cooldown** — enforced server-side but no client-side warning
-10. **Server.js is monolithic** — 7779 lines, no Express, manual routing via `if/else` chains
+10. **Server.js is monolithic** — 7779+ lines, no Express, manual routing via `if/else` chains
 11. **No auto-save on draft field changes** — manual save only
 12. **Manual payment verification** — no UPI webhook, admin must approve manually
 13. **Raw SQL throughout** — no ORM or query builder, risk of SQL errors
 14. **Image crop tolerance** — 0.02 ratio tolerance means near-3:4 images skip crop modal
 15. **Dead code**: `CreateTournament.jsx` (1515 lines) not imported anywhere; `RegistrationWizard.jsx` (475 lines) not imported; `TournamentCreationModal.jsx` not imported
+16. **Footer only on homepage** — no global footer component, currently embedded in `Homepage.jsx`
+17. **`VITE_` env prefix requirement** — for production builds on Render, ImgBB API key needs the `VITE_` prefix to be accessible client-side
+18. **Touch-gesture consistency** — some horizontal scroll containers use `!touch-auto` instead of `pan-x`, risking inconsistent behavior
 
 ---
 
-## 24. Future Roadmap
+## 28. Future Roadmap
 
 ### Not Yet Implemented
 - **Tournament History**: Player profile pages with past placements and wins
@@ -1688,6 +1966,7 @@ src/assets/
 - **Tournament Automation**: Feature flag exists, automation triggers listed but actual triggers processing is basic
 - **Custom Registration Forms**: Feature flag exists, form builder UI built but not deeply integrated
 - **Analytics**: Basic/Advanced/Full tiers defined, charts built but data collection layer is manual
+- **Global Footer**: Exists only in Homepage.jsx, not extracted to a root-level component
 
 ---
 
@@ -1696,3 +1975,4 @@ src/assets/
 | Date | Change | Author |
 |---|---|---|
 | Initial creation | Full platform documentation | — |
+| 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), ImgBB dual-upload strategy (§10.11, §24.6), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |
