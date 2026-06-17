@@ -26,7 +26,7 @@ function emptyForm() {
     description: '',
     match_type: 'squad',
     perspective: 'tpp',
-    slotsTotal: '100',
+    slotsTotal: '64',
     reserved_slots: '0',
     entry_fee_amount: '',
     prize_pool_type: 'dynamic',
@@ -84,7 +84,21 @@ function validateStep(step, data, planLimits, orgName, userTier) {
         errs.prize_split = 'MVP + Kill Reward budget exceeds base prize pool.'
       }
 
-      const totalPct = (data.prize_positions || []).reduce((s, p) => s + (parseInt(p.percentage) || 0), 0)
+      if (data.entry_fee_amount !== '' && data.entry_fee_amount !== undefined) {
+        const parsedFee = parseInt(data.entry_fee_amount)
+        if (isNaN(parsedFee) || parsedFee < 1) {
+          errs.entry_fee_amount = 'Entry fee must be greater than 0 for paid tournaments.'
+        }
+      }
+
+      const positions = data.prize_positions || []
+      if (!positions.length) {
+        errs.prize_positions = 'Please add at least one prize distribution position.'
+      }
+      const totalPct = positions.reduce((s, p) => s + (parseInt(p.percentage) || 0), 0)
+      if (positions.length && totalPct !== 100) {
+        errs.prize_positions_total = 'Prize distribution total must equal exactly 100%.'
+      }
       if (totalPct > 100) errs.prize_split = 'Prize distribution exceeds 100%.'
       break
     }

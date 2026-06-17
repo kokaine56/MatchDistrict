@@ -104,6 +104,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
           </div>
           <span className="text-xs text-on-surface-variant">{totalSlots} total slots</span>
         </div>
+        {errors?.entry_fee_amount && <p className="text-xs text-error mt-2">{errors.entry_fee_amount}</p>}
       </div>
 
       <PrizeAllocationEngine data={data} platformFeePct={platformFeePct} organizerFeePct={organizerFeePct} />
@@ -200,6 +201,8 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
             onChange={handlePositionsChange}
             availablePlacementPool={availablePlacementPool}
           />
+          {errors?.prize_positions && <p className="text-xs text-error mt-2">{errors.prize_positions}</p>}
+          {errors?.prize_positions_total && <p className="text-xs text-error mt-2">{errors.prize_positions_total}</p>}
           {errors?.prize_split && <p className="text-xs text-error mt-2">{errors.prize_split}</p>}
         </div>
       </div>

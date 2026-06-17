@@ -17,9 +17,7 @@ function generateSmartPercentages(count) {
   if (count === 7) return [30, 20, 15, 12, 10, 7, 6]
   if (count === 8) return [28, 18, 14, 12, 10, 8, 5, 5]
   if (count === 9) return [25, 17, 13, 11, 9, 8, 7, 5, 5]
-  // 10+: first gets ~25%, then gradually decreasing, last few get ~3-4%
   const result = []
-  const remaining = 100
   const lastFew = 4
   const tailTotal = lastFew * 3
   let allocated = 0
@@ -38,7 +36,6 @@ function generateSmartPercentages(count) {
       allocated += share
     }
   }
-  // Adjust rounding to ensure sum = 100
   const sum = Math.round(result.reduce((a, b) => a + b, 0))
   if (sum !== 100 && result.length > 0) {
     result[0] += (100 - sum)
@@ -48,11 +45,12 @@ function generateSmartPercentages(count) {
 
 export default function PrizeDistributionEditor({ positions = [], onChange, availablePlacementPool = 0 }) {
   const totalPercentage = useMemo(() => {
-    return positions.reduce((sum, p) => sum + (parseInt(p.percentage) || 0), 0)
+    return Math.round(positions.reduce((sum, p) => sum + (parseFloat(p.percentage) || 0), 0) * 10) / 10
   }, [positions])
 
   const isValid = totalPercentage <= 100
-  const isExact = totalPercentage === 100
+  const isExact = Math.abs(totalPercentage - 100) < 0.01
+  const remaining = Math.max(0, Math.round((100 - totalPercentage) * 10) / 10)
 
   const addPosition = useCallback(() => {
     const count = positions.length + 1
@@ -82,7 +80,13 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
   }, [positions, onChange])
 
   const updatePercentage = useCallback((id, value) => {
-    onChange(positions.map((p) => (p.id === id ? { ...p, percentage: value } : p)))
+    const parsedValue = parseFloat(value) || 0
+    const otherSum = positions
+      .filter(p => p.id !== id)
+      .reduce((sum, p) => sum + (parseFloat(p.percentage) || 0), 0)
+    const maxAvailable = Math.max(0, 100 - otherSum)
+    const clampedValue = Math.min(parsedValue, maxAvailable)
+    onChange(positions.map((p) => (p.id === id ? { ...p, percentage: String(clampedValue) } : p)))
   }, [positions, onChange])
 
   return (
@@ -92,7 +96,7 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
         <button
           type="button"
           onClick={addPosition}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
         >
           + Add Position
         </button>
@@ -150,13 +154,24 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
 
       <div className="flex items-center gap-2 pt-1">
         <span className="text-sm font-medium">Total:</span>
-        <span className={`text-sm font-bold ${isExact ? 'text-tertiary' : !isValid ? 'text-error' : 'text-on-surface-variant'}`}>
+        <span className={`text-sm font-bold ${isExact ? 'text-tertiary' : totalPercentage > 100 ? 'text-error' : 'text-on-surface-variant'}`}>
           {totalPercentage}%
         </span>
         {isExact && <span className="text-xs text-tertiary">✓ Fully Allocated</span>}
-        {!isValid && <span className="text-xs text-error">Exceeds 100%</span>}
-        {isValid && !isExact && totalPercentage > 0 && <span className="text-xs text-on-surface-variant">Remaining: {Math.round((100 - totalPercentage) * 10) / 10}%</span>}
+        {totalPercentage > 100 && <span className="text-xs text-error">Exceeds 100%</span>}
       </div>
+
+      {positions.length > 0 && (
+        <div className="text-xs">
+          {isExact ? (
+            <span className="text-tertiary font-medium">Ready to proceed</span>
+          ) : totalPercentage > 100 ? (
+            <span className="text-error font-medium">Reduce total to 100%</span>
+          ) : (
+            <span className="text-on-surface-variant">Remaining to allocate: <strong>{remaining}%</strong></span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

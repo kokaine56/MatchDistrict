@@ -67,7 +67,12 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           )}
         </div>
         {errors?.slotsTotal && <p className="text-xs text-error">{errors.slotsTotal}</p>}
-        <p className="text-xs text-on-surface-variant mt-1">{validationMsg}</p>
+        <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40">
+          <svg className="w-4 h-4 mt-0.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-xs text-blue-700 dark:text-blue-300">{validationMsg}</p>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -83,7 +88,12 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           placeholder="e.g. 10"
           className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors"
         />
-        <p className="text-xs text-on-surface-variant">Reserved slots are hidden from public registration and can be assigned manually.</p>
+        <div className="mt-1 flex items-start gap-2 p-3 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40">
+          <svg className="w-4 h-4 mt-0.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-xs text-blue-700 dark:text-blue-300">Reserved slots are hidden from public registration and can be assigned manually.</p>
+        </div>
       </div>
 
       <SlotCalculator total={data.slotsTotal} reserved={data.reserved_slots} />
