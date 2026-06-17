@@ -88,7 +88,6 @@ loadEnv();
 
 const { Pool } = pg;
 const PORT = process.env.PORT || 10000;
-const UPLOADS_DIR = path.join(__dirname, 'uploads', 'screenshots');
 
 // Enforce and validate environment variables for production-grade security
 if (!process.env.DATABASE_URL) {
@@ -140,7 +139,9 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth@matchdistrict.in>';
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-const IMGBB_API_KEY_SERVER = process.env.IMGBB_API_KEY || process.env.VITE_IMGBB_API_KEY || '';
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
 
 // Initialize Resend
 const resend = new Resend(RESEND_API_KEY);
@@ -4265,19 +4266,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7q. Image Upload to ImgBB Service
+  // 7q. Cloudinary Signed Upload Proxy (API key + secret stay server-side)
   if (req.url === '/api/upload' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const authUser = getAuthUser(req);
-        if (!authUser) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to upload images.' }));
-          return;
-        }
-
         const payload = JSON.parse(body);
         if (!payload.image) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4285,94 +4279,55 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Ensure uploads directory exists
-        if (!fs.existsSync(UPLOADS_DIR)) {
-          fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+        if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'Cloudinary credentials not configured on server.' }));
+          return;
         }
 
-        // Generate unique filename
-        const ext = payload.image.includes('image/png') ? 'png' : payload.image.includes('image/webp') ? 'webp' : 'jpg';
-        const filename = `${crypto.randomUUID()}.${ext}`;
-        const filePath = path.join(UPLOADS_DIR, filename);
-
-        // Strip base64 prefix if present
         let base64Data = payload.image;
+        let mimeType = 'image/png';
         if (base64Data.includes(';base64,')) {
-          base64Data = base64Data.split(';base64,')[1];
+          const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            mimeType = matches[1];
+            base64Data = matches[2];
+          } else {
+            base64Data = base64Data.split(';base64,')[1];
+          }
         }
 
         const buffer = Buffer.from(base64Data, 'base64');
-        await fs.promises.writeFile(filePath, buffer);
+        const timestamp = Math.floor(Date.now() / 1000);
+        const signature = crypto.createHash('sha1')
+          .update(`timestamp=${timestamp}${CLOUDINARY_API_SECRET}`)
+          .digest('hex');
 
-        const url = `/uploads/screenshots/${filename}`;
-        console.log(`📸 [UPLOAD SERVICE] Image saved locally: ${url} (${buffer.length} bytes)`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, url }));
-      } catch (err) {
-        console.error(`❌ [UPLOAD SERVICE] Exception during upload:`, err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'UPLOAD_ERROR', message: err.message }));
-      }
-    });
-    return;
-  }
+        const cloudinaryForm = new FormData();
+        cloudinaryForm.append('file', new Blob([buffer], { type: mimeType }), 'upload');
+        cloudinaryForm.append('api_key', CLOUDINARY_API_KEY);
+        cloudinaryForm.append('timestamp', timestamp.toString());
+        cloudinaryForm.append('signature', signature);
 
-  // 7r. ImgBB Upload Proxy (CORS-safe)
-  if (req.url === '/api/imgbb-upload' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const authUser = getAuthUser(req);
-        if (!authUser) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to upload images.' }));
-          return;
-        }
-
-        const payload = JSON.parse(body);
-        if (!payload.image) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'No image data provided.' }));
-          return;
-        }
-
-        if (!IMGBB_API_KEY_SERVER) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'ImgBB API key not configured on server.' }));
-          return;
-        }
-
-        let base64 = payload.image;
-        if (base64.includes(';base64,')) {
-          base64 = base64.split(';base64,')[1];
-        }
-        const imgBuffer = Buffer.from(base64, 'base64');
-        const blob = new Blob([imgBuffer], { type: 'image/png' });
-
-        const imgbbForm = new FormData();
-        imgbbForm.append('image', blob, 'upload.png');
-
-        const imgbbRes = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY_SERVER}`, {
+        const cloudinaryRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
           method: 'POST',
-          body: imgbbForm,
+          body: cloudinaryForm,
         });
 
-        const imgbbData = await imgbbRes.json();
-        if (!imgbbData.success) {
-          console.error('❌ [IMGBB PROXY] ImgBB error:', imgbbData.error?.message);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'IMGBB_ERROR', message: imgbbData.error?.message || 'ImgBB upload failed' }));
-          return;
-        }
+        const cloudinaryData = await cloudinaryRes.json();
 
-        console.log(`📸 [IMGBB PROXY] Upload success: ${imgbbData.data.display_url}`);
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, url: imgbbData.data.display_url }));
+        if (cloudinaryRes.ok && cloudinaryData.secure_url) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, url: cloudinaryData.secure_url }));
+        } else {
+          console.error('❌ [CLOUDINARY] Upload error:', cloudinaryData.error?.message);
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CLOUDINARY_ERROR', message: cloudinaryData.error?.message || 'Cloudinary upload failed' }));
+        }
       } catch (err) {
-        console.error('❌ [IMGBB PROXY] Exception:', err.message);
+        console.error('❌ [CLOUDINARY] Exception:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'PROXY_ERROR', message: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'UPLOAD_ERROR', message: err.message }));
       }
     });
     return;
@@ -8553,27 +8508,6 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
-    return;
-  }
-
-  // 7b. Serve static files from uploads/
-  if (req.url.startsWith('/uploads/')) {
-    const uploadPath = path.join(__dirname, req.url);
-    try {
-      const stat = await fs.promises.stat(uploadPath);
-      if (stat.isFile()) {
-        const ext = path.extname(uploadPath);
-        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-        const data = await fs.promises.readFile(uploadPath);
-        res.writeHead(200, { 'Content-Type': contentType });
-        res.end(data);
-        return;
-      }
-    } catch (err) {
-      // Fall through to 404
-    }
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('404 Not Found');
     return;
   }
 

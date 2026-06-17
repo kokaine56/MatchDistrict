@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
+import { uploadImage } from '../utils/cloudinaryUpload'
 
 const PAYMENT_STEPS = ['Registration', 'Payment', 'Verification', 'Confirmed']
 
@@ -141,30 +142,16 @@ export default function TournamentPayment() {
       let screenshotUrl = null
 
       if (needsPayment) {
-        setUploadProgress(30)
-        const reader = new FileReader()
-        const base64 = await new Promise((resolve, reject) => {
-          reader.onload = () => resolve(reader.result)
-          reader.onerror = reject
-          reader.readAsDataURL(screenshot)
-        })
         setUploadProgress(50)
-
-        const uploadRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ image: base64 })
-        })
-        const uploadData = await uploadRes.json()
-        setUploadProgress(70)
-
-        if (!uploadData.success) {
+        try {
+          screenshotUrl = await uploadImage(screenshot)
+        } catch {
           setServerError('Failed to upload screenshot. Please try again.')
           setSubmitting(false)
           submitLockRef.current = false
           return
         }
-        screenshotUrl = uploadData.url
+        setUploadProgress(70)
       }
 
       const idempotencyKey = 'IK-' + Date.now().toString(36) + '-' + crypto.randomUUID().slice(0, 8)

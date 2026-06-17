@@ -6,7 +6,7 @@ import VerificationBadge from '../components/VerificationBadge.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
 import { getAuthToken } from '../utils/getAuthToken.js'
-import { uploadToImgbb } from '../utils/imgbbUpload'
+import { uploadImage } from '../utils/cloudinaryUpload'
 import { sanitizeImageUrl } from '../utils/userStorage.js'
 
 export default function OrgPage({ onNavigate }) {
@@ -177,7 +177,7 @@ export default function OrgPage({ onNavigate }) {
     setProfileUploadProgress(40)
     triggerToast('Uploading image... Please wait.')
     try {
-      const url = await uploadToImgbb(file)
+      const url = await uploadImage(file)
       if (!url || !sanitizeImageUrl(url)) {
         triggerToast('Upload returned an invalid image URL.')
         return null

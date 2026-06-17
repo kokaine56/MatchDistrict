@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAuthToken } from '../utils/getAuthToken'
-import { uploadToImgbb } from '../utils/imgbbUpload'
+import { uploadImage } from '../utils/cloudinaryUpload'
 
 const PAYMENT_APPS = ['Google Pay', 'PhonePe', 'Paytm', 'Amazon Pay', 'BHIM UPI', 'Other']
 
@@ -151,7 +151,7 @@ export default function RegistrationWizard({ tournamentId, entryFee, tournamentT
       setScreenshotUploading(true)
       let screenshotUrl = null
       try {
-        screenshotUrl = await uploadToImgbb(screenshotFile)
+        screenshotUrl = await uploadImage(screenshotFile)
       } catch {
         triggerToast('Failed to upload screenshot. Please try again.')
         setScreenshotUploading(false)

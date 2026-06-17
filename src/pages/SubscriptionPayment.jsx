@@ -6,6 +6,7 @@ import { subscriptionApi } from '../services/subscriptionApi.js'
 import { useUser } from '../UserContext.jsx'
 import { PLAN_PRICES, PLAN_ORDER } from '../utils/featureGates.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
+import { uploadImage } from '../utils/cloudinaryUpload.js'
 import qrBasicMonthly from '../assets/payment/qr_basic_monthly.png'
 import qrProMonthly from '../assets/payment/qr_pro_monthly.png'
 import qrAnnually from '../assets/payment/anually.png'
@@ -107,26 +108,7 @@ export default function SubscriptionPayment() {
 
   const uploadScreenshot = async () => {
     if (!screenshotFile) return null
-    const token = await getAuthToken()
-    if (!token) throw new Error('Authentication token not found. Please sign in again.')
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = async (e) => {
-        const base64 = e.target.result
-        try {
-          const res = await fetch('/api/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ image: base64 })
-          })
-          const data = await res.json()
-          if (data.success) resolve(data.url)
-          else reject(new Error(data.message || 'Upload failed'))
-        } catch (err) { reject(err) }
-      }
-      reader.onerror = reject
-      reader.readAsDataURL(screenshotFile)
-    })
+    return uploadImage(screenshotFile)
   }
 
   const handleSubmit = async () => {

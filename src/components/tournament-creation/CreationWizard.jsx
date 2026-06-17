@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useUser } from '../../UserContext'
 import { getAuthToken } from '../../utils/getAuthToken'
-import { uploadToImgbb } from '../../utils/imgbbUpload'
+import { uploadImage } from '../../utils/cloudinaryUpload'
 import StepIndicator from './StepIndicator'
 import StepNavigation from './StepNavigation'
 import Step1BasicDetails from './steps/Step1BasicDetails'
@@ -352,17 +352,17 @@ export default function CreationWizard() {
         rules: formData.rules || '',
       }
 
-      // Use pre-uploaded ImgBB URL from Step9Publish if provided
+      // Use pre-uploaded Cloudinary URL from Step9Publish if provided
       if (preUploadedImageUrl) {
         body.cover_image_url = preUploadedImageUrl
       } else {
-        // Upload cover image to ImgBB if local file is pending
+        // Upload cover image to Cloudinary if local file is pending
         const hasNewFile = !!formData.cover_image_file
         const hasBlobUrl = typeof formData.cover_image_url === 'string' && formData.cover_image_url.startsWith('blob:')
         if (hasNewFile || hasBlobUrl) {
           setUploadingMedia(true)
           try {
-            const uploadedUrl = await uploadToImgbb(formData.cover_image_file || formData.cover_image_url)
+            const uploadedUrl = await uploadImage(formData.cover_image_file || formData.cover_image_url)
             body.cover_image_url = uploadedUrl
           } catch (err) {
             console.error('[Publish] Cover image upload failed:', err)

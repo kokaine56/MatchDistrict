@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { uploadToImgbb } from '../../../utils/imgbbUpload'
+import { uploadImage } from '../../../utils/cloudinaryUpload'
 
 export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError }) {
   const navigate = useNavigate()
@@ -31,10 +31,10 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
 
     let finalImageUrl = data.cover_image_url || ''
 
-    if (finalImageUrl && !finalImageUrl.includes('imgbb.com') && !finalImageUrl.includes('unsplash.com')) {
+    if (finalImageUrl && !finalImageUrl.includes('cloudinary.com') && !finalImageUrl.includes('unsplash.com')) {
       setMediaUploading(true)
       try {
-        finalImageUrl = await uploadToImgbb(finalImageUrl)
+        finalImageUrl = await uploadImage(finalImageUrl)
       } catch (err) {
         setMediaUploading(false)
         setIsPublishing(false)

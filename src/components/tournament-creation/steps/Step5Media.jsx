@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
 import CropModal from '../CropModal'
-import { uploadToImgbb } from '../../../utils/imgbbUpload'
+import { uploadImage } from '../../../utils/cloudinaryUpload'
 
 export default function Step5Media({ data, onChange, orgName, orgTier }) {
   const [uploadStatus, setUploadStatus] = useState('idle')
@@ -13,27 +13,6 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
   const [isImgUploading, setIsImgUploading] = useState(false)
   const fileRef = useRef(null)
   const pendingUpload = useRef(null)
-
-  // ─── ImgBB API Key Initialization Check ───────────────────────────────────
-  // Runs once on mount. Validates that the VITE_IMGBB_API_KEY env var is
-  // present in the client bundle. If missing, image uploads will silently
-  // fall back to the server proxy (/api/imgbb-upload) — but if that also
-  // lacks the key the upload will fail. Catching it here speeds up debugging.
-  useEffect(() => {
-    const key = import.meta.env.VITE_IMGBB_API_KEY
-    if (!key || key.trim() === '') {
-      console.error(
-        '[Step5Media] ⚠️  MISSING ENV VAR: VITE_IMGBB_API_KEY is undefined or empty.\n' +
-        '  → Tournament cover image uploads will fail if the server-side proxy (/api/imgbb-upload) is also unconfigured.\n' +
-        '  → ACTION REQUIRED:\n' +
-        '      1. Add  VITE_IMGBB_API_KEY=<your_key>  to your hosting platform\'s environment variables.\n' +
-        '      2. Trigger a full platform REBUILD — Vite bakes env vars into the bundle at build time.\n' +
-        '         Changes to env vars do NOT take effect without a rebuild.\n' +
-        '  → Docs: https://vitejs.dev/guide/env-and-mode.html#env-variables'
-      )
-    }
-  }, [])
-  // ─────────────────────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (e) => {
     const file = e.target.files?.[0]
@@ -55,7 +34,6 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
     setUploadStatus('validating')
     setUploadError('')
 
-    // Read image to check dimensions
     const img = new Image()
     const tempUrl = URL.createObjectURL(file)
     let loadOk = false
@@ -76,13 +54,14 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
     const TOLERANCE = 0.02
 
     if (Math.abs(imgRatio - TARGET_RATIO) <= TOLERANCE) {
-      // Already 3:4 — upload to ImgBB immediately
       URL.revokeObjectURL(tempUrl)
       setIsImgUploading(true)
       try {
-        const publicUrl = await uploadToImgbb(file)
-        onChange({ ...data, cover_image_url: publicUrl })
-        setUploadStatus('completed')
+        const publicUrl = await uploadImage(file)
+        if (publicUrl) {
+          onChange({ ...data, cover_image_url: publicUrl })
+          setUploadStatus('completed')
+        }
       } catch (err) {
         setUploadError(err.message || 'Upload failed, please try again')
         setUploadStatus('failed')
@@ -92,11 +71,10 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
       return
     }
 
-    // Ratio differs — open crop modal with locked 3:4 frame
     setCropSrc(tempUrl)
     pendingUpload.current = file
     setShowCrop(true)
-  }, [data, onChange, uploadToImgbb])
+  }, [data, onChange])
 
   const handleCropDone = useCallback(async (blob) => {
     setShowCrop(false)
@@ -107,16 +85,18 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
 
     setIsImgUploading(true)
     try {
-      const publicUrl = await uploadToImgbb(croppedFile)
-      onChange({ ...data, cover_image_url: publicUrl })
-      setUploadStatus('completed')
+      const publicUrl = await uploadImage(croppedFile)
+      if (publicUrl) {
+        onChange({ ...data, cover_image_url: publicUrl })
+        setUploadStatus('completed')
+      }
     } catch (err) {
       setUploadError(err.message || 'Upload failed, please try again')
       setUploadStatus('failed')
     } finally {
       setIsImgUploading(false)
     }
-  }, [data, onChange, cropSrc, uploadToImgbb])
+  }, [data, onChange, cropSrc])
 
   const handleCropCancel = useCallback(() => {
     setShowCrop(false)
@@ -203,7 +183,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
                 <span className="text-sm text-on-background font-medium">
-                  {isImgUploading ? 'Uploading to server...' : 'Processing Image...'}
+                  {isImgUploading ? 'Uploading image...' : 'Processing Image...'}
                 </span>
                 {uploadFile && (
                   <span className="text-xs text-on-surface-variant/70">

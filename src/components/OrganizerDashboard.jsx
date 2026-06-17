@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../ThemeContext.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAuthToken } from '../utils/getAuthToken.js'
-import { uploadToImgbb } from '../utils/imgbbUpload'
+import { uploadImage } from '../utils/cloudinaryUpload'
 import { sanitizeImageUrl } from '../utils/userStorage.js'
 import PricingSection from './PricingSection'
 import { useSubscription } from '../contexts/SubscriptionContext'
@@ -215,7 +215,7 @@ function OrganizerDashboard({
 
     try {
       if (stagedUploads.logo) {
-        const url = await uploadToImgbb(stagedUploads.logo.blob)
+        const url = await uploadImage(stagedUploads.logo.blob)
         if (!url || !sanitizeImageUrl(url)) {
           triggerToast('Logo upload returned an invalid URL.')
           setIsSavingSettings(false)
@@ -224,7 +224,7 @@ function OrganizerDashboard({
         finalLogo = url
       }
       if (stagedUploads.banner) {
-        const url = await uploadToImgbb(stagedUploads.banner.blob)
+        const url = await uploadImage(stagedUploads.banner.blob)
         if (!url || !sanitizeImageUrl(url)) {
           triggerToast('Banner upload returned an invalid URL.')
           setIsSavingSettings(false)

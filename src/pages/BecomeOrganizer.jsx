@@ -4,6 +4,7 @@ import Header from '../components/Header.jsx';
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx';
 import { useUser } from '../UserContext.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
+import { uploadImage } from '../utils/cloudinaryUpload.js';
 
 const countriesList = ["India", "United States", "United Kingdom", "Other"];
 
@@ -410,24 +411,14 @@ function BecomeOrganizer({ onNavigate }) {
     if (!file.type.startsWith('image/')) { alert('Please upload a valid image file.'); return; }
     if (file.size > 10 * 1024 * 1024) { alert('Banner must be under 10MB.'); return; }
     setIsUploadingBanner(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const token = await getAuthToken();
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ image: reader.result }),
-        });
-        const data = await res.json();
-        if (data.success && data.url) {
-          updateForm('orgBanner', data.url);
-          updateForm('orgBannerName', file.name);
-        }
-      } catch {}
-      setIsUploadingBanner(false);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const url = await uploadImage(file);
+      if (url) {
+        updateForm('orgBanner', url);
+        updateForm('orgBannerName', file.name);
+      }
+    } catch {}
+    setIsUploadingBanner(false);
   };
 
   const handleKycUpload = async (file) => {
@@ -439,24 +430,14 @@ function BecomeOrganizer({ onNavigate }) {
     setKycFileInfo({ size: file.size, isValid, sizeText: sizeMB.toFixed(2) + ' MB' });
     if (!isValid) return;
     setIsUploadingKyc(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      try {
-        const token = await getAuthToken();
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ image: reader.result }),
-        });
-        const data = await res.json();
-        if (data.success && data.url) {
-          updateForm('kycImage', data.url);
-          updateForm('kycName', file.name);
-        }
-      } catch {}
-      setIsUploadingKyc(false);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const url = await uploadImage(file);
+      if (url) {
+        updateForm('kycImage', url);
+        updateForm('kycName', file.name);
+      }
+    } catch {}
+    setIsUploadingKyc(false);
   };
 
   const handleMouseDown = (e) => {
@@ -510,15 +491,9 @@ function BecomeOrganizer({ onNavigate }) {
     setIsUploadingLogo(true);
     setCropImageSrc('');
     try {
-      const token = await getAuthToken();
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ image: base64 }),
-      });
-      const data = await res.json();
-      if (data.success && data.url) {
-        updateForm('orgLogo', data.url);
+      const url = await uploadImage(base64);
+      if (url) {
+        updateForm('orgLogo', url);
         updateForm('orgLogoName', cropImageName);
       }
     } catch {}
