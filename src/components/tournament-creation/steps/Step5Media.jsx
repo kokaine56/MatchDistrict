@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
 import CropModal from '../CropModal'
@@ -13,6 +13,27 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
   const [isImgUploading, setIsImgUploading] = useState(false)
   const fileRef = useRef(null)
   const pendingUpload = useRef(null)
+
+  // ─── ImgBB API Key Initialization Check ───────────────────────────────────
+  // Runs once on mount. Validates that the VITE_IMGBB_API_KEY env var is
+  // present in the client bundle. If missing, image uploads will silently
+  // fall back to the server proxy (/api/imgbb-upload) — but if that also
+  // lacks the key the upload will fail. Catching it here speeds up debugging.
+  useEffect(() => {
+    const key = import.meta.env.VITE_IMGBB_API_KEY
+    if (!key || key.trim() === '') {
+      console.error(
+        '[Step5Media] ⚠️  MISSING ENV VAR: VITE_IMGBB_API_KEY is undefined or empty.\n' +
+        '  → Tournament cover image uploads will fail if the server-side proxy (/api/imgbb-upload) is also unconfigured.\n' +
+        '  → ACTION REQUIRED:\n' +
+        '      1. Add  VITE_IMGBB_API_KEY=<your_key>  to your hosting platform\'s environment variables.\n' +
+        '      2. Trigger a full platform REBUILD — Vite bakes env vars into the bundle at build time.\n' +
+        '         Changes to env vars do NOT take effect without a rebuild.\n' +
+        '  → Docs: https://vitejs.dev/guide/env-and-mode.html#env-variables'
+      )
+    }
+  }, [])
+  // ─────────────────────────────────────────────────────────────────────────
 
   const handleUpload = useCallback(async (e) => {
     const file = e.target.files?.[0]
