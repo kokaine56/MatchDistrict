@@ -55,8 +55,10 @@ export async function uploadToImgbb(image) {
 
   // Fallback: direct ImgBB upload
   console.log('[ImgBB] Falling back to direct ImgBB API upload...')
-  const IMGBB_API_KEY = import.meta.env.VITE_IMGBB_API_KEY
-  if (!IMGBB_API_KEY) {
+  const apiKey = import.meta.env.VITE_IMGBB_API_KEY
+
+  if (!apiKey) {
+    console.error("Upload failed: VITE_IMGBB_API_KEY is missing in the environment.")
     throw new Error('VITE_IMGBB_API_KEY is not configured. Cannot upload images.')
   }
 
@@ -69,23 +71,24 @@ export async function uploadToImgbb(image) {
   const formData = new FormData()
   formData.append('image', fileToUpload)
 
-  const uploadUrl = `https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`
-  console.log('[ImgBB] POST (direct):', uploadUrl)
+  try {
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, {
+      method: 'POST',
+      body: formData,
+    })
 
-  const res = await fetch(uploadUrl, {
-    method: 'POST',
-    body: formData,
-  })
+    console.log('[ImgBB] Direct response status:', response.status, response.statusText)
+    const data = await response.json()
+    console.log('[ImgBB] Direct response:', JSON.stringify(data, null, 2))
 
-  console.log('[ImgBB] Direct response status:', res.status, res.statusText)
-  const data = await res.json()
-  console.log('[ImgBB] Direct response:', JSON.stringify(data, null, 2))
-
-  if (!data.success) {
-    console.error('[ImgBB] Direct upload failed:', data.error?.message || '(no message)')
-    throw new Error(data.error?.message || `ImgBB upload failed (HTTP ${res.status})`)
+    if (data.success) {
+      console.log('[ImgBB] Direct upload success! URL:', data.data.display_url)
+      return data.data.display_url
+    } else {
+      throw new Error(data.error?.message || 'ImgBB API returned an error')
+    }
+  } catch (error) {
+    console.error('Error uploading image:', error)
+    throw error
   }
-
-  console.log('[ImgBB] Direct upload success! URL:', data.data.display_url)
-  return data.data.display_url
 }
