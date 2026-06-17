@@ -152,8 +152,7 @@ SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 # Image Upload (VITE_ prefix required for client-side access in Vite)
 VITE_CLOUDINARY_CLOUD_NAME=dwiol3q0f
-CLOUDINARY_API_KEY=<your-api-key>
-CLOUDINARY_API_SECRET=<your-api-secret>
+VITE_CLOUDINARY_UPLOAD_PRESET=matchdistrict_default
 
 # Feature Flags
 ENABLE_ESCROW_CONTRACTS=true
@@ -163,7 +162,7 @@ ENABLE_ANTI_CHEAT_LOGS=true
 
 ### Vite Configuration (`vite.config.js`)
 - **envPrefix**: Extended to include `APP_`, `API_`, `SOCKET_`, `AUTH_`, `OTP_`, `ADMIN_`, `JWT_`, `ENABLE_`, `ANALYTICS_`, `DATABASE_`, `SUPABASE_`, and `VITE_` prefixes.
-- **Proxy**: All `/api` requests proxied to `http://localhost:10000` in dev. In production (Render, etc.), image uploads use the server-side `/api/upload` endpoint which performs signed Cloudinary uploads with `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET`.
+- **Proxy**: All `/api` requests proxied to `http://localhost:10000` in dev. In production (Render, etc.), image uploads use Cloudinary unsigned client-side upload directly via `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET`.
 - **Build chunking**: React/Framer-Motion/React-Router → `vendor` chunk; all other `node_modules` → `dependencies` chunk.
 - **historyApiFallback**: Enabled for SPA routing.
 
@@ -603,7 +602,7 @@ The server runs on **port 10000** as a raw Node.js HTTP server with manual routi
 |---|---|---|---|---|
 | PUT | `/api/users/update-profile/:id` | Ownership | 5500 | Update user profile |
 | GET | `/api/users/:id` | Auth | 5600 | Get user profile |
-| POST | `/api/upload` | Auth | 5700 | Upload image (base64 → Cloudinary via proxy) — **Deprecated, use client-side Cloudinary upload** |
+| POST | `/api/upload` | Auth | 5700 | Upload image (base64 → Cloudinary via proxy) — **Removed, all uploads use direct client-side Cloudinary unsigned upload** |
 | GET | `/api/users` | Admin | 5800 | List all users |
 | DELETE | `/api/users/:id` | Admin | 5900 | Delete user (with cascade) |
 
@@ -690,7 +689,7 @@ The server runs on **port 10000** as a raw Node.js HTTP server with manual routi
 | POST | `/api/inject-dummy-registrations` | Admin | 7550 | Test inject dummy registrations |
 | POST | `/api/admin/toggle-early-access` | Admin | 7600 | Toggle user early access |
 | POST | `/api/admin/save-feature-flag` | Admin | 7650 | Save feature flag |
-| POST | `/api/upload` | Auth | ~4268 | Server-side image upload (base64 → local storage) — **Removed, all uploads use Cloudinary** |
+| POST | `/api/upload` | Auth | ~4268 | **Removed** — all uploads use direct client-side Cloudinary unsigned upload |
 
 ---
 
@@ -1087,9 +1086,9 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 ### 10.10 Image Upload System (`Step5Media.jsx` + `CropModal.jsx`)
 1. User clicks dashed upload zone (accepts `image/jpeg, image/png, image/webp`)
 2. Validation: type must be JPEG/PNG/WebP, max 5MB, min resolution 600×800 (inferred from crop logic)
-3. If ratio is already 3:4 (within 0.02 tolerance) → upload via `uploadImage()` (sends to server `/api/upload` proxy → Cloudinary signed API)
+3. If ratio is already 3:4 (within 0.02 tolerance) → upload directly to Cloudinary via `uploadImage()` using unsigned upload preset
 4. If ratio differs → open CropModal with locked 3:4 frame
-5. Upload via `uploadImage()` which POSTs to server-side `/api/upload` for signed Cloudinary upload using API key + secret
+5. Upload via `uploadImage()` which sends `FormData` with `file` + `upload_preset` directly to Cloudinary unsigned API
 6. On success: `cover_image_url` updated in form data
 
 **CropModal**:
@@ -1097,14 +1096,13 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 - Drag reposition, scroll/zoom (0.5x–5x)
 - Cannot change crop ratio, resize crop box, use freeform crop
 - Canvas output: JPEG at 92% quality
-### 10.11 Image Upload — Server-Side Signed Cloudinary Proxy (`src/utils/cloudinaryUpload.js`)
+### 10.11 Image Upload — Cloudinary Unsigned Upload (`src/utils/cloudinaryUpload.js`)
 
-The `uploadImage()` function uploads via a server-side proxy for signed Cloudinary uploads:
-1. Converts the input (File, Blob, data URL) to base64
-2. `POST /api/upload` with `{ image: base64 }` to the server
-3. Server generates a SHA-1 signature using `CLOUDINARY_API_SECRET` and sends the file to Cloudinary's signed upload API
-4. Returns `secure_url` from the Cloudinary JSON response
-5. API key and secret never leave the server — available as `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` in `.env`
+The `uploadImage()` function performs a direct unsigned upload to Cloudinary:
+1. Converts the input (File, Blob, data URL) to a Blob
+2. Sends `FormData` with `file` and `upload_preset` to `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
+3. Returns `secure_url` from the Cloudinary JSON response
+4. Requires `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET` in `.env` — no API key or secret needed
 
 ---
 
@@ -1814,9 +1812,7 @@ The `<Footer />` component must always be placed at the **absolute root layout l
 - `buildPlayerProfilePayload(form)`, `buildOrgProfilePayload(form)`
 ### 24.6 Image Upload (`src/utils/cloudinaryUpload.js`)
 
-- `uploadImage(image)` — Server-proxied signed Cloudinary upload. Converts input (File, Blob, blob: URL, http URL, data: URL) to base64, POSTs to `/api/upload`, server generates SHA-1 signature with `CLOUDINARY_API_SECRET`. Requires `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET` on server.
-- Supports File/Blob, base64 strings, and remote URLs as input
-- Transforms blobs to base64 for proxy transport
+- `uploadImage(image)` — Direct unsigned Cloudinary upload via `FormData` with `file` + `upload_preset`. Accepts File, Blob, blob: URL, http URL, or data: URL. Requires `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET` in `.env`.
 
 ### 24.7 Test Injector (`src/utils/testInjector.js`)
 - `injectDummyRegistrations(tournamentId, targetSlots=1000)` — Inserts dummy teams in chunks of 500 via Supabase

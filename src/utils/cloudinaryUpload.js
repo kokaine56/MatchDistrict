@@ -1,42 +1,44 @@
 export async function uploadImage(image) {
-  let base64 = null
+  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
 
-  if (typeof image === 'string') {
-    if (image.startsWith('blob:') || image.startsWith('http')) {
-      const resp = await fetch(image)
-      const blob = await resp.blob()
-      base64 = await blobToBase64(blob)
-    } else if (image.startsWith('data:')) {
-      base64 = image
-    } else {
-      throw new Error('Invalid image input')
+  if (!cloudName || !uploadPreset) {
+    throw new Error('VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET must be set in the environment.')
+  }
+
+  let fileToUpload = image
+
+  if (typeof fileToUpload === 'string') {
+    if (fileToUpload.startsWith('blob:')) {
+      const resp = await fetch(fileToUpload)
+      fileToUpload = await resp.blob()
+    } else if (fileToUpload.startsWith('http')) {
+      const resp = await fetch(fileToUpload)
+      fileToUpload = await resp.blob()
+    } else if (fileToUpload.startsWith('data:')) {
+      const resp = await fetch(fileToUpload)
+      fileToUpload = await resp.blob()
     }
-  } else if (image instanceof File || image instanceof Blob) {
-    base64 = await blobToBase64(image)
   }
 
-  if (!base64) {
-    throw new Error('Could not process image for upload')
+  const formData = new FormData()
+  formData.append('file', fileToUpload)
+  formData.append('upload_preset', uploadPreset)
+
+  try {
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    const data = await response.json()
+
+    if (response.ok && data.secure_url) {
+      return data.secure_url
+    } else {
+      throw new Error(data.error?.message || 'Cloudinary upload failed')
+    }
+  } catch (error) {
+    throw error
   }
-
-  const res = await fetch('/api/upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: base64 }),
-  })
-
-  const data = await res.json()
-  if (data.success && data.url) {
-    return data.url
-  }
-  throw new Error(data.message || data.error || 'Upload failed')
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
 }

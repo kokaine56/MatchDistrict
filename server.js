@@ -139,9 +139,6 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth@matchdistrict.in>';
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || process.env.VITE_CLOUDINARY_CLOUD_NAME || '';
-const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
-const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
 
 // Initialize Resend
 const resend = new Resend(RESEND_API_KEY);
@@ -4266,72 +4263,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7q. Cloudinary Signed Upload Proxy (API key + secret stay server-side)
-  if (req.url === '/api/upload' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const payload = JSON.parse(body);
-        if (!payload.image) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'No image data provided.' }));
-          return;
-        }
 
-        if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'Cloudinary credentials not configured on server.' }));
-          return;
-        }
-
-        let base64Data = payload.image;
-        let mimeType = 'image/png';
-        if (base64Data.includes(';base64,')) {
-          const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
-          if (matches) {
-            mimeType = matches[1];
-            base64Data = matches[2];
-          } else {
-            base64Data = base64Data.split(';base64,')[1];
-          }
-        }
-
-        const buffer = Buffer.from(base64Data, 'base64');
-        const timestamp = Math.floor(Date.now() / 1000);
-        const signature = crypto.createHash('sha1')
-          .update(`timestamp=${timestamp}${CLOUDINARY_API_SECRET}`)
-          .digest('hex');
-
-        const cloudinaryForm = new FormData();
-        cloudinaryForm.append('file', new Blob([buffer], { type: mimeType }), 'upload');
-        cloudinaryForm.append('api_key', CLOUDINARY_API_KEY);
-        cloudinaryForm.append('timestamp', timestamp.toString());
-        cloudinaryForm.append('signature', signature);
-
-        const cloudinaryRes = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
-          method: 'POST',
-          body: cloudinaryForm,
-        });
-
-        const cloudinaryData = await cloudinaryRes.json();
-
-        if (cloudinaryRes.ok && cloudinaryData.secure_url) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, url: cloudinaryData.secure_url }));
-        } else {
-          console.error('❌ [CLOUDINARY] Upload error:', cloudinaryData.error?.message);
-          res.writeHead(502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'CLOUDINARY_ERROR', message: cloudinaryData.error?.message || 'Cloudinary upload failed' }));
-        }
-      } catch (err) {
-        console.error('❌ [CLOUDINARY] Exception:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'UPLOAD_ERROR', message: err.message }));
-      }
-    });
-    return;
-  }
 
   // --- SITE SETTINGS: GET GLOBAL THEME (public) ---
   if (req.url === '/api/settings/theme' && req.method === 'GET') {
