@@ -261,7 +261,7 @@ export default function CreationWizard() {
           registrationCloseDate: t.registrationCloseDate || '',
           startDate: t.startDate || '',
           roadmap,
-          sponsors: t.sponsors_data || [],
+          sponsors: Array.isArray(t.sponsors_data) ? t.sponsors_data : (typeof t.sponsors_data === 'string' ? (() => { try { return JSON.parse(t.sponsors_data) } catch { return [] } })() : []),
           rules: t.rules || '',
         })
         setDraftId(id)
@@ -303,7 +303,7 @@ export default function CreationWizard() {
 
       // Calculate prize pool
       const basePrizePool = (parseInt(formData.entry_fee_amount) || 0) * (parseInt(formData.slotsTotal) || 0)
-      const sponsorContribs = (formData.sponsors || [])
+      const sponsorContribs = (Array.isArray(formData.sponsors) ? formData.sponsors : [])
         .filter((s) => s.status === 'approved')
         .reduce((sum, s) => sum + (s.amount || 0), 0)
       const finalPrizePool = basePrizePool + sponsorContribs
@@ -536,7 +536,7 @@ export default function CreationWizard() {
       case 6: return <Step6ScheduleRoadmap {...props} onValidationChange={(blocked) => handleValidationBlocked(6, blocked)} />
       case 7: return <Step7Rules {...props} />
       case 8: return <Step8Preview {...props} />
-      case 9: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} />
+      case 9: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} isEditMode={isEditMode} />
       default: return null
     }
   }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError])
@@ -635,6 +635,7 @@ export default function CreationWizard() {
         isSubmitting={isSubmitting}
         isLastStep={isLastStep}
         navigationBlocked={isNavigationBlocked}
+        isEditMode={isEditMode}
       />
     </div>
   )

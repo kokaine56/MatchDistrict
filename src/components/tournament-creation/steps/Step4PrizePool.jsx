@@ -58,7 +58,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
 
   const basePrizePool = useMemo(() => entryFee * totalSlots, [entryFee, totalSlots])
   const sponsorContributions = useMemo(() => {
-    return (data.sponsors || [])
+    return (Array.isArray(data.sponsors) ? data.sponsors : [])
       .filter((s) => s.status === 'approved')
       .reduce((sum, s) => sum + (s.amount || 0), 0)
   }, [data.sponsors])

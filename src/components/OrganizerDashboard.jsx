@@ -1193,11 +1193,7 @@ function OrganizerDashboard({
                                   triggerToast(`Cannot edit a ${t.status} tournament.`);
                                   return;
                                 }
-                                if ((t.edits_count || 0) >= 1) {
-                                  triggerToast('This tournament has already been edited. Further edits are not permitted.');
-                                  return;
-                                }
-                                navigate(`/tournaments/edit/${t.id}`);
+                                navigate(`/create-tournament?edit=${t.id}`);
                               }}
                               className="w-full flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium text-on-background hover:bg-surface-variant transition-colors"
                             >

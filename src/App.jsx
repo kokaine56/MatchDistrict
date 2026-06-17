@@ -131,7 +131,7 @@ function AppInner() {
 
     if (page === 'create-tournament') {
       setCreationTemplate(param)
-      navigate('/create-tournament')
+      navigate(param ? `/create-tournament?edit=${param}` : '/create-tournament')
       return
     }
 

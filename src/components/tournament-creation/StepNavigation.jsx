@@ -9,7 +9,8 @@ export default function StepNavigation({
   onPublish,
   isSubmitting,
   isLastStep,
-  navigationBlocked = false
+  navigationBlocked = false,
+  isEditMode = false
 }) {
   return (
     <div
@@ -39,6 +40,8 @@ export default function StepNavigation({
               <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
               Saving...
             </span>
+          ) : isEditMode ? (
+            <span>Save Changes</span>
           ) : (
             <span>Save Draft</span>
           )}
@@ -52,7 +55,7 @@ export default function StepNavigation({
             disabled={isSubmitting}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl bg-primary text-white text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(99,102,241,0.55)] hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
-            {isSubmitting ? 'Publishing...' : 'Publish'}
+            {isSubmitting ? (isEditMode ? 'Saving...' : 'Publishing...') : (isEditMode ? 'Save Changes' : 'Publish')}
           </motion.button>
         ) : (
           <motion.button

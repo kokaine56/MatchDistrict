@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { uploadImage } from '../../../utils/cloudinaryUpload'
 
-export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError }) {
+export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError, isEditMode }) {
   const navigate = useNavigate()
   const [published, setPublished] = useState(null)
   const [isPublishing, setIsPublishing] = useState(false)
@@ -15,7 +15,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
   const basePrizePool = entryFee * totalSlots
-  const sponsorContribs = (data.sponsors || []).filter((s) => s.status === 'approved').reduce((s, v) => s + (v.amount || 0), 0)
+  const sponsorContribs = (Array.isArray(data.sponsors) ? data.sponsors : []).filter((s) => s.status === 'approved').reduce((s, v) => s + (v.amount || 0), 0)
   const totalPrizePool = basePrizePool + sponsorContribs
 
   useEffect(() => {
@@ -101,8 +101,8 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </motion.div>
-          <h2 className="text-2xl font-bold text-on-background">Tournament Published</h2>
-          <p className="text-sm text-on-surface-variant">Your tournament is now live and visible to players.</p>
+          <h2 className="text-2xl font-bold text-on-background">{isEditMode ? 'Changes Saved' : 'Tournament Published'}</h2>
+          <p className="text-sm text-on-surface-variant">{isEditMode ? 'Your tournament has been updated successfully.' : 'Your tournament is now live and visible to players.'}</p>
         </div>
 
         <div className="flex justify-center gap-1.5">
@@ -209,10 +209,10 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
-            onClick={() => navigate(`/tournaments/${published.id}/edit`)}
+            onClick={() => navigate(`/create-tournament?edit=${published.id}`)}
             className="px-4 py-3 rounded-xl border border-outline-variant/30 text-sm font-medium text-on-surface-variant hover:bg-surface/50 transition-colors"
           >
-            Edit Tournament
+            {isEditMode ? 'Continue Editing' : 'Edit Tournament'}
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.02 }}
@@ -284,7 +284,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div>
-              <p className="text-sm font-semibold text-rose-500">Failed to Publish Tournament</p>
+              <p className="text-sm font-semibold text-rose-500">{isEditMode ? 'Failed to Save Changes' : 'Failed to Publish Tournament'}</p>
               <p className="text-xs text-rose-400/80 mt-1">{publishErrorMsg}</p>
             </div>
           </div>
@@ -301,7 +301,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
             disabled={isPublishing || mediaUploading}
             className="w-full py-3.5 rounded-xl border-2 border-primary/30 text-primary text-sm font-semibold hover:bg-primary/10 hover:border-primary/50 disabled:opacity-40 transition-all"
           >
-            {isPublishing ? 'Saving Draft...' : 'Save as Draft'}
+            {isPublishing ? (isEditMode ? 'Saving...' : 'Publishing...') : (isEditMode ? 'Save Changes' : 'Save as Draft')}
           </motion.button>
         ) : (
           <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/25 rounded-xl p-4">
@@ -335,6 +335,8 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
               <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
               Publishing...
             </span>
+          ) : isEditMode ? (
+            'Save Changes'
           ) : (
             'Publish Tournament'
           )}
