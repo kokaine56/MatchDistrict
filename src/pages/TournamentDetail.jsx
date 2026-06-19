@@ -62,8 +62,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   // Search and tabs states
   const [searchQuery, setSearchQuery] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
-  const [mobileTab, setMobileTab] = useState('overview'); // 'overview' | 'rules' | 'teams' | 'prizes_slots'
-  const [desktopTab, setDesktopTab] = useState('brief'); // 'brief' | 'rules'
   const [currentPage, setCurrentPage] = useState(1);
   const teamsPerPage = 6;
 
@@ -95,8 +93,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [currentUser] = useCurrentUser();
   const { signOut } = useUser();
   const [slotsData, setSlotsData] = useState({ slotsTotal: 100, slotsFilled: 0, slotsAvailable: 100, slots: [] });
-  const [isPassPopped, setIsPassPopped] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
 
   useEffect(() => {
     if (!tournamentId) return;
@@ -167,6 +163,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   }, [tournamentId]);
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
+  const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
 
   // Fetch organizer profile + follower count when tourney loads
   useEffect(() => {
@@ -479,6 +476,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const slotTotal = tourney?.slotsTotal || slotsData?.slotsTotal || 100;
   const slotFilled = slotsData?.slotsFilled ?? (registrations ? registrations.filter(r => !['cancelled','expired','rejected'].includes((r.status || '').toLowerCase())).length : 0);
   const slotAvailable = Math.max(0, slotTotal - slotFilled);
+  const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
 
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
@@ -517,115 +515,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     }
     return list;
   }, [tourney]);
-
-  // Construct visual squad grid items (exactly 100 squad match slots)
-  const gridCells = useMemo(() => {
-    return Array.from({ length: 100 }, (_, i) => i < slotFilled);
-  }, [slotFilled]);
-
-  if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
-
-  if (!tourney) {
-    return (
-      <div className="min-h-screen bg-background text-on-background relative overflow-hidden">
-        <Header activePage="tournament-detail" onNavigate={onNavigate} />
-        <main className="max-w-md mx-auto px-4 py-32 text-center relative z-10 flex flex-col items-center justify-center min-h-[70vh]">
-          <div className="bg-surface-container-low/55 backdrop-blur-xl rounded-3xl p-8 space-y-6 shadow-lg">
-            <div className="w-16 h-16 mx-auto rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/30 text-red-400">
-              <span className="material-symbols-outlined text-3xl">error</span>
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-black uppercase text-on-background tracking-tight">
-                {loadError ? 'Unable to Load Tournament' : 'Tournament Not Found'}
-              </h2>
-              <p className="text-xs text-on-surface-variant leading-relaxed">
-                {loadError || 'The tournament you are looking for does not exist or has been removed by the organizer.'}
-              </p>
-            </div>
-            {loadError && (
-              <button type="button" onClick={loadTournament}
-                className="w-full py-3 bg-surface-container hover:bg-surface text-on-background rounded-xl text-xs font-bold transition-all">
-                Try Again
-              </button>
-            )}
-            <button onClick={() => onNavigate && onNavigate('tournaments')}
-              className="w-full py-3.5 bg-primary hover:bg-primary/95 text-on-primary rounded-xl text-xs font-bold transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg">
-              <span className="material-symbols-outlined text-sm">arrow_back</span>
-              Back to Tournaments
-            </button>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  // Common UI Renders
-  const renderSlotTracker = () => {
-    const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
-    return (
-      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 p-4 space-y-3">
-        <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
-          <span className="material-symbols-outlined text-sm">grid_view</span>
-          Slot Allocations
-        </h3>
-
-        <div className="space-y-1.5">
-          <div className="flex justify-between text-[10px]">
-            <span className="font-bold text-on-surface-variant">Lobby Occupancy</span>
-            <span className="font-bold text-primary tabular-nums">{slotFilled}/{slotTotal}</span>
-          </div>
-          <div className="w-full h-2 rounded-full bg-surface-container-high overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-primary to-secondary transition-all duration-500 rounded-full"
-              style={{ width: `${fillPercent}%` }} />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex justify-between text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">
-            <span>Roster Map</span>
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded bg-primary/45" /> Taken</span>
-              <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded bg-surface-variant/20 border border-outline-variant/30" /> Open</span>
-            </div>
-          </div>
-          <div className="grid grid-cols-10 gap-1 max-w-[280px] mx-auto">
-            {gridCells.map((occupied, idx) => (
-              <div key={idx}
-                className={`aspect-square rounded-[3px] transition-all ${
-                  occupied ? 'bg-primary/45 border border-primary/40' : 'bg-surface-variant/20 border border-outline-variant/30'
-                }`}
-                title={occupied ? `Slot ${idx + 1}: Occupied` : `Slot ${idx + 1}: Available`} />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderPrizeTable = () => {
-    return (
-      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-outline-variant/10">
-          <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-amber-400 text-sm">emoji_events</span>
-            Prize Distribution
-          </h3>
-        </div>
-        <div className="divide-y divide-outline-variant/10">
-          {prizeDistributions.map((row, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-2 hover:bg-surface-container-low/20 transition-all">
-              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${row.badgeBg}`}>
-                {row.badge} {row.position}
-              </span>
-              <span className="text-[11px] font-black text-secondary tabular-nums">
-                {row.prize}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
 
   const getParsedRules = (rulesData) => {
     if (!rulesData) return null;
@@ -678,7 +567,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     
     if (!parsedRules) {
       return (
-        <div className="text-xs text-on-surface-variant leading-relaxed">
+        <div className="text-xs text-white/70 leading-relaxed">
           {tourney?.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.'}
         </div>
       );
@@ -686,7 +575,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
     if (parsedRules.type === 'flat') {
       return (
-        <ul className="list-disc pl-4 space-y-1.5 text-xs text-on-surface-variant">
+        <ul className="list-disc pl-4 space-y-1.5 text-xs text-white/70">
           {parsedRules.items.map((item, idx) => (
             <li key={idx} className="leading-relaxed">{item}</li>
           ))}
@@ -697,9 +586,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return (
       <div className="space-y-4">
         {parsedRules.categories.map((cat, idx) => (
-          <div key={idx} className="space-y-1">
+          <div key={idx} className="space-y-1.5">
             <h4 className="text-xs font-bold text-white uppercase tracking-wider">{cat.title}</h4>
-            <ul className="list-disc pl-5 space-y-1 text-[11px] text-on-surface-variant">
+            <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/60">
               {cat.items.map((item, i) => (
                 <li key={i} className="leading-relaxed">{item}</li>
               ))}
@@ -707,9 +596,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           </div>
         ))}
         {parsedRules.custom.length > 0 && (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <h4 className="text-xs font-bold text-primary uppercase tracking-wider">Custom Rules</h4>
-            <ul className="list-disc pl-5 space-y-1 text-[11px] text-on-surface-variant">
+            <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/60">
               {parsedRules.custom.map((item, i) => (
                 <li key={i} className="leading-relaxed">{item}</li>
               ))}
@@ -720,238 +609,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
-  const renderTeamsList = () => {
-    return (
-      <div className="bg-surface-container-low/20 rounded-xl border border-outline-variant/10 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-outline-variant/15">
-          <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-sm">groups</span>
-            Registered Teams
-          </h3>
-        </div>
-
-        <div className="p-3 space-y-2.5">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-on-surface-variant">search</span>
-              <input type="text" placeholder="Search team or captain..." value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 bg-surface border border-outline-variant/20 rounded-lg text-[10px] text-on-background placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary transition-all" />
-            </div>
-          </div>
-
-          <div className="flex gap-1.5 flex-wrap">
-            {[
-              { id: 'all', label: 'All' },
-              { id: 'verified', label: 'Verified' },
-              { id: 'approved', label: 'Approved' },
-              { id: 'pending', label: 'Pending' }
-            ].map(f => (
-              <button key={f.id} onClick={() => setTeamFilter(f.id)}
-                className={`px-2 py-0.5 rounded text-[9px] font-bold border transition-all ${
-                  teamFilter === f.id
-                    ? 'bg-primary border-primary text-on-primary'
-                    : 'bg-surface-container/60 hover:bg-surface-container border-outline-variant/20 text-on-surface-variant'
-                }`}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {filteredTeams.length === 0 ? (
-            <div className="text-center py-6 text-[10px] text-on-surface-variant/60">No teams found matching filters.</div>
-          ) : (
-            <div className="space-y-2">
-              <div className="divide-y divide-outline-variant/10 border border-outline-variant/20 rounded-lg overflow-hidden">
-                {paginatedTeams.map((team, idx) => (
-                  <div key={idx} className="flex items-center gap-2 px-3 py-2 hover:bg-surface-container-low/20 transition-all">
-                    <img src={team.logo} className="w-5 h-5 rounded object-cover border border-outline-variant/20 shrink-0" alt="" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-bold text-on-background truncate">{team.name}</div>
-                      <div className="text-[8px] text-on-surface-variant/60 truncate">{team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}</div>
-                    </div>
-                    <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
-                      team.status === 'Approved' || team.status === 'Confirmed'
-                        ? 'bg-emerald-500/10 text-emerald-400'
-                        : team.status === 'Waitlisted'
-                        ? 'bg-amber-500/10 text-amber-400'
-                        : 'bg-slate-500/10 text-slate-400'
-                    }`}>{team.status}</span>
-                  </div>
-                ))}
-              </div>
-
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] text-on-surface-variant/60">{(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}</span>
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
-                      className="p-0.5 rounded bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed">
-                      <span className="material-symbols-outlined text-sm">chevron_left</span>
-                    </button>
-                    <span className="text-[9px] text-on-surface-variant">Pg {currentPage}/{totalPages}</span>
-                    <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
-                      className="p-0.5 rounded bg-surface border border-outline-variant/20 text-on-background disabled:opacity-40 disabled:cursor-not-allowed">
-                      <span className="material-symbols-outlined text-sm">chevron_right</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const renderRoomCredentialsCard = () => {
-    const isPendingPaymentStatus = rosterStatus === 'pending_payment' || rosterStatus === 'PENDING_PAYMENT_VERIFICATION';
-    
-    if (!currentUser || (!isApprovedRoster && !isPendingPaymentStatus)) {
-      return (
-        <div className="bg-surface-container-low/20 rounded-xl border border-rose-500/10 p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-              <span className="material-symbols-outlined text-sm">lock</span>
-            </div>
-            <div className="space-y-0.5">
-              <h4 className="text-[10px] font-bold uppercase text-rose-400 tracking-wider">Room Coordinates Locked</h4>
-              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
-                {currentUser 
-                  ? "Complete registration to unlock match credentials."
-                  : "Sign in with a verified account to access credentials."
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (isPendingPaymentStatus) {
-      return (
-        <div className="bg-surface-container-low/20 rounded-xl border border-amber-500/15 p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-              <span className="material-symbols-outlined text-sm">hourglass_empty</span>
-            </div>
-            <div className="space-y-0.5 flex-1">
-              <h4 className="text-[10px] font-bold uppercase text-amber-400 tracking-wider">Payment Verification Pending</h4>
-              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
-                Match room details unlock once the organizer approves your transaction.
-              </p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (!revealTimeReached) {
-      return (
-        <div className="bg-surface-container-low/20 rounded-xl border border-primary/20 p-4">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
-              <span className="material-symbols-outlined text-sm">hourglass_top</span>
-            </div>
-            <div className="space-y-1 flex-1 min-w-0">
-              <h4 className="text-[10px] font-bold uppercase text-primary tracking-wider">Decrypting Coordinates...</h4>
-              <p className="text-[9px] text-on-surface-variant/70 leading-relaxed">
-                Room details revealed 15 minutes before match start.
-              </p>
-              {revealCountdown && (
-                <span className="text-[9px] font-mono font-bold text-secondary bg-secondary/10 px-1.5 py-0.5 rounded border border-secondary/20 inline-block mt-1">
-                  Decrypts in: {revealCountdown}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-surface-container-low/20 rounded-xl border border-emerald-500/20 p-4">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between border-b border-outline-variant/20 pb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <span className="material-symbols-outlined text-xs">lock_open</span>
-              </div>
-              <span className="text-[9px] font-bold uppercase text-emerald-400 tracking-wider">Lobby Decrypted</span>
-            </div>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-          </div>
-
-          {isLobbyLoading ? (
-            <div className="flex items-center justify-center py-3 gap-2">
-              <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent spinner loading-spinner" />
-              <span className="text-[10px] text-on-surface-variant">Decrypting cords...</span>
-            </div>
-          ) : lobbyError ? (
-            <div className="text-[10px] text-rose-400 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20 flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-xs shrink-0">error</span>
-              <span>{lobbyError}</span>
-            </div>
-          ) : lobbyCredentials ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-lg p-2.5">
-                <div className="space-y-0.5">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Room ID</span>
-                  <span className="text-[10px] font-mono font-bold text-on-background select-all block">{lobbyCredentials.roomID || 'TBD'}</span>
-                </div>
-                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomID, 'Room ID')}
-                  className="p-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all" title="Copy">
-                  <span className="material-symbols-outlined text-xs">content_copy</span>
-                </button>
-              </div>
-              <div className="flex items-center justify-between bg-surface/50 border border-outline-variant/20 rounded-lg p-2.5">
-                <div className="space-y-0.5">
-                  <span className="text-[8px] font-bold text-on-surface-variant uppercase tracking-wider">Password</span>
-                  <span className="text-[10px] font-mono font-bold text-on-background select-all block">{lobbyCredentials.roomPassword || 'TBD'}</span>
-                </div>
-                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomPassword, 'Password')}
-                  className="p-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-background transition-all" title="Copy">
-                  <span className="material-symbols-outlined text-xs">content_copy</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={fetchLobbyCredentials}
-              className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg transition-all active:scale-[0.98] flex items-center justify-center gap-1">
-              <span className="material-symbols-outlined text-xs">refresh</span>
-              Fetch Lobby Details
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  const gameBadgeClasses = getGameBadge(tourney.game);
-  const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
-
   const renderFlowchart = () => {
     return (
       <div className="space-y-4">
         <div className="space-y-1">
-          <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Match Roadmap</h3>
-          <p className="text-[11px] text-on-surface-variant/70 leading-relaxed">
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Tournament Match Roadmap</h3>
+          <p className="text-[11px] text-white/50 leading-relaxed">
             Follow the path of matches and qualify through rounds to reach the Grand Finals.
           </p>
         </div>
 
         {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
-          <div className="w-full overflow-x-auto py-6 px-4 bg-[#0d0e12]/40 border border-outline-variant/10 rounded-2xl flex items-center gap-6 scrollbar-thin">
+          <div className="w-full overflow-x-auto py-6 px-4 bg-[#0d0e12]/40 border border-white/10 rounded-2xl flex items-center gap-6 scrollbar-thin">
             {parsedTimeline.roadmap.map((round, idx) => (
               <React.Fragment key={round.id || idx}>
                 {/* Node Card */}
-                <div className="flex-shrink-0 w-[200px] bg-[#0d0e12] border border-outline-variant/20 rounded-xl p-4 relative group hover:border-primary/40 transition-all duration-300 shadow-md">
+                <div className="flex-shrink-0 w-[200px] bg-[#07080C] border border-white/10 rounded-xl p-4 relative group hover:border-primary/40 transition-all duration-300 shadow-md">
                   <div className="absolute top-[-9px] left-4 bg-primary text-on-primary text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-sm">
                     ROUND {idx + 1}
                   </div>
                   <div className="space-y-2 pt-1">
                     <div className="text-xs font-black text-white truncate uppercase">{round.name || `Round ${idx + 1}`}</div>
-                    <div className="space-y-1.5 text-[10px] text-on-surface-variant">
+                    <div className="space-y-1.5 text-[10px] text-white/60">
                       <div className="flex items-center gap-1.5">
                         <span className="material-symbols-outlined text-[12px] text-primary">calendar_today</span>
                         <span>{round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'TBD'}</span>
@@ -976,7 +655,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                 {/* Connecting Arrow */}
                 {idx < parsedTimeline.roadmap.length - 1 && (
-                  <div className="flex-shrink-0 flex items-center justify-center text-primary/40 animate-pulse">
+                  <div className="flex-shrink-0 flex items-center justify-center text-primary/45 animate-pulse">
                     <span className="material-symbols-outlined text-xl">arrow_forward</span>
                   </div>
                 )}
@@ -984,9 +663,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 bg-surface-container-low/10 border border-dashed border-outline-variant/10 rounded-xl">
-            <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">sports_esports</span>
-            <p className="text-[10px] text-on-surface-variant mt-2 font-bold uppercase">No match rounds scheduled yet.</p>
+          <div className="text-center py-8 bg-[#07080C]/40 border border-dashed border-white/10 rounded-xl">
+            <span className="material-symbols-outlined text-2xl text-white/30">sports_esports</span>
+            <p className="text-[10px] text-white/50 mt-2 font-bold uppercase">No match rounds scheduled yet.</p>
           </div>
         )}
       </div>
@@ -999,28 +678,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         {/* Sponsor Wall */}
         {sponsorList.length > 0 && (
           <div className="space-y-3">
-            <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Our Sponsors</h3>
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Our Sponsors</h3>
             <div className="flex flex-wrap gap-2">
               {sponsorList.map((s, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface-container-low border border-outline-variant/20 rounded-lg text-[10px] font-bold text-on-background">
+                <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/40 border border-white/10 rounded-lg text-[10px] font-bold text-white">
                   <span className="text-warning text-[11px]">&#9733;</span>
                   {s.name}
-                  {s.amount > 0 && <span className="text-on-surface-variant font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                  {s.amount > 0 && <span className="text-white/60 font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
                 </span>
               ))}
             </div>
             {totalSponsorAmount > 0 && (
-              <p className="text-[10px] text-on-surface-variant/60">Total: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
+              <p className="text-[10px] text-white/50">Total Contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
             )}
           </div>
         )}
 
         {/* Sponsor Contribution Form */}
         {isSponsorsEnabled && (
-          <div className="bg-surface-container-low/20 rounded-xl p-4 border border-outline-variant/10 space-y-3">
+          <div className="bg-black/30 rounded-xl p-4 border border-white/5 space-y-3">
             <div>
-              <h3 className="text-xs font-bold text-on-background">Sponsor This Tournament</h3>
-              <p className="text-[10px] text-on-surface-variant/70 mt-0.5">Contribute to the prize pool and get featured above.</p>
+              <h3 className="text-xs font-bold text-white">Sponsor This Tournament</h3>
+              <p className="text-[10px] text-white/50 mt-0.5">Contribute to the prize pool and get featured above.</p>
             </div>
             {!showSponsorForm ? (
               <button onClick={() => setShowSponsorForm(true)}
@@ -1032,33 +711,33 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <div className="grid grid-cols-2 gap-2.5">
                   <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
                     placeholder="Your name" required
-                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
                   <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
                     placeholder="Email" type="email"
-                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
                     placeholder="Amount (₹)" type="number" min="1" required
-                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
                   <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
                     placeholder="UPI Transaction ID / UTR" required
-                    className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
                 </div>
                 <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
                   placeholder="Payment app (Google Pay / PhonePe / Paytm)"
-                  className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50" />
+                  className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
                 <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
                   placeholder="Message (optional)"
-                  className="w-full bg-surface border border-outline-variant/20 rounded-lg px-3 py-1.5 text-[10px] text-on-background placeholder:text-on-surface-variant/50 resize-none h-14" />
-                <p className="text-[8px] text-on-surface-variant/50">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
+                  className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40 resize-none h-14" />
+                <p className="text-[8px] text-white/40">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
                 <div className="flex gap-2">
                   <button type="submit" disabled={sponsorSubmitting}
                     className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
                     {sponsorSubmitting ? 'Submitting...' : 'Submit'}
                   </button>
                   <button type="button" onClick={() => setShowSponsorForm(false)}
-                    className="px-3 py-1.5 min-h-[36px] rounded-lg border border-outline-variant/20 text-[10px] font-bold text-on-surface-variant hover:text-on-background transition-all">
+                    className="px-3 py-1.5 min-h-[36px] rounded-lg border border-white/10 text-[10px] font-bold text-white/50 hover:text-white transition-all">
                     Cancel
                   </button>
                 </div>
@@ -1070,417 +749,510 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
-  return (
-    <div className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
-      <Header activePage="tournament-detail" onNavigate={onNavigate} />
+  if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
 
-      <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-16 pb-24 sm:pt-20 space-y-8">
-        
-        {/* Wallet Pass Hero Component Container with perspective and 3D tilt */}
-        <div 
-          className="flex flex-col sm:flex-row relative items-center justify-center gap-4 sm:gap-0 select-none py-6 sm:py-10 max-w-4xl sm:ml-0 w-full"
-          style={{
-            perspective: '1000px',
-            transform: 'rotate3d(1, -1, 0, 4deg)',
-            transformStyle: 'preserve-3d'
-          }}
-        >
-          {/* The Pocket Sleeve Container */}
-          <div 
-            onClick={() => setIsPassPopped(!isPassPopped)}
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            className="z-10 relative w-full max-w-[280px] sm:max-w-[260px] aspect-[3/4] bg-surface-container-low rounded-2xl flex-shrink-0 transform shadow-[0_20px_50px_rgba(0,0,0,0.8)] cursor-pointer hover:scale-[1.01] transition-all duration-300"
-            style={{
-              transform: isPassPopped ? 'rotateY(-6deg) translateX(-8px) translateZ(10px)' : 'rotateY(0deg) translateX(0) translateZ(10px)',
-              transition: 'transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-              transformStyle: 'preserve-3d'
-            }}
-          >
-            {/* Layer A: The Pouch Backing (z-0) */}
-            <div 
-              className="absolute inset-0 rounded-2xl bg-[#0c0d12] border border-outline-variant/15 shadow-[inset_0_4px_20px_rgba(0,0,0,0.9)] z-0"
-            />
-
-            {/* Layer B: The White Pass Card (z-10) */}
-            <div
-              className="z-10 bg-white border border-slate-200 rounded-2xl p-5 pl-12 shadow-[0_20px_50px_rgba(0,0,0,0.4)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform"
-              style={{
-                transform: isPassPopped
-                  ? 'translateX(85%) translateZ(-5px)'
-                  : (isHovered ? 'translateX(40px) translateZ(-5px)' : 'translateX(12px) translateZ(-5px)'),
-                transition: 'transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 500ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                opacity: isPassPopped ? 1 : 0.95
-              }}
-            >
-              <div className="space-y-3.5">
-                {/* Top row with target SVG decoration */}
-                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
-                  <span className="text-[9px] tracking-widest text-slate-500 font-extrabold uppercase">
-                    TOURNAMENT PASS
-                  </span>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-amber-600">
-                    <circle cx="12" cy="12" r="9" />
-                    <circle cx="12" cy="12" r="3" />
-                    <line x1="12" y1="1" x2="12" y2="23" />
-                    <line x1="1" y1="12" x2="23" y2="12" />
-                  </svg>
-                </div>
-
-                {/* Title & Organizer */}
-                <div className="space-y-0.5">
-                  <h2 className="text-lg sm:text-xl font-black text-slate-955 tracking-tight uppercase leading-tight truncate w-full">
-                    {tourney.title}
-                  </h2>
-                  <div className="flex items-center gap-1 text-[10px] text-slate-800 font-bold leading-none mt-1">
-                    <span>by {orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
-                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                  </div>
-                </div>
-
-                {/* Prize & Entry Rows */}
-                <div className="grid grid-cols-2 gap-2 py-1.5 border-y border-slate-200 text-center">
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg py-1 px-1.5 flex items-center justify-center">
-                    <span className="text-[10px] font-extrabold text-emerald-600 tracking-tight uppercase">
-                      PRIZE: {prizeDisplay}
-                    </span>
-                  </div>
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg py-1 px-1.5 flex items-center justify-center">
-                    <span className="text-[10px] font-extrabold text-amber-600 tracking-tight uppercase">
-                      ENTRY: {entryDisplay}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Format & Slots tracker (Shifted up to empty center quadrant) */}
-                <div className="space-y-2.5">
-                  <div className="space-y-0.5">
-                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block leading-none">FORMAT</span>
-                    <span className="text-[11px] font-bold text-slate-900 block leading-none mt-0.5">
-                      {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
-                    </span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block leading-none">SLOTS</span>
-                    <div className="flex items-center gap-1 text-[11px] font-bold text-slate-900 leading-none mt-0.5">
-                      <span className="material-symbols-outlined text-[13px] text-slate-500 leading-none">group</span>
-                      <span>{slotFilled}/{slotTotal} &bull; {Math.min(100, Math.round((slotFilled / slotTotal) * 100))}%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Row framing the Game Icon */}
-              <div className="flex justify-end items-end w-full pt-2">
-                {getGameLogo(tourney.game) && (
-                  <div className="rounded-lg overflow-hidden bg-slate-100/50 p-1 border border-slate-200/40 shadow-sm shrink-0">
-                    <img 
-                      src={getGameLogo(tourney.game)} 
-                      alt={tourney.game} 
-                      className="w-12 h-12 rounded-lg object-contain select-none grayscale opacity-40 mix-blend-multiply" 
-                    />
-                  </div>
-                )}
-              </div>
+  const renderRoomCredentialsCard = () => {
+    const isPendingPaymentStatus = rosterStatus === 'pending_payment' || rosterStatus === 'PENDING_PAYMENT_VERIFICATION';
+    
+    if (!currentUser || (!isApprovedRoster && !isPendingPaymentStatus)) {
+      return (
+        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-rose-500/10 p-5 rounded-2xl">
+          <div className="flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+              <span className="material-symbols-outlined text-base">lock</span>
             </div>
-
-            {/* Layer C: The Wallet Front Envelope Face (z-20) */}
-            <div 
-              className="absolute inset-0 rounded-2xl overflow-hidden border border-outline-variant/30 bg-surface-container-low z-20 pointer-events-none"
-            >
-              <img
-                src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
-                alt={tourney.title}
-                className="w-full h-full object-cover"
-              />
+            <div className="space-y-1">
+              <h4 className="text-xs font-bold uppercase text-rose-400 tracking-wider">Room Coordinates Locked</h4>
+              <p className="text-[11px] text-white/55 leading-relaxed">
+                {currentUser 
+                  ? "Complete registration to unlock match credentials."
+                  : "Sign in with a verified account to access credentials."
+                }
+              </p>
             </div>
           </div>
         </div>
+      );
+    }
 
-        {/* Divider line */}
-        <hr className="border-outline-variant/15" />
-
-        {/* ══════════ PC VIEW: 70/30 GRID ══════════ */}
-        <div className="hidden md:grid grid-cols-10 gap-8 items-start">
-          {/* Left Column (70%) */}
-          <div className="col-span-7 space-y-6">
-            {/* Minimal Line Tab Bar Switcher */}
-            <div className="flex border-b border-outline-variant/15 gap-6">
-              {[
-                { id: 'brief', label: 'Overview', icon: 'info' },
-                { id: 'rules', label: 'Rules & Regulations', icon: 'gavel' },
-                { id: 'matches', label: 'Matches', icon: 'sports_esports' },
-                { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
-              ].filter(t => !t.hidden).map(tab => (
-                <button key={tab.id}
-                  onClick={() => setDesktopTab(tab.id)}
-                  className={`pb-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all flex items-center gap-1.5 ${
-                    desktopTab === tab.id
-                      ? 'border-primary text-on-background'
-                      : 'border-transparent text-on-surface-variant/60 hover:text-on-background'
-                  }`}>
-                  <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
-                  {tab.label}
-                </button>
-              ))}
+    if (isPendingPaymentStatus) {
+      return (
+        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-amber-500/15 p-5 rounded-2xl">
+          <div className="flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+              <span className="material-symbols-outlined text-base">hourglass_empty</span>
             </div>
+            <div className="space-y-1 flex-1">
+              <h4 className="text-xs font-bold uppercase text-amber-400 tracking-wider">Payment Verification Pending</h4>
+              <p className="text-[11px] text-white/55 leading-relaxed">
+                Match room details unlock once the organizer approves your transaction.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
-            {/* Tab Contents */}
-            {desktopTab === 'brief' && (
-              <div className="space-y-6">
-                {/* Hero Prize Row */}
-                <div className="grid grid-cols-3 gap-4 bg-[#0d0e12]/40 rounded-xl p-4 border border-outline-variant/10">
-                  <div>
-                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Prize Pool</span>
-                    <p className="text-xl font-black text-secondary mt-0.5">{prizeDisplay}</p>
-                  </div>
-                  <div>
-                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Entry Fee</span>
-                    <p className="text-xl font-black text-on-background mt-0.5">{entryDisplay}</p>
-                  </div>
-                  <div>
-                    <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider">Slots</span>
-                    <p className="text-xl font-black text-on-background mt-0.5">{slotFilled}/{slotTotal} <span className="text-xs font-bold text-on-surface-variant">filled</span></p>
-                    <p className="text-[10px] text-on-surface-variant/60">{slotAvailable} slots left</p>
+    if (!revealTimeReached) {
+      return (
+        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-primary/20 p-5 rounded-2xl">
+          <div className="flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
+              <span className="material-symbols-outlined text-base">hourglass_top</span>
+            </div>
+            <div className="space-y-1.5 flex-1 min-w-0">
+              <h4 className="text-xs font-bold uppercase text-primary tracking-wider font-headline-md">Decrypting Coordinates...</h4>
+              <p className="text-[11px] text-white/55 leading-relaxed">
+                Room details revealed 15 minutes before match start.
+              </p>
+              {revealCountdown && (
+                <span className="text-[10px] font-mono font-bold text-secondary bg-secondary/15 px-2 py-0.5 rounded border border-secondary/20 inline-block mt-1">
+                  Decrypts in: {revealCountdown}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-emerald-500/20 p-5 rounded-2xl">
+        <div className="space-y-3.5">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                <span className="material-symbols-outlined text-xs">lock_open</span>
+              </div>
+              <span className="text-[10px] font-bold uppercase text-emerald-400 tracking-wider">Lobby Decrypted</span>
+            </div>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+          </div>
+
+          {isLobbyLoading ? (
+            <div className="flex items-center justify-center py-3 gap-2">
+              <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent spinner loading-spinner rounded-full" />
+              <span className="text-xs text-white/60">Decrypting cords...</span>
+            </div>
+          ) : lobbyError ? (
+            <div className="text-[11px] text-rose-400 bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20 flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-xs shrink-0">error</span>
+              <span>{lobbyError}</span>
+            </div>
+          ) : lobbyCredentials ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl p-3">
+                <div className="space-y-0.5">
+                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Room ID</span>
+                  <span className="text-xs font-mono font-bold text-white select-all block mt-0.5">{lobbyCredentials.roomID || 'TBD'}</span>
+                </div>
+                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomID, 'Room ID')}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all" title="Copy">
+                  <span className="material-symbols-outlined text-sm">content_copy</span>
+                </button>
+              </div>
+              <div className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl p-3">
+                <div className="space-y-0.5">
+                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Password</span>
+                  <span className="text-xs font-mono font-bold text-white select-all block mt-0.5">{lobbyCredentials.roomPassword || 'TBD'}</span>
+                </div>
+                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomPassword, 'Password')}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all" title="Copy">
+                  <span className="material-symbols-outlined text-sm">content_copy</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={fetchLobbyCredentials}
+              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
+              <span className="material-symbols-outlined text-xs">refresh</span>
+              Fetch Lobby Details
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div 
+      className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-primary/30 selection:text-white"
+      style={{
+        backgroundImage: 'radial-gradient(#1a1c29 1.5px, transparent 1.5px)',
+        backgroundSize: '32px 32px'
+      }}
+    >
+      <Header activePage="tournament-detail" onNavigate={onNavigate} />
+
+      <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw]">
+        <div className="w-full max-w-[1280px] space-y-8 pb-32">
+          
+          {/* Hero Section */}
+          <section className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+            
+            {/* Left Poster card */}
+            <div className="md:col-span-5 bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl relative w-full flex flex-col shrink group">
+              <div className="aspect-[3/4] w-full relative">
+                <img 
+                  alt="Tournament Poster" 
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
+                  src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
+                />
+                
+                {/* Gradient bottom overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex items-end p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full border border-white/20 overflow-hidden shrink-0 bg-[#07080C] flex items-center justify-center font-bold text-xs">
+                      {orgProfile?.avatar ? (
+                        <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                      ) : (
+                        (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-bold text-white text-sm">
+                          {orgProfile?.orgName || tourney.orgName || orgProfile?.name}
+                        </p>
+                        <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                      </div>
+                      <p className="text-[10px] text-white/60">Organizer</p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Prize Distribution Table */}
-                {renderPrizeTable()}
-
-                {/* Slot Tracker */}
-                {renderSlotTracker()}
-
-                {/* Registered Teams */}
-                {renderTeamsList()}
-
-                {/* Event Brief */}
-                {tourney.description && (
-                  <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
-                    <p className="text-xs text-on-surface-variant/80 leading-relaxed whitespace-pre-line">{tourney.description}</p>
+                {/* Top overlay */}
+                <div className="absolute inset-x-0 top-0 p-6 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+                  <h2 className="text-xl md:text-2xl font-black text-white tracking-tight mb-1 uppercase">
+                    {tourney.title}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white/80 text-xs font-bold">
+                      by {orgProfile?.orgName || tourney.orgName || orgProfile?.name}
+                    </span>
+                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
                   </div>
-                )}
+                </div>
               </div>
-            )}
+            </div>
 
-            {desktopTab === 'rules' && (
-              <div className="space-y-2">
-                <h3 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
-                <div className="text-xs text-on-surface-variant/80 leading-relaxed">
+            {/* Right Registered Squads/Teams list */}
+            <div className="md:col-span-7 bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <h4 className="font-bold text-lg text-white tracking-wider flex items-center gap-2">
+                  <span className="material-symbols-outlined text-primary text-xl">groups</span>
+                  Registered Squads
+                </h4>
+                
+                {/* Roster Filters */}
+                <div className="flex gap-1.5 flex-wrap">
+                  {[
+                    { id: 'all', label: 'All' },
+                    { id: 'verified', label: 'Verified' },
+                    { id: 'approved', label: 'Approved' },
+                    { id: 'pending', label: 'Pending' }
+                  ].map(f => (
+                    <button key={f.id} onClick={() => setTeamFilter(f.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
+                        teamFilter === f.id
+                          ? 'bg-primary border-primary text-on-primary'
+                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                      }`}>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Search bar */}
+              <div className="relative">
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/50">search</span>
+                <input
+                  type="text"
+                  placeholder="Search team or captain..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-primary transition-all"
+                />
+              </div>
+
+              {/* Squads List */}
+              {filteredTeams.length === 0 ? (
+                <div className="text-center py-12 text-xs text-white/45">No squads found matching filters.</div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-black/25">
+                    {paginatedTeams.map((team, idx) => (
+                      <div key={idx} className="flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
+                        <img src={team.logo} className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0" alt="" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{team.name}</p>
+                          <p className="text-[10px] text-white/50 truncate">
+                            {team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${
+                          team.status === 'Approved' || team.status === 'Confirmed'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            : team.status === 'Waitlisted'
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            : 'bg-white/5 text-white/60 border-white/10'
+                        }`}>
+                          {team.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Pagination controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-[10px] text-white/50">
+                        {(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
+                          className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
+                          <span className="material-symbols-outlined text-sm">chevron_left</span>
+                        </button>
+                        <span className="text-[10px] text-white/80">Pg {currentPage}/{totalPages}</span>
+                        <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
+                          className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
+                          <span className="material-symbols-outlined text-sm">chevron_right</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Roster map info row */}
+              <div className="pt-4 border-t border-white/5 flex items-center justify-between">
+                <div className="flex -space-x-2 overflow-hidden">
+                  {allTeams.slice(0, 4).map((t, i) => (
+                    <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-white/10 overflow-hidden">
+                      <img src={t.logo} className="w-full h-full object-cover" alt="" />
+                    </div>
+                  ))}
+                  {allTeams.length > 4 && (
+                    <div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-primary/20 border border-primary/40 text-primary text-[10px] font-bold">
+                      +{allTeams.length - 4}
+                    </div>
+                  )}
+                </div>
+                <p className="text-[9px] text-white/45 font-bold uppercase tracking-widest">
+                  Live occupancy maps
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Info Grid Section */}
+          <section className="grid grid-cols-2 md:grid-cols-4 gap-4 px-0">
+            {/* Schedule */}
+            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <span className="material-symbols-outlined text-primary">calendar_today</span>
+              </div>
+              <div>
+                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Schedule</p>
+                <p className="text-white font-bold text-sm mt-0.5 leading-snug">
+                  {formattedDate || 'TBD'} • {formattedTime || 'TBD'}
+                </p>
+              </div>
+            </div>
+
+            {/* Format */}
+            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <span className="material-symbols-outlined text-primary">layers</span>
+              </div>
+              <div>
+                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Format</p>
+                <p className="text-white font-bold text-sm mt-0.5 leading-snug">
+                  {formatLabel(tourney.match_type)} • {(tourney.perspective || 'TPP').toUpperCase()}
+                </p>
+              </div>
+            </div>
+
+            {/* Slots with progress */}
+            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <span className="material-symbols-outlined text-primary">group</span>
+              </div>
+              <div>
+                <div className="flex justify-between items-end mb-1">
+                  <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Slots</p>
+                  <p className="text-primary font-black text-xs tabular-nums">{slotFilled} / {slotTotal}</p>
+                </div>
+                <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                  <div className="bg-primary h-full rounded-full transition-all duration-1000" style={{ width: `${fillPercent}%` }}></div>
+                </div>
+                <div className="flex justify-between mt-2 text-[8px] font-black uppercase tracking-wider">
+                  <span className="text-emerald-400">{slotFilled} Confirmed</span>
+                  <span className="text-primary">{slotAvailable} Open</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Entry Fee */}
+            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                <span className="material-symbols-outlined text-primary">confirmation_number</span>
+              </div>
+              <div>
+                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Entry Fee</p>
+                <p className="text-white font-bold text-sm mt-0.5 leading-snug">{entryDisplay} / Team</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Main Content Area: Prize Pool & Rules */}
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-8 px-0">
+            {/* Left 2/3 column */}
+            <div className="md:col-span-2 space-y-8">
+              
+              {/* Prize Pool Breakdown */}
+              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
+                <div className="flex items-center justify-between mb-8 border-b border-white/5 pb-6">
+                  <h3 className="font-bold text-xl text-white uppercase tracking-wider flex items-center gap-3">
+                    <span className="material-symbols-outlined text-primary text-3xl">emoji_events</span>
+                    Prize Pool Breakdown
+                  </h3>
+                  <div className="text-right">
+                    <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Total Pool</p>
+                    <p className="text-secondary font-black text-3xl">{prizeDisplay}</p>
+                  </div>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {prizeDistributions.map((row, i) => (
+                    <div key={i} className="flex items-center justify-between py-4 hover:bg-white/5 transition-all px-3 rounded-xl">
+                      <div className="flex items-center gap-4">
+                        <span className={`px-2.5 py-1 rounded text-[9px] font-black tracking-wider uppercase ${row.badgeBg}`}>
+                          {row.badge} {row.position}
+                        </span>
+                        <p className="text-white/60 text-xs hidden sm:block">Qualifying placement reward</p>
+                      </div>
+                      <p className="text-lg font-black text-secondary tabular-nums">{row.prize}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Roadmap Round flow */}
+              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
+                {renderFlowchart()}
+              </div>
+
+              {/* Tournament Rules */}
+              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
+                <h3 className="font-bold text-xl text-white uppercase tracking-wider mb-6 flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-primary text-2xl">gavel</span>
+                  Tournament Rules
+                </h3>
+                <div className="space-y-4">
                   {renderRulesContent()}
                 </div>
               </div>
-            )}
 
-            {desktopTab === 'matches' && renderFlowchart()}
+            </div>
 
-            {desktopTab === 'sponsors' && renderSponsorsContent()}
-          </div>
+            {/* Right 1/3 column side cards */}
+            <div className="space-y-6">
+              
+              {/* Lobby Coordinates decrypting */}
+              {renderRoomCredentialsCard()}
 
-          {/* Right Column (30% Sticky Sidebar) */}
-          <div className="col-span-3 sticky top-24 space-y-6">
-            <div className="bg-[#0d0e12]/40 rounded-xl border border-outline-variant/10 p-4 space-y-4 shadow-sm">
-              {/* Countdown Container */}
-              {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
-                <div className="bg-[#07080C] rounded-lg p-3 border border-outline-variant/10">
-                  <span className="text-[8px] font-black text-on-surface-variant uppercase tracking-widest block text-center mb-2">
-                    {countdown.type === 'registration' ? 'REGISTRATION CLOSES IN' : 'TOURNAMENT STARTS IN'}
-                  </span>
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {[
-                      { val: countdown.days, lbl: 'DAYS' },
-                      { val: countdown.hours, lbl: 'HRS' },
-                      { val: countdown.minutes, lbl: 'MINS' },
-                      { val: countdown.seconds, lbl: 'SECS' }
-                    ].map((s, idx) => (
-                      <div key={idx} className="bg-[#0d0e12] rounded py-1.5 text-center border border-outline-variant/10 shadow-inner">
-                        <span className="text-sm font-black tabular-nums text-primary block leading-none">{String(s.val).padStart(2, '0')}</span>
-                        <span className="text-[7px] font-bold text-on-surface-variant uppercase block mt-1 leading-none">{s.lbl}</span>
+              {/* Public Announcements / Notices */}
+              {announcements.length > 0 && (
+                <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4">
+                  <h4 className="font-bold text-base text-white tracking-wider uppercase flex items-center gap-2">
+                    <span className="material-symbols-outlined text-amber-400">campaign</span>
+                    Public Notices
+                  </h4>
+                  <div className="space-y-3">
+                    {announcements.map((notice) => (
+                      <div key={notice.id} className="p-4 bg-black/35 border border-white/5 rounded-xl space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                            {notice.pin && <span className="material-symbols-outlined text-xs text-primary">push_pin</span>}
+                            {notice.title}
+                          </h5>
+                          <span className="text-[8px] text-white/40 font-mono">{notice.time}</span>
+                        </div>
+                        <p className="text-[11px] text-white/70 leading-relaxed whitespace-pre-line">{notice.text}</p>
                       </div>
                     ))}
                   </div>
                 </div>
-              ) : countdown.type === 'live' ? (
-                <div className="flex items-center justify-center gap-2 py-3 bg-rose-500/10 rounded-lg border border-rose-500/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
-                  <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">LIVE NOW</span>
-                </div>
-              ) : (
-                <div className="bg-[#0d0e12]/40 rounded-lg py-2.5 border border-outline-variant/10 text-center">
-                  <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest">REGISTRATION CLOSED</span>
+              )}
+
+              {/* Sponsors Section */}
+              {(isSponsorsEnabled || sponsorList.length > 0) && (
+                <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
+                  {renderSponsorsContent()}
                 </div>
               )}
 
-              {/* Primary Active Dynamic CTA Button */}
-              <button onClick={handleRegister} disabled={btn.disabled}
-                className={`w-full py-2.5 min-h-[40px] rounded-lg font-bold text-xs transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-md ${btnStyles[btn.style]}`}>
-                {btn.text}
-                {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
-              </button>
-            </div>
-
-            {/* Room Credentials */}
-            {renderRoomCredentialsCard()}
-
-            {/* Timeline Schedule */}
-            <div className="bg-[#0d0e12]/40 rounded-xl border border-outline-variant/10 p-4 space-y-3">
-              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-sm">schedule</span>
-                Timeline
-              </h3>
-              <div className="space-y-2.5 border-l border-outline-variant/20 pl-3 ml-1">
-                {[
-                  { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
-                  { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
-                ].map((step, idx) => {
-                  const dateObj = step.date ? new Date(step.date) : null;
-                  return (
-                    <div key={idx} className="relative">
-                      <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
-                      <div className="text-[10px] font-bold text-on-background">{step.label}</div>
-                      <div className="text-[9px] font-bold text-primary">
-                        {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-                      </div>
-                      <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ══════════ MOBILE VIEW: FLUID STACK ══════════ */}
-        <div className="block md:hidden space-y-6">
-          {/* Mobile Tab Bar Switcher */}
-          <div className="flex overflow-x-auto border-b border-outline-variant/15 gap-4 no-scrollbar">
-            {[
-              { id: 'overview', label: 'Overview', icon: 'info' },
-              { id: 'rules', label: 'Rules', icon: 'gavel' },
-              { id: 'matches', label: 'Matches', icon: 'sports_esports' },
-              { id: 'teams', label: 'Teams', icon: 'groups' },
-              { id: 'sponsors', label: 'Sponsors', icon: 'handshake', hidden: !isSponsorsEnabled && sponsorList.length === 0 }
-            ].filter(t => !t.hidden).map(tab => (
-              <button key={tab.id}
-                onClick={() => setMobileTab(tab.id)}
-                className={`pb-2 text-[10px] font-bold uppercase tracking-wider border-b-2 shrink-0 transition-all flex items-center gap-1.5 ${
-                  mobileTab === tab.id
-                    ? 'border-primary text-on-background'
-                    : 'border-transparent text-on-surface-variant/60'
-                }`}>
-                <span className="material-symbols-outlined text-[13px]">{tab.icon}</span>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Mobile Tab Content */}
-          {mobileTab === 'overview' && (
-            <div className="space-y-4">
-              {/* Prize distribution */}
-              {renderPrizeTable()}
-
-              {/* Slot Tracker */}
-              {renderSlotTracker()}
-
-              {/* Registered Teams */}
-              {renderTeamsList()}
-
-              {/* Event Brief */}
-              {tourney.description && (
-                <div className="space-y-1.5">
-                  <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Event Brief</h3>
-                  <p className="text-[11px] text-on-surface-variant/80 leading-relaxed">{tourney.description}</p>
+              {/* Organizer / Contact Info */}
+              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4">
+                <div>
+                  <h4 className="font-bold text-base text-white tracking-wider uppercase">Contact Support</h4>
+                  <p className="text-[10px] text-white/50 mt-0.5">Need help regarding matching schedules or fees?</p>
                 </div>
-              )}
-
-              {/* Room Credentials */}
-              {renderRoomCredentialsCard()}
-
-              {/* Timeline */}
-              <div className="bg-[#0d0e12]/40 rounded-lg border border-outline-variant/10 p-3 space-y-2.5">
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm">schedule</span>
-                  Timeline
-                </h3>
-                <div className="space-y-2 border-l border-outline-variant/20 pl-3">
-                  {[
-                    { label: 'Check-in Opens', date: tourney.lobby_start_time || tourney.registrationCloseDate, desc: 'Coordinates unlock' },
-                    { label: 'Match Start', date: tourney.startDate, desc: 'Lobby locks' }
-                  ].map((step, idx) => {
-                    const dateObj = step.date ? new Date(step.date) : null;
-                    return (
-                      <div key={idx} className="relative">
-                        <span className="absolute -left-[13px] top-1 w-1.5 h-1.5 rounded-full bg-primary border-2 border-background" />
-                        <div className="text-[10px] font-bold text-on-background">{step.label}</div>
-                        <div className="text-[9px] font-bold text-primary">
-                          {dateObj ? dateObj.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'TBD'}
-                        </div>
-                        <p className="text-[8px] text-on-surface-variant/60">{step.desc}</p>
-                      </div>
-                    );
-                  })}
-                </div>
+                <button className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 py-3.5 rounded-xl text-primary font-black text-xs uppercase tracking-widest transition-all">
+                  <span className="material-symbols-outlined text-base">chat</span>
+                  Join Discord Community
+                </button>
               </div>
+
             </div>
-          )}
+          </section>
 
-          {mobileTab === 'rules' && (
-            <div className="space-y-2">
-              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Tournament Rules</h3>
-              <div className="text-xs text-on-surface-variant/80 leading-relaxed">
-                {renderRulesContent()}
-              </div>
-            </div>
-          )}
-
-          {mobileTab === 'matches' && renderFlowchart()}
-
-          {mobileTab === 'teams' && renderTeamsList()}
-
-          {mobileTab === 'sponsors' && renderSponsorsContent()}
         </div>
-
       </main>
 
-      {/* MOBILE STICKY BOTTOM ACTION BAR */}
-      <div className="block md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#07080C]/90 backdrop-blur-xl border-t border-outline-variant/20 px-4 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.8)]">
-        <div className="flex items-center justify-between gap-4 max-w-md mx-auto">
-          {/* Countdown & slots info */}
-          <div className="min-w-0 flex-1">
-            {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
-              <div className="text-[10px] font-bold text-primary flex items-center gap-1 mb-0.5 truncate uppercase">
-                <span className="material-symbols-outlined text-xs">schedule</span>
-                <span>
-                  {countdown.type === 'registration' ? 'Reg Closes' : 'Starts'} in:{' '}
+      {/* FIXED STICKY BOTTOM ACTION BAR */}
+      <footer className="fixed bottom-0 left-0 w-full bg-[#0d0e12]/80 backdrop-blur-xl border-t border-white/10 px-4 md:px-margin-desktop py-4 z-40">
+        <div className="max-w-[1280px] mx-auto flex items-center justify-between">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
+                <span className="text-primary font-bold font-label-sm flex items-center gap-1 text-[11px] sm:text-xs">
+                  <span className="material-symbols-outlined text-[16px]">schedule</span>
+                  {countdown.type === 'registration' ? 'REG CLOSES IN: ' : 'STARTS IN: '}
                   {countdown.days > 0 ? `${countdown.days}d ` : ''}
                   {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
                 </span>
-              </div>
-            ) : countdown.type === 'live' ? (
-              <div className="text-[10px] font-bold text-rose-500 flex items-center gap-1 mb-0.5 animate-pulse uppercase">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping mr-1" />
-                <span>LIVE NOW</span>
-              </div>
-            ) : (
-              <div className="text-[10px] font-bold text-rose-500 mb-0.5">CLOSED</div>
-            )}
-            <p className="text-[10px] text-on-surface-variant font-medium leading-none">
-              {slotAvailable} slots left &bull; {entryDisplay}
-            </p>
+              ) : countdown.type === 'live' ? (
+                <span className="text-rose-500 font-bold font-label-sm flex items-center gap-1 text-[11px] sm:text-xs animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping mr-1" />
+                  LIVE NOW
+                </span>
+              ) : (
+                <span className="text-rose-500 font-bold font-label-sm text-[11px] sm:text-xs">
+                  REGISTRATION CLOSED
+                </span>
+              )}
+            </div>
+            <p className="text-white/50 text-[10px] sm:text-[11px] mt-0.5">{slotAvailable} slots left &bull; Be quick!</p>
           </div>
-          {/* CTA */}
-          <button
-            onClick={handleRegister}
-            disabled={btn.disabled}
-            className={`shrink-0 px-4 py-2.5 rounded-xl font-bold text-xs transition-all active:scale-[0.95] flex items-center justify-center gap-1.5 shadow-md ${btnStyles[btn.style]}`}
-          >
-            {btn.text}
-            {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex flex-col items-end">
+              <p className="text-white/40 text-[9px] tracking-wider uppercase font-bold">ENTRY FEE</p>
+              <p className="text-white font-black text-sm">{entryDisplay}</p>
+            </div>
+            <button 
+              onClick={handleRegister} 
+              disabled={btn.disabled}
+              className={`px-6 sm:px-12 py-3.5 sm:py-4 rounded-xl font-bold flex items-center gap-2 transition-all transform hover:scale-[1.02] active:scale-95 shadow-xl shadow-primary/20 ${btnStyles[btn.style]}`}
+            >
+              <span>{btn.text}</span>
+              {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
+            </button>
+          </div>
         </div>
-      </div>
+      </footer>
 
       {/* TOAST */}
       <AnimatePresence>
