@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 export default function MultiAdminPanel({ subscriptionApi, triggerToast }) {
@@ -7,17 +7,26 @@ export default function MultiAdminPanel({ subscriptionApi, triggerToast }) {
   const [showForm, setShowForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({ name: '', email: '', role: 'staff', adminRole: 'admin' })
-  const [actionLog, setActionLog] = useState([])
 
   const fetchStaff = useCallback(async () => {
     setLoading(true)
     try {
       const res = await subscriptionApi.getStaff()
       if (res.success) setStaff(res.staff || [])
-    } catch (e) {} finally { setLoading(false) }
-  }, [subscriptionApi])
+    } catch (e) {
+      console.error('Error fetching staff:', e)
+      triggerToast('Failed to fetch staff')
+    } finally { setLoading(false) }
+  }, [subscriptionApi, triggerToast])
 
-  useEffect(() => { fetchStaff() }, [fetchStaff])
+  useEffect(() => {
+    let mounted = true
+    const loadStaff = async () => {
+      if (mounted) await fetchStaff()
+    }
+    loadStaff()
+    return () => { mounted = false }
+  }, [fetchStaff])
 
   const handleInvite = async (e) => {
     e.preventDefault()
@@ -40,7 +49,10 @@ export default function MultiAdminPanel({ subscriptionApi, triggerToast }) {
       } else {
         triggerToast(res.message || 'Failed to invite')
       }
-    } catch (e) { triggerToast('Network error') }
+    } catch (e) {
+      console.error('Invite error:', e)
+      triggerToast('Network error')
+    }
     finally { setSubmitting(false) }
   }
 
@@ -49,7 +61,10 @@ export default function MultiAdminPanel({ subscriptionApi, triggerToast }) {
     try {
       const res = await subscriptionApi.removeStaff(staffId)
       if (res.success) { triggerToast('Admin removed'); fetchStaff() }
-    } catch (e) { triggerToast('Failed to remove') }
+    } catch (e) {
+      console.error('Remove error:', e)
+      triggerToast('Failed to remove')
+    }
   }
 
   const handlePermissionToggle = async (staffId, permission, currentValue) => {
@@ -58,7 +73,10 @@ export default function MultiAdminPanel({ subscriptionApi, triggerToast }) {
       perms[permission] = !currentValue
       const res = await subscriptionApi.updateStaffPermissions({ staffId, permissions: perms })
       if (res.success) fetchStaff()
-    } catch (e) { triggerToast('Failed to update permissions') }
+    } catch (e) {
+      console.error('Permission error:', e)
+      triggerToast('Failed to update permissions')
+    }
   }
 
   return (
