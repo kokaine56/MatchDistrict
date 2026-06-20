@@ -582,10 +582,14 @@ async function initDb() {
 
     // Seed admin user if not present
     try {
-      const adminEmail = process.env.ADMIN_EMAIL || 'matchdistrict.in@gmail.com';
-      const adminPassword = process.env.ADMIN_PASSWORD || '101010';
-      const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
-      if (checkAdmin.rows.length === 0) {
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminEmail || !adminPassword) {
+        console.warn('⚠️ [MATCH DISTRICT DB] ADMIN_EMAIL or ADMIN_PASSWORD environment variables missing. Skipping admin user seeding.');
+      } else {
+        const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+        if (checkAdmin.rows.length === 0) {
         const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
         const hashedAdminPassword = hashPassword(adminPassword);
         await client.query(
@@ -605,7 +609,8 @@ async function initDb() {
             'Active'
           ]
         );
-        console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
+          console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
+        }
       }
     } catch (seedErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
