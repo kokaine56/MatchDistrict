@@ -110,7 +110,15 @@ if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
 }
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.JWT_SECRET || 'matchdistrict_super_secure_jwt_secret_key_2026';
+
+if (!process.env.JWT_SECRET) {
+  console.error('\n❌ [CRITICAL ERROR] JWT_SECRET is not set in the environment or .env file.');
+  console.error('The hardcoded fallback has been removed for production security.');
+  console.error('Please configure JWT_SECRET in your environment or .env file before starting the server.\n');
+  process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Encryption helper functions for browser persistent session
 const ENCRYPTION_KEY = crypto.scryptSync(JWT_SECRET, 'md-salt-string', 32);
