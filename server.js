@@ -109,8 +109,15 @@ if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
   console.warn('⚠️ [WARNING] ADMIN_EMAIL or ADMIN_PASSWORD is not set. Using default administrative credentials.');
 }
 
+if (!process.env.JWT_SECRET) {
+  console.error('\n❌ [CRITICAL ERROR] JWT_SECRET is not set in the environment or .env file.');
+  console.error('Hardcoded fallback has been removed for security.');
+  console.error('Please configure JWT_SECRET in your environment or .env file before starting the server.\n');
+  process.exit(1);
+}
+
 const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.JWT_SECRET || 'matchdistrict_super_secure_jwt_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Encryption helper functions for browser persistent session
 const ENCRYPTION_KEY = crypto.scryptSync(JWT_SECRET, 'md-salt-string', 32);
