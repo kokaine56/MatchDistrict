@@ -404,7 +404,6 @@ async function initDb() {
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registrations table ensured.');
     } catch (createRegErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create/verify tournament_registrations:', createRegErr.message);
     }
