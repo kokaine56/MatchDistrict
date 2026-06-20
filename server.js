@@ -835,7 +835,7 @@ const server = http.createServer(async (req, res) => {
         let expiry = parsed.expiry;
 
         if (!otp) {
-          otp = Math.floor(100000 + Math.random() * 900000).toString();
+          otp = crypto.randomInt(100000, 1000000).toString();
         }
         if (!expiry) {
           expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
