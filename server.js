@@ -247,7 +247,6 @@ async function initDb() {
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
       `);
-      console.log('📦 [MATCH DISTRICT DB] Supabase users and organizer tables schema verified and updated.');
     } catch (alterErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tables:', alterErr.message);
     }
