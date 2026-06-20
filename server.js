@@ -605,7 +605,6 @@ async function initDb() {
             'Active'
           ]
         );
-        console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
       }
     } catch (seedErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
