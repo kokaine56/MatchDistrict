@@ -555,22 +555,23 @@ async function initDb() {
         'wallet_transactions'
       ];
 
-      for (const table of tables) {
-        const checkTableExists = await client.query(`
-          SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = $1
-        `, [table]);
+      const existingTablesResult = await client.query(`
+        SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY($1)
+      `, [tables]);
 
-        if (checkTableExists.rows.length > 0) {
+      const existingTables = existingTablesResult.rows.map(row => row.tablename);
+
+      if (existingTables.length > 0) {
+        const pubTablesResult = await client.query(`
+          SELECT tablename FROM pg_publication_tables
+          WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = ANY($1)
+        `, [existingTables]);
+
+        const pubTables = new Set(pubTablesResult.rows.map(row => row.tablename));
+
+        for (const table of existingTables) {
           await client.query(`ALTER TABLE "${table}" REPLICA IDENTITY FULL;`);
-
-          const pubTableCheck = await client.query(`
-            SELECT 1 FROM pg_publication_tables 
-            WHERE pubname = 'supabase_realtime' 
-            AND schemaname = 'public' 
-            AND tablename = $1
-          `, [table]);
-
-          if (pubTableCheck.rows.length === 0) {
+          if (!pubTables.has(table)) {
             await client.query(`ALTER PUBLICATION supabase_realtime ADD TABLE "${table}";`);
             console.log(`📡 [REALTIME] Added table "${table}" to supabase_realtime publication.`);
           }
