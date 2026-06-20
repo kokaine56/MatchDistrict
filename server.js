@@ -835,7 +835,7 @@ const server = http.createServer(async (req, res) => {
         let expiry = parsed.expiry;
 
         if (!otp) {
-          otp = Math.floor(100000 + Math.random() * 900000).toString();
+          otp = crypto.randomInt(100000, 1000000).toString();
         }
         if (!expiry) {
           expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
@@ -1136,7 +1136,7 @@ const server = http.createServer(async (req, res) => {
         // Register user in Supabase Auth using password passed from client
         let userUUID = null;
         let isLocalFallback = false;
-        const registerPassword = password || ('MatchDistrictTempPass' + Math.random().toString(36).slice(-8));
+        const registerPassword = password || ('MatchDistrictTempPass' + crypto.randomBytes(4).toString('hex'));
 
         try {
           const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -2697,7 +2697,7 @@ const server = http.createServer(async (req, res) => {
             description = COALESCE(EXCLUDED.description, tournaments.description)
           RETURNING *`,
           [
-            t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+            t.id || `TRN-${Date.now().toString(36).slice(-4)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
             t.title || '',
             t.game || '',
             t.status || 'upcoming',
@@ -3104,7 +3104,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to duplicate this tournament.' }));
         return;
       }
-      const newId = `TRN-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const newId = `TRN-${Date.now().toString().slice(-4)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
       const dbRes = await pool.query(
         `INSERT INTO tournaments (
           id, title, game, status, "badgeBg", "badgeText", date, prize, entry, "teamsCount",

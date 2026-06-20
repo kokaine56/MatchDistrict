@@ -1,0 +1,1 @@
+## Insecure Randomness Remediation\n\nReplaced Math.random() with cryptographically secure functions from the 'crypto' module for generating One-Time Passwords (OTPs), temporary passwords, and identifiers. Math.random() is predictable and unsuitable for security-sensitive operations. crypto.randomInt() and crypto.randomBytes() guarantee true cryptographic randomness.
