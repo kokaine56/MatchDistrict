@@ -463,7 +463,6 @@ async function initDb() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
-      console.log('📦 [MATCH DISTRICT DB] payment_submissions table ensured.');
     } catch (payErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create payment_submissions:', payErr.message);
     }
