@@ -618,7 +618,6 @@ async function initDb() {
         VALUES ('platform_fee_percentage', '10', CURRENT_TIMESTAMP)
         ON CONFLICT (key) DO NOTHING
       `);
-      console.log('💰 [MATCH DISTRICT DB] Default platform fee seeded (10%).');
     } catch (feeErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not seed platform fee:', feeErr.message);
     }
@@ -629,7 +628,6 @@ async function initDb() {
         VALUES ('organizer_fee_percentage', '5', CURRENT_TIMESTAMP)
         ON CONFLICT (key) DO NOTHING
       `);
-      console.log('💰 [MATCH DISTRICT DB] Default organizer fee seeded (5%).');
     } catch (orgFeeErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not seed organizer fee:', orgFeeErr.message);
     }
