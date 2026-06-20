@@ -2,6 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import bcrypt from 'bcrypt';
 import pg from 'pg';
 import { Resend } from 'resend';
 import { fileURLToPath } from 'url';
@@ -31,17 +32,20 @@ function publicUserRow(row) {
   return user;
 }
 
-// Hash a password using pbkdf2
+// Hash a password using bcrypt
 function hashPassword(password) {
   if (password == null || typeof password !== 'string') return '';
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-  return `pbkdf2$${salt}$${hash}`;
+  return bcrypt.hashSync(password, 10);
 }
 
 // Verify a password against a hash
 function verifyPassword(password, storedPassword) {
   if (!password || !storedPassword) return false;
+
+  // Check if it's a bcrypt hash
+  if (storedPassword.startsWith('$2a$') || storedPassword.startsWith('$2b$') || storedPassword.startsWith('$2y$')) {
+    return bcrypt.compareSync(password, storedPassword);
+  }
 
   // If stored password doesn't follow the hash format, check plaintext (fallback for existing users)
   if (!storedPassword.startsWith('pbkdf2$')) {
