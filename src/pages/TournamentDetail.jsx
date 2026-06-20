@@ -887,57 +887,99 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw]">
         <div className="w-full max-w-[1280px] space-y-8 pb-32">
           
-          {/* Hero Section */}
-          <section className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+          {/* Hero Section - Flex layout with poster + details */}
+          <section className="flex flex-col sm:flex-row sm:items-start gap-6 sm:gap-8">
             
-            {/* Left Poster card */}
-            <div className="md:col-span-5 bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden shadow-2xl relative w-full flex flex-col shrink group">
-              <div className="aspect-[3/4] w-full relative">
+            {/* Tournament Poster - Clean, no overlays */}
+            <div className="flex-shrink-0 mx-auto sm:mx-0 group">
+              <div className="aspect-[3/4] w-full max-w-[160px] sm:max-w-[220px] md:max-w-[260px] flex-shrink-0 rounded-xl shadow-md overflow-hidden">
                 <img 
                   alt="Tournament Poster" 
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
                   src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
                 />
-                
-                {/* Gradient bottom overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex items-end p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full border border-white/20 overflow-hidden shrink-0 bg-[#07080C] flex items-center justify-center font-bold text-xs">
-                      {orgProfile?.avatar ? (
-                        <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
-                      ) : (
-                        (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-bold text-white text-sm">
-                          {orgProfile?.orgName || tourney.orgName || orgProfile?.name}
-                        </p>
-                        <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                      </div>
-                      <p className="text-[10px] text-white/60">Organizer</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Top overlay */}
-                <div className="absolute inset-x-0 top-0 p-6 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
-                  <h2 className="text-xl md:text-2xl font-black text-white tracking-tight mb-1 uppercase">
-                    {tourney.title}
-                  </h2>
-                  <div className="flex items-center gap-2">
-                    <span className="text-white/80 text-xs font-bold">
-                      by {orgProfile?.orgName || tourney.orgName || orgProfile?.name}
-                    </span>
-                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                  </div>
-                </div>
               </div>
             </div>
 
-            {/* Right Registered Squads/Teams list */}
-            <div className="md:col-span-7 bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+            {/* Details Column */}
+            <div className="flex-1 min-w-0 text-center sm:text-left">
+              <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200 p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 w-full">
+
+                {/* Tournament Title */}
+                <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-slate-900 leading-tight">
+                  {tourney.title}
+                </h1>
+
+                {/* Organizer */}
+                <div className="text-xs sm:text-sm font-bold text-slate-600 flex items-center justify-center sm:justify-start gap-1.5">
+                  <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-slate-500">
+                    {orgProfile?.avatar ? (
+                      <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                    ) : (
+                      (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
+                    )}
+                  </div>
+                  <span>{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                  <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                </div>
+
+                {/* Financial Highlight Pills */}
+                <div className="flex gap-2 sm:gap-3 mt-2 sm:mt-4">
+                  <div className="flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg flex items-center justify-center text-[11px] sm:text-sm font-extrabold border bg-green-50/50 text-green-700 border-green-200 leading-tight">
+                    <span className="truncate">PRIZE: {prizeDisplay}</span>
+                  </div>
+                  <div className="flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg flex items-center justify-center text-[11px] sm:text-sm font-extrabold border bg-orange-50/50 text-orange-600 border-orange-200 leading-tight">
+                    <span className="truncate">ENTRY: {entryDisplay}</span>
+                  </div>
+                </div>
+
+                {/* Formats & Slots Grid */}
+                <div className="grid grid-cols-2 gap-3 sm:gap-6 mt-2 sm:mt-5 pt-3 sm:pt-5 border-t border-slate-100">
+                  {/* Format */}
+                  <div className="flex flex-col text-center sm:text-left">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 sm:mb-1">FORMAT</span>
+                    <span className="text-xs sm:text-base font-bold text-slate-800 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5">
+                      {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
+                    </span>
+                  </div>
+                  {/* Slots */}
+                  <div className="flex flex-col text-center sm:text-left">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 sm:mb-1">SLOTS</span>
+                    <span className="text-xs sm:text-base font-bold text-slate-800 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5">
+                      <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      <span>{slotFilled}/{slotTotal}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Bottom Action Area */}
+                <div className="flex items-center justify-between mt-1 sm:mt-2 pt-1 sm:pt-2">
+                  <button
+                    onClick={handleRegister}
+                    disabled={btn.disabled}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 shadow-sm transition-all text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {btn.text}
+                  </button>
+                  {getGameLogo(tourney.game) && (
+                    <img 
+                      src={getGameLogo(tourney.game)} 
+                      alt={tourney.game} 
+                      className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ml-2 sm:ml-3" 
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Registered Squads/Teams list */}
+          <section className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h4 className="font-bold text-lg text-white tracking-wider flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary text-xl">groups</span>
@@ -1044,67 +1086,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   Live occupancy maps
                 </p>
               </div>
-            </div>
-          </section>
-
-          {/* Info Grid Section */}
-          <section className="grid grid-cols-2 md:grid-cols-4 gap-4 px-0">
-            {/* Schedule */}
-            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <span className="material-symbols-outlined text-primary">calendar_today</span>
-              </div>
-              <div>
-                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Schedule</p>
-                <p className="text-white font-bold text-sm mt-0.5 leading-snug">
-                  {formattedDate || 'TBD'} • {formattedTime || 'TBD'}
-                </p>
-              </div>
-            </div>
-
-            {/* Format */}
-            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <span className="material-symbols-outlined text-primary">layers</span>
-              </div>
-              <div>
-                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Format</p>
-                <p className="text-white font-bold text-sm mt-0.5 leading-snug">
-                  {formatLabel(tourney.match_type)} • {(tourney.perspective || 'TPP').toUpperCase()}
-                </p>
-              </div>
-            </div>
-
-            {/* Slots with progress */}
-            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <span className="material-symbols-outlined text-primary">group</span>
-              </div>
-              <div>
-                <div className="flex justify-between items-end mb-1">
-                  <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Slots</p>
-                  <p className="text-primary font-black text-xs tabular-nums">{slotFilled} / {slotTotal}</p>
-                </div>
-                <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-                  <div className="bg-primary h-full rounded-full transition-all duration-1000" style={{ width: `${fillPercent}%` }}></div>
-                </div>
-                <div className="flex justify-between mt-2 text-[8px] font-black uppercase tracking-wider">
-                  <span className="text-emerald-400">{slotFilled} Confirmed</span>
-                  <span className="text-primary">{slotAvailable} Open</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Entry Fee */}
-            <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 p-5 rounded-2xl flex flex-col gap-3 group hover:border-primary/30 transition-all">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                <span className="material-symbols-outlined text-primary">confirmation_number</span>
-              </div>
-              <div>
-                <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Entry Fee</p>
-                <p className="text-white font-bold text-sm mt-0.5 leading-snug">{entryDisplay} / Team</p>
-              </div>
-            </div>
           </section>
 
           {/* Main Content Area: Prize Pool & Rules */}
