@@ -491,13 +491,37 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     if (!tourney) return [];
     const list = [];
     const pool = parseInt(tourney.prize_pool_amount || tourney.prizePool || tourney.prize, 10) || 0;
-    const firstVal = tourney.prize_split_1st || (pool > 0 ? `₹${Math.round(pool * 0.5).toLocaleString('en-IN')}` : '50%');
-    const secondVal = tourney.prize_split_2nd || (pool > 0 ? `₹${Math.round(pool * 0.3).toLocaleString('en-IN')}` : '30%');
-    const thirdVal = tourney.prize_split_3rd || (pool > 0 ? `₹${Math.round(pool * 0.2).toLocaleString('en-IN')}` : '20%');
 
-    list.push({ position: '1st Place', prize: firstVal, badge: '🥇', badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' });
-    list.push({ position: '2nd Place', prize: secondVal, badge: '🥈', badgeBg: 'bg-slate-400/20 text-slate-300 border border-slate-400/30' });
-    list.push({ position: '3rd Place', prize: thirdVal, badge: '🥉', badgeBg: 'bg-amber-700/20 text-amber-600 border border-amber-700/30' });
+    let usedPrizePositions = false;
+    try {
+      const raw = tourney.prize_positions;
+      if (raw) {
+        const parsedPositions = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsedPositions) && parsedPositions.length > 0) {
+          parsedPositions.forEach((pos) => {
+            const pct = parseFloat(pos.percentage);
+            const amount = !isNaN(pct) && pool > 0 ? Math.round(pool * pct / 100) : 0;
+            list.push({
+              position: pos.name || `${list.length + 1} Place`,
+              prize: amount > 0 ? `₹${amount.toLocaleString('en-IN')}` : `${pct}%`,
+              badge: '',
+              badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+            });
+          });
+          usedPrizePositions = true;
+        }
+      }
+    } catch (_) {}
+
+    if (!usedPrizePositions) {
+      const firstVal = tourney.prize_split_1st || (pool > 0 ? `₹${Math.round(pool * 0.5).toLocaleString('en-IN')}` : '50%');
+      const secondVal = tourney.prize_split_2nd || (pool > 0 ? `₹${Math.round(pool * 0.3).toLocaleString('en-IN')}` : '30%');
+      const thirdVal = tourney.prize_split_3rd || (pool > 0 ? `₹${Math.round(pool * 0.2).toLocaleString('en-IN')}` : '20%');
+
+      list.push({ position: '1st Place', prize: firstVal, badge: '🥇', badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' });
+      list.push({ position: '2nd Place', prize: secondVal, badge: '🥈', badgeBg: 'bg-slate-400/20 text-slate-300 border border-slate-400/30' });
+      list.push({ position: '3rd Place', prize: thirdVal, badge: '🥉', badgeBg: 'bg-amber-700/20 text-amber-600 border border-amber-700/30' });
+    }
 
     if (tourney.mvp_enabled) {
       list.push({
@@ -611,69 +635,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
-  const renderFlowchart = () => {
-    return (
-      <div className="space-y-4">
-        <div className="space-y-1">
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider">Tournament Match Roadmap</h3>
-          <p className="text-[11px] text-white/50 leading-relaxed">
-            Follow the path of matches and qualify through rounds to reach the Grand Finals.
-          </p>
-        </div>
-
-        {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
-          <div className="w-full overflow-x-auto py-6 px-4 bg-[#0d0e12]/40 border border-white/10 rounded-2xl flex items-center gap-6 scrollbar-thin">
-            {parsedTimeline.roadmap.map((round, idx) => (
-              <React.Fragment key={round.id || idx}>
-                {/* Node Card */}
-                <div className="flex-shrink-0 w-[200px] bg-[#07080C] border border-white/10 rounded-xl p-4 relative group hover:border-primary/40 transition-all duration-300 shadow-md">
-                  <div className="absolute top-[-9px] left-4 bg-primary text-on-primary text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded shadow-sm">
-                    ROUND {idx + 1}
-                  </div>
-                  <div className="space-y-2 pt-1">
-                    <div className="text-xs font-black text-white truncate uppercase">{round.name || `Round ${idx + 1}`}</div>
-                    <div className="space-y-1.5 text-[10px] text-white/60">
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[12px] text-primary">calendar_today</span>
-                        <span>{round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'TBD'}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[12px] text-primary">schedule</span>
-                        <span>{round.time || 'TBD'}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[12px] text-primary">map</span>
-                        <span>Map: <strong className="text-white">{round.map || 'Erangel'}</strong></span>
-                      </div>
-                      {round.qualified && (
-                        <div className="flex items-center gap-1.5 mt-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded text-[9px] font-bold uppercase">
-                          <span className="material-symbols-outlined text-[12px]">emoji_events</span>
-                          <span>Qualifies: {round.qualified}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Connecting Arrow */}
-                {idx < parsedTimeline.roadmap.length - 1 && (
-                  <div className="flex-shrink-0 flex items-center justify-center text-primary/45 animate-pulse">
-                    <span className="material-symbols-outlined text-xl">arrow_forward</span>
-                  </div>
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8 bg-[#07080C]/40 border border-dashed border-white/10 rounded-xl">
-            <span className="material-symbols-outlined text-2xl text-white/30">sports_esports</span>
-            <p className="text-[10px] text-white/50 mt-2 font-bold uppercase">No match rounds scheduled yet.</p>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const renderSponsorsContent = () => {
     return (
       <div className="space-y-4">
@@ -752,129 +713,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
-
-  const renderRoomCredentialsCard = () => {
-    const isPendingPaymentStatus = rosterStatus === 'pending_payment' || rosterStatus === 'PENDING_PAYMENT_VERIFICATION';
-    
-    if (!currentUser || (!isApprovedRoster && !isPendingPaymentStatus)) {
-      return (
-        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-rose-500/10 p-5 rounded-2xl">
-          <div className="flex items-start gap-3.5">
-            <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-              <span className="material-symbols-outlined text-base">lock</span>
-            </div>
-            <div className="space-y-1">
-              <h4 className="text-xs font-bold uppercase text-rose-400 tracking-wider">Room Coordinates Locked</h4>
-              <p className="text-[11px] text-white/55 leading-relaxed">
-                {currentUser 
-                  ? "Complete registration to unlock match credentials."
-                  : "Sign in with a verified account to access credentials."
-                }
-              </p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (isPendingPaymentStatus) {
-      return (
-        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-amber-500/15 p-5 rounded-2xl">
-          <div className="flex items-start gap-3.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
-              <span className="material-symbols-outlined text-base">hourglass_empty</span>
-            </div>
-            <div className="space-y-1 flex-1">
-              <h4 className="text-xs font-bold uppercase text-amber-400 tracking-wider">Payment Verification Pending</h4>
-              <p className="text-[11px] text-white/55 leading-relaxed">
-                Match room details unlock once the organizer approves your transaction.
-              </p>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    if (!revealTimeReached) {
-      return (
-        <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-primary/20 p-5 rounded-2xl">
-          <div className="flex items-start gap-3.5">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 animate-pulse">
-              <span className="material-symbols-outlined text-base">hourglass_top</span>
-            </div>
-            <div className="space-y-1.5 flex-1 min-w-0">
-              <h4 className="text-xs font-bold uppercase text-primary tracking-wider font-headline-md">Decrypting Coordinates...</h4>
-              <p className="text-[11px] text-white/55 leading-relaxed">
-                Room details revealed 15 minutes before match start.
-              </p>
-              {revealCountdown && (
-                <span className="text-[10px] font-mono font-bold text-secondary bg-secondary/15 px-2 py-0.5 rounded border border-secondary/20 inline-block mt-1">
-                  Decrypts in: {revealCountdown}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-emerald-500/20 p-5 rounded-2xl">
-        <div className="space-y-3.5">
-          <div className="flex items-center justify-between border-b border-white/5 pb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <span className="material-symbols-outlined text-xs">lock_open</span>
-              </div>
-              <span className="text-[10px] font-bold uppercase text-emerald-400 tracking-wider">Lobby Decrypted</span>
-            </div>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-          </div>
-
-          {isLobbyLoading ? (
-            <div className="flex items-center justify-center py-3 gap-2">
-              <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent spinner loading-spinner rounded-full" />
-              <span className="text-xs text-white/60">Decrypting cords...</span>
-            </div>
-          ) : lobbyError ? (
-            <div className="text-[11px] text-rose-400 bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20 flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-xs shrink-0">error</span>
-              <span>{lobbyError}</span>
-            </div>
-          ) : lobbyCredentials ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl p-3">
-                <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Room ID</span>
-                  <span className="text-xs font-mono font-bold text-white select-all block mt-0.5">{lobbyCredentials.roomID || 'TBD'}</span>
-                </div>
-                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomID, 'Room ID')}
-                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all" title="Copy">
-                  <span className="material-symbols-outlined text-sm">content_copy</span>
-                </button>
-              </div>
-              <div className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl p-3">
-                <div className="space-y-0.5">
-                  <span className="text-[9px] font-bold text-white/40 uppercase tracking-wider">Password</span>
-                  <span className="text-xs font-mono font-bold text-white select-all block mt-0.5">{lobbyCredentials.roomPassword || 'TBD'}</span>
-                </div>
-                <button onClick={() => handleCopyCredentials(lobbyCredentials.roomPassword, 'Password')}
-                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-all" title="Copy">
-                  <span className="material-symbols-outlined text-sm">content_copy</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={fetchLobbyCredentials}
-              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all active:scale-[0.98] flex items-center justify-center gap-1.5">
-              <span className="material-symbols-outlined text-xs">refresh</span>
-              Fetch Lobby Details
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div 
@@ -1033,25 +871,55 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'roadmap' && (
-              <div className="space-y-4 max-w-2xl">
+              <div className="flex items-center gap-4 overflow-x-auto pb-4 w-full scrollbar-hide">
                 {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
-                  parsedTimeline.roadmap.map((round, idx) => (
-                    <div key={round.id || idx} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">R{idx + 1}</span>
-                        <div>
-                          <p className="text-sm font-bold text-slate-800">{round.name || `Round ${idx + 1}`}</p>
-                          <p className="text-xs text-slate-500">
-                            {round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'TBD'}
-                            {round.time ? ` @ ${round.time}` : ''}
+                  parsedTimeline.roadmap.map((round, index) => (
+                    <React.Fragment key={round.id || index}>
+                      <div className="min-w-[180px] sm:min-w-[220px] bg-white border border-slate-200 rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0">
+                        <h4 className="font-black text-slate-900 text-base sm:text-lg mb-2">{round.title || `Qualifier ${index + 1}`}</h4>
+                        <div className="space-y-1.5 text-xs text-slate-500 font-medium">
+                          <p className="flex items-center gap-1.5 sm:gap-2">
+                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            <span>{round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBD'}</span>
+                          </p>
+                          <p className="flex items-center gap-1.5 sm:gap-2">
+                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>{round.time || 'TBD'}</span>
+                          </p>
+                          <p className="flex items-center gap-1.5 sm:gap-2">
+                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            <span>Map: <span className="font-bold text-slate-700">{round.map || 'TBD'}</span></span>
                           </p>
                         </div>
+                        {round.qualified && (
+                          <div className="mt-3 sm:mt-4 bg-green-50/80 text-green-700 text-xs font-bold px-2.5 py-1.5 rounded-md border border-green-100 w-fit flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>Qualifies: {round.qualified}</span>
+                          </div>
+                        )}
                       </div>
-                      {round.map && <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">{round.map}</span>}
-                    </div>
+                      {index < parsedTimeline.roadmap.length - 1 && (
+                        <div className="text-slate-300 shrink-0">
+                          <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                          </svg>
+                        </div>
+                      )}
+                    </React.Fragment>
                   ))
                 ) : (
-                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No roadmap rounds scheduled yet.</div>
+                  <div className="text-slate-500 p-6 bg-slate-50 rounded-xl border border-slate-100 w-full">
+                    No roadmap rounds scheduled yet.
+                  </div>
                 )}
               </div>
             )}
@@ -1226,114 +1094,44 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             )}
           </div>
 
-          {/* Main Content Area: Roadmap & Rules */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-8 px-0">
-            {/* Left 2/3 column */}
-            <div className="md:col-span-2 space-y-8">
-              
-              {/* Roadmap Round flow */}
-              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-                {renderFlowchart()}
-              </div>
+          {/* Sidebar Content */}
+          <div className="space-y-6">
 
-            </div>
-
-            {/* Right 1/3 column side cards */}
-            <div className="space-y-6">
-              
-              {/* Lobby Coordinates decrypting */}
-              {renderRoomCredentialsCard()}
-
-              {/* Public Announcements / Notices */}
-              {announcements.length > 0 && (
-                <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4">
-                  <h4 className="font-bold text-base text-white tracking-wider uppercase flex items-center gap-2">
-                    <span className="material-symbols-outlined text-amber-400">campaign</span>
-                    Public Notices
-                  </h4>
-                  <div className="space-y-3">
-                    {announcements.map((notice) => (
-                      <div key={notice.id} className="p-4 bg-black/35 border border-white/5 rounded-xl space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
-                            {notice.pin && <span className="material-symbols-outlined text-xs text-primary">push_pin</span>}
-                            {notice.title}
-                          </h5>
-                          <span className="text-[8px] text-white/40 font-mono">{notice.time}</span>
-                        </div>
-                        <p className="text-[11px] text-white/70 leading-relaxed whitespace-pre-line">{notice.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sponsors Section */}
-              {(isSponsorsEnabled || sponsorList.length > 0) && (
-                <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
-                  {renderSponsorsContent()}
-                </div>
-              )}
-
-              {/* Organizer / Contact Info */}
+            {/* Public Announcements / Notices */}
+            {announcements.length > 0 && (
               <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl space-y-4">
-                <div>
-                  <h4 className="font-bold text-base text-white tracking-wider uppercase">Contact Support</h4>
-                  <p className="text-[10px] text-white/50 mt-0.5">Need help regarding matching schedules or fees?</p>
+                <h4 className="font-bold text-base text-white tracking-wider uppercase flex items-center gap-2">
+                  <span className="material-symbols-outlined text-amber-400">campaign</span>
+                  Public Notices
+                </h4>
+                <div className="space-y-3">
+                  {announcements.map((notice) => (
+                    <div key={notice.id} className="p-4 bg-black/35 border border-white/5 rounded-xl space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          {notice.pin && <span className="material-symbols-outlined text-xs text-primary">push_pin</span>}
+                          {notice.title}
+                        </h5>
+                        <span className="text-[8px] text-white/40 font-mono">{notice.time}</span>
+                      </div>
+                      <p className="text-[11px] text-white/70 leading-relaxed whitespace-pre-line">{notice.text}</p>
+                    </div>
+                  ))}
                 </div>
-                <button className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 py-3.5 rounded-xl text-primary font-black text-xs uppercase tracking-widest transition-all">
-                  <span className="material-symbols-outlined text-base">chat</span>
-                  Join Discord Community
-                </button>
               </div>
+            )}
 
-            </div>
-          </section>
+            {/* Sponsors Section */}
+            {(isSponsorsEnabled || sponsorList.length > 0) && (
+              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
+                {renderSponsorsContent()}
+              </div>
+            )}
+
+          </div>
 
         </div>
       </main>
-
-      {/* FIXED STICKY BOTTOM ACTION BAR */}
-      <footer className="fixed bottom-0 left-0 w-full bg-[#0d0e12]/80 backdrop-blur-xl border-t border-white/10 px-4 md:px-margin-desktop py-4 z-40">
-        <div className="max-w-[1280px] mx-auto flex items-center justify-between">
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') ? (
-                <span className="text-primary font-bold font-label-sm flex items-center gap-1 text-[11px] sm:text-xs">
-                  <span className="material-symbols-outlined text-[16px]">schedule</span>
-                  {countdown.type === 'registration' ? 'REG CLOSES IN: ' : 'STARTS IN: '}
-                  {countdown.days > 0 ? `${countdown.days}d ` : ''}
-                  {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
-                </span>
-              ) : countdown.type === 'live' ? (
-                <span className="text-rose-500 font-bold font-label-sm flex items-center gap-1 text-[11px] sm:text-xs animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping mr-1" />
-                  LIVE NOW
-                </span>
-              ) : (
-                <span className="text-rose-500 font-bold font-label-sm text-[11px] sm:text-xs">
-                  REGISTRATION CLOSED
-                </span>
-              )}
-            </div>
-            <p className="text-white/50 text-[10px] sm:text-[11px] mt-0.5">{slotAvailable} slots left &bull; Be quick!</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex flex-col items-end">
-              <p className="text-white/40 text-[9px] tracking-wider uppercase font-bold">ENTRY FEE</p>
-              <p className="text-white font-black text-sm">{entryDisplay}</p>
-            </div>
-            <button 
-              onClick={handleRegister} 
-              disabled={btn.disabled}
-              className={`px-6 sm:px-12 py-3.5 sm:py-4 rounded-xl font-bold flex items-center gap-2 transition-all transform hover:scale-[1.02] active:scale-95 shadow-xl shadow-primary/20 ${btnStyles[btn.style]}`}
-            >
-              <span>{btn.text}</span>
-              {btn.icon && <span className="material-symbols-outlined text-sm">{btn.icon}</span>}
-            </button>
-          </div>
-        </div>
-      </footer>
 
       {/* TOAST */}
       <AnimatePresence>
