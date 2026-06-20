@@ -106,7 +106,14 @@ if (!process.env.SUPABASE_ANON_KEY) {
 }
 
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
-  console.warn('⚠️ [WARNING] ADMIN_EMAIL or ADMIN_PASSWORD is not set. Using default administrative credentials.');
+  if (process.env.APP_ENV === 'production') {
+    console.error('\n❌ [CRITICAL ERROR] ADMIN_EMAIL or ADMIN_PASSWORD is not set in the environment.');
+    console.error('Hardcoded admin credentials have been removed for production security.');
+    console.error('Please configure ADMIN_EMAIL and ADMIN_PASSWORD before starting the server in production.\n');
+    process.exit(1);
+  } else {
+    console.warn('⚠️ [WARNING] ADMIN_EMAIL or ADMIN_PASSWORD is not set. Admin user will not be seeded.');
+  }
 }
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -580,32 +587,35 @@ async function initDb() {
       console.warn('⚠️ [REALTIME] Failed to configure Supabase Realtime publication:', realtimeErr.message);
     }
 
-    // Seed admin user if not present
+    // Seed admin user if present in environment variables
     try {
-      const adminEmail = process.env.ADMIN_EMAIL || 'matchdistrict.in@gmail.com';
-      const adminPassword = process.env.ADMIN_PASSWORD || '101010';
-      const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
-      if (checkAdmin.rows.length === 0) {
-        const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
-        const hashedAdminPassword = hashPassword(adminPassword);
-        await client.query(
-          `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, tier, "orgApplicationStatus", avatar, status) 
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [
-            adminId,
-            adminId,
-            'Super Admin',
-            adminEmail,
-            hashedAdminPassword,
-            '@admin',
-            'admin',
-            'Pro',
-            'none',
-            'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=500&q=80',
-            'Active'
-          ]
-        );
-        console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (adminEmail && adminPassword) {
+        const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
+        if (checkAdmin.rows.length === 0) {
+          const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
+          const hashedAdminPassword = hashPassword(adminPassword);
+          await client.query(
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, tier, "orgApplicationStatus", avatar, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [
+              adminId,
+              adminId,
+              'Super Admin',
+              adminEmail,
+              hashedAdminPassword,
+              '@admin',
+              'admin',
+              'Pro',
+              'none',
+              'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=500&q=80',
+              'Active'
+            ]
+          );
+          console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
+        }
       }
     } catch (seedErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
