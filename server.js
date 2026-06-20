@@ -7907,6 +7907,23 @@ const server = http.createServer(async (req, res) => {
       }
 
       // Monthly tournament growth (12 months)
+      const dStartTournaments = new Date();
+      dStartTournaments.setMonth(dStartTournaments.getMonth() - 11);
+      dStartTournaments.setDate(1);
+      dStartTournaments.setHours(0, 0, 0, 0);
+
+      const tournamentsAgg = await pool.query(
+        `SELECT EXTRACT(YEAR FROM created_at) as year, EXTRACT(MONTH FROM created_at) as month, COUNT(*) as cnt
+         FROM tournaments
+         WHERE "orgId" = $1 AND "isDraft" = false AND created_at >= $2
+         GROUP BY year, month`,
+        [user.id, dStartTournaments]
+      );
+      const tMap = {};
+      for (const row of tournamentsAgg.rows) {
+        tMap[`${parseInt(row.year)}-${String(row.month).padStart(2, '0')}`] = parseInt(row.cnt);
+      }
+
       const monthlyTournaments = [];
       for (let i = 11; i >= 0; i--) {
         const d = new Date();
@@ -7914,14 +7931,28 @@ const server = http.createServer(async (req, res) => {
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournaments WHERE "orgId" = $1 AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3 AND "isDraft" = false`,
-          [user.id, year, month]
-        );
-        monthlyTournaments.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        monthlyTournaments.push({ month: label, count: tMap[label] || 0 });
       }
 
       // Registration growth (monthly for 6 months)
+      const dStartRegs = new Date();
+      dStartRegs.setMonth(dStartRegs.getMonth() - 5);
+      dStartRegs.setDate(1);
+      dStartRegs.setHours(0, 0, 0, 0);
+
+      const regAgg = await pool.query(
+        `SELECT EXTRACT(YEAR FROM tr.created_at) as year, EXTRACT(MONTH FROM tr.created_at) as month, COUNT(*) as cnt
+         FROM tournament_registrations tr
+         JOIN tournaments t ON t.id = tr.tournament_id
+         WHERE t."orgId" = $1 AND tr.created_at >= $2
+         GROUP BY year, month`,
+        [user.id, dStartRegs]
+      );
+      const rMap = {};
+      for (const row of regAgg.rows) {
+        rMap[`${parseInt(row.year)}-${String(row.month).padStart(2, '0')}`] = parseInt(row.cnt);
+      }
+
       const monthlyRegistrations = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
@@ -7929,18 +7960,23 @@ const server = http.createServer(async (req, res) => {
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournament_registrations tr 
-           JOIN tournaments t ON t.id = tr.tournament_id 
-           WHERE t."orgId" = $1 
-             AND EXTRACT(YEAR FROM tr.created_at) = $2 
-             AND EXTRACT(MONTH FROM tr.created_at) = $3`,
-          [user.id, year, month]
-        );
-        monthlyRegistrations.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        monthlyRegistrations.push({ month: label, count: rMap[label] || 0 });
       }
 
       // Participant growth (unique participants over time)
+      const partAgg = await pool.query(
+        `SELECT EXTRACT(YEAR FROM tr.created_at) as year, EXTRACT(MONTH FROM tr.created_at) as month, COUNT(DISTINCT tr.user_id) as cnt
+         FROM tournament_registrations tr
+         JOIN tournaments t ON t.id = tr.tournament_id
+         WHERE t."orgId" = $1 AND tr.created_at >= $2 AND tr.status = 'approved'
+         GROUP BY year, month`,
+        [user.id, dStartRegs]
+      );
+      const pMap = {};
+      for (const row of partAgg.rows) {
+        pMap[`${parseInt(row.year)}-${String(row.month).padStart(2, '0')}`] = parseInt(row.cnt);
+      }
+
       const participantGrowth = [];
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
@@ -7948,16 +7984,7 @@ const server = http.createServer(async (req, res) => {
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(DISTINCT tr.user_id) as cnt FROM tournament_registrations tr 
-           JOIN tournaments t ON t.id = tr.tournament_id 
-           WHERE t."orgId" = $1 
-             AND EXTRACT(YEAR FROM tr.created_at) = $2 
-             AND EXTRACT(MONTH FROM tr.created_at) = $3
-             AND tr.status = 'approved'`,
-          [user.id, year, month]
-        );
-        participantGrowth.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        participantGrowth.push({ month: label, count: pMap[label] || 0 });
       }
 
       // 30-day growth rates
