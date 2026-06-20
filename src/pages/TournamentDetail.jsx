@@ -887,93 +887,93 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw]">
         <div className="w-full max-w-[1280px] space-y-8 pb-32">
           
-          {/* Hero Section - Flex layout with poster + details */}
-          <section className="flex flex-col sm:flex-row sm:items-start gap-6 sm:gap-8">
-            
-            {/* Tournament Poster - Clean, no overlays */}
-            <div className="flex-shrink-0 mx-auto sm:mx-0 group">
-              <div className="aspect-[3/4] w-full max-w-[160px] sm:max-w-[220px] md:max-w-[260px] flex-shrink-0 rounded-xl shadow-md overflow-hidden">
-                <img 
-                  alt="Tournament Poster" 
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                  src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
-                />
+          {/* Hero Section - Side-by-side poster + condensed details */}
+          <section className="flex flex-col w-full">
+            <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200 p-4 sm:p-6 w-full">
+              
+              {/* Side-by-side: Poster + Top Details */}
+              <div className="flex flex-row items-start gap-4 w-full">
+                
+                {/* Poster Left */}
+                <div className="w-[110px] sm:w-[140px] shrink-0">
+                  <img 
+                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-md"
+                    src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
+                    alt="Tournament Poster"
+                  />
+                </div>
+
+                {/* Details Right */}
+                <div className="flex-1 flex flex-col items-start justify-start text-left min-w-0">
+                  
+                  {/* Title */}
+                  <h1 className="text-lg sm:text-xl font-black text-slate-900 leading-tight line-clamp-2 break-words">
+                    {tourney.title}
+                  </h1>
+
+                  {/* Organizer */}
+                  <div className="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1 mt-1">
+                    <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-slate-500">
+                      {orgProfile?.avatar ? (
+                        <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                      ) : (
+                        (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <span className="truncate">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                    <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
+                  </div>
+
+                  {/* Financial Pills */}
+                  <div className="flex flex-wrap gap-2 mt-3 w-full">
+                    <div className="px-2 py-1.5 bg-green-50/80 border border-green-200 text-green-700 text-xs font-extrabold rounded-md flex-1 text-center min-w-[80px] leading-tight">
+                      PRIZE: {prizeDisplay}
+                    </div>
+                    <div className="px-2 py-1.5 bg-amber-50/80 border border-amber-200 text-amber-600 text-xs font-extrabold rounded-md flex-1 text-center min-w-[80px] leading-tight">
+                      ENTRY: {entryDisplay}
+                    </div>
+                  </div>
+
+                  {/* Format & Slots - compact inline */}
+                  <div className="flex items-center gap-4 mt-3 w-full">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">FORMAT</span>
+                      <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
+                        {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">SLOTS</span>
+                      <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
+                        <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        <span>{slotFilled}/{slotTotal}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            {/* Details Column */}
-            <div className="flex-1 min-w-0 text-center sm:text-left">
-              <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200 p-4 sm:p-6 flex flex-col gap-3 sm:gap-4 w-full">
-
-                {/* Tournament Title */}
-                <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-slate-900 leading-tight">
-                  {tourney.title}
-                </h1>
-
-                {/* Organizer */}
-                <div className="text-xs sm:text-sm font-bold text-slate-600 flex items-center justify-center sm:justify-start gap-1.5">
-                  <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-slate-500">
-                    {orgProfile?.avatar ? (
-                      <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
-                    ) : (
-                      (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
-                    )}
-                  </div>
-                  <span>{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
-                  <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
-                </div>
-
-                {/* Financial Highlight Pills */}
-                <div className="flex gap-2 sm:gap-3 mt-2 sm:mt-4">
-                  <div className="flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg flex items-center justify-center text-[11px] sm:text-sm font-extrabold border bg-green-50/50 text-green-700 border-green-200 leading-tight">
-                    <span className="truncate">PRIZE: {prizeDisplay}</span>
-                  </div>
-                  <div className="flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg flex items-center justify-center text-[11px] sm:text-sm font-extrabold border bg-orange-50/50 text-orange-600 border-orange-200 leading-tight">
-                    <span className="truncate">ENTRY: {entryDisplay}</span>
-                  </div>
-                </div>
-
-                {/* Formats & Slots Grid */}
-                <div className="grid grid-cols-2 gap-3 sm:gap-6 mt-2 sm:mt-5 pt-3 sm:pt-5 border-t border-slate-100">
-                  {/* Format */}
-                  <div className="flex flex-col text-center sm:text-left">
-                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 sm:mb-1">FORMAT</span>
-                    <span className="text-xs sm:text-base font-bold text-slate-800 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5">
-                      {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
-                    </span>
-                  </div>
-                  {/* Slots */}
-                  <div className="flex flex-col text-center sm:text-left">
-                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 sm:mb-1">SLOTS</span>
-                    <span className="text-xs sm:text-base font-bold text-slate-800 flex items-center justify-center sm:justify-start gap-1 sm:gap-1.5">
-                      <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                      </svg>
-                      <span>{slotFilled}/{slotTotal}</span>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Bottom Action Area */}
-                <div className="flex items-center justify-between mt-1 sm:mt-2 pt-1 sm:pt-2">
-                  <button
-                    onClick={handleRegister}
-                    disabled={btn.disabled}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 shadow-sm transition-all text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {btn.text}
-                  </button>
-                  {getGameLogo(tourney.game) && (
-                    <img 
-                      src={getGameLogo(tourney.game)} 
-                      alt={tourney.game} 
-                      className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ml-2 sm:ml-3" 
-                    />
-                  )}
-                </div>
+              {/* Action Area */}
+              <div className="flex items-center justify-between mt-4 sm:mt-5 pt-4 border-t border-slate-100">
+                <button
+                  onClick={handleRegister}
+                  disabled={btn.disabled}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 shadow-sm transition-all text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {btn.text}
+                </button>
+                {getGameLogo(tourney.game) && (
+                  <img 
+                    src={getGameLogo(tourney.game)} 
+                    alt={tourney.game} 
+                    className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ml-2 sm:ml-3" 
+                  />
+                )}
               </div>
             </div>
           </section>
