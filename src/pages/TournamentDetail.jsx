@@ -925,12 +925,18 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </div>
 
                   {/* Financial Pills */}
-                  <div className="flex flex-wrap gap-2 mt-3 w-full">
-                    <div className="px-2 py-1.5 bg-green-50/80 border border-green-200 text-green-700 text-xs font-extrabold rounded-md flex-1 text-center min-w-[80px] leading-tight">
-                      PRIZE: {prizeDisplay}
+                  <div className="flex items-start gap-3 mt-3 w-full">
+                    <div className="flex flex-col gap-1 min-w-[80px]">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Prize</span>
+                      <div className="px-2 py-1.5 bg-green-50/80 border border-green-200 text-green-700 text-xs sm:text-sm font-extrabold rounded-md text-center">
+                        {prizeDisplay}
+                      </div>
                     </div>
-                    <div className="px-2 py-1.5 bg-amber-50/80 border border-amber-200 text-amber-600 text-xs font-extrabold rounded-md flex-1 text-center min-w-[80px] leading-tight">
-                      ENTRY: {entryDisplay}
+                    <div className="flex flex-col gap-1 min-w-[80px]">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Entry</span>
+                      <div className="px-2 py-1.5 bg-amber-50/80 border border-amber-200 text-amber-600 text-xs sm:text-sm font-extrabold rounded-md text-center">
+                        {entryDisplay}
+                      </div>
                     </div>
                   </div>
 
