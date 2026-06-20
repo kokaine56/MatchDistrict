@@ -8179,26 +8179,61 @@ const server = http.createServer(async (req, res) => {
 
       // Monthly performance (last 6 months - tournaments + regs)
       const monthlyPerformance = [];
+
+      const startMonthDate = new Date();
+      startMonthDate.setMonth(startMonthDate.getMonth() - 5);
+      startMonthDate.setDate(1);
+      startMonthDate.setHours(0, 0, 0, 0);
+
+      const [tStatsRes, rStatsRes] = await Promise.all([
+        pool.query(
+          `SELECT
+             EXTRACT(YEAR FROM created_at) as year,
+             EXTRACT(MONTH FROM created_at) as month,
+             COUNT(*) as cnt
+           FROM tournaments
+           WHERE "orgId" = $1 AND "isDraft" = false AND created_at >= $2
+           GROUP BY EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at)`,
+          [userId, startMonthDate]
+        ),
+        pool.query(
+          `SELECT
+             EXTRACT(YEAR FROM tr.created_at) as year,
+             EXTRACT(MONTH FROM tr.created_at) as month,
+             COUNT(*) as cnt
+           FROM tournament_registrations tr
+           JOIN tournaments t ON t.id = tr.tournament_id
+           WHERE t."orgId" = $1 AND tr.created_at >= $2
+           GROUP BY EXTRACT(YEAR FROM tr.created_at), EXTRACT(MONTH FROM tr.created_at)`,
+          [userId, startMonthDate]
+        )
+      ]);
+
+      const tStatsMap = {};
+      tStatsRes.rows.forEach(r => {
+        const y = parseInt(r.year);
+        const m = parseInt(r.month);
+        tStatsMap[`${y}-${String(m).padStart(2, '0')}`] = parseInt(r.cnt);
+      });
+
+      const rStatsMap = {};
+      rStatsRes.rows.forEach(r => {
+        const y = parseInt(r.year);
+        const m = parseInt(r.month);
+        rStatsMap[`${y}-${String(m).padStart(2, '0')}`] = parseInt(r.cnt);
+      });
+
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const tCountRes = await pool.query(
-          'SELECT COUNT(*) as cnt FROM tournaments WHERE "orgId" = $1 AND "isDraft" = false AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3',
-          [userId, year, month]
-        );
-        const rCountRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournament_registrations tr
-           JOIN tournaments t ON t.id = tr.tournament_id
-           WHERE t."orgId" = $1 AND EXTRACT(YEAR FROM tr.created_at) = $2 AND EXTRACT(MONTH FROM tr.created_at) = $3`,
-          [userId, year, month]
-        );
+
         monthlyPerformance.push({
           month: label,
-          tournaments: parseInt(tCountRes.rows[0].cnt),
-          registrations: parseInt(rCountRes.rows[0].cnt)
+          tournaments: tStatsMap[label] || 0,
+          registrations: rStatsMap[label] || 0
         });
       }
 

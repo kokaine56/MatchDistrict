@@ -14,7 +14,7 @@
     "@floating-ui/react": "^0.27.19",
     "@supabase/supabase-js": "^2.108.2",
     "framer-motion": "^12.38.0",
-    "pg": "^8.20.0",
+    "pg": "^8.22.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.0",
