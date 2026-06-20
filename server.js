@@ -8507,23 +8507,27 @@ function startAutomationProcessor() {
           } else if (rule.trigger_event === 'auto_reminder') {
             const tRes = await pool.query('SELECT "orgId", title FROM tournaments WHERE id = $1', [tournamentId]);
             if (tRes.rows.length > 0) {
-              const orgId = tRes.rows[0].orgId;
               const tTitle = tRes.rows[0].title;
               const regs = await pool.query(
                 'SELECT DISTINCT email FROM tournament_registrations WHERE tournament_id = $1 AND email IS NOT NULL',
                 [tournamentId]
               );
-              for (const reg of regs.rows) {
-                try {
-                  if (resend) {
-                    await resend.emails.send({
-                      from: 'Match District <notifications@matchdistrict.in>',
-                      to: reg.email,
-                      subject: `Reminder: ${tTitle} starts soon!`,
-                      html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
-                    });
+              if (resend && regs.rows.length > 0) {
+                const batchSize = 100;
+                for (let i = 0; i < regs.rows.length; i += batchSize) {
+                  const chunk = regs.rows.slice(i, i + batchSize);
+                  const emailPayloads = chunk.map((reg) => ({
+                    from: 'Match District <notifications@matchdistrict.in>',
+                    to: reg.email,
+                    subject: `Reminder: ${tTitle} starts soon!`,
+                    html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
+                  }));
+                  try {
+                    await resend.batch.send(emailPayloads);
+                  } catch (batchErr) {
+                    console.error('Failed to send batch emails:', batchErr);
                   }
-                } catch (_) { }
+                }
               }
             }
           } else if (rule.trigger_event === 'auto_notification') {
