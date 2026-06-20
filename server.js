@@ -156,7 +156,6 @@ const pool = new Pool({
 async function initDb() {
   try {
     const client = await pool.connect();
-    console.log('\n📦 [MATCH DISTRICT DB] Connected to Supabase PostgreSQL Database.');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
