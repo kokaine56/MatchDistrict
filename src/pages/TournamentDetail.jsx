@@ -90,6 +90,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   // Countdown state
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' });
   const [activeTab, setActiveTab] = useState('prize');
+  const [openRule, setOpenRule] = useState(null);
 
   const [currentUser] = useCurrentUser();
   const { signOut } = useUser();
@@ -1055,55 +1056,51 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'rules' && (
-              <div className="max-w-2xl">
+              <div className="max-w-2xl space-y-3">
                 {(() => {
                   const parsedRules = getParsedRules(tourney?.rules);
+                  const categories = [];
+
                   if (!parsedRules) {
-                    return (
-                      <div className="p-6 bg-white border border-slate-200 rounded-xl shadow-sm text-slate-700 text-sm leading-relaxed">
-                        {tourney?.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.'}
-                      </div>
-                    );
+                    categories.push({
+                      title: 'Rules',
+                      items: [tourney?.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.']
+                    });
+                  } else if (parsedRules.type === 'flat') {
+                    categories.push({ title: 'Rules', items: parsedRules.items });
+                  } else {
+                    parsedRules.categories.forEach(c => categories.push({ title: c.title, items: c.items }));
+                    if (parsedRules.custom.length > 0) {
+                      categories.push({ title: 'Custom Rules', items: parsedRules.custom, custom: true });
+                    }
                   }
-                  if (parsedRules.type === 'flat') {
-                    return (
-                      <ul className="space-y-2">
-                        {parsedRules.items.map((item, idx) => (
-                          <li key={idx} className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm text-slate-700 text-sm leading-relaxed">{item}</li>
-                        ))}
-                      </ul>
-                    );
-                  }
-                  return (
-                    <div className="space-y-4">
-                      {parsedRules.categories.map((cat, idx) => (
-                        <div key={idx} className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-2">
-                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{cat.title}</h4>
-                          <ul className="space-y-1">
-                            {cat.items.map((item, i) => (
-                              <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
-                                <span className="text-slate-300 mt-0.5">•</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                      {parsedRules.custom.length > 0 && (
-                        <div className="bg-white border border-blue-200 rounded-xl shadow-sm p-4 space-y-2">
-                          <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider">Custom Rules</h4>
-                          <ul className="space-y-1">
-                            {parsedRules.custom.map((item, i) => (
-                              <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
-                                <span className="text-blue-400 mt-0.5">•</span>
-                                <span>{item}</span>
-                              </li>
-                            ))}
-                          </ul>
+
+                  return categories.map((cat, idx) => (
+                    <div key={idx} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                      <button
+                        onClick={() => setOpenRule(openRule === idx ? null : idx)}
+                        className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 transition-colors font-bold text-slate-800 text-left"
+                      >
+                        <span className={`text-sm uppercase tracking-wider ${cat.custom ? 'text-blue-600' : 'text-slate-700'}`}>{cat.title}</span>
+                        <svg
+                          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${openRule === idx ? 'rotate-180' : ''}`}
+                          viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                      {openRule === idx && (
+                        <div className="p-4 border-t border-slate-100 text-slate-600 text-sm leading-relaxed whitespace-pre-wrap space-y-1.5">
+                          {cat.items.map((item, i) => (
+                            <p key={i} className="flex items-start gap-2">
+                              <span className="text-slate-300 mt-0.5">•</span>
+                              <span>{item}</span>
+                            </p>
+                          ))}
                         </div>
                       )}
                     </div>
-                  );
+                  ));
                 })()}
               </div>
             )}
@@ -1237,17 +1234,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               {/* Roadmap Round flow */}
               <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
                 {renderFlowchart()}
-              </div>
-
-              {/* Tournament Rules */}
-              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-                <h3 className="font-bold text-xl text-white uppercase tracking-wider mb-6 flex items-center gap-2.5">
-                  <span className="material-symbols-outlined text-primary text-2xl">gavel</span>
-                  Tournament Rules
-                </h3>
-                <div className="space-y-4">
-                  {renderRulesContent()}
-                </div>
               </div>
 
             </div>
