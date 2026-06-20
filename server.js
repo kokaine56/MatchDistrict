@@ -8078,19 +8078,39 @@ const server = http.createServer(async (req, res) => {
 
       // Monthly revenue trend (last 6 months)
       const monthlyRevenue = [];
+      const monthsMap = new Map();
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const revRes = await pool.query(
-          `SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER) * CAST("slotsFilled" AS INTEGER)), 0) as rev
-           FROM tournaments t WHERE t."orgId" = $1 AND t."isDraft" = false
-           AND EXTRACT(YEAR FROM t.created_at) = $2 AND EXTRACT(MONTH FROM t.created_at) = $3`,
-          [userId, year, month]
-        );
-        monthlyRevenue.push({ month: label, revenue: parseFloat(revRes.rows[0].rev) });
+        monthsMap.set(label, 0);
+      }
+
+      const dStart = new Date();
+      dStart.setMonth(dStart.getMonth() - 5);
+      dStart.setDate(1);
+      dStart.setHours(0, 0, 0, 0);
+
+      const optRes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM t.created_at) as year, EXTRACT(MONTH FROM t.created_at) as month,
+         COALESCE(SUM(CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER) * CAST("slotsFilled" AS INTEGER)), 0) as rev
+         FROM tournaments t WHERE t."orgId" = $1 AND t."isDraft" = false
+         AND t.created_at >= $2
+         GROUP BY year, month`,
+        [userId, dStart]
+      );
+
+      for (const row of optRes.rows) {
+        const label = `${row.year}-${String(row.month).padStart(2, '0')}`;
+        if (monthsMap.has(label)) {
+          monthsMap.set(label, parseFloat(row.rev));
+        }
+      }
+
+      for (const [month, revenue] of monthsMap.entries()) {
+        monthlyRevenue.push({ month, revenue });
       }
 
       // Total prize pool managed
