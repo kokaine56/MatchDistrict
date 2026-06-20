@@ -98,7 +98,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 if (!process.env.SUPABASE_URL) {
-  console.warn('⚠️ [WARNING] SUPABASE_URL is not defined in the environment. Falling back to default public URL.');
+  console.warn('⚠️ [WARNING] SUPABASE_URL is not defined in the environment. Supabase client initialization may fail.');
 }
 
 if (!process.env.SUPABASE_ANON_KEY) {
@@ -137,8 +137,8 @@ function decryptSessionData(text) {
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth@matchdistrict.in>';
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 // Initialize Resend
 const resend = new Resend(RESEND_API_KEY);
