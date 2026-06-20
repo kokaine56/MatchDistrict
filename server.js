@@ -490,7 +490,6 @@ async function initDb() {
         CREATE INDEX IF NOT EXISTS idx_registrations_idempotency ON tournament_registrations(idempotency_key);
         CREATE INDEX IF NOT EXISTS idx_registrations_payment_id ON tournament_registrations(payment_id);
       `);
-      console.log('📦 [MATCH DISTRICT DB] Registration/payment indexes created.');
     } catch (idxErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create indexes:', idxErr.message);
     }
