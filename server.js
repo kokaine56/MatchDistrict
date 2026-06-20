@@ -8478,75 +8478,86 @@ function startAutomationProcessor() {
       const rulesRes = await pool.query(
         'SELECT * FROM automation_rules WHERE is_active = true'
       );
-      for (const rule of rulesRes.rows) {
-        try {
-          const config = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {});
-          const tournamentId = config.tournamentId || rule.tournament_id;
-          if (!tournamentId) continue;
-          const scheduledAt = config.scheduledAt ? new Date(config.scheduledAt) : null;
-          if (scheduledAt && scheduledAt > now) continue;
-          if (rule.trigger_event === 'auto_publish') {
-            await pool.query(
+      const rulePromises = rulesRes.rows.map(async (rule) => {
+        const config = typeof rule.action_config === 'string' ? JSON.parse(rule.action_config) : (rule.action_config || {});
+        const tournamentId = config.tournamentId || rule.tournament_id;
+        if (!tournamentId) return null;
+        const scheduledAt = config.scheduledAt ? new Date(config.scheduledAt) : null;
+        if (scheduledAt && scheduledAt > now) return null;
+
+        if (rule.trigger_event === 'auto_publish') {
+          await Promise.all([
+            pool.query(
               'UPDATE tournaments SET status = $1, "isDraft" = false WHERE id = $2',
               ['published', tournamentId]
-            );
-            await pool.query(
+            ),
+            pool.query(
               'INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5, $6)',
               ['LOG-' + crypto.randomBytes(4).toString('hex').toUpperCase(), 'system', 'auto_publish', 'tournament', tournamentId, JSON.stringify({ rule_id: rule.id })]
-            );
-          } else if (rule.trigger_event === 'auto_open_registration') {
-            await pool.query(
-              "UPDATE tournaments SET status = 'registration_open' WHERE id = $1",
-              [tournamentId]
-            );
-          } else if (rule.trigger_event === 'auto_close_registration') {
-            await pool.query(
-              "UPDATE tournaments SET status = 'live' WHERE id = $1",
-              [tournamentId]
-            );
-          } else if (rule.trigger_event === 'auto_reminder') {
-            const tRes = await pool.query('SELECT "orgId", title FROM tournaments WHERE id = $1', [tournamentId]);
-            if (tRes.rows.length > 0) {
-              const orgId = tRes.rows[0].orgId;
-              const tTitle = tRes.rows[0].title;
-              const regs = await pool.query(
-                'SELECT DISTINCT email FROM tournament_registrations WHERE tournament_id = $1 AND email IS NOT NULL',
-                [tournamentId]
-              );
-              for (const reg of regs.rows) {
-                try {
-                  if (resend) {
-                    await resend.emails.send({
-                      from: 'Match District <notifications@matchdistrict.in>',
-                      to: reg.email,
-                      subject: `Reminder: ${tTitle} starts soon!`,
-                      html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
-                    });
-                  }
-                } catch (_) { }
-              }
-            }
-          } else if (rule.trigger_event === 'auto_notification') {
-            const noticeText = config.message || 'Automated notification from Match District.';
-            await pool.query(
-              `INSERT INTO notices (id, tournament_id, title, content, created_at)
-               VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
-              ['NOTICE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), tournamentId, 'Automated Notice', noticeText]
-            );
-          } else if (rule.trigger_event === 'auto_status_update') {
-            const targetStatus = config.targetStatus || 'live';
-            await pool.query(
-              'UPDATE tournaments SET status = $1 WHERE id = $2',
-              [targetStatus, tournamentId]
-            );
-          }
+            )
+          ]);
+        } else if (rule.trigger_event === 'auto_open_registration') {
           await pool.query(
-            'UPDATE automation_rules SET last_run_at = CURRENT_TIMESTAMP WHERE id = $1',
-            [rule.id]
+            "UPDATE tournaments SET status = 'registration_open' WHERE id = $1",
+            [tournamentId]
           );
-        } catch (ruleErr) {
-          console.error('Automation rule error:', rule.id, ruleErr.message);
+        } else if (rule.trigger_event === 'auto_close_registration') {
+          await pool.query(
+            "UPDATE tournaments SET status = 'live' WHERE id = $1",
+            [tournamentId]
+          );
+        } else if (rule.trigger_event === 'auto_reminder') {
+          const tRes = await pool.query('SELECT "orgId", title FROM tournaments WHERE id = $1', [tournamentId]);
+          if (tRes.rows.length > 0) {
+            const tTitle = tRes.rows[0].title;
+            const regs = await pool.query(
+              'SELECT DISTINCT email FROM tournament_registrations WHERE tournament_id = $1 AND email IS NOT NULL',
+              [tournamentId]
+            );
+            await Promise.all(regs.rows.map(async (reg) => {
+              try {
+                if (resend) {
+                  await resend.emails.send({
+                    from: 'Match District <notifications@matchdistrict.in>',
+                    to: reg.email,
+                    subject: `Reminder: ${tTitle} starts soon!`,
+                    html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
+                  });
+                }
+              } catch (_) { }
+            }));
+          }
+        } else if (rule.trigger_event === 'auto_notification') {
+          const noticeText = config.message || 'Automated notification from Match District.';
+          await pool.query(
+            `INSERT INTO notices (id, tournament_id, title, content, created_at)
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
+            ['NOTICE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), tournamentId, 'Automated Notice', noticeText]
+          );
+        } else if (rule.trigger_event === 'auto_status_update') {
+          const targetStatus = config.targetStatus || 'live';
+          await pool.query(
+            'UPDATE tournaments SET status = $1 WHERE id = $2',
+            [targetStatus, tournamentId]
+          );
         }
+        return rule.id;
+      });
+
+      const results = await Promise.allSettled(rulePromises);
+      const successfulRuleIds = results
+        .filter(res => res.status === 'fulfilled' && res.value !== null)
+        .map(res => res.value);
+
+      results.filter(res => res.status === 'rejected').forEach(err => {
+        console.error('Automation rule error:', err.reason);
+      });
+
+      if (successfulRuleIds.length > 0) {
+        await pool.query(
+          'UPDATE automation_rules SET last_run_at = CURRENT_TIMESTAMP WHERE id = ANY($1)',
+          [successfulRuleIds]
+        );
       }
     } catch (err) {
       console.error('Automation processor error:', err.message);
