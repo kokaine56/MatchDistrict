@@ -7906,59 +7906,84 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Monthly tournament growth (12 months)
-      const monthlyTournaments = [];
+      // ── BATCH QUERY OPTIMIZATION for Growth Analytics ──
+
+      // 1. Initialize data structures for all periods
+      const monthlyTournamentsMap = new Map();
       for (let i = 11; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
-        const year = d.getFullYear();
-        const month = d.getMonth() + 1;
-        const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournaments WHERE "orgId" = $1 AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3 AND "isDraft" = false`,
-          [user.id, year, month]
-        );
-        monthlyTournaments.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthlyTournamentsMap.set(label, 0);
       }
 
-      // Registration growth (monthly for 6 months)
-      const monthlyRegistrations = [];
+      const monthlyRegistrationsMap = new Map();
+      const participantGrowthMap = new Map();
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
-        const year = d.getFullYear();
-        const month = d.getMonth() + 1;
-        const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournament_registrations tr 
-           JOIN tournaments t ON t.id = tr.tournament_id 
-           WHERE t."orgId" = $1 
-             AND EXTRACT(YEAR FROM tr.created_at) = $2 
-             AND EXTRACT(MONTH FROM tr.created_at) = $3`,
-          [user.id, year, month]
-        );
-        monthlyRegistrations.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        monthlyRegistrationsMap.set(label, 0);
+        participantGrowthMap.set(label, 0);
       }
 
-      // Participant growth (unique participants over time)
-      const participantGrowth = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date();
-        d.setMonth(d.getMonth() - i);
-        const year = d.getFullYear();
-        const month = d.getMonth() + 1;
-        const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(DISTINCT tr.user_id) as cnt FROM tournament_registrations tr 
-           JOIN tournaments t ON t.id = tr.tournament_id 
-           WHERE t."orgId" = $1 
-             AND EXTRACT(YEAR FROM tr.created_at) = $2 
-             AND EXTRACT(MONTH FROM tr.created_at) = $3
-             AND tr.status = 'approved'`,
-          [user.id, year, month]
-        );
-        participantGrowth.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
-      }
+      // 2. Determine start dates for queries
+      const tStart = new Date();
+      tStart.setMonth(tStart.getMonth() - 11);
+      const startYear = tStart.getFullYear();
+      const startMonth = tStart.getMonth() + 1;
+
+      const rStart = new Date();
+      rStart.setMonth(rStart.getMonth() - 5);
+      const rStartYear = rStart.getFullYear();
+      const rStartMonth = rStart.getMonth() + 1;
+
+      // 3. Monthly tournament growth (12 months)
+      const tRes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM created_at) as year, EXTRACT(MONTH FROM created_at) as month, COUNT(*) as cnt
+         FROM tournaments
+         WHERE "orgId" = $1 AND "isDraft" = false
+           AND (EXTRACT(YEAR FROM created_at) > $2 OR (EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) >= $3))
+         GROUP BY EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at)`,
+        [user.id, startYear, startMonth]
+      );
+      tRes.rows.forEach(r => {
+        const label = `${r.year}-${String(r.month).padStart(2, '0')}`;
+        if (monthlyTournamentsMap.has(label)) monthlyTournamentsMap.set(label, parseInt(r.cnt));
+      });
+      const monthlyTournaments = Array.from(monthlyTournamentsMap.entries()).map(([month, count]) => ({ month, count }));
+
+      // 4. Registration growth (monthly for 6 months)
+      const rRes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM tr.created_at) as year, EXTRACT(MONTH FROM tr.created_at) as month, COUNT(*) as cnt
+         FROM tournament_registrations tr
+         JOIN tournaments t ON t.id = tr.tournament_id
+         WHERE t."orgId" = $1
+           AND (EXTRACT(YEAR FROM tr.created_at) > $2 OR (EXTRACT(YEAR FROM tr.created_at) = $2 AND EXTRACT(MONTH FROM tr.created_at) >= $3))
+         GROUP BY EXTRACT(YEAR FROM tr.created_at), EXTRACT(MONTH FROM tr.created_at)`,
+        [user.id, rStartYear, rStartMonth]
+      );
+      rRes.rows.forEach(r => {
+        const label = `${r.year}-${String(r.month).padStart(2, '0')}`;
+        if (monthlyRegistrationsMap.has(label)) monthlyRegistrationsMap.set(label, parseInt(r.cnt));
+      });
+      const monthlyRegistrations = Array.from(monthlyRegistrationsMap.entries()).map(([month, count]) => ({ month, count }));
+
+      // 5. Participant growth (unique participants over time for 6 months)
+      const pRes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM tr.created_at) as year, EXTRACT(MONTH FROM tr.created_at) as month, COUNT(DISTINCT tr.user_id) as cnt
+         FROM tournament_registrations tr
+         JOIN tournaments t ON t.id = tr.tournament_id
+         WHERE t."orgId" = $1 AND tr.status = 'approved'
+           AND (EXTRACT(YEAR FROM tr.created_at) > $2 OR (EXTRACT(YEAR FROM tr.created_at) = $2 AND EXTRACT(MONTH FROM tr.created_at) >= $3))
+         GROUP BY EXTRACT(YEAR FROM tr.created_at), EXTRACT(MONTH FROM tr.created_at)`,
+        [user.id, rStartYear, rStartMonth]
+      );
+      pRes.rows.forEach(r => {
+        const label = `${r.year}-${String(r.month).padStart(2, '0')}`;
+        if (participantGrowthMap.has(label)) participantGrowthMap.set(label, parseInt(r.cnt));
+      });
+      const participantGrowth = Array.from(participantGrowthMap.entries()).map(([month, count]) => ({ month, count }));
 
       // 30-day growth rates
       const current30 = await pool.query(
