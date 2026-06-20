@@ -983,15 +983,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
           {/* Registration Countdown Banner */}
           {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') && (
-            <div className="mt-4 bg-slate-900 text-white rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between shadow-md">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <svg className="w-5 h-5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                <span>{countdown.type === 'registration' ? 'Registration closes in:' : 'Tournament starts in:'}</span>
-              </div>
-              <div className="text-xl font-mono font-bold tracking-wider text-amber-400 mt-2 sm:mt-0">
+            <div className="mt-4 bg-white border border-slate-100 shadow-sm rounded-xl p-3 flex items-center justify-between w-full">
+              <span className="text-xs sm:text-sm font-bold text-slate-500 uppercase tracking-widest">Registration Closes In</span>
+              <div className="text-sm sm:text-base font-black text-blue-700 bg-blue-50/50 border border-blue-100 px-3 py-1.5 rounded-lg whitespace-nowrap">
                 {countdown.days > 0 ? `${countdown.days}d ` : ''}
                 {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
               </div>
@@ -1023,148 +1017,223 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             </div>
           </div>
 
-          {/* Registered Squads/Teams list */}
-          <section className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <h4 className="font-bold text-lg text-white tracking-wider flex items-center gap-2">
-                  <span className="material-symbols-outlined text-primary text-xl">groups</span>
-                  Registered Squads
-                </h4>
-                
-                {/* Roster Filters */}
-                <div className="flex gap-1.5 flex-wrap">
-                  {[
-                    { id: 'all', label: 'All' },
-                    { id: 'verified', label: 'Verified' },
-                    { id: 'approved', label: 'Approved' },
-                    { id: 'pending', label: 'Pending' }
-                  ].map(f => (
-                    <button key={f.id} onClick={() => setTeamFilter(f.id)}
-                      className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
-                        teamFilter === f.id
-                          ? 'bg-primary border-primary text-on-primary'
-                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
-                      }`}>
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
+          {/* Tab Content Area */}
+          <div className="mt-6 w-full pb-20 min-h-[120px]">
+            {activeTab === 'prize' && (
+              <div className="flex flex-col gap-3 max-w-2xl">
+                {prizeDistributions.length > 0 ? prizeDistributions.map((row, i) => (
+                  <div key={i} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+                    <span className="text-slate-800 font-bold text-sm">{row.position}</span>
+                    <span className="text-green-600 font-black text-sm">{row.prize}</span>
+                  </div>
+                )) : (
+                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No prize distribution data available.</div>
+                )}
               </div>
-
-              {/* Search bar */}
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/50">search</span>
-                <input
-                  type="text"
-                  placeholder="Search team or captain..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-primary transition-all"
-                />
-              </div>
-
-              {/* Squads List */}
-              {filteredTeams.length === 0 ? (
-                <div className="text-center py-12 text-xs text-white/45">No squads found matching filters.</div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-black/25">
-                    {paginatedTeams.map((team, idx) => (
-                      <div key={idx} className="flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
-                        <img src={team.logo} className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0" alt="" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold text-white truncate">{team.name}</p>
-                          <p className="text-[10px] text-white/50 truncate">
-                            {team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}
+            )}
+            {activeTab === 'roadmap' && (
+              <div className="space-y-4 max-w-2xl">
+                {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
+                  parsedTimeline.roadmap.map((round, idx) => (
+                    <div key={round.id || idx} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-0.5 rounded border border-blue-100">R{idx + 1}</span>
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{round.name || `Round ${idx + 1}`}</p>
+                          <p className="text-xs text-slate-500">
+                            {round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : 'TBD'}
+                            {round.time ? ` @ ${round.time}` : ''}
                           </p>
                         </div>
-                        <span className={`shrink-0 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${
-                          team.status === 'Approved' || team.status === 'Confirmed'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : team.status === 'Waitlisted'
-                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                            : 'bg-white/5 text-white/60 border-white/10'
-                        }`}>
-                          {team.status}
-                        </span>
                       </div>
+                      {round.map && <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">{round.map}</span>}
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No roadmap rounds scheduled yet.</div>
+                )}
+              </div>
+            )}
+            {activeTab === 'rules' && (
+              <div className="max-w-2xl">
+                {(() => {
+                  const parsedRules = getParsedRules(tourney?.rules);
+                  if (!parsedRules) {
+                    return (
+                      <div className="p-6 bg-white border border-slate-200 rounded-xl shadow-sm text-slate-700 text-sm leading-relaxed">
+                        {tourney?.rules || 'No specific rules are set for this tournament. Standard fair play and gaming etiquette apply.'}
+                      </div>
+                    );
+                  }
+                  if (parsedRules.type === 'flat') {
+                    return (
+                      <ul className="space-y-2">
+                        {parsedRules.items.map((item, idx) => (
+                          <li key={idx} className="p-3 bg-white border border-slate-200 rounded-xl shadow-sm text-slate-700 text-sm leading-relaxed">{item}</li>
+                        ))}
+                      </ul>
+                    );
+                  }
+                  return (
+                    <div className="space-y-4">
+                      {parsedRules.categories.map((cat, idx) => (
+                        <div key={idx} className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 space-y-2">
+                          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{cat.title}</h4>
+                          <ul className="space-y-1">
+                            {cat.items.map((item, i) => (
+                              <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                                <span className="text-slate-300 mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                      {parsedRules.custom.length > 0 && (
+                        <div className="bg-white border border-blue-200 rounded-xl shadow-sm p-4 space-y-2">
+                          <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider">Custom Rules</h4>
+                          <ul className="space-y-1">
+                            {parsedRules.custom.map((item, i) => (
+                              <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                                <span className="text-blue-400 mt-0.5">•</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+            {activeTab === 'teams' && (
+              <section className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <h4 className="font-bold text-lg text-white tracking-wider flex items-center gap-2">
+                    <span className="material-symbols-outlined text-primary text-xl">groups</span>
+                    Registered Squads
+                  </h4>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'verified', label: 'Verified' },
+                      { id: 'approved', label: 'Approved' },
+                      { id: 'pending', label: 'Pending' }
+                    ].map(f => (
+                      <button key={f.id} onClick={() => setTeamFilter(f.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
+                          teamFilter === f.id
+                            ? 'bg-primary border-primary text-on-primary'
+                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+                        }`}>
+                        {f.label}
+                      </button>
                     ))}
                   </div>
-
-                  {/* Pagination controls */}
-                  {totalPages > 1 && (
-                    <div className="flex items-center justify-between pt-2">
-                      <span className="text-[10px] text-white/50">
-                        {(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
-                          className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
-                          <span className="material-symbols-outlined text-sm">chevron_left</span>
-                        </button>
-                        <span className="text-[10px] text-white/80">Pg {currentPage}/{totalPages}</span>
-                        <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
-                          className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
-                          <span className="material-symbols-outlined text-sm">chevron_right</span>
-                        </button>
+                </div>
+                <div className="relative">
+                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/50">search</span>
+                  <input
+                    type="text"
+                    placeholder="Search team or captain..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-primary transition-all"
+                  />
+                </div>
+                {filteredTeams.length === 0 ? (
+                  <div className="text-center py-12 text-xs text-white/45">No squads found matching filters.</div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-black/25">
+                      {paginatedTeams.map((team, idx) => (
+                        <div key={idx} className="flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
+                          <img src={team.logo} className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0" alt="" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-white truncate">{team.name}</p>
+                            <p className="text-[10px] text-white/50 truncate">
+                              {team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}
+                            </p>
+                          </div>
+                          <span className={`shrink-0 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${
+                            team.status === 'Approved' || team.status === 'Confirmed'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                              : team.status === 'Waitlisted'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                              : 'bg-white/5 text-white/60 border-white/10'
+                          }`}>
+                            {team.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between pt-2">
+                        <span className="text-[10px] text-white/50">
+                          {(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
+                            className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
+                            <span className="material-symbols-outlined text-sm">chevron_left</span>
+                          </button>
+                          <span className="text-[10px] text-white/80">Pg {currentPage}/{totalPages}</span>
+                          <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
+                            className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
+                            <span className="material-symbols-outlined text-sm">chevron_right</span>
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                )}
+                <div className="pt-4 border-t border-white/5 flex items-center justify-between">
+                  <div className="flex -space-x-2 overflow-hidden">
+                    {allTeams.slice(0, 4).map((t, i) => (
+                      <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-white/10 overflow-hidden">
+                        <img src={t.logo} className="w-full h-full object-cover" alt="" />
+                      </div>
+                    ))}
+                    {allTeams.length > 4 && (
+                      <div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-primary/20 border border-primary/40 text-primary text-[10px] font-bold">
+                        +{allTeams.length - 4}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[9px] text-white/45 font-bold uppercase tracking-widest">Live occupancy maps</p>
                 </div>
-              )}
-
-              {/* Roster map info row */}
-              <div className="pt-4 border-t border-white/5 flex items-center justify-between">
-                <div className="flex -space-x-2 overflow-hidden">
-                  {allTeams.slice(0, 4).map((t, i) => (
-                    <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-white/10 overflow-hidden">
-                      <img src={t.logo} className="w-full h-full object-cover" alt="" />
-                    </div>
-                  ))}
-                  {allTeams.length > 4 && (
-                    <div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-primary/20 border border-primary/40 text-primary text-[10px] font-bold">
-                      +{allTeams.length - 4}
-                    </div>
-                  )}
-                </div>
-                <p className="text-[9px] text-white/45 font-bold uppercase tracking-widest">
-                  Live occupancy maps
-                </p>
+              </section>
+            )}
+            {activeTab === 'sponsors' && (
+              <div className="max-w-2xl">
+                {sponsorList.length > 0 ? (
+                  <div className="flex flex-wrap gap-3">
+                    {sponsorList.map((s, i) => (
+                      <div key={i} className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm">
+                        <span className="text-amber-500 text-sm">&#9733;</span>
+                        <span className="text-sm font-bold text-slate-800">{s.name}</span>
+                        {s.amount > 0 && <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
+                      </div>
+                    ))}
+                    {totalSponsorAmount > 0 && (
+                      <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600">
+                        Total Contributions: <span className="font-bold text-green-600">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No sponsors yet for this tournament.</div>
+                )}
               </div>
-          </section>
+            )}
+          </div>
 
-          {/* Main Content Area: Prize Pool & Rules */}
+          {/* Main Content Area: Roadmap & Rules */}
           <section className="grid grid-cols-1 md:grid-cols-3 gap-8 px-0">
             {/* Left 2/3 column */}
             <div className="md:col-span-2 space-y-8">
               
-              {/* Prize Pool Breakdown */}
-              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
-                <div className="flex items-center justify-between mb-8 border-b border-white/5 pb-6">
-                  <h3 className="font-bold text-xl text-white uppercase tracking-wider flex items-center gap-3">
-                    <span className="material-symbols-outlined text-primary text-3xl">emoji_events</span>
-                    Prize Pool Breakdown
-                  </h3>
-                  <div className="text-right">
-                    <p className="text-white/40 text-[10px] uppercase font-bold tracking-wider">Total Pool</p>
-                    <p className="text-secondary font-black text-3xl">{prizeDisplay}</p>
-                  </div>
-                </div>
-                <div className="divide-y divide-white/5">
-                  {prizeDistributions.map((row, i) => (
-                    <div key={i} className="flex items-center justify-between py-4 hover:bg-white/5 transition-all px-3 rounded-xl">
-                      <div className="flex items-center gap-4">
-                        <span className={`px-2.5 py-1 rounded text-[9px] font-black tracking-wider uppercase ${row.badgeBg}`}>
-                          {row.badge} {row.position}
-                        </span>
-                        <p className="text-white/60 text-xs hidden sm:block">Qualifying placement reward</p>
-                      </div>
-                      <p className="text-lg font-black text-secondary tabular-nums">{row.prize}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Roadmap Round flow */}
               <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
                 {renderFlowchart()}
