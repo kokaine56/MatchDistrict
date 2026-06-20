@@ -89,7 +89,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   // Countdown state
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' });
-  const [activeTab, setActiveTab] = useState('prize');
 
   const [currentUser] = useCurrentUser();
   const { signOut } = useUser();
@@ -896,16 +895,16 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <div className="flex flex-row items-start gap-4 w-full">
                 
                 {/* Poster Left */}
-                <div className="w-[110px] sm:w-[140px] md:w-[220px] lg:w-[280px] shrink-0">
+                <div className="w-[110px] sm:w-[140px] shrink-0">
                   <img 
-                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-lg"
+                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-md"
                     src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
                     alt="Tournament Poster"
                   />
                 </div>
 
                 {/* Details Right */}
-                <div className="flex-1 flex flex-col items-start justify-start md:justify-center text-left min-w-0">
+                <div className="flex-1 flex flex-col items-start justify-start text-left min-w-0">
                   
                   {/* Title */}
                   <h1 className="text-lg sm:text-xl font-black text-slate-900 leading-tight line-clamp-2 break-words">
@@ -980,48 +979,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             </div>
           </section>
-
-          {/* Registration Countdown Banner */}
-          {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') && (
-            <div className="mt-4 bg-slate-900 text-white rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between shadow-md">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <svg className="w-5 h-5 text-amber-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <polyline points="12 6 12 12 16 14" />
-                </svg>
-                <span>{countdown.type === 'registration' ? 'Registration closes in:' : 'Tournament starts in:'}</span>
-              </div>
-              <div className="text-xl font-mono font-bold tracking-wider text-amber-400 mt-2 sm:mt-0">
-                {countdown.days > 0 ? `${countdown.days}d ` : ''}
-                {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
-              </div>
-            </div>
-          )}
-
-          {/* Horizontal Scrollable Tabs */}
-          <div className="mt-8 border-b border-slate-200 w-full overflow-hidden">
-            <div className="flex items-center gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
-              {[
-                { id: 'prize', label: 'Prize Pool Distribution' },
-                { id: 'roadmap', label: 'Roadmap' },
-                { id: 'rules', label: 'Rules & Regulations' },
-                { id: 'teams', label: 'Registered Teams' },
-                { id: 'sponsors', label: 'Sponsors' },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={
-                    activeTab === tab.id
-                      ? 'text-blue-600 font-bold border-b-2 border-blue-600 pb-3 -mb-[14px] whitespace-nowrap'
-                      : 'text-slate-500 hover:text-slate-800 font-semibold cursor-pointer whitespace-nowrap'
-                  }
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Registered Squads/Teams list */}
           <section className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
