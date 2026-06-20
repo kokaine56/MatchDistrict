@@ -477,7 +477,6 @@ async function initDb() {
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS payment_id VARCHAR(50);
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
       `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registrations enhanced columns verified.');
     } catch (alterReg2Err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournament_registrations v2:', alterReg2Err.message);
     }
