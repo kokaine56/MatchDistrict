@@ -528,7 +528,6 @@ async function initDb() {
         ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
         ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
       `);
-      console.log('📦 [MATCH DISTRICT DB] Sponsor, links, forms & admin log tables initialized.');
     } catch (extErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create extension tables:', extErr.message);
     }
