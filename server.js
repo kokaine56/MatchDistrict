@@ -635,7 +635,6 @@ async function initDb() {
     }
 
     client.release();
-    console.log('📦 [MATCH DISTRICT DB] Supabase Tables Initialized Successfully.\n');
   } catch (err) {
     console.error('❌ [MATCH DISTRICT DB] Failed to initialize Supabase DB:', err.message);
   }
