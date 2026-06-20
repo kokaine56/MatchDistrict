@@ -89,7 +89,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   // Countdown state
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' });
-  const [activeTab, setActiveTab] = useState('prize');
+  const [activeTab, setActiveTab] = useState('overview');
   const [openRule, setOpenRule] = useState(null);
 
   const [currentUser] = useCurrentUser();
@@ -835,6 +835,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           <div className="mt-8 border-b border-slate-200 w-full overflow-hidden">
             <div className="flex items-center gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
               {[
+                { id: 'overview', label: 'Overview' },
                 { id: 'prize', label: 'Prize Pool Distribution' },
                 { id: 'roadmap', label: 'Roadmap' },
                 { id: 'rules', label: 'Rules & Regulations' },
@@ -858,6 +859,76 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
           {/* Tab Content Area */}
           <div className="mt-6 w-full pb-20 min-h-[120px]">
+            {activeTab === 'overview' && (
+              <div className="flex flex-col lg:flex-row gap-6 w-full">
+
+                {/* Left Column: Descriptions */}
+                <div className="flex-1 space-y-6">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
+                    <h3 className="text-base font-bold text-slate-800 uppercase tracking-wider mb-2">About Tournament</h3>
+                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{tourney?.description || 'No description provided for this tournament.'}</p>
+                  </div>
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
+                    <h3 className="text-base font-bold text-slate-800 uppercase tracking-wider mb-2">About Organizer</h3>
+                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{orgProfile?.bio || tourney?.description || 'No description provided for this organizer.'}</p>
+                  </div>
+                </div>
+
+                {/* Right Column: Organizer Profile Card */}
+                <div className="w-full lg:w-[320px] shrink-0">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-500">
+                        {orgProfile?.avatar ? (
+                          <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                        ) : (
+                          (orgProfile?.orgName || tourney?.orgName || 'MD').slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-slate-900 truncate">{orgProfile?.orgName || tourney?.orgName || orgProfile?.name || 'Organizer'}</span>
+                          <VerificationBadge tier={orgProfile?.tier || tourney?.orgTier} size="xs" />
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {[1,2,3,4,5].map(star => (
+                            <svg key={star} className="w-3.5 h-3.5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                            </svg>
+                          ))}
+                          <span className="text-sm font-bold text-slate-700 ml-1">4.8 <span className="text-slate-400 font-medium">(120 reviews)</span></span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleFollow}
+                      disabled={followLoading}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {isFollowing ? (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Following
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                          </svg>
+                          Follow Organizer
+                        </>
+                      )}
+                    </button>
+                    {followerCount > 0 && (
+                      <p className="text-xs text-slate-500 text-center -mt-2">{followerCount.toLocaleString()} follower{followerCount !== 1 ? 's' : ''}</p>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )}
             {activeTab === 'prize' && (
               <div className="flex flex-col gap-3 max-w-2xl">
                 {prizeDistributions.length > 0 ? prizeDistributions.map((row, i) => (
