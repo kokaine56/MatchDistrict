@@ -1136,7 +1136,7 @@ const server = http.createServer(async (req, res) => {
         // Register user in Supabase Auth using password passed from client
         let userUUID = null;
         let isLocalFallback = false;
-        const registerPassword = password || ('MatchDistrictTempPass' + Math.random().toString(36).slice(-8));
+        const registerPassword = password || ('MatchDistrictTempPass' + crypto.randomBytes(8).toString('hex'));
 
         try {
           const { data: authData, error: authError } = await supabase.auth.signUp({
