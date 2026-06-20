@@ -438,7 +438,6 @@ async function initDb() {
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
-      console.log('📦 [MATCH DISTRICT DB] registration_sessions table ensured.');
     } catch (sesErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create registration_sessions:', sesErr.message);
     }
