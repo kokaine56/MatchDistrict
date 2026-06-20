@@ -745,19 +745,36 @@ async function notifyFollowersOfTournament(t) {
       [orgId]
     );
 
+    const title = `New Tournament: ${t.title}`;
+    const message = `${orgName} has hosted a new tournament "${t.title}" for ${t.game}! Check it out and register now.`;
+
+    // 1. Batch insert alerts in database
+    const alertIds = [];
+    const userIds = [];
+    const titles = [];
+    const messages = [];
+    const tournamentIds = [];
+
     for (const follower of followersRes.rows) {
       const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex');
-      const title = `New Tournament: ${t.title}`;
-      const message = `${orgName} has hosted a new tournament "${t.title}" for ${t.game}! Check it out and register now.`;
 
-      // 1. Insert alert in database
+      alertIds.push(alertId);
+      userIds.push(follower.id);
+      titles.push(title);
+      messages.push(message);
+      tournamentIds.push(t.id);
+    }
+
+    if (alertIds.length > 0) {
       await pool.query(
         `INSERT INTO alerts (id, user_id, title, message, tournament_id) 
-         VALUES ($1, $2, $3, $4, $5)`,
-        [alertId, follower.id, title, message, t.id]
+         SELECT * FROM UNNEST ($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])`,
+        [alertIds, userIds, titles, messages, tournamentIds]
       );
+    }
 
-      // 2. Send email via Resend
+    // 2. Send emails via Resend
+    for (const follower of followersRes.rows) {
       if (follower.email) {
         try {
           await resend.emails.send({
