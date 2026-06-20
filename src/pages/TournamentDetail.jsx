@@ -924,32 +924,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
                   </div>
 
-                  {/* Financial Pills */}
-                  <div className="flex items-start gap-3 mt-3 w-full">
-                    <div className="flex flex-col gap-1 min-w-[80px]">
+                  {/* Data Grid - 2x2 unified */}
+                  <div className="grid grid-cols-2 gap-y-4 gap-x-4 w-full mt-4">
+                    {/* Prize */}
+                    <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Prize</span>
-                      <div className="px-2 py-1.5 bg-green-50/80 border border-green-200 text-green-700 text-xs sm:text-sm font-extrabold rounded-md text-center">
-                        {prizeDisplay}
-                      </div>
+                      <span className="text-sm sm:text-base font-extrabold text-green-600">{prizeDisplay}</span>
                     </div>
-                    <div className="flex flex-col gap-1 min-w-[80px]">
+                    {/* Entry */}
+                    <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Entry</span>
-                      <div className="px-2 py-1.5 bg-amber-50/80 border border-amber-200 text-amber-600 text-xs sm:text-sm font-extrabold rounded-md text-center">
-                        {entryDisplay}
-                      </div>
+                      <span className="text-sm sm:text-base font-extrabold text-amber-600">{entryDisplay}</span>
                     </div>
-                  </div>
-
-                  {/* Format & Slots - compact inline */}
-                  <div className="flex items-center gap-4 mt-3 w-full">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">FORMAT</span>
+                    {/* Format */}
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">FORMAT</span>
                       <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
                         {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
                       </span>
                     </div>
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">SLOTS</span>
+                    {/* Slots */}
+                    <div className="flex flex-col items-start gap-0.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SLOTS</span>
                       <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
                         <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
