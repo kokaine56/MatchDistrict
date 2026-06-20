@@ -745,19 +745,30 @@ async function notifyFollowersOfTournament(t) {
       [orgId]
     );
 
-    for (const follower of followersRes.rows) {
-      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex');
-      const title = `New Tournament: ${t.title}`;
-      const message = `${orgName} has hosted a new tournament "${t.title}" for ${t.game}! Check it out and register now.`;
+    const title = `New Tournament: ${t.title}`;
+    const message = `${orgName} has hosted a new tournament "${t.title}" for ${t.game}! Check it out and register now.`;
 
-      // 1. Insert alert in database
+    // 1. Insert alerts in database (Batch Insert)
+    if (followersRes.rows.length > 0) {
+      const values = [];
+      const params = [];
+      let paramIdx = 1;
+
+      for (const follower of followersRes.rows) {
+        const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex');
+        values.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+        params.push(alertId, follower.id, title, message, t.id);
+      }
+
       await pool.query(
         `INSERT INTO alerts (id, user_id, title, message, tournament_id) 
-         VALUES ($1, $2, $3, $4, $5)`,
-        [alertId, follower.id, title, message, t.id]
+         VALUES ${values.join(', ')}`,
+        params
       );
+    }
 
-      // 2. Send email via Resend
+    // 2. Send email via Resend
+    for (const follower of followersRes.rows) {
       if (follower.email) {
         try {
           await resend.emails.send({
