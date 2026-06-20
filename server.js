@@ -7776,17 +7776,33 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const monthlyData = [];
+      const monthMap = new Map();
+      const now = new Date();
+      // Set to the first of the month to avoid day-of-month rollover issues
+      const startDate = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
       for (let i = 5; i >= 0; i--) {
-        const d = new Date();
-        d.setMonth(d.getMonth() - i);
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(*) as cnt FROM tournaments WHERE "orgId" = $1 AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3`,
-          [user.id, year, month]
-        );
-        monthlyData.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        monthlyData.push({ month: label, count: 0 });
+        monthMap.set(label, monthlyData.length - 1);
+      }
+
+      const countRes = await pool.query(
+        `SELECT EXTRACT(YEAR FROM created_at) as year, EXTRACT(MONTH FROM created_at) as month, COUNT(*) as cnt
+         FROM tournaments
+         WHERE "orgId" = $1 AND created_at >= $2
+         GROUP BY EXTRACT(YEAR FROM created_at), EXTRACT(MONTH FROM created_at)`,
+        [user.id, startDate]
+      );
+
+      for (const row of countRes.rows) {
+        const label = `${parseInt(row.year)}-${String(parseInt(row.month)).padStart(2, '0')}`;
+        if (monthMap.has(label)) {
+          monthlyData[monthMap.get(label)].count = parseInt(row.cnt);
+        }
       }
       const regCountRes = await pool.query(
         `SELECT COUNT(*) as cnt FROM tournament_registrations tr JOIN tournaments t ON t.id = tr.tournament_id WHERE t."orgId" = $1`,
