@@ -377,7 +377,6 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
       `);
-      console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournaments table:', alterErr.message);
     }
