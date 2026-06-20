@@ -7942,22 +7942,40 @@ const server = http.createServer(async (req, res) => {
 
       // Participant growth (unique participants over time)
       const participantGrowth = [];
+      const pgStartDate = new Date();
+      pgStartDate.setMonth(pgStartDate.getMonth() - 5);
+      pgStartDate.setDate(1);
+      pgStartDate.setHours(0, 0, 0, 0);
+
+      const participantRes = await pool.query(
+        `SELECT
+           EXTRACT(YEAR FROM tr.created_at) as year,
+           EXTRACT(MONTH FROM tr.created_at) as month,
+           COUNT(DISTINCT tr.user_id) as cnt
+         FROM tournament_registrations tr
+         JOIN tournaments t ON t.id = tr.tournament_id
+         WHERE t."orgId" = $1
+           AND tr.status = 'approved'
+           AND tr.created_at >= $2
+         GROUP BY EXTRACT(YEAR FROM tr.created_at), EXTRACT(MONTH FROM tr.created_at)`,
+        [user.id, pgStartDate]
+      );
+
+      const pgMap = {};
+      for (const row of participantRes.rows) {
+        const y = parseInt(row.year);
+        const m = parseInt(row.month);
+        const label = `${y}-${String(m).padStart(2, '0')}`;
+        pgMap[label] = parseInt(row.cnt);
+      }
+
       for (let i = 5; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
         const year = d.getFullYear();
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
-        const countRes = await pool.query(
-          `SELECT COUNT(DISTINCT tr.user_id) as cnt FROM tournament_registrations tr 
-           JOIN tournaments t ON t.id = tr.tournament_id 
-           WHERE t."orgId" = $1 
-             AND EXTRACT(YEAR FROM tr.created_at) = $2 
-             AND EXTRACT(MONTH FROM tr.created_at) = $3
-             AND tr.status = 'approved'`,
-          [user.id, year, month]
-        );
-        participantGrowth.push({ month: label, count: parseInt(countRes.rows[0].cnt) });
+        participantGrowth.push({ month: label, count: pgMap[label] || 0 });
       }
 
       // 30-day growth rates
