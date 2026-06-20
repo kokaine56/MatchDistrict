@@ -110,7 +110,15 @@ if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
 }
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.JWT_SECRET || 'matchdistrict_super_secure_jwt_secret_key_2026';
+
+// Generate a random fallback for JWT secret if not provided
+let fallbackJwtSecret = null;
+if (!process.env.JWT_SECRET) {
+  fallbackJwtSecret = crypto.randomBytes(32).toString('hex');
+  console.warn('⚠️ [WARNING] JWT_SECRET is not set in the environment. Using a securely generated random secret for this session. Persistent sessions will invalidate on server restart.');
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || fallbackJwtSecret;
 
 // Encryption helper functions for browser persistent session
 const ENCRYPTION_KEY = crypto.scryptSync(JWT_SECRET, 'md-salt-string', 32);
@@ -583,7 +591,14 @@ async function initDb() {
     // Seed admin user if not present
     try {
       const adminEmail = process.env.ADMIN_EMAIL || 'matchdistrict.in@gmail.com';
-      const adminPassword = process.env.ADMIN_PASSWORD || '101010';
+      let adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminPassword) {
+        adminPassword = crypto.randomBytes(12).toString('hex');
+        console.warn(`⚠️ [WARNING] ADMIN_PASSWORD is not set. A securely generated password will be used for ${adminEmail}.`);
+        console.warn(`🔑 [ADMIN PASSWORD] Generated password: ${adminPassword}`);
+      }
+
       const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
       if (checkAdmin.rows.length === 0) {
         const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
