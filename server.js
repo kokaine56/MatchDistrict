@@ -572,7 +572,6 @@ async function initDb() {
 
           if (pubTableCheck.rows.length === 0) {
             await client.query(`ALTER PUBLICATION supabase_realtime ADD TABLE "${table}";`);
-            console.log(`📡 [REALTIME] Added table "${table}" to supabase_realtime publication.`);
           }
         }
       }
