@@ -754,8 +754,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   {/* Organizer */}
                   <div className="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1 mt-1">
                     <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-slate-500">
-                      {orgProfile?.avatar ? (
-                        <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                      {tourney?.orgLogo || orgProfile?.avatar ? (
+                        <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
                       ) : (
                         (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
                       )}
@@ -847,8 +847,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   onClick={() => setActiveTab(tab.id)}
                   className={
                     activeTab === tab.id
-                      ? 'text-blue-600 font-bold border-b-2 border-blue-600 pb-3 -mb-[14px] whitespace-nowrap'
-                      : 'text-slate-500 hover:text-slate-800 font-semibold cursor-pointer whitespace-nowrap'
+                      ? 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap'
+                      : 'text-slate-400 hover:text-slate-600 pb-2 cursor-pointer whitespace-nowrap'
                   }
                 >
                   {tab.label}
@@ -863,14 +863,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <div className="flex flex-col lg:flex-row gap-6 w-full">
 
                 {/* Left Column: Descriptions */}
-                <div className="flex-1 space-y-6">
+                <div className="flex-1 space-y-4">
                   <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
-                    <h3 className="text-base font-bold text-slate-800 uppercase tracking-wider mb-2">About Tournament</h3>
-                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{tourney?.description || 'No description provided for this tournament.'}</p>
+                    <h3 className="text-xs font-black text-slate-800 tracking-widest uppercase mb-2">About Tournament</h3>
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{tourney?.description || 'No description provided for this tournament.'}</p>
                   </div>
                   <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
-                    <h3 className="text-base font-bold text-slate-800 uppercase tracking-wider mb-2">About Organizer</h3>
-                    <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{orgProfile?.bio || tourney?.description || 'No description provided for this organizer.'}</p>
+                    <h3 className="text-xs font-black text-slate-800 tracking-widest uppercase mb-2">About Organizer</h3>
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
                   </div>
                 </div>
 
@@ -879,8 +879,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-500">
-                        {orgProfile?.avatar ? (
-                          <img src={orgProfile.avatar} className="w-full h-full object-cover" alt="" />
+                        {tourney?.orgLogo || orgProfile?.avatar ? (
+                          <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
                         ) : (
                           (orgProfile?.orgName || tourney?.orgName || 'MD').slice(0, 2).toUpperCase()
                         )}
@@ -897,6 +897,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             </svg>
                           ))}
                           <span className="text-sm font-bold text-slate-700 ml-1">4.8 <span className="text-slate-400 font-medium">(120 reviews)</span></span>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 text-xs font-bold text-slate-500">
+                          <span>🎮 {orgProfile?.totalTournaments || tourney?.orgTotalHosted || 12} Tournaments Hosted</span>
                         </div>
                       </div>
                     </div>
