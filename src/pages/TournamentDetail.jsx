@@ -9,6 +9,7 @@ import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js';
 import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
+import { uploadImage } from '../utils/cloudinaryUpload.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 
@@ -44,6 +45,9 @@ function getGameBadge(game) {
   return GAME_BADGE[key] || 'bg-primary/20 text-primary border-primary/25';
 }
 
+// Helper to resolve dynamic class list strings cleanly
+const clsx = (...classes) => classes.filter(Boolean).join(' ');
+
 function getGameLogo(game) {
   const key = (game || '').toLowerCase().trim();
   return GAME_LOGOS[key] || null;
@@ -58,6 +62,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [showSponsorForm, setShowSponsorForm] = useState(false);
   const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
   const [sponsorSubmitting, setSponsorSubmitting] = useState(false);
+  const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
+  const [selectedTier, setSelectedTier] = useState(null);
+  const [sponsorStep, setSponsorStep] = useState(1);
   
   // Search and tabs states
   const [searchQuery, setSearchQuery] = useState('');
@@ -380,6 +387,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     if (!sponsorForm.transaction_id.trim()) { triggerToast('Please enter your UPI transaction ID for verification.'); return; }
     setSponsorSubmitting(true);
     try {
+      let screenshot_url = '';
+      if (sponsorScreenshot) {
+        const uploaded = await uploadImage(sponsorScreenshot);
+        if (uploaded?.secure_url) screenshot_url = uploaded.secure_url;
+      }
       const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -388,11 +400,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           amount: parseInt(sponsorForm.amount),
           message: sponsorForm.message.trim() || undefined,
           transaction_id: sponsorForm.transaction_id.trim(),
-          payment_app: sponsorForm.payment_app || undefined
+          payment_app: sponsorForm.payment_app || undefined,
+          screenshot_url: screenshot_url || undefined
         })
       });
       const data = await res.json();
-      if (data.success) { triggerToast('Contribution submitted for admin review!'); setShowSponsorForm(false); setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' }); }
+      if (data.success) { triggerToast('Contribution submitted for admin review!'); setShowSponsorForm(false); setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' }); setSponsorScreenshot(null); setSelectedTier(null); setSponsorStep(1); }
       else triggerToast(data.message || 'Failed to submit contribution.');
     } catch (e) { triggerToast('Network error submitting contribution.'); } finally { setSponsorSubmitting(false); }
   };
@@ -635,83 +648,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
-  const renderSponsorsContent = () => {
-    return (
-      <div className="space-y-4">
-        {/* Sponsor Wall */}
-        {sponsorList.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">Our Sponsors</h3>
-            <div className="flex flex-wrap gap-2">
-              {sponsorList.map((s, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/40 border border-white/10 rounded-lg text-[10px] font-bold text-white">
-                  <span className="text-warning text-[11px]">&#9733;</span>
-                  {s.name}
-                  {s.amount > 0 && <span className="text-white/60 font-medium">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
-                </span>
-              ))}
-            </div>
-            {totalSponsorAmount > 0 && (
-              <p className="text-[10px] text-white/50">Total Contributions: <span className="font-bold text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span></p>
-            )}
-          </div>
-        )}
-
-        {/* Sponsor Contribution Form */}
-        {isSponsorsEnabled && (
-          <div className="bg-black/30 rounded-xl p-4 border border-white/5 space-y-3">
-            <div>
-              <h3 className="text-xs font-bold text-white">Sponsor This Tournament</h3>
-              <p className="text-[10px] text-white/50 mt-0.5">Contribute to the prize pool and get featured above.</p>
-            </div>
-            {!showSponsorForm ? (
-              <button onClick={() => setShowSponsorForm(true)}
-                className="w-full py-2 min-h-[38px] rounded-lg bg-primary text-white text-[10px] font-bold hover:bg-primary/90 transition-all">
-                Support with UPI
-              </button>
-            ) : (
-              <form onSubmit={handleSponsorContribute} className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2.5">
-                  <input value={sponsorForm.name} onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                    placeholder="Your name" required
-                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
-                  <input value={sponsorForm.email} onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
-                    placeholder="Email" type="email"
-                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <input value={sponsorForm.amount} onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                    placeholder="Amount (₹)" type="number" min="1" required
-                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
-                  <input value={sponsorForm.transaction_id} onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                    placeholder="UPI Transaction ID / UTR" required
-                    className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
-                </div>
-                <input value={sponsorForm.payment_app} onChange={e => setSponsorForm(p => ({ ...p, payment_app: e.target.value }))}
-                  placeholder="Payment app (Google Pay / PhonePe / Paytm)"
-                  className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40" />
-                <textarea value={sponsorForm.message} onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                  placeholder="Message (optional)"
-                  className="w-full bg-[#07080C] border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white placeholder:text-white/40 resize-none h-14" />
-                <p className="text-[8px] text-white/40">Pay to <span className="font-bold text-primary">matchdistrict@upi</span></p>
-                <div className="flex gap-2">
-                  <button type="submit" disabled={sponsorSubmitting}
-                    className="flex-1 py-1.5 min-h-[36px] rounded-lg bg-emerald-500 text-white text-[10px] font-bold hover:bg-emerald-600 disabled:opacity-50 transition-all">
-                    {sponsorSubmitting ? 'Submitting...' : 'Submit'}
-                  </button>
-                  <button type="button" onClick={() => setShowSponsorForm(false)}
-                    className="px-3 py-1.5 min-h-[36px] rounded-lg border border-white/10 text-[10px] font-bold text-white/50 hover:text-white transition-all">
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
 
   return (
@@ -836,7 +772,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             <div className="flex items-center gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
               {[
                 { id: 'overview', label: 'Overview' },
-                { id: 'prize', label: 'Prize Pool Distribution' },
+                { id: 'prize', label: 'Prize Pool' },
                 { id: 'roadmap', label: 'Roadmap' },
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
@@ -1047,122 +983,320 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'teams' && (
-              <section className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <h4 className="font-bold text-lg text-white tracking-wider flex items-center gap-2">
-                    <span className="material-symbols-outlined text-primary text-xl">groups</span>
-                    Registered Squads
-                  </h4>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {[
-                      { id: 'all', label: 'All' },
-                      { id: 'verified', label: 'Verified' },
-                      { id: 'approved', label: 'Approved' },
-                      { id: 'pending', label: 'Pending' }
-                    ].map(f => (
-                      <button key={f.id} onClick={() => setTeamFilter(f.id)}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
-                          teamFilter === f.id
-                            ? 'bg-primary border-primary text-on-primary'
-                            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
-                        }`}>
-                        {f.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/50">search</span>
-                  <input
-                    type="text"
-                    placeholder="Search team or captain..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 bg-black/40 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-primary transition-all"
-                  />
-                </div>
-                {filteredTeams.length === 0 ? (
-                  <div className="text-center py-12 text-xs text-white/45">No squads found matching filters.</div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="divide-y divide-white/5 border border-white/10 rounded-xl overflow-hidden bg-black/25">
-                      {paginatedTeams.map((team, idx) => (
-                        <div key={idx} className="flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-all">
-                          <img src={team.logo} className="w-8 h-8 rounded-lg object-cover border border-white/10 shrink-0" alt="" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-white truncate">{team.name}</p>
-                            <p className="text-[10px] text-white/50 truncate">
-                              {team.captain}{team.members?.length > 0 ? ` + ${team.members.length}` : ''}
-                            </p>
-                          </div>
-                          <span className={`shrink-0 px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${
-                            team.status === 'Approved' || team.status === 'Confirmed'
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                              : team.status === 'Waitlisted'
-                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                              : 'bg-white/5 text-white/60 border-white/10'
-                          }`}>
-                            {team.status}
-                          </span>
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm w-full">
+                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">Live Slot Occupancy Map</h3>
+
+                <div className="grid grid-cols-4 sm:grid-cols-8 md:grid-cols-10 gap-2.5 w-full">
+                  {Array.from({ length: slotTotal }, (_, i) => {
+                    const slotNum = i + 1;
+                    const slotInfo = slotsData?.slots?.find(s => s.number === slotNum);
+                    if (slotInfo?.status === 'occupied') {
+                      return (
+                        <div key={i} className="aspect-square bg-red-50 border border-red-200 text-red-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs" title={`Occupied by ${slotInfo.teamName}`}>
+                          {slotNum}
                         </div>
-                      ))}
-                    </div>
-                    {totalPages > 1 && (
-                      <div className="flex items-center justify-between pt-2">
-                        <span className="text-[10px] text-white/50">
-                          {(currentPage - 1) * teamsPerPage + 1}-{Math.min(filteredTeams.length, currentPage * teamsPerPage)} of {filteredTeams.length}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} disabled={currentPage === 1}
-                            className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
-                            <span className="material-symbols-outlined text-sm">chevron_left</span>
-                          </button>
-                          <span className="text-[10px] text-white/80">Pg {currentPage}/{totalPages}</span>
-                          <button onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}
-                            className="p-1 rounded bg-black/45 border border-white/10 text-white disabled:opacity-30 disabled:cursor-not-allowed">
-                            <span className="material-symbols-outlined text-sm">chevron_right</span>
-                          </button>
+                      );
+                    }
+                    if (slotInfo?.status === 'pending') {
+                      return (
+                        <div key={i} className="aspect-square bg-amber-50 border border-amber-200 text-amber-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs animate-pulse" title={`Pending: ${slotInfo.teamName}`}>
+                          {slotNum}
                         </div>
+                      );
+                    }
+                    return (
+                      <div key={i} className="aspect-square bg-green-50 border border-green-200 text-green-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs" title="Available">
+                        {slotNum}
                       </div>
-                    )}
-                  </div>
-                )}
-                <div className="pt-4 border-t border-white/5 flex items-center justify-between">
-                  <div className="flex -space-x-2 overflow-hidden">
-                    {allTeams.slice(0, 4).map((t, i) => (
-                      <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-white/10 overflow-hidden">
-                        <img src={t.logo} className="w-full h-full object-cover" alt="" />
-                      </div>
-                    ))}
-                    {allTeams.length > 4 && (
-                      <div className="flex items-center justify-center h-8 w-8 rounded-full ring-2 ring-[#0d0e12] bg-primary/20 border border-primary/40 text-primary text-[10px] font-bold">
-                        +{allTeams.length - 4}
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[9px] text-white/45 font-bold uppercase tracking-widest">Live occupancy maps</p>
+                    );
+                  })}
                 </div>
-              </section>
+
+                <div className="flex items-center gap-4 mt-6 pt-4 border-t border-slate-100 text-xs font-bold text-slate-500">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    <span>Available</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                    <span>Occupied</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <span>Pending</span>
+                  </div>
+                </div>
+              </div>
             )}
             {activeTab === 'sponsors' && (
-              <div className="max-w-2xl">
+              <div className="w-full max-w-3xl">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-base font-black text-slate-800 uppercase tracking-wider">Tournament Sponsors</h3>
+                  <button onClick={() => setShowSponsorForm(true)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl text-xs transition-all">
+                    Become a Sponsor
+                  </button>
+                </div>
+
                 {sponsorList.length > 0 ? (
-                  <div className="flex flex-wrap gap-3">
-                    {sponsorList.map((s, i) => (
-                      <div key={i} className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm">
-                        <span className="text-amber-500 text-sm">&#9733;</span>
-                        <span className="text-sm font-bold text-slate-800">{s.name}</span>
-                        {s.amount > 0 && <span className="text-xs font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded border border-green-100">₹{parseInt(s.amount).toLocaleString('en-IN')}</span>}
-                      </div>
-                    ))}
-                    {totalSponsorAmount > 0 && (
-                      <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600">
-                        Total Contributions: <span className="font-bold text-green-600">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
-                      </div>
-                    )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 mt-6 w-full max-w-7xl mx-auto px-2">
+                    {sponsorList.map((s, i) => {
+                      const amt = parseInt(s.amount) || 0;
+                      let frameStyle, headerColor, medallionAsset, cornerAccents;
+
+                      if (amt >= 750) {
+                        frameStyle = 'bg-gradient-to-b from-[#1f1f1f] via-[#121212] to-[#0a0a0a] border-[#d4af37]/40';
+                        headerColor = 'text-[#d4af37]';
+                        cornerAccents = (
+                          <>
+                            <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-[#d4af37]/40" />
+                            <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-[#d4af37]/40" />
+                            <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-[#d4af37]/40" />
+                            <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-[#d4af37]/40" />
+                          </>
+                        );
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-amber-400/20 to-transparent flex items-center justify-center border border-[#d4af37]/30 shadow-lg">
+                            <svg className="w-10 h-10 text-[#d4af37]" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" />
+                            </svg>
+                          </div>
+                        );
+                      } else if (amt >= 500) {
+                        frameStyle = 'bg-gradient-to-b from-[#3b2d4a] via-[#1d1626] to-[#15101c] border-[#5e437a]';
+                        headerColor = 'text-[#c084fc]';
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-purple-400/20 to-transparent flex items-center justify-center border border-purple-500/30 shadow-lg">
+                            <svg className="w-10 h-10 text-[#c084fc]" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2l2.5 5.5L20 8l-4 4 1 6.5-5-3-5 3L8 12l-4-4 5.5-.5z" />
+                            </svg>
+                          </div>
+                        );
+                      } else if (amt >= 250) {
+                        frameStyle = 'bg-gradient-to-b from-[#0f2d4a] via-[#071726] to-[#05101a] border-[#1b4e7a]';
+                        headerColor = 'text-[#38bdf8]';
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-blue-500/20 to-transparent flex items-center justify-center border border-blue-500/30 shadow-lg">
+                            <svg className="w-10 h-10 text-[#38bdf8]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M6 3h12l4 6-10 12L2 9z" fill="currentColor" fillOpacity="0.2" />
+                              <path d="M12 3v18M2 9h20" />
+                            </svg>
+                          </div>
+                        );
+                      } else if (amt >= 100) {
+                        frameStyle = 'bg-gradient-to-b from-[#42330f] via-[#211a07] to-[#171205] border-[#6b541b]';
+                        headerColor = 'text-[#fbbf24]';
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-yellow-500/20 to-transparent flex items-center justify-center border border-yellow-500/30 shadow-lg">
+                            <svg className="w-10 h-10 text-[#fbbf24]" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" />
+                            </svg>
+                          </div>
+                        );
+                      } else if (amt >= 50) {
+                        frameStyle = 'bg-gradient-to-b from-[#2d3238] via-[#1a1d21] to-[#121417] border-[#434b54]';
+                        headerColor = 'text-[#a3b3c2]';
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-slate-400/20 to-transparent flex items-center justify-center border border-slate-500/30 shadow-lg">
+                            <svg className="w-10 h-10 text-[#a3b3c2]" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 7l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z" />
+                            </svg>
+                          </div>
+                        );
+                      } else {
+                        frameStyle = 'bg-gradient-to-b from-[#2e1a12] via-[#1c100b] to-[#140b08] border-[#4a2e22]';
+                        headerColor = 'text-[#ff8c52]';
+                        medallionAsset = (
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-[#ff8c52]/10 to-transparent flex items-center justify-center border border-[#ff8c52]/20 shadow-lg">
+                            <svg className="w-10 h-10 text-[#ff8c52]" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 4l2 5 5 1-4 4 1 5-4-2-4 2 1-5-4-4 5-1z" />
+                            </svg>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={i} className={`w-full aspect-[1/1.3] rounded-[24px] p-6 flex flex-col items-center justify-between relative overflow-hidden transition-all duration-300 hover:-translate-y-2 shadow-2xl select-none border ${frameStyle}`}>
+                          {cornerAccents}
+
+                          {/* Top — Medallion Asset */}
+                          <div className="flex flex-col items-center relative z-10">
+                            {medallionAsset}
+                          </div>
+
+                          {/* Middle — Tier Label + Name + Sponsored By */}
+                          <div className="flex flex-col items-center relative z-10 w-full -mt-2">
+                            <span className={`text-[10px] font-black tracking-widest uppercase mt-4 block text-center opacity-90 ${headerColor}`}>
+                              {amt >= 750 ? 'PREMIUM SPONSOR' : amt >= 500 ? 'PLATINUM SPONSOR' : amt >= 250 ? 'DIAMOND SPONSOR' : amt >= 100 ? 'GOLD SPONSOR' : amt >= 50 ? 'SILVER SPONSOR' : 'BRONZE SPONSOR'}
+                            </span>
+                            <h4 className="text-base sm:text-lg font-black text-white mt-1 tracking-tight text-center truncate w-full">{s.squadName || 'Gaming Warrior'}</h4>
+                            <p className="text-xs text-slate-400 mt-1 font-medium text-center flex items-center justify-center gap-1">
+                              <span className="opacity-70">Sponsored by</span>
+                              <span className="text-slate-300 font-bold">{s.name}</span>
+                            </p>
+                          </div>
+
+                          {/* Bottom — Amount */}
+                          <div className="mt-5 pt-3 border-t border-white/5 w-full flex flex-col items-center relative z-10">
+                            <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Amount</span>
+                            <span className="text-lg sm:text-xl font-black text-white mt-0.5 tracking-wide">₹{amt.toLocaleString('en-IN')}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No sponsors yet for this tournament.</div>
+                )}
+
+                {totalSponsorAmount > 0 && (
+                  <div className="w-full mt-4 p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600">
+                    Total Contributions: <span className="font-bold text-green-600">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+
+                {/* Sponsor Form Modal — 3-Step Wizard */}
+                {showSponsorForm && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) { setShowSponsorForm(false); setSponsorStep(1); } }}>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                      <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-1">Sponsor This Tournament</h4>
+
+                      {/* Step Indicator */}
+                      <div className="flex items-center gap-2 mb-6">
+                        {[1, 2, 3].map(s => (
+                          <React.Fragment key={s}>
+                            <div className={`flex items-center gap-1.5 ${s <= sponsorStep ? 'text-blue-700' : 'text-slate-300'}`}>
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${s <= sponsorStep ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>{s}</div>
+                              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">{s === 1 ? 'Details' : s === 2 ? 'Pay' : 'Proof'}</span>
+                            </div>
+                            {s < 3 && <div className={`flex-1 h-px ${sponsorStep > s ? 'bg-blue-600' : 'bg-slate-200'}`} />}
+                          </React.Fragment>
+                        ))}
+                      </div>
+
+                      {/* STEP 1: Basic Details & Tier Selection */}
+                      {sponsorStep === 1 && (
+                        <div className="space-y-4">
+                          <p className="text-xs text-slate-500 font-medium">Enter your details and choose a contribution amount.</p>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <input
+                              value={sponsorForm.name}
+                              onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
+                              placeholder="Full Name" required
+                              className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
+                            />
+                            <input
+                              value={sponsorForm.email}
+                              onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
+                              placeholder="Email Address" type="email"
+                              className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
+                            />
+                          </div>
+
+                          <input
+                            value={sponsorForm.message}
+                            onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
+                            placeholder="WhatsApp Number (10 digits)"
+                            type="tel" maxLength={10}
+                            className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
+                          />
+
+                          <div>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Contribution Amount (₹)</p>
+                            <input
+                              type="number"
+                              min="1"
+                              value={sponsorForm.amount}
+                              onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
+                              placeholder="Enter custom amount (₹)..."
+                              className="w-full text-lg font-black bg-slate-50 border-2 border-slate-200 focus:border-blue-600 focus:bg-white rounded-xl p-3 text-slate-900 transition-all outline-none"
+                            />
+                          </div>
+
+                          <button type="button" onClick={() => setSponsorStep(2)}
+                            disabled={!sponsorForm.name.trim() || !sponsorForm.email.trim() || !sponsorForm.message.trim() || sponsorForm.message.trim().length !== 10 || !sponsorForm.amount || parseInt(sponsorForm.amount) <= 0}
+                            className="w-full py-3 min-h-[44px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-all">
+                            Proceed to Payment
+                          </button>
+                        </div>
+                      )}
+
+                      {/* STEP 2: Live UPI Payment Execution */}
+                      {sponsorStep === 2 && (
+                        <div className="space-y-4">
+                          <p className="text-sm text-slate-700 font-bold">
+                            Pay exactly <span className="text-blue-600">₹{parseInt(sponsorForm.amount) || 0}</span> using any UPI application below, then click next to submit proof.
+                          </p>
+
+                          <a
+                            href={`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 w-full transition-all">
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            Open UPI App
+                          </a>
+
+                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                            <p className="text-xs text-slate-500">Pay to <span className="font-bold text-blue-600">matchdistrict@upi</span></p>
+                            <div className="flex items-center gap-2">
+                              <input readOnly value={`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`}
+                                className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 font-mono" />
+                              <button type="button" onClick={() => { navigator.clipboard.writeText(`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`); triggerToast('UPI link copied!'); }}
+                                className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
+                                Copy
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3 pt-2">
+                            <button type="button" onClick={() => setSponsorStep(1)}
+                              className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:text-slate-700 transition-all">
+                              Back
+                            </button>
+                            <button type="button" onClick={() => setSponsorStep(3)}
+                              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all">
+                              I Have Paid, Next
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* STEP 3: Transaction Proof Submission */}
+                      {sponsorStep === 3 && (
+                        <form onSubmit={handleSponsorContribute} className="space-y-4">
+                          <p className="text-xs text-slate-500 font-medium">Enter your transaction details and upload the payment screenshot for verification.</p>
+
+                          <input
+                            value={sponsorForm.transaction_id}
+                            onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
+                            placeholder="UPI Transaction ID / UTR Number"
+                            required
+                            className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
+                          />
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-slate-500">Upload Payment Screenshot</p>
+                            <input type="file" accept="image/*" onChange={e => setSponsorScreenshot(e.target.files?.[0] || null)}
+                              className="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                          </div>
+
+                          <div className="flex gap-3 pt-2">
+                            <button type="button" onClick={() => setSponsorStep(2)}
+                              className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:text-slate-700 transition-all">
+                              Back
+                            </button>
+                            <button type="submit" disabled={sponsorSubmitting}
+                              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50 transition-all">
+                              {sponsorSubmitting ? 'Submitting...' : 'Submit Sponsorship'}
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -1192,13 +1326,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* Sponsors Section */}
-            {(isSponsorsEnabled || sponsorList.length > 0) && (
-              <div className="bg-[#0d0e12]/45 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
-                {renderSponsorsContent()}
               </div>
             )}
 
