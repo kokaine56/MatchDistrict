@@ -4,6 +4,11 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      'motion/react': 'framer-motion'
+    }
+  },
   server: {
     historyApiFallback: true, // serve index.html for all unknown routes (SPA routing)
     proxy: {

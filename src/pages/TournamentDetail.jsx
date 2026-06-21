@@ -12,6 +12,7 @@ import { getAuthToken } from '../utils/getAuthToken.js';
 import { uploadImage } from '../utils/cloudinaryUpload.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
+import SponsorCardItem from '../components/SponsorCardItem.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -66,6 +67,60 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [selectedTier, setSelectedTier] = useState(null);
   const [sponsorStep, setSponsorStep] = useState(1);
   
+  // Custom states for premium sponsors cards interaction
+  const [selectedCardId, setSelectedCardId] = useState(null);
+  const [frozenCards, setFrozenCards] = useState({});
+
+  const getCardType = (amt) => {
+    if (amt >= 1000) return 'OBSIDIAN_ELITE';
+    if (amt >= 500) return 'DIAMOND_PREFERRED';
+    if (amt >= 250) return 'GOLD_ELITE';
+    if (amt >= 100) return 'SILVER_PLUS';
+    return 'EMERALD_PRESTIGE';
+  };
+
+  const getCardTagName = (amt) => {
+    if (amt >= 1000) return 'OBSIDIAN ELITE';
+    if (amt >= 500) return 'DIAMOND PREFERRED';
+    if (amt >= 250) return 'GOLD ELITE';
+    if (amt >= 100) return 'SILVER PLUS';
+    return 'EMERALD PRESTIGE';
+  };
+
+  const generateMockCardDetails = (s, index) => {
+    const seed = (s.name || '').charCodeAt(0) || index;
+    const lastFour = String(1000 + (seed % 9000));
+    const middleFour = String(2000 + ((seed * 17) % 8000));
+    const firstEight = "4321 8976";
+    const cardNumber = `${firstEight} ${middleFour} ${lastFour}`;
+    const cvv = String(100 + (seed % 900));
+    const expMonth = String(1 + (seed % 12)).padStart(2, '0');
+    const expYear = String(26 + (seed % 5));
+    const expiry = `${expMonth}/${expYear}`;
+    return { cardNumber, cvv, expiry };
+  };
+
+  const handleToggleFreeze = (cardId) => {
+    setFrozenCards(prev => ({
+      ...prev,
+      [cardId]: !prev[cardId]
+    }));
+  };
+
+  // Seed frozen state demonstration
+  useEffect(() => {
+    if (sponsorList.length > 0) {
+      const initialFrozen = {};
+      sponsorList.forEach((s, idx) => {
+        const cardId = s.id || `spn-${idx}`;
+        if (idx === 1) {
+          initialFrozen[cardId] = true;
+        }
+      });
+      setFrozenCards(prev => ({ ...initialFrozen, ...prev }));
+    }
+  }, [sponsorList]);
+
   // Search and tabs states
   const [searchQuery, setSearchQuery] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
@@ -673,7 +728,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 {/* Poster Left */}
                 <div className="w-[110px] sm:w-[140px] md:w-[220px] lg:w-[280px] shrink-0">
                   <img 
-                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-lg"
+                     className="w-full aspect-[3/4] object-cover rounded-xl shadow-lg"
                     src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
                     alt="Tournament Poster"
                   />
@@ -1029,129 +1084,57 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'sponsors' && (
-              <div className="w-full max-w-3xl">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-black text-slate-800 uppercase tracking-wider">Tournament Sponsors</h3>
+              <div className="w-full max-w-7xl">
+                <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4">
+                  <div className="text-left">
+                    <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">Tournament Sponsors</h3>
+                    <p className="text-xs text-slate-400 mt-1">Premium corporate and community contributions directly backing the prize pool.</p>
+                  </div>
                   <button onClick={() => setShowSponsorForm(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl text-xs transition-all">
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-xl text-xs transition-all tracking-wide shadow-md shadow-blue-600/10">
                     Become a Sponsor
                   </button>
                 </div>
 
                 {sponsorList.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 mt-6 w-full max-w-7xl mx-auto px-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 w-full max-w-7xl mx-auto px-2">
                     {sponsorList.map((s, i) => {
                       const amt = parseInt(s.amount) || 0;
-                      let frameStyle, headerColor, medallionAsset, cornerAccents;
-
-                      if (amt >= 750) {
-                        frameStyle = 'bg-gradient-to-b from-[#1f1f1f] via-[#121212] to-[#0a0a0a] border-[#d4af37]/40';
-                        headerColor = 'text-[#d4af37]';
-                        cornerAccents = (
-                          <>
-                            <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-[#d4af37]/40" />
-                            <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-[#d4af37]/40" />
-                            <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-[#d4af37]/40" />
-                            <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-[#d4af37]/40" />
-                          </>
-                        );
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-amber-400/20 to-transparent flex items-center justify-center border border-[#d4af37]/30 shadow-lg">
-                            <svg className="w-10 h-10 text-[#d4af37]" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" />
-                            </svg>
-                          </div>
-                        );
-                      } else if (amt >= 500) {
-                        frameStyle = 'bg-gradient-to-b from-[#3b2d4a] via-[#1d1626] to-[#15101c] border-[#5e437a]';
-                        headerColor = 'text-[#c084fc]';
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-purple-400/20 to-transparent flex items-center justify-center border border-purple-500/30 shadow-lg">
-                            <svg className="w-10 h-10 text-[#c084fc]" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2l2.5 5.5L20 8l-4 4 1 6.5-5-3-5 3L8 12l-4-4 5.5-.5z" />
-                            </svg>
-                          </div>
-                        );
-                      } else if (amt >= 250) {
-                        frameStyle = 'bg-gradient-to-b from-[#0f2d4a] via-[#071726] to-[#05101a] border-[#1b4e7a]';
-                        headerColor = 'text-[#38bdf8]';
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-blue-500/20 to-transparent flex items-center justify-center border border-blue-500/30 shadow-lg">
-                            <svg className="w-10 h-10 text-[#38bdf8]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M6 3h12l4 6-10 12L2 9z" fill="currentColor" fillOpacity="0.2" />
-                              <path d="M12 3v18M2 9h20" />
-                            </svg>
-                          </div>
-                        );
-                      } else if (amt >= 100) {
-                        frameStyle = 'bg-gradient-to-b from-[#42330f] via-[#211a07] to-[#171205] border-[#6b541b]';
-                        headerColor = 'text-[#fbbf24]';
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-yellow-500/20 to-transparent flex items-center justify-center border border-yellow-500/30 shadow-lg">
-                            <svg className="w-10 h-10 text-[#fbbf24]" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" />
-                            </svg>
-                          </div>
-                        );
-                      } else if (amt >= 50) {
-                        frameStyle = 'bg-gradient-to-b from-[#2d3238] via-[#1a1d21] to-[#121417] border-[#434b54]';
-                        headerColor = 'text-[#a3b3c2]';
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-slate-400/20 to-transparent flex items-center justify-center border border-slate-500/30 shadow-lg">
-                            <svg className="w-10 h-10 text-[#a3b3c2]" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 7l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z" />
-                            </svg>
-                          </div>
-                        );
-                      } else {
-                        frameStyle = 'bg-gradient-to-b from-[#2e1a12] via-[#1c100b] to-[#140b08] border-[#4a2e22]';
-                        headerColor = 'text-[#ff8c52]';
-                        medallionAsset = (
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-b from-[#ff8c52]/10 to-transparent flex items-center justify-center border border-[#ff8c52]/20 shadow-lg">
-                            <svg className="w-10 h-10 text-[#ff8c52]" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 4l2 5 5 1-4 4 1 5-4-2-4 2 1-5-4-4 5-1z" />
-                            </svg>
-                          </div>
-                        );
-                      }
+                      const cardId = s.id || `spn-${i}`;
+                      const card = {
+                        id: cardId,
+                        type: getCardType(amt),
+                        tagName: getCardTagName(amt),
+                        balance: amt,
+                        cardmemberName: s.name,
+                        ...generateMockCardDetails(s, i),
+                        isFrozen: !!frozenCards[cardId]
+                      };
 
                       return (
-                        <div key={i} className={`w-full aspect-[1/1.3] rounded-[24px] p-6 flex flex-col items-center justify-between relative overflow-hidden transition-all duration-300 hover:-translate-y-2 shadow-2xl select-none border ${frameStyle}`}>
-                          {cornerAccents}
-
-                          {/* Top — Medallion Asset */}
-                          <div className="flex flex-col items-center relative z-10">
-                            {medallionAsset}
-                          </div>
-
-                          {/* Middle — Tier Label + Name + Sponsored By */}
-                          <div className="flex flex-col items-center relative z-10 w-full -mt-2">
-                            <span className={`text-[10px] font-black tracking-widest uppercase mt-4 block text-center opacity-90 ${headerColor}`}>
-                              {amt >= 750 ? 'PREMIUM SPONSOR' : amt >= 500 ? 'PLATINUM SPONSOR' : amt >= 250 ? 'DIAMOND SPONSOR' : amt >= 100 ? 'GOLD SPONSOR' : amt >= 50 ? 'SILVER SPONSOR' : 'BRONZE SPONSOR'}
-                            </span>
-                            <h4 className="text-base sm:text-lg font-black text-white mt-1 tracking-tight text-center truncate w-full">{s.squadName || 'Gaming Warrior'}</h4>
-                            <p className="text-xs text-slate-400 mt-1 font-medium text-center flex items-center justify-center gap-1">
-                              <span className="opacity-70">Sponsored by</span>
-                              <span className="text-slate-300 font-bold">{s.name}</span>
-                            </p>
-                          </div>
-
-                          {/* Bottom — Amount */}
-                          <div className="mt-5 pt-3 border-t border-white/5 w-full flex flex-col items-center relative z-10">
-                            <span className="text-[9px] uppercase tracking-widest text-slate-500 font-bold">Amount</span>
-                            <span className="text-lg sm:text-xl font-black text-white mt-0.5 tracking-wide">₹{amt.toLocaleString('en-IN')}</span>
-                          </div>
-                        </div>
+                        <SponsorCardItem
+                          key={cardId}
+                          card={card}
+                          isSelected={selectedCardId === cardId}
+                          onSelect={() => setSelectedCardId(cardId)}
+                          onToggleFreeze={() => handleToggleFreeze(cardId)}
+                        />
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No sponsors yet for this tournament.</div>
+                  <div className="p-6 bg-[#0c0d12]/45 border border-white/5 rounded-2xl text-slate-400 text-sm font-medium text-center">
+                    No sponsors yet for this tournament. Be the first to sponsor!
+                  </div>
                 )}
 
                 {totalSponsorAmount > 0 && (
-                  <div className="w-full mt-4 p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-600">
-                    Total Contributions: <span className="font-bold text-green-600">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
+                  <div className="w-full mt-8 p-5 bg-[#0c0d12]/60 border border-white/5 rounded-2xl text-sm text-slate-300 flex items-center justify-between backdrop-blur-md">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] tracking-widest font-mono uppercase font-bold text-slate-400">Total Backed Volume</span>
+                      <span className="text-xs text-slate-500 font-medium">Accumulated verified sponsor allocations.</span>
+                    </div>
+                    <span className="font-display text-xl sm:text-2xl font-black text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
                   </div>
                 )}
 

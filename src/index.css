@@ -2107,3 +2107,49 @@ html:not(.light) .sponsor-form-panel {
   -ms-overflow-style: none !important;
 }
 
+/* Carbon pattern background for Obsidian Elite cards */
+.carbon-pattern {
+  background-color: #0c0c0e !important;
+  background-image: 
+    radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 0),
+    radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 0) !important;
+  background-size: 8px 8px !important;
+  background-position: 0 0, 4px 4px !important;
+}
+
+/* Radar concentric ripples for Diamond Preferred cards */
+@keyframes radar-pulse {
+  0% {
+    transform: scale(0.1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(4.5);
+    opacity: 0;
+  }
+}
+
+.radar-ring {
+  position: absolute;
+  border: 1.5px solid rgba(59, 130, 246, 0.3);
+  border-radius: 50%;
+  width: 120px;
+  height: 120px;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.animate-radar-1 {
+  animation: radar-pulse 4s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
+}
+
+.animate-radar-2 {
+  animation: radar-pulse 4s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
+  animation-delay: 1.33s;
+}
+
+.animate-radar-3 {
+  animation: radar-pulse 4s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
+  animation-delay: 2.66s;
+}
+
