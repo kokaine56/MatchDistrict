@@ -1097,188 +1097,57 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
 
                 {sponsorList.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 w-full max-w-7xl mx-auto px-2">
-                    {sponsorList.map((s, i) => {
-                      const amt = parseInt(s.amount) || 0;
-                      const cardId = s.id || `spn-${i}`;
-                      const card = {
-                        id: cardId,
-                        type: getCardType(amt),
-                        tagName: getCardTagName(amt),
-                        balance: amt,
-                        cardmemberName: s.name,
-                        ...generateMockCardDetails(s, i),
-                        isFrozen: !!frozenCards[cardId]
-                      };
-
-                      return (
-                        <SponsorCardItem
-                          key={cardId}
-                          card={card}
-                          isSelected={selectedCardId === cardId}
-                          onSelect={() => setSelectedCardId(cardId)}
-                          onToggleFreeze={() => handleToggleFreeze(cardId)}
-                        />
+                  <div className="w-full max-w-7xl">
+                    {(() => {
+                      const uniqueSponsors = Array.from(
+                        new Map(sponsorList.map(item => {
+                          const key = item.id || `${(item.name || '').toLowerCase().trim()}-${item.amount}`;
+                          return [key, item];
+                        })).values()
                       );
-                    })}
+                      const totalVolume = uniqueSponsors.reduce((sum, item) => sum + Number(item.balance || item.amount || 0), 0);
+                      return (
+                        <>
+                          <div className="mt-2 mb-6 bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between max-w-xs shadow-sm">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Sponsoring Volume</span>
+                              <span className="text-xl font-black text-slate-950 mt-0.5">
+                                ₹{totalVolume.toLocaleString('en-IN')}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-6 w-full max-w-7xl mx-auto px-2">
+                            {uniqueSponsors.map((item, idx) => {
+                              const amt = Number(item.balance || item.amount || 0);
+                              const cardId = item.id || `spn-${item.name || 'sponsor'}-${idx}`;
+                              const card = {
+                                id: cardId,
+                                type: getCardType(amt),
+                                tagName: getCardTagName(amt),
+                                balance: amt,
+                                cardmemberName: item.cardmemberName || item.name || 'Anonymous Sponsor',
+                                ...generateMockCardDetails(item, idx),
+                                lastFour: String(cardId).replace(/[^0-9a-zA-Z]/g, '').slice(-4).padStart(4, '0'),
+                                isFrozen: !!frozenCards[cardId]
+                              };
+                              return (
+                                <SponsorCardItem
+                                  key={card.id}
+                                  card={card}
+                                  isSelected={selectedCardId === cardId}
+                                  onSelect={() => setSelectedCardId(cardId)}
+                                  onToggleFreeze={() => handleToggleFreeze(cardId)}
+                                />
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
-                  <div className="p-6 bg-[#0c0d12]/45 border border-white/5 rounded-2xl text-slate-400 text-sm font-medium text-center">
+                  <div className="p-6 bg-white/5 border border-white/10 rounded-2xl text-slate-400 text-sm font-medium text-center">
                     No sponsors yet for this tournament. Be the first to sponsor!
-                  </div>
-                )}
-
-                {totalSponsorAmount > 0 && (
-                  <div className="w-full mt-8 p-5 bg-[#0c0d12]/60 border border-white/5 rounded-2xl text-sm text-slate-300 flex items-center justify-between backdrop-blur-md">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] tracking-widest font-mono uppercase font-bold text-slate-400">Total Backed Volume</span>
-                      <span className="text-xs text-slate-500 font-medium">Accumulated verified sponsor allocations.</span>
-                    </div>
-                    <span className="font-display text-xl sm:text-2xl font-black text-emerald-400">₹{totalSponsorAmount.toLocaleString('en-IN')}</span>
-                  </div>
-                )}
-
-                {/* Sponsor Form Modal — 3-Step Wizard */}
-                {showSponsorForm && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => { if (e.target === e.currentTarget) { setShowSponsorForm(false); setSponsorStep(1); } }}>
-                    <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                      <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-1">Sponsor This Tournament</h4>
-
-                      {/* Step Indicator */}
-                      <div className="flex items-center gap-2 mb-6">
-                        {[1, 2, 3].map(s => (
-                          <React.Fragment key={s}>
-                            <div className={`flex items-center gap-1.5 ${s <= sponsorStep ? 'text-blue-700' : 'text-slate-300'}`}>
-                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${s <= sponsorStep ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>{s}</div>
-                              <span className="text-[10px] font-bold uppercase tracking-wider hidden sm:inline">{s === 1 ? 'Details' : s === 2 ? 'Pay' : 'Proof'}</span>
-                            </div>
-                            {s < 3 && <div className={`flex-1 h-px ${sponsorStep > s ? 'bg-blue-600' : 'bg-slate-200'}`} />}
-                          </React.Fragment>
-                        ))}
-                      </div>
-
-                      {/* STEP 1: Basic Details & Tier Selection */}
-                      {sponsorStep === 1 && (
-                        <div className="space-y-4">
-                          <p className="text-xs text-slate-500 font-medium">Enter your details and choose a contribution amount.</p>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <input
-                              value={sponsorForm.name}
-                              onChange={e => setSponsorForm(p => ({ ...p, name: e.target.value }))}
-                              placeholder="Full Name" required
-                              className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
-                            />
-                            <input
-                              value={sponsorForm.email}
-                              onChange={e => setSponsorForm(p => ({ ...p, email: e.target.value }))}
-                              placeholder="Email Address" type="email"
-                              className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
-                            />
-                          </div>
-
-                          <input
-                            value={sponsorForm.message}
-                            onChange={e => setSponsorForm(p => ({ ...p, message: e.target.value }))}
-                            placeholder="WhatsApp Number (10 digits)"
-                            type="tel" maxLength={10}
-                            className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
-                          />
-
-                          <div>
-                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Contribution Amount (₹)</p>
-                            <input
-                              type="number"
-                              min="1"
-                              value={sponsorForm.amount}
-                              onChange={e => setSponsorForm(p => ({ ...p, amount: e.target.value }))}
-                              placeholder="Enter custom amount (₹)..."
-                              className="w-full text-lg font-black bg-slate-50 border-2 border-slate-200 focus:border-blue-600 focus:bg-white rounded-xl p-3 text-slate-900 transition-all outline-none"
-                            />
-                          </div>
-
-                          <button type="button" onClick={() => setSponsorStep(2)}
-                            disabled={!sponsorForm.name.trim() || !sponsorForm.email.trim() || !sponsorForm.message.trim() || sponsorForm.message.trim().length !== 10 || !sponsorForm.amount || parseInt(sponsorForm.amount) <= 0}
-                            className="w-full py-3 min-h-[44px] rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed transition-all">
-                            Proceed to Payment
-                          </button>
-                        </div>
-                      )}
-
-                      {/* STEP 2: Live UPI Payment Execution */}
-                      {sponsorStep === 2 && (
-                        <div className="space-y-4">
-                          <p className="text-sm text-slate-700 font-bold">
-                            Pay exactly <span className="text-blue-600">₹{parseInt(sponsorForm.amount) || 0}</span> using any UPI application below, then click next to submit proof.
-                          </p>
-
-                          <a
-                            href={`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`}
-                            target="_blank" rel="noopener noreferrer"
-                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 w-full transition-all">
-                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                            </svg>
-                            Open UPI App
-                          </a>
-
-                          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                            <p className="text-xs text-slate-500">Pay to <span className="font-bold text-blue-600">matchdistrict@upi</span></p>
-                            <div className="flex items-center gap-2">
-                              <input readOnly value={`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`}
-                                className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600 font-mono" />
-                              <button type="button" onClick={() => { navigator.clipboard.writeText(`upi://pay?pa=matchdistrict@upi&pn=MatchDistrict&am=${parseInt(sponsorForm.amount) || 0}&cu=INR`); triggerToast('UPI link copied!'); }}
-                                className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-all">
-                                Copy
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-3 pt-2">
-                            <button type="button" onClick={() => setSponsorStep(1)}
-                              className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:text-slate-700 transition-all">
-                              Back
-                            </button>
-                            <button type="button" onClick={() => setSponsorStep(3)}
-                              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all">
-                              I Have Paid, Next
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* STEP 3: Transaction Proof Submission */}
-                      {sponsorStep === 3 && (
-                        <form onSubmit={handleSponsorContribute} className="space-y-4">
-                          <p className="text-xs text-slate-500 font-medium">Enter your transaction details and upload the payment screenshot for verification.</p>
-
-                          <input
-                            value={sponsorForm.transaction_id}
-                            onChange={e => setSponsorForm(p => ({ ...p, transaction_id: e.target.value }))}
-                            placeholder="UPI Transaction ID / UTR Number"
-                            required
-                            className="w-full border border-slate-200 rounded-xl p-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-600"
-                          />
-
-                          <div className="space-y-2">
-                            <p className="text-xs font-bold text-slate-500">Upload Payment Screenshot</p>
-                            <input type="file" accept="image/*" onChange={e => setSponsorScreenshot(e.target.files?.[0] || null)}
-                              className="w-full text-sm text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-                          </div>
-
-                          <div className="flex gap-3 pt-2">
-                            <button type="button" onClick={() => setSponsorStep(2)}
-                              className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-500 hover:text-slate-700 transition-all">
-                              Back
-                            </button>
-                            <button type="submit" disabled={sponsorSubmitting}
-                              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold disabled:opacity-50 transition-all">
-                              {sponsorSubmitting ? 'Submitting...' : 'Submit Sponsorship'}
-                            </button>
-                          </div>
-                        </form>
-                      )}
-                    </div>
                   </div>
                 )}
               </div>

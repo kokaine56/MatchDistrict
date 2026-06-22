@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { Eye, EyeOff, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
 
 export default function SponsorCardItem({
@@ -10,61 +10,63 @@ export default function SponsorCardItem({
 }) {
   const [revealSecrets, setRevealSecrets] = useState(false);
 
+  const cardDigits = card.lastFour || String(card.id).slice(-4).padStart(4, '0').replace(/[^0-9]/g, '7');
+
   // Helper to get classes for each theme card
   const getThemeStyles = () => {
     switch (card.type) {
       case 'OBSIDIAN_ELITE':
         return {
           wrapper: 'carbon-pattern border border-neutral-800 text-white min-h-[230px]',
-          tag: 'text-neutral-300 border-neutral-700 bg-neutral-900/80',
-          contactless: 'text-neutral-300',
+          tag: 'border-white/20 bg-white/10',
+          contactless: '',
           chipGold: false,
-          labelColor: 'text-neutral-400',
-          accentBorder: 'ring-2 ring-neutral-400 shadow-[0_0_25px_rgba(255,255,255,0.08)]',
+          labelColor: 'text-white',
+          accentBorder: 'ring-2 ring-white/30 shadow-[0_0_25px_rgba(255,255,255,0.08)]',
         };
       case 'DIAMOND_PREFERRED':
         return {
-          wrapper: 'bg-gradient-to-tr from-[#020617] via-[#0b132b] to-[#1d3557] border border-blue-900/40 text-blue-100 min-h-[230px]',
-          tag: 'text-yellow-400 border-yellow-500/30 bg-[#bf8f30]/20',
-          contactless: 'text-yellow-400',
+          wrapper: 'bg-gradient-to-tr from-[#020617] via-[#0b132b] to-[#1d3557] border border-blue-900/40 text-white min-h-[230px]',
+          tag: 'border-white/20 bg-white/10',
+          contactless: '',
           chipGold: true,
-          labelColor: 'text-blue-300/80',
+          labelColor: 'text-white',
           accentBorder: 'ring-2 ring-blue-500 shadow-[0_0_25px_rgba(59,130,246,0.3)]',
         };
       case 'GOLD_ELITE':
         return {
-          wrapper: 'bg-gradient-to-tr from-[#543d04] via-[#c69324] to-[#f3cf65] border border-[#a17812] text-yellow-950 min-h-[230px]',
-          tag: 'text-yellow-900 border-yellow-900/20 bg-yellow-100/30',
-          contactless: 'text-yellow-900',
+          wrapper: 'bg-gradient-to-tr from-[#543d04] via-[#c69324] to-[#f3cf65] border border-[#a17812] text-white min-h-[230px]',
+          tag: 'border-white/30 bg-black/20',
+          contactless: '',
           chipGold: true,
-          labelColor: 'text-yellow-950/70',
+          labelColor: 'text-white',
           accentBorder: 'ring-2 ring-yellow-400 shadow-[0_0_25px_rgba(234,179,8,0.3)]',
         };
       case 'SILVER_PLUS':
         return {
-          wrapper: 'bg-gradient-to-tr from-[#1e293b] via-[#475569] to-[#94a3b8] border border-slate-500/40 text-slate-100 min-h-[230px]',
-          tag: 'text-slate-100 border-slate-200/40 bg-slate-800/40',
-          contactless: 'text-slate-100',
+          wrapper: 'bg-gradient-to-tr from-[#1e293b] via-[#475569] to-[#94a3b8] border border-slate-500/40 text-white min-h-[230px]',
+          tag: 'border-white/20 bg-white/10',
+          contactless: '',
           chipGold: true,
-          labelColor: 'text-slate-200/70',
+          labelColor: 'text-white',
           accentBorder: 'ring-2 ring-slate-300 shadow-[0_0_25px_rgba(148,163,184,0.3)]',
         };
       case 'EMERALD_PRESTIGE':
         return {
-          wrapper: 'bg-gradient-to-tr from-[#022c22] via-[#0d9488] to-[#2dd4bf] border border-teal-500/40 text-teal-500 min-h-[230px]',
-          tag: 'text-emerald-100 border-emerald-300/30 bg-emerald-950/50',
-          contactless: 'text-teal-200',
+          wrapper: 'bg-gradient-to-tr from-[#022c22] via-[#0d9488] to-[#2dd4bf] border border-teal-500/40 text-white min-h-[230px]',
+          tag: 'border-white/20 bg-white/10',
+          contactless: '',
           chipGold: true,
-          labelColor: 'text-teal-950/70',
+          labelColor: 'text-white',
           accentBorder: 'ring-2 ring-emerald-500 shadow-[0_0_25px_rgba(16,185,129,0.3)]',
         };
       default:
         return {
-          wrapper: 'bg-gradient-to-tr from-[#022c22] via-[#0d9488] to-[#2dd4bf] border border-teal-500/40 text-teal-500 min-h-[230px]',
-          tag: 'text-emerald-100 border-emerald-300/30 bg-emerald-950/50',
-          contactless: 'text-teal-200',
+          wrapper: 'bg-gradient-to-tr from-[#022c22] via-[#0d9488] to-[#2dd4bf] border border-teal-500/40 text-white min-h-[230px]',
+          tag: 'border-white/20 bg-white/10',
+          contactless: '',
           chipGold: true,
-          labelColor: 'text-teal-950/70',
+          labelColor: 'text-white',
           accentBorder: 'ring-2 ring-emerald-500 shadow-[0_0_25px_rgba(16,185,129,0.3)]',
         };
     }
@@ -87,7 +89,7 @@ export default function SponsorCardItem({
       onClick={() => {
         if (!card.isFrozen) onSelect();
       }}
-      className={`relative rounded-2xl overflow-hidden card-shimmer cursor-pointer transition-all duration-300 flex flex-col justify-between p-6 shadow-2xl select-none ${
+      className={`relative rounded-2xl overflow-hidden card-shimmer cursor-pointer transition-all duration-300 flex flex-col justify-between p-6 shadow-2xl select-none sponsored-card ${
         styles.wrapper
       } ${isSelected ? styles.accentBorder : 'hover:shadow-xl hover:border-neutral-700/60'}`}
       id={`sponsored-card-${card.id}`}
@@ -100,24 +102,6 @@ export default function SponsorCardItem({
             <div className="radar-ring animate-radar-2" />
             <div className="radar-ring animate-radar-3" />
           </div>
-        </div>
-      )}
-
-      {/* Freeze overlay */}
-      {card.isFrozen && (
-        <div className="absolute inset-0 bg-slate-900/75 backdrop-blur-sm z-30 flex flex-col items-center justify-center text-center p-4">
-          <ShieldAlert className="w-12 h-12 text-rose-500 mb-2 animate-bounce" />
-          <p className="text-white font-medium text-lg tracking-wide">CARD TEMPORARILY FROZEN</p>
-          <p className="text-slate-400 text-xs px-4 mt-1">Pending Sponsor Authorization</p>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFreeze();
-            }}
-            className="mt-4 px-4 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-semibold tracking-wider transition shadow-lg shadow-sky-500/20"
-          >
-            ACTIVE AUTHORIZATION
-          </button>
         </div>
       )}
 
@@ -144,10 +128,10 @@ export default function SponsorCardItem({
 
       {/* MIDDLE VALUE SECTION */}
       <div className="flex flex-col my-auto z-10">
-        <span className={`text-[10px] tracking-widest font-mono uppercase font-semibold block mb-1 ${styles.labelColor}`}>
-          Sponsored Balance
+          <span className={`text-[10px] tracking-widest uppercase font-semibold block mb-1`}>
+            Sponsored Balance
         </span>
-        <div className="text-2xl sm:text-3xl font-display tracking-tight font-bold flex items-baseline">
+        <div className="text-2xl sm:text-3xl tracking-tight font-black flex items-baseline">
           {formatBalance(card.balance)}
         </div>
       </div>
@@ -155,12 +139,13 @@ export default function SponsorCardItem({
       {/* BOTTOM METADATA ROW */}
       <div className="flex items-end justify-between z-10 w-full mt-4">
         <div className="flex flex-col">
-          <span className={`text-[8.5px] uppercase tracking-wider block font-semibold mb-0.5 ${styles.labelColor}`}>
+          <span className={`text-[8.5px] uppercase tracking-wider block font-semibold mb-0.5`}>
             Cardmember Name
           </span>
-          <span className="text-xs sm:text-[13px] font-mono tracking-wider font-semibold opacity-95">
+          <span className="text-xs sm:text-[13px] tracking-wider font-extrabold uppercase">
             {card.cardmemberName}
           </span>
+          <div className="text-[11px] font-medium tracking-widest mt-1">•••• {cardDigits}</div>
         </div>
 
         {/* Wireless payment wavy signals logo */}
@@ -181,7 +166,7 @@ export default function SponsorCardItem({
               e.stopPropagation();
               setRevealSecrets(!revealSecrets);
             }}
-            className="bg-black/40 hover:bg-black/60 p-1 rounded-full text-white/80 hover:text-white transition cursor-pointer"
+            className="bg-black/40 hover:bg-black/60 p-1 rounded-full hover:text-white/80 transition cursor-pointer"
             title="Toggle Card Details"
           >
             {revealSecrets ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -194,14 +179,14 @@ export default function SponsorCardItem({
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="absolute inset-x-0 bottom-16 bg-black/90 backdrop-blur-md border-y border-neutral-800 z-20 px-6 py-3 flex text-left flex-col text-neutral-300"
+          className="absolute inset-x-0 bottom-16 bg-black/90 backdrop-blur-md border-y border-neutral-800 z-20 px-6 py-3 flex text-left flex-col"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="text-[9px] text-[#38bdf8] tracking-widest font-mono uppercase font-semibold mb-0.5">Sensitive Details</div>
+          <div className="text-[9px] tracking-widest uppercase font-semibold mb-0.5">Sensitive Details</div>
           <div className="flex justify-between items-center pr-2">
-            <span className="font-mono text-sm tracking-[0.2em] font-medium text-white">{card.cardNumber}</span>
-            <span className="font-mono text-xs text-neutral-400">EXP: {card.expiry}</span>
-            <span className="font-mono text-xs text-neutral-400">CVV: {card.cvv}</span>
+            <span className="text-sm tracking-[0.2em] font-medium">{card.cardNumber}</span>
+            <span className="text-xs">EXP: {card.expiry}</span>
+            <span className="text-xs">CVV: {card.cvv}</span>
           </div>
         </motion.div>
       )}

@@ -363,9 +363,21 @@ html.light tbody.text-white,
 html.light tr.text-white,
 html.light td.text-white,
 html.light th.text-white,
-html.light div.text-white:not(.badge):not(.status-badge):not(.bg-primary):not(.bg-secondary):not(.bg-emerald-500):not(.bg-rose-500),
-html.light span.text-white:not(.material-symbols-outlined):not(.badge):not(.status-badge):not(.bg-primary):not(.bg-secondary):not(.bg-emerald-500):not(.bg-rose-500) {
+html.light div.text-white:not(.badge):not(.status-badge):not(.bg-primary):not(.bg-secondary):not(.bg-emerald-500):not(.bg-rose-500):not(.sponsored-card),
+html.light span.text-white:not(.material-symbols-outlined):not(.badge):not(.status-badge):not(.bg-primary):not(.bg-secondary):not(.bg-emerald-500):not(.bg-rose-500):not(.sponsored-card) {
   color: rgb(var(--on-background)) !important;
+}
+
+/* Sponsor cards — always pure white text regardless of light/dark mode */
+html.light .sponsored-card,
+html.light .sponsored-card span,
+html.light .sponsored-card div,
+html.light .sponsored-card .text-white,
+.dark .sponsored-card,
+.dark .sponsored-card span,
+.dark .sponsored-card div,
+.dark .sponsored-card .text-white {
+  color: #ffffff !important;
 }
 
 html.light p,
