@@ -100,6 +100,10 @@ function validateStep(step, data, planLimits, orgName, userTier) {
         errs.prize_positions_total = 'Prize distribution total must equal exactly 100%.'
       }
       if (totalPct > 100) errs.prize_split = 'Prize distribution exceeds 100%.'
+
+      if (data.sponsors_enabled && (userTier === 'Free' || !userTier)) {
+        errs.sponsors_enabled = 'Sponsor Contributions require the Basic plan or higher.'
+      }
       break
     }
     case 5:

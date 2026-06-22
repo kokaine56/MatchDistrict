@@ -2568,19 +2568,37 @@ const server = http.createServer(async (req, res) => {
         ORDER BY t.created_at DESC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      const normalized = (dbRes.rows || []).map((r) => ({
-        ...r,
-        cover_image_url: r.cover_image_url || '',
-        orgName: r.orgName || r.userOrgName || r.userName || 'Match District Organizer',
-        orgLogo: r.orgLogo || r.userOrgImage || '',
-        prize: (() => {
-          if (r.prize && r.prize.startsWith('\u20B9')) return r.prize;
-          const num = parseInt(String(r.prize || '').replace(/[^0-9]/g, ''), 10);
-          if (!isNaN(num) && num > 0) return `\u20B9${num.toLocaleString('en-IN')}`;
-          if (r.prize_pool_amount > 0) return `\u20B9${Number(r.prize_pool_amount).toLocaleString('en-IN')}`;
-          return r.prize && r.prize !== 'TBD' && r.prize !== 'TBA' ? r.prize : 'TBD';
-        })(),
-      }));
+      const normalized = (dbRes.rows || []).map((r) => {
+        // Compute sponsor contributions from sponsors_data
+        let sponsorRevenue = 0;
+        let hasApprovedSponsors = false;
+        try {
+          const sd = typeof r.sponsors_data === 'string' ? JSON.parse(r.sponsors_data) : (r.sponsors_data || []);
+          if (Array.isArray(sd)) {
+            const approved = sd.filter(s => s.status === 'approved');
+            sponsorRevenue = approved.reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0);
+            hasApprovedSponsors = approved.length > 0;
+          }
+        } catch {}
+        const basePrize = parseInt(r.prize_pool_amount) || 0;
+        const totalPrize = basePrize + sponsorRevenue;
+        return {
+          ...r,
+          cover_image_url: r.cover_image_url || '',
+          orgName: r.orgName || r.userOrgName || r.userName || 'Match District Organizer',
+          orgLogo: r.orgLogo || r.userOrgImage || '',
+          sponsorRevenue,
+          hasApprovedSponsors,
+          basePrize,
+          totalPrize,
+          prize: (() => {
+            if (r.prize && r.prize.startsWith('\u20B9') && !hasApprovedSponsors) return r.prize;
+            if (totalPrize > 0) return `\u20B9${totalPrize.toLocaleString('en-IN')}`;
+            if (r.prize && r.prize !== 'TBD' && r.prize !== 'TBA') return r.prize;
+            return 'TBD';
+          })(),
+        };
+      });
       res.end(JSON.stringify({ success: true, tournaments: normalized }));
     } catch (err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Supabase fetch tournaments failed:', err.message);
@@ -2612,6 +2630,21 @@ const server = http.createServer(async (req, res) => {
       delete row.userOrgName;
       delete row.userOrgImage;
       delete row.userName;
+      // Compute sponsor contributions
+      let sponsorRevenue = 0;
+      let hasApprovedSponsors = false;
+      try {
+        const sd = typeof row.sponsors_data === 'string' ? JSON.parse(row.sponsors_data) : (row.sponsors_data || []);
+        if (Array.isArray(sd)) {
+          const approved = sd.filter(s => s.status === 'approved');
+          sponsorRevenue = approved.reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0);
+          hasApprovedSponsors = approved.length > 0;
+        }
+      } catch {}
+      row.sponsorRevenue = sponsorRevenue;
+      row.hasApprovedSponsors = hasApprovedSponsors;
+      row.basePrize = parseInt(row.prize_pool_amount) || 0;
+      row.totalPrize = row.basePrize + sponsorRevenue;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, tournament: row }));
     } catch (err) {
@@ -2664,6 +2697,13 @@ const server = http.createServer(async (req, res) => {
         if (!limitCheck.allowed) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'LIMIT_EXCEEDED', message: limitCheck.error }));
+          return;
+        }
+
+        // Plan gate sponsors_enabled — only Basic/Pro can enable
+        if (t.sponsors_enabled && !limitCheck.plan.sponsorSections) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FEATURE_LOCKED', message: 'Sponsor Contributions require the Basic plan or higher.', requiredPlan: 'Basic' }));
           return;
         }
 
@@ -2839,6 +2879,16 @@ const server = http.createServer(async (req, res) => {
           if (!limitCheck.allowed) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'LIMIT_EXCEEDED', message: limitCheck.error }));
+            return;
+          }
+        }
+
+        // Plan gate sponsors_enabled
+        if (t.sponsors_enabled) {
+          const planCheck = await checkPlanLimits(pool, existing.orgId || authUser.id, 0, true, id);
+          if (!planCheck.plan.sponsorSections) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'FEATURE_LOCKED', message: 'Sponsor Contributions require the Basic plan or higher.' }));
             return;
           }
         }
@@ -7141,13 +7191,8 @@ const server = http.createServer(async (req, res) => {
         [authUser.id, adminNotes || null, contributionId]
       );
 
-      // Update tournament prize_pool_amount by adding contribution amount
-      await pool.query(
-        `UPDATE tournaments SET prize_pool_amount = COALESCE(prize_pool_amount, 0) + $1 WHERE id = $2`,
-        [parseInt(contrib.amount), contrib.tournament_id]
-      );
-
       // Append approved contribution to sponsors_data JSON column
+      // (prize_pool_amount stays as base — total is computed dynamically)
       const spRes = await pool.query('SELECT sponsors_data FROM tournaments WHERE id = $1', [contrib.tournament_id]);
       let existingSponsors = [];
       if (spRes.rows.length > 0 && spRes.rows[0].sponsors_data) {

@@ -101,5 +101,17 @@ export function normalizeTournamentRow(matched) {
         return 0
       }
     })(),
+    basePrize: parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0,
+    totalPrize: (() => {
+      const base = parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0
+      let contrib = 0
+      try {
+        const data = typeof matched.sponsors_data === 'string' ? JSON.parse(matched.sponsors_data) : (matched.sponsors_data || [])
+        if (Array.isArray(data)) {
+          contrib = data.filter(s => s.status === 'approved').reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0)
+        }
+      } catch {}
+      return base + contrib
+    })(),
   }
 }
