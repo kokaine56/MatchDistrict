@@ -7111,7 +7111,7 @@ const server = http.createServer(async (req, res) => {
         const tRes = await pool.query('SELECT sponsors_data FROM tournaments WHERE id = $1', [tournamentId]);
         let organizerSponsors = [];
         if (tRes.rows.length > 0 && tRes.rows[0].sponsors_data) {
-          try { organizerSponsors = JSON.parse(tRes.rows[0].sponsors_data).filter(s => s.status === 'approved'); } catch {}
+          try { organizerSponsors = JSON.parse(tRes.rows[0].sponsors_data).filter(s => s.status === 'approved' && s.type !== 'public'); } catch {}
         }
         const allSponsors = [
           ...organizerSponsors.map(s => ({ type: 'organizer', name: s.name, amount: s.amount, logo: s.logo, website: s.website })),
