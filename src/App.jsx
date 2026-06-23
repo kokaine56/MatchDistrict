@@ -258,18 +258,46 @@ function AppInner() {
     )
   }
 
-  // Registration page adapter with auth guard
+  // Registration page adapter with auth guard AND pre-flight duplicate check
   const RegistrationRoute = () => {
     const { currentUser, loading } = useUser()
     const { id } = useParams()
     const location = useLocation()
+    const [checkingReg, setCheckingReg] = useState(true)
+    const [alreadyRegistered, setAlreadyRegistered] = useState(false)
 
-    if (loading) {
+    useEffect(() => {
+      if (!id || !currentUser) { setCheckingReg(false); return }
+      setCheckingReg(true)
+      fetch(`/api/tournaments/${id}/registrations`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.registrations) {
+            const myReg = data.registrations.find(r => {
+              if (r.user_id === currentUser.id) return true
+              if (currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase()) return true
+              return false
+            })
+            if (myReg) {
+              const active = ['pending', 'pending_payment', 'approved', 'confirmed', 'PENDING_PAYMENT_VERIFICATION']
+              if (active.includes(myReg.status)) setAlreadyRegistered(true)
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => setCheckingReg(false))
+    }, [id, currentUser])
+
+    if (loading || checkingReg) {
       return <LoadingArena />
     }
 
     if (!currentUser) {
       return <Navigate to={`/login?redirect=${encodeURIComponent('/tournaments/' + id + '/register')}`} replace />
+    }
+
+    if (alreadyRegistered) {
+      return <Navigate to={`/tournaments/${id}`} replace />
     }
 
     return (

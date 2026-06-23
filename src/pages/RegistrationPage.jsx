@@ -3,13 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useUser } from '../UserContext'
 import { getAuthToken } from '../utils/getAuthToken'
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const SUB_COUNT = 2
 const STEPS = ['Registration', 'Payment', 'Verification', 'Confirmed']
 
 const INITIAL_STATE = {
   teamName: '',
-  email: '',
   phone: '',
   captainIgn: '',
   captainUid: '',
@@ -27,10 +25,8 @@ function validateAll(state) {
   const errs = {}
   if (!state.teamName.trim()) errs.teamName = 'Team name is required'
   else if (state.teamName.trim().length > 16) errs.teamName = 'Max 16 characters'
-  if (!state.email.trim()) errs.email = 'Email is required'
-  else if (!EMAIL_RE.test(state.email.trim())) errs.email = 'Invalid email format'
   const digits = state.phone.replace(/\D/g, '')
-  if (!state.phone.trim()) errs.phone = 'Phone is required'
+  if (!state.phone.trim()) errs.phone = 'WhatsApp number is required'
   else if (digits.length !== 10) errs.phone = 'Must be exactly 10 digits'
   if (!state.captainIgn.trim()) errs.captainIgn = 'Captain IGN is required'
   if (!state.captainUid.trim()) errs.captainUid = 'Captain UID is required'
@@ -50,6 +46,10 @@ function validateAll(state) {
     if (s.uid.trim() && !/^\d+$/.test(s.uid.trim())) errs[`sub${i + 1}_uid`] = 'Numbers only'
   })
   return errs
+}
+
+function RequiredAsterisk() {
+  return <span className="text-red-500 ml-0.5">*</span>
 }
 
 function ProgressSteps({ currentStep }) {
@@ -85,6 +85,18 @@ function ProgressSteps({ currentStep }) {
   )
 }
 
+function scrollToFirstError(formEl) {
+  const firstErr = formEl.querySelector('[data-error]')
+  if (!firstErr) return
+  firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Find the closest input or textarea and focus it
+  const fieldContainer = firstErr.closest('[data-field]')
+  if (fieldContainer) {
+    const input = fieldContainer.querySelector('input, textarea, select')
+    input?.focus()
+  }
+}
+
 export default function RegistrationPage() {
   const { id: tournamentId } = useParams()
   const navigate = useNavigate()
@@ -103,29 +115,66 @@ export default function RegistrationPage() {
     }
   }, [currentUser, tournamentId, navigate])
 
-  // Fetch tournament data
+  // Fetch tournament data + check existing registrations
   useEffect(() => {
-    if (!tournamentId) return
+    if (!tournamentId || !currentUser) return
     setTournamentLoading(true)
-    fetch(`/api/tournaments/${tournamentId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.success && data.tournament) {
-          const t = data.tournament
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const [tRes, regRes] = await Promise.all([
+          fetch(`/api/tournaments/${tournamentId}`),
+          fetch(`/api/tournaments/${tournamentId}/registrations`)
+        ])
+        const tData = await tRes.json()
+        const regData = await regRes.json()
+
+        if (cancelled) return
+
+        // Check existing registration for this user
+        if (regData.success && regData.registrations) {
+          const myReg = regData.registrations.find(r => {
+            if (r.user_id === currentUser.id) return true
+            if (currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase()) return true
+            return false
+          })
+          if (myReg) {
+            const active = ['pending', 'pending_payment', 'approved', 'confirmed', 'PENDING_PAYMENT_VERIFICATION']
+            if (active.includes(myReg.status)) {
+              setState(prev => ({ ...prev, serverError: 'You have already registered a team for this tournament.' }))
+            }
+          }
+        }
+
+        // Set tournament data
+        if (tData?.success && tData.tournament) {
+          const t = tData.tournament
           setTournament(t)
-          // Validate tournament state
-          if (t.status === 'archived' || t.status === 'completed') {
-            setState(prev => ({ ...prev, serverError: 'This tournament has ended.' }))
-          } else if (t.registrationCloseDate && new Date(t.registrationCloseDate) < new Date()) {
-            setState(prev => ({ ...prev, serverError: 'Registration for this tournament has closed.' }))
-          } else if (t.slotsFilled >= t.slotsTotal) {
-            setState(prev => ({ ...prev, serverError: 'All slots for this tournament are filled.' }))
+          if (!cancelled) {
+            if (t.status === 'archived' || t.status === 'completed') {
+              setState(prev => ({ ...prev, serverError: 'This tournament has ended.' }))
+            } else if (t.registrationCloseDate && (
+              /^\d{4}-\d{2}-\d{2}$/.test(t.registrationCloseDate)
+                ? new Date(t.registrationCloseDate + 'T23:59:59.999Z') < new Date()
+                : new Date(t.registrationCloseDate) < new Date()
+            )) {
+              setState(prev => ({ ...prev, serverError: 'Registration for this tournament has closed.' }))
+            } else if (t.slotsFilled >= t.slotsTotal) {
+              setState(prev => ({ ...prev, serverError: 'All slots for this tournament are filled.' }))
+            }
           }
         } else setTournament(null)
-      })
-      .catch(() => setTournament(null))
-      .finally(() => setTournamentLoading(false))
-  }, [tournamentId])
+      } catch {
+        if (!cancelled) setTournament(null)
+      } finally {
+        if (!cancelled) setTournamentLoading(false)
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
+  }, [tournamentId, currentUser])
 
   const [submitted, setSubmitted] = useState(false)
   const visibleErrors = submitted ? state.errors : {}
@@ -168,14 +217,16 @@ export default function RegistrationPage() {
     setSubmitted(true)
 
     const errs = validateAll(state)
-    const allTouch = { teamName: true, email: true, phone: true, captainIgn: true, captainUid: true }
+    const allTouch = { teamName: true, phone: true, captainIgn: true, captainUid: true }
     state.players.forEach((_, i) => { allTouch[`p${i + 2}_ign`] = true; allTouch[`p${i + 2}_uid`] = true })
     state.substitutes.forEach((_, i) => { allTouch[`sub${i + 1}_ign`] = true; allTouch[`sub${i + 1}_uid`] = true })
 
     if (Object.keys(errs).length > 0) {
       setState(prev => ({ ...prev, touched: { ...prev.touched, ...allTouch }, errors: errs }))
-      const firstErr = formRef.current?.querySelector('[data-error]')
-      firstErr?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Use requestAnimationFrame to ensure DOM has updated with error elements before scrolling
+      requestAnimationFrame(() => {
+        scrollToFirstError(formRef.current)
+      })
       return
     }
 
@@ -193,7 +244,7 @@ export default function RegistrationPage() {
 
       const payload = {
         team_name: state.teamName.trim(),
-        email: state.email.trim().toLowerCase(),
+        email: currentUser?.email || '',
         phone: state.phone.replace(/\D/g, ''),
         captain: state.captainIgn.trim(),
         captain_uid: state.captainUid.trim(),
@@ -227,12 +278,16 @@ export default function RegistrationPage() {
         serverError: err.message || 'Connection error. Please try again.'
       }))
     }
-  }, [state, tournamentId, navigate])
+  }, [state, tournamentId, navigate, currentUser])
 
   // Guard
   if (!currentUser) return null
 
   const needsPayment = tournament?.entry && tournament.entry !== 'Free'
+
+  // Blocking errors — user cannot proceed with the form
+  const blockingErrors = ['You have already registered a team for this tournament.', 'This tournament has ended.', 'Registration for this tournament has closed.', 'All slots for this tournament are filled.']
+  const isBlocked = state.serverError && blockingErrors.includes(state.serverError)
 
   const inputBase = `w-full px-3 py-[13px] rounded-xl border-2 text-[15px] outline-none transition-all duration-150 bg-surface text-on-background placeholder:text-on-surface-variant/40`
   const inputNormal = 'border-outline-variant/40 hover:border-outline-variant/60 focus:border-primary focus:ring-4 focus:ring-primary/10'
@@ -249,6 +304,23 @@ export default function RegistrationPage() {
       )}
 
       <div className="max-w-[1000px] mx-auto px-4 py-6 pb-28 md:pb-24">
+        {/* Blocking state — show message + Go Back, hide form */}
+        {isBlocked ? (
+          <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
+            <div className="w-16 h-16 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-on-background mb-2">Cannot Proceed</h2>
+            <p className="text-sm text-on-surface-variant mb-6 max-w-sm">{state.serverError}</p>
+            <button type="button" onClick={() => navigate(`/tournaments/${tournamentId}`)}
+              className="px-6 py-3 min-h-[48px] rounded-xl text-[14px] font-bold bg-primary text-white shadow-lg shadow-primary/25 hover:bg-primary/90 transition-all">
+              Go Back to Tournament
+            </button>
+          </div>
+        ) : (
+          <>
         {/* Progress Steps */}
         <ProgressSteps currentStep={1} />
 
@@ -259,29 +331,24 @@ export default function RegistrationPage() {
               <h2 className="text-sm font-semibold text-on-background">Team Information</h2>
             </div>
             <div className="space-y-4">
-              <div>
-                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">Team Name</label>
+              <div data-field>
+                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">
+                  Team Name<RequiredAsterisk />
+                </label>
                 <input type="text" value={state.teamName} onChange={(e) => setField('teamName', e.target.value)}
                   onBlur={() => blurField('teamName')} placeholder="Enter team name" maxLength={16}
                   className={`${inputBase} ${visibleErrors.teamName ? inputError : inputNormal}`} />
                 {visibleErrors.teamName && <p data-error className="text-[12px] text-red-500 mt-1.5">{visibleErrors.teamName}</p>}
                 <span className="text-[11px] text-on-surface-variant/40 mt-1 block">{state.teamName.length}/16</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">Email</label>
-                  <input type="email" value={state.email} onChange={(e) => setField('email', e.target.value)}
-                    onBlur={() => blurField('email')} placeholder="you@example.com" autoComplete="email"
-                    className={`${inputBase} ${visibleErrors.email ? inputError : inputNormal}`} />
-                  {visibleErrors.email && <p data-error className="text-[12px] text-red-500 mt-1.5">{visibleErrors.email}</p>}
-                </div>
-                <div>
-                  <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">WhatsApp</label>
-                  <input type="tel" value={state.phone} onChange={(e) => setField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    onBlur={() => blurField('phone')} placeholder="9876543210" maxLength={10} inputMode="numeric" autoComplete="tel"
-                    className={`${inputBase} ${visibleErrors.phone ? inputError : inputNormal}`} />
-                  {visibleErrors.phone && <p data-error className="text-[12px] text-red-500 mt-1.5">{visibleErrors.phone}</p>}
-                </div>
+              <div data-field>
+                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">
+                  WhatsApp<RequiredAsterisk />
+                </label>
+                <input type="tel" value={state.phone} onChange={(e) => setField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  onBlur={() => blurField('phone')} placeholder="9876543210" maxLength={10} inputMode="numeric" autoComplete="tel"
+                  className={`${inputBase} ${visibleErrors.phone ? inputError : inputNormal}`} />
+                {visibleErrors.phone && <p data-error className="text-[12px] text-red-500 mt-1.5">{visibleErrors.phone}</p>}
               </div>
             </div>
           </div>
@@ -295,15 +362,19 @@ export default function RegistrationPage() {
               <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">Captain</h2>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">IGN</label>
+              <div data-field>
+                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">
+                  IGN<RequiredAsterisk />
+                </label>
                 <input type="text" value={state.captainIgn} onChange={(e) => setField('captainIgn', e.target.value)}
                   onBlur={() => blurField('captainIgn')} placeholder="Captain IGN"
                   className={`${inputBase} ${visibleErrors.captainIgn ? inputError : inputNormal}`} />
                 {visibleErrors.captainIgn && <p data-error className="text-[12px] text-red-500 mt-1.5">{visibleErrors.captainIgn}</p>}
               </div>
-              <div>
-                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">UID</label>
+              <div data-field>
+                <label className="text-[13px] font-medium text-on-surface-variant mb-1.5 block">
+                  UID<RequiredAsterisk />
+                </label>
                 <input type="text" value={state.captainUid} onChange={(e) => setField('captainUid', e.target.value.replace(/\D/g, ''))}
                   onBlur={() => blurField('captainUid')} placeholder="Captain UID" inputMode="numeric"
                   className={`${inputBase} ${visibleErrors.captainUid ? inputError : inputNormal}`} />
@@ -315,12 +386,12 @@ export default function RegistrationPage() {
           {/* Players */}
           <div className="rounded-xl bg-surface shadow-sm border border-outline-variant/30 p-4 sm:p-5">
             <div className="flex items-center justify-between pb-3 mb-4 border-b border-outline-variant/20">
-              <h2 className="text-sm font-semibold text-on-background">Players</h2>
+              <h2 className="text-sm font-semibold text-on-background">Players <span className="text-red-500 font-normal">*</span></h2>
               <span className="text-[11px] font-medium text-on-surface-variant/60 bg-surface-variant/40 px-2 py-0.5 rounded-md">Required</span>
             </div>
             <div className="space-y-2.5">
               {state.players.map((p, i) => (
-                <div key={i} className="flex items-center gap-3 bg-surface-variant/20 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 border border-outline-variant/20">
+                <div key={i} data-field className="flex items-center gap-3 bg-surface-variant/20 rounded-xl px-3 py-2.5 sm:px-4 sm:py-3 border border-outline-variant/20">
                   <span className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold flex-shrink-0">{i + 2}</span>
                   <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <input type="text" value={p.ign} onChange={(e) => setPlayer(i, 'ign', e.target.value)}
@@ -423,16 +494,18 @@ export default function RegistrationPage() {
                    <>{needsPayment ? 'Continue to Payment' : 'Continue to Registration'}</>
                  )}
                </button>
-             </div>
-           </div>
-         </form>
-       </div>
+              </div>
+            </div>
+          </form>
+          </>
+        )}
+        </div>
 
-       {/* Loading overlay */}
+        {/* Loading overlay */}
        {state.isSubmitting && <div className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm" />}
 
-       {/* Mobile sticky bar */}
-       <div className="fixed bottom-0 left-0 right-0 z-30 md:hidden bg-surface border-t border-outline-variant/30 px-4 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] dark:shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
+        {/* Mobile sticky bar (hidden when blocked) */}
+        {!isBlocked && <div className="fixed bottom-0 left-0 right-0 z-30 md:hidden bg-surface border-t border-outline-variant/30 px-4 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] dark:shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
          <div className="flex items-center gap-3 max-w-[1000px] mx-auto">
            <button type="button" onClick={() => navigate(-1)} disabled={state.isSubmitting}
              className="px-5 py-3 min-h-[48px] rounded-xl text-[14px] font-semibold disabled:opacity-30 bg-surface-variant/60 hover:bg-surface-variant text-on-background border border-outline-variant/30 flex-shrink-0 transition-colors">
@@ -445,9 +518,9 @@ export default function RegistrationPage() {
              ) : (
                <>{needsPayment ? 'Continue to Payment' : 'Continue to Registration'}</>
              )}
-          </button>
-        </div>
-      </div>
-    </div>
+           </button>
+          </div>
+        </div>}
+     </div>
   )
 }

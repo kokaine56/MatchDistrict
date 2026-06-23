@@ -157,18 +157,41 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const [slotsData, setSlotsData] = useState({ slotsTotal: 100, slotsFilled: 0, slotsAvailable: 100, slots: [] });
 
+  const fetchRegistrations = useCallback(async () => {
+    if (!tournamentId) return;
+    try {
+      const res = await fetch(`/api/tournaments/${tournamentId}/registrations`);
+      const data = await res.json();
+      if (data.success && data.registrations) setRegistrations(data.registrations);
+    } catch (_) {}
+  }, [tournamentId]);
+
+  const fetchSlots = useCallback(async () => {
+    if (!tournamentId) return;
+    try {
+      const res = await fetch(`/api/tournaments/${tournamentId}/slots`);
+      const data = await res.json();
+      if (data.success) setSlotsData(data);
+    } catch (_) {}
+  }, [tournamentId]);
+
+  useEffect(() => {
+    fetchRegistrations();
+    fetchSlots();
+  }, [fetchRegistrations, fetchSlots]);
+
+  useRefetchOnFocus(fetchRegistrations, !!tournamentId);
+  useRefetchOnFocus(fetchSlots, !!tournamentId);
+
+  // Polling fallback: re-fetch registrations & slots every 30s as safety net
   useEffect(() => {
     if (!tournamentId) return;
-    fetch(`/api/tournaments/${tournamentId}/registrations`)
-      .then(res => res.json())
-      .then(data => { if (data.success && data.registrations) setRegistrations(data.registrations); })
-      .catch(() => {});
-
-    fetch(`/api/tournaments/${tournamentId}/slots`)
-      .then(res => res.json())
-      .then(data => { if (data.success) setSlotsData(data); })
-      .catch(() => {});
-  }, [tournamentId]);
+    const iv = setInterval(() => {
+      fetchRegistrations();
+      fetchSlots();
+    }, 30000);
+    return () => clearInterval(iv);
+  }, [tournamentId, fetchRegistrations, fetchSlots]);
 
   const [tournamentsList, setTournamentsList] = useState([]);
   const [tournamentRow, setTournamentRow] = useState(null);
@@ -221,9 +244,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         else if (payload.eventType === 'UPDATE') setChatMessages(prev => prev.map(m => m.id === payload.new.id ? payload.new : m));
         else if (payload.eventType === 'DELETE') setChatMessages(prev => prev.filter(m => m.id !== payload.old.id));
       })
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          console.warn(`[REALTIME] Channel tournament-detail-${tournamentId} status:`, status, err);
+          fetchRegistrations();
+          fetchSlots();
+        }
+      });
     return () => { supabase.removeChannel(channel); };
-  }, [tournamentId]);
+  }, [tournamentId, fetchRegistrations, fetchSlots]);
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
   const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
@@ -379,7 +408,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const myRoster = useMemo(() => {
     if (!currentUser || registrations.length === 0) return null;
-    return registrations.find(r => r.user_id === currentUser.id || r.captain.toLowerCase() === currentUser.gamerTag?.toLowerCase() || r.captain.toLowerCase() === `@${currentUser.gamerTag?.toLowerCase()}` || r.captain.toLowerCase() === currentUser.name?.toLowerCase());
+    return registrations.find(r => {
+      if (r.user_id === currentUser.id) return true;
+      if (currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase()) return true;
+      const captainLower = (r.captain || '').toLowerCase();
+      const gt = (currentUser.gamerTag || '').toLowerCase();
+      const nm = (currentUser.name || '').toLowerCase();
+      return captainLower === gt || captainLower === `@${gt}` || captainLower === nm;
+    });
   }, [currentUser, registrations]);
 
   const isRegistered = !!myRoster;
@@ -397,22 +433,21 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const isPendingApproval = rosterStatus === 'pending';
 
   const getButtonConfig = () => {
-    if (!myRoster) return { text: 'Join Now', icon: 'arrow_forward', style: 'primary', disabled: false };
-    if (isApprovedRoster) return { text: 'Registered ✓', icon: 'check_circle', style: 'approved', disabled: true };
-    if (isPendingPayment) return { text: 'Waiting for Verification', icon: 'hourglass_top', style: 'warning', disabled: true };
-    if (isPendingApproval) return { text: 'Waiting for Approval', icon: 'hourglass_top', style: 'warning', disabled: true };
-    if (rosterStatus === 'PAYMENT_REJECTED') return { text: 'Payment Rejected — Re-register', icon: 'refresh', style: 'danger', disabled: false };
-    if (canReRegister) return { text: 'Join Now', icon: 'arrow_forward', style: 'primary', disabled: false };
-    return { text: 'Pending', icon: 'hourglass_top', style: 'warning', disabled: true };
+    if (!myRoster) return { text: 'Join Now', style: 'primary', disabled: false };
+    if (isApprovedRoster) return { text: 'Joined', style: 'approved', disabled: true };
+    if (isPendingPayment || isPendingApproval) return { text: 'Pending Verification', style: 'warning', disabled: true };
+    if (rosterStatus === 'PAYMENT_REJECTED') return { text: 'Re-register', style: 'danger', disabled: false };
+    if (canReRegister) return { text: 'Join Now', style: 'primary', disabled: false };
+    return { text: 'Pending Verification', style: 'warning', disabled: true };
   };
 
   const btn = getButtonConfig();
 
   const btnStyles = {
-    primary: 'bg-primary hover:bg-primary/95 text-on-primary shadow-lg',
-    approved: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-not-allowed',
-    warning: 'bg-amber-500/20 text-amber-400 border border-amber-500/30 cursor-not-allowed',
-    danger: 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+    primary: 'bg-primary hover:bg-primary/90 text-white font-bold shadow-lg shadow-primary/25',
+    approved: 'bg-emerald-500 text-white font-bold cursor-not-allowed opacity-80',
+    warning: 'bg-amber-500 text-white font-bold cursor-not-allowed opacity-80',
+    danger: 'bg-red-500 hover:bg-red-600 text-white font-bold shadow-lg shadow-red-500/25'
   };
 
   const triggerToast = (msg) => { setToastMessage(msg); setShowToast(true); setTimeout(() => setShowToast(false), 4000); };
@@ -806,7 +841,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <button
                   onClick={handleRegister}
                   disabled={btn.disabled}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 shadow-sm transition-all text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                  className={`${btnStyles[btn.style]} py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 transition-all text-xs sm:text-sm disabled:cursor-not-allowed`}
                 >
                   {btn.text}
                 </button>

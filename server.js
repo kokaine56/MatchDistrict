@@ -435,10 +435,21 @@ async function initDb() {
           form_data TEXT NOT NULL,
           idempotency_key VARCHAR(64) UNIQUE,
           status VARCHAR(20) DEFAULT 'active',
-          expires_at TIMESTAMP NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          expires_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
       `);
+      // Migrate existing TIMESTAMP columns to TIMESTAMPTZ (no-op if already correct)
+      await client.query(`
+        ALTER TABLE registration_sessions 
+        ALTER COLUMN expires_at TYPE TIMESTAMPTZ 
+        USING expires_at AT TIME ZONE 'UTC'
+      `).catch(() => {});
+      await client.query(`
+        ALTER TABLE registration_sessions 
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ 
+        USING created_at AT TIME ZONE 'UTC'
+      `).catch(() => {});
       console.log('📦 [MATCH DISTRICT DB] registration_sessions table ensured.');
     } catch (sesErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create registration_sessions:', sesErr.message);
@@ -459,11 +470,21 @@ async function initDb() {
           payment_status VARCHAR(30) DEFAULT 'pending_admin_review',
           admin_notes TEXT,
           reviewed_by VARCHAR(50),
-          reviewed_at TIMESTAMP,
+          reviewed_at TIMESTAMPTZ,
           idempotency_key VARCHAR(64) UNIQUE,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
       `);
+      await client.query(`
+        ALTER TABLE payment_submissions 
+        ALTER COLUMN reviewed_at TYPE TIMESTAMPTZ 
+        USING reviewed_at AT TIME ZONE 'UTC'
+      `).catch(() => {});
+      await client.query(`
+        ALTER TABLE payment_submissions 
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ 
+        USING created_at AT TIME ZONE 'UTC'
+      `).catch(() => {});
       console.log('📦 [MATCH DISTRICT DB] payment_submissions table ensured.');
     } catch (payErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create payment_submissions:', payErr.message);
@@ -3370,7 +3391,10 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         if (tournament.registrationCloseDate) {
-          const closeDate = new Date(tournament.registrationCloseDate);
+          const raw = tournament.registrationCloseDate;
+          const closeDate = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+            ? new Date(raw + 'T23:59:59.999Z')
+            : new Date(raw);
           if (closeDate < new Date()) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration for this tournament has closed.' }));
@@ -3595,7 +3619,7 @@ const server = http.createServer(async (req, res) => {
 
         // Verify tournament is still open
         const tRes = await client.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount FROM tournaments WHERE id = $1',
+          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate" FROM tournaments WHERE id = $1',
           [session.tournament_id]
         );
         if (tRes.rows.length === 0) {
@@ -3605,6 +3629,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const tournament = tRes.rows[0];
+
+        // Registration close date check (defense-in-depth)
+        if (tournament.registrationCloseDate) {
+          const raw = tournament.registrationCloseDate;
+          const closeDate = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+            ? new Date(raw + 'T23:59:59.999Z')
+            : new Date(raw);
+          if (closeDate < new Date()) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration for this tournament has closed.' }));
+            client.release();
+            return;
+          }
+        }
 
         // Optimistic slot check
         if (tournament.slotsFilled >= tournament.slotsTotal) {
