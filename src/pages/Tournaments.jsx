@@ -5,6 +5,7 @@ import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
 import TournamentCard from '../components/TournamentCard'
+import SponsoredStar from '../components/SponsoredStar'
 import VerificationBadge from '../components/VerificationBadge'
 import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
@@ -266,6 +267,8 @@ function Tournaments({ onNavigate }) {
                         registrationOpenDate={t.registrationOpenDate}
                         registrationCloseDate={t.registrationCloseDate}
                         startDate={t.startDate}
+                        hasSponsors={t.hasApprovedSponsors}
+                        sponsoredAmount={t.totalSponsorContributions}
                       />
                     </div>
                   ))}
@@ -585,6 +588,7 @@ function Tournaments({ onNavigate }) {
                           <div className="flex items-center gap-1">
                             <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
                             <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(t.prize || t.prizePool)}</span>
+                            {(t.hasApprovedSponsors || t.totalSponsorContributions > 0) && <SponsoredStar size={12} />}
                           </div>
 
                           <div className="flex items-center gap-2">
@@ -645,6 +649,8 @@ function Tournaments({ onNavigate }) {
                             registrationOpenDate={t.registrationOpenDate}
                             registrationCloseDate={t.registrationCloseDate}
                             startDate={t.startDate}
+                            hasSponsors={t.hasApprovedSponsors}
+                            sponsoredAmount={t.totalSponsorContributions}
                           />
                         </div>
                       ))}

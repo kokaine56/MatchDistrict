@@ -1,6 +1,7 @@
 import { memo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import VerificationBadge from './VerificationBadge'
+import SponsoredStar from './SponsoredStar'
 import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
@@ -63,7 +64,8 @@ function WalletPassCard({
   onNavigate,
   buttonClassName,
   displayBadgeText,
-  displayBadgeBg
+  displayBadgeBg,
+  hasSponsors
 }) {
   const [isPassPopped, setIsPassPopped] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
@@ -180,10 +182,11 @@ function WalletPassCard({
 
             {/* Prize & Entry Rows */}
             <div className="grid grid-cols-2 gap-1 py-1 border-y border-slate-200 text-center leading-none">
-              <div className="bg-emerald-50 border border-emerald-100 rounded py-0.5 px-0.5 flex items-center justify-center">
+              <div className="bg-emerald-50 border border-emerald-100 rounded py-0.5 px-0.5 flex items-center justify-center gap-0.5">
                 <span className="text-[7px] font-extrabold text-emerald-600 tracking-tight uppercase truncate">
                   {prizeDisplay}
                 </span>
+                {hasSponsors && <SponsoredStar size={9} />}
               </div>
               <div className="bg-amber-50 border border-amber-100 rounded py-0.5 px-0.5 flex items-center justify-center">
                 <span className="text-[7px] font-extrabold text-amber-600 tracking-tight uppercase truncate">
@@ -358,6 +361,7 @@ function TournamentCardBase({
   orgName, orgTier, buttonText,
   onNavigate,
   hasSponsors,
+  sponsoredAmount,
   isPreview,
   buttonClassName,
   registrationOpenDate,
@@ -365,6 +369,7 @@ function TournamentCardBase({
   startDate,
   date
 }) {
+  const isSponsored = hasSponsors || (parseInt(sponsoredAmount) > 0)
   const [isExpanded, setIsExpanded] = useState(false)
   const [imgError, setImgError] = useState(false)
   const [fallbackFailed, setFallbackFailed] = useState(false)
@@ -476,10 +481,9 @@ function TournamentCardBase({
             />
           )}
 
-          {hasSponsors ? (
-            <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-amber-500 text-black text-[9px] sm:text-[10px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1 max-w-[90px] truncate select-none">
-              <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <span className="truncate">Sponsored</span>
+          {isSponsored ? (
+            <div className="absolute bottom-2 left-2 p-1.5 rounded-full bg-amber-500 shadow-sm select-none">
+              <SponsoredStar size={12} />
             </div>
           ) : game ? (
             <div className="absolute bottom-2 left-2 select-none">
@@ -520,6 +524,7 @@ function TournamentCardBase({
       buttonClassName={finalButtonClass}
       displayBadgeText={displayBadgeText}
       displayBadgeBg={displayBadgeBg}
+      hasSponsors={isSponsored}
     />
   )
 }
