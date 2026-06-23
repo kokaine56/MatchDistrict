@@ -47,6 +47,7 @@ function emptyForm() {
     roadmap: [],
     sponsors: [],
     rules: '',
+    max_slots_per_room: '',
   }
 }
 
@@ -281,6 +282,7 @@ export default function CreationWizard() {
           roadmap,
           sponsors: Array.isArray(t.sponsors_data) ? t.sponsors_data : (typeof t.sponsors_data === 'string' ? (() => { try { return JSON.parse(t.sponsors_data) } catch { return [] } })() : []),
           rules: t.rules || '',
+          max_slots_per_room: t.max_slots_per_room ? String(t.max_slots_per_room) : '',
         })
         setDraftId(id)
       }
@@ -368,6 +370,7 @@ export default function CreationWizard() {
         slotsTotal: parseInt(formData.slotsTotal) || 100,
         sponsors_enabled: formData.sponsors_enabled ?? false,
         rules: formData.rules || '',
+        max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
       }
 
       // Use pre-uploaded Cloudinary URL from Step9Publish if provided

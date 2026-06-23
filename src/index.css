@@ -1308,6 +1308,18 @@ body::-webkit-scrollbar {
   animation: shine-sweep 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
+@keyframes mirror-shine {
+  0% { transform: translateX(-150%) rotate(25deg); }
+  30%, 100% { transform: translateX(150%) rotate(25deg); }
+}
+
+.chrome-shine-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.45) 50%, transparent 100%);
+  animation: mirror-shine 3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
 /* ==========================================================================
    PROFILE EDIT MODALS - THEME SUPPORT
    ========================================================================== */

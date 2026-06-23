@@ -77,6 +77,7 @@ export function normalizeTournamentRow(matched) {
         return []
       }
     })(),
+    max_slots_per_room: matched.max_slots_per_room ? parseInt(matched.max_slots_per_room, 10) : null,
     sponsors_enabled: matched.sponsors_enabled ?? false,
     sponsors_data: (() => {
       try {

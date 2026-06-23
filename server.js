@@ -376,6 +376,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgLogo" TEXT DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
@@ -2715,9 +2716,9 @@ const server = http.createServer(async (req, res) => {
             rules, chat, notices, teams, region, format, "slotsTotal", "slotsFilled", "roomID", "roomPassword", timeline, "bannerUrl", "logoUrl", "isDraft", version, "orgId",
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
-            mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled
+            mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -2734,7 +2735,8 @@ const server = http.createServer(async (req, res) => {
             match_type = COALESCE(EXCLUDED.match_type, tournaments.match_type),
             perspective = COALESCE(EXCLUDED.perspective, tournaments.perspective),
             entry_fee_amount = COALESCE(EXCLUDED.entry_fee_amount, tournaments.entry_fee_amount),
-            description = COALESCE(EXCLUDED.description, tournaments.description)
+            description = COALESCE(EXCLUDED.description, tournaments.description),
+            max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room)
           RETURNING *`,
           [
             t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -2789,7 +2791,8 @@ const server = http.createServer(async (req, res) => {
             t.kill_reward_enabled || false,
             t.kill_reward_per_kill !== undefined ? parseInt(t.kill_reward_per_kill) : 0,
             t.prize_positions || '[]',
-            t.sponsors_enabled !== undefined ? t.sponsors_enabled : false
+            t.sponsors_enabled !== undefined ? t.sponsors_enabled : false,
+            t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${t.id}" created in Supabase PostgreSQL.\n`);
@@ -2945,8 +2948,9 @@ const server = http.createServer(async (req, res) => {
             kill_reward_enabled = COALESCE($48, kill_reward_enabled),
             kill_reward_per_kill = COALESCE($49, kill_reward_per_kill),
             prize_positions = COALESCE($50, prize_positions),
-            sponsors_enabled = COALESCE($51, sponsors_enabled)
-           WHERE id = $52 RETURNING *`,
+            sponsors_enabled = COALESCE($51, sponsors_enabled),
+            max_slots_per_room = COALESCE($52, max_slots_per_room)
+           WHERE id = $53 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
             t.game !== undefined ? t.game : null,
@@ -2999,6 +3003,7 @@ const server = http.createServer(async (req, res) => {
             t.kill_reward_per_kill !== undefined ? parseInt(t.kill_reward_per_kill) : null,
             t.prize_positions !== undefined ? t.prize_positions : null,
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
+            t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
             id
           ]
         );
@@ -4475,7 +4480,7 @@ const server = http.createServer(async (req, res) => {
     const parts = req.url.split('/');
     const id = parts[3];
     try {
-      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled" FROM tournaments WHERE id = $1', [id]);
+      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room FROM tournaments WHERE id = $1', [id]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
@@ -4483,6 +4488,10 @@ const server = http.createServer(async (req, res) => {
       }
       const slotsTotal = parseInt(tRes.rows[0].slotsTotal) || 100;
       const slotsFilled = parseInt(tRes.rows[0].slotsFilled) || 0;
+      const matchType = (tRes.rows[0].match_type || 'squad').toLowerCase();
+      const maxSlotsPerRoom = tRes.rows[0].max_slots_per_room
+        ? parseInt(tRes.rows[0].max_slots_per_room)
+        : null;
 
       const regsRes = await pool.query(
         'SELECT id, team_name, captain, status, slot_number FROM tournament_registrations WHERE tournament_id = $1',
@@ -4512,13 +4521,67 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      const roomCeilings = { solo: 100, duo: 50, squad: 25 };
+      const gameCeiling = roomCeilings[matchType] || 25;
+      const effectiveMaxPerRoom = maxSlotsPerRoom || gameCeiling;
+      const m = Math.max(1, effectiveMaxPerRoom);
+      const total = Math.max(0, slotsTotal);
+
+      let rooms = [];
+      let balanced = false;
+
+      if (total > 0 && total > m) {
+        const initialRooms = Math.floor(total / m);
+        const remainder = total % m;
+        if (remainder > 0) {
+          const newCapacity = Math.ceil(total / initialRooms);
+          if (newCapacity <= gameCeiling) {
+            // Balanced collapse
+            const base = Math.floor(total / initialRooms);
+            const extra = total % initialRooms;
+            let cursor = 1;
+            for (let i = 0; i < initialRooms; i++) {
+              const size = i < extra ? base + 1 : base;
+              const start = cursor;
+              const end = cursor + size - 1;
+              rooms.push({ roomNumber: i + 1, slotStart: start, slotEnd: end, slotsInRoom: size });
+              cursor += size;
+            }
+            balanced = true;
+          }
+        }
+      }
+
+      if (rooms.length === 0) {
+        // Fall back to simple split
+        const totalRooms = Math.max(1, Math.ceil(total / m));
+        for (let r = 0; r < totalRooms; r++) {
+          const start = r * m + 1;
+          const end = Math.min((r + 1) * m, total);
+          rooms.push({
+            roomNumber: r + 1,
+            slotStart: start,
+            slotEnd: end,
+            slotsInRoom: end - start + 1,
+          });
+        }
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
         slotsTotal,
         slotsFilled,
         slotsAvailable: Math.max(0, slotsTotal - slotsFilled),
-        slots
+        slots,
+        roomMeta: {
+          matchType,
+          maxSlotsPerRoom: effectiveMaxPerRoom,
+          gameCeiling,
+          totalRooms: rooms.length,
+          balanced,
+          rooms,
+        },
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });

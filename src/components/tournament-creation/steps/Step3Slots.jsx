@@ -8,6 +8,8 @@ const PLAN_VALIDATION = {
   Pro: 'Pro Plan supports up to 1000 slots per tournament.',
 }
 
+const ROOM_CEILINGS = { solo: 100, duo: 50, squad: 25 }
+
 export default function Step3Slots({ data, onChange, errors, planLimits, userTier }) {
   const tier = userTier || 'Free'
   const maxSlots = planLimits?.maxSlots || PLAN_MAX_SLOTS[tier] || 100
@@ -97,6 +99,61 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
       </div>
 
       <SlotCalculator total={data.slotsTotal} reserved={data.reserved_slots} />
+
+      {/* Room Configuration */}
+      <div className="pt-4 border-t border-slate-100 dark:border-outline-variant/20">
+        <div className="flex items-center gap-2 mb-3">
+          <svg className="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+            <path d="M8 21h8" /><path d="M12 17v4" />
+          </svg>
+          <h3 className="text-sm font-bold text-on-background">Room Configuration</h3>
+        </div>
+
+        <p className="text-xs text-on-surface-variant mb-3">
+          Optionally split slots across multiple game lobbies. 
+          Leave blank to use the match type's default maximum per room.
+        </p>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-on-surface-variant">
+            Max Slots Per Room <span className="text-on-surface-variant/50">(optional)</span>
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={ROOM_CEILINGS[data.match_type] || 25}
+            value={data.max_slots_per_room || ''}
+            onChange={(e) => {
+              const v = e.target.value
+              const ceiling = ROOM_CEILINGS[data.match_type] || 25
+              if (v === '' || (parseInt(v) > 0 && parseInt(v) <= ceiling)) {
+                onChange({ ...data, max_slots_per_room: v })
+              }
+            }}
+            placeholder="e.g. 16"
+            className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors"
+          />
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-xs text-on-surface-variant">
+              Hard ceiling for <strong className="text-on-background capitalize">{data.match_type || 'squad'}</strong>: <strong>{ROOM_CEILINGS[data.match_type] || 25}</strong> slots/room
+            </span>
+            {data.max_slots_per_room && parseInt(data.max_slots_per_room) > 0 && data.slotsTotal && (
+              <span className="text-xs text-on-surface-variant">
+                {Math.ceil(parseInt(data.slotsTotal) / parseInt(data.max_slots_per_room))} room{Math.ceil(parseInt(data.slotsTotal) / parseInt(data.max_slots_per_room)) > 1 ? 's' : ''} needed
+              </span>
+            )}
+          </div>
+          <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
+            <svg className="w-4 h-4 mt-0.5 shrink-0 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            <p className="text-xs text-indigo-700 dark:text-indigo-300">
+              Players see room tabs in the Live Slot Occupancy Map. Each room's slot numbers restart at 1, mirroring actual in-game lobby display.
+            </p>
+          </div>
+        </div>
+      </div>
     </motion.div>
   )
 }

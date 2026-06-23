@@ -13,6 +13,7 @@ import { uploadImage } from '../utils/cloudinaryUpload.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
+import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -948,11 +949,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   {/* Sponsored */}
                   {sponsoredAmount > 0 && (
                     <div className="flex items-center justify-between mt-4 relative z-10">
-                      <span className="text-sm text-slate-600 font-medium flex items-center gap-2">
-                        <svg className="w-4 h-4 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                      <span className="text-sm text-slate-600 font-medium flex items-center gap-1.5">
+                        Sponsored Contributions
+                        <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
                           <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
                         </svg>
-                        Sponsored Contributions
                       </span>
                       <span className="text-sm font-bold text-amber-600">+{formatIndianCurrency(sponsoredAmount)}</span>
                     </div>
@@ -961,10 +962,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   {/* Separator */}
                   <div className="border-t border-slate-100 my-4 relative z-10" />
 
-                  {/* Hero Total Prize Pool */}
+                  {/* Total Prize Pool */}
                   <div className="flex items-center justify-between relative z-10">
                     <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Prize Pool</span>
-                    <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-3xl sm:text-4xl font-black tracking-tight drop-shadow-sm">
+                    <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
                       {formatIndianCurrency(totalPrize)}
                     </span>
                   </div>
@@ -976,21 +977,33 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">Prize Distribution</h5>
                     {prizeDistributions.slice(0, 15).map((row, i) => {
                       const medalSvgs = [
-                        <svg key="g" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
-                        </svg>,
-                        <svg key="s" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
-                        </svg>,
-                        <svg key="b" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
-                        </svg>
+                        <span key="g" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.4)]"
+                          style={{ background: 'linear-gradient(135deg, #FCD34D, #EAB308, #D97706)' }}>
+                          <span className="chrome-shine-overlay" />
+                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
+                          </svg>
+                        </span>,
+                        <span key="s" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(148,163,184,0.3)]"
+                          style={{ background: 'linear-gradient(135deg, #E2E8F0, #94A3B8, #64748B)' }}>
+                          <span className="chrome-shine-overlay" />
+                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
+                          </svg>
+                        </span>,
+                        <span key="b" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(217,119,6,0.3)]"
+                          style={{ background: 'linear-gradient(135deg, #FDBA74, #F97316, #92400E)' }}>
+                          <span className="chrome-shine-overlay" />
+                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
+                          </svg>
+                        </span>
                       ];
 
                       const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
@@ -1120,50 +1133,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'teams' && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm w-full">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">Live Slot Occupancy Map</h3>
-
-                <div className="grid grid-cols-4 sm:grid-cols-8 md:grid-cols-10 gap-2.5 w-full">
-                  {Array.from({ length: slotTotal }, (_, i) => {
-                    const slotNum = i + 1;
-                    const slotInfo = slotsData?.slots?.find(s => s.number === slotNum);
-                    if (slotInfo?.status === 'occupied') {
-                      return (
-                        <div key={i} className="aspect-square bg-red-50 border border-red-200 text-red-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs" title={`Occupied by ${slotInfo.teamName}`}>
-                          {slotNum}
-                        </div>
-                      );
-                    }
-                    if (slotInfo?.status === 'pending') {
-                      return (
-                        <div key={i} className="aspect-square bg-amber-50 border border-amber-200 text-amber-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs animate-pulse" title={`Pending: ${slotInfo.teamName}`}>
-                          {slotNum}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={i} className="aspect-square bg-green-50 border border-green-200 text-green-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs" title="Available">
-                        {slotNum}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="flex items-center gap-4 mt-6 pt-4 border-t border-slate-100 text-xs font-bold text-slate-500">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                    <span>Available</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                    <span>Occupied</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                    <span>Pending</span>
-                  </div>
-                </div>
-              </div>
+              <RoomSlotGrid
+                slotsData={slotsData}
+                matchType={tourney?.match_type}
+              />
             )}
             {activeTab === 'sponsors' && (
               <div className="w-full max-w-7xl">
