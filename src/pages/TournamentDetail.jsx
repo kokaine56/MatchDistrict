@@ -935,40 +935,44 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             )}
             {activeTab === 'prize' && (
               <div className="flex flex-col gap-5 max-w-2xl">
-                {/* Premium Prize Pool Breakdown Summary */}
+                {/* Prize Pool Breakdown Summary */}
                 <div className="relative overflow-hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-lg">
-                  <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-32 bg-emerald-400/10 rounded-full blur-3xl pointer-events-none" />
-                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-5 relative z-10">Prize Pool Breakdown</h4>
+                  {sponsoredAmount > 0 ? (
+                    <>
+                      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-5 relative z-10">Prize Pool Breakdown</h4>
 
-                  {/* Base Prize */}
-                  <div className="flex items-center justify-between relative z-10">
-                    <span className="text-sm text-slate-600 font-medium">Base Prize</span>
-                    <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
-                  </div>
+                      <div className="flex items-center justify-between relative z-10">
+                        <span className="text-sm text-slate-600 font-medium">Base Prize</span>
+                        <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
+                      </div>
 
-                  {/* Sponsored */}
-                  {sponsoredAmount > 0 && (
-                    <div className="flex items-center justify-between mt-4 relative z-10">
-                      <span className="text-sm text-slate-600 font-medium flex items-center gap-1.5">
-                        Sponsored Contributions
-                        <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
-                        </svg>
+                      <div className="flex items-center justify-between mt-4 relative z-10">
+                        <span className="text-sm text-slate-600 font-medium flex items-center gap-1.5">
+                          Sponsored Contributions
+                          <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
+                          </svg>
+                        </span>
+                        <span className="text-sm font-bold text-amber-600">+{formatIndianCurrency(sponsoredAmount)}</span>
+                      </div>
+
+                      <div className="border-t border-slate-100 my-4 relative z-10" />
+
+                      <div className="flex items-center justify-between relative z-10">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Prize Pool</span>
+                        <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
+                          {formatIndianCurrency(totalPrize)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-between relative z-10">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Prize Pool</span>
+                      <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
+                        {formatIndianCurrency(totalPrize)}
                       </span>
-                      <span className="text-sm font-bold text-amber-600">+{formatIndianCurrency(sponsoredAmount)}</span>
                     </div>
                   )}
-
-                  {/* Separator */}
-                  <div className="border-t border-slate-100 my-4 relative z-10" />
-
-                  {/* Total Prize Pool */}
-                  <div className="flex items-center justify-between relative z-10">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Prize Pool</span>
-                    <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
-                      {formatIndianCurrency(totalPrize)}
-                    </span>
-                  </div>
                 </div>
 
                 {/* Prize Distribution Cards */}
@@ -977,33 +981,21 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">Prize Distribution</h5>
                     {prizeDistributions.slice(0, 15).map((row, i) => {
                       const medalSvgs = [
-                        <span key="g" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.4)]"
-                          style={{ background: 'linear-gradient(135deg, #FCD34D, #EAB308, #D97706)' }}>
-                          <span className="chrome-shine-overlay" />
-                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
-                          </svg>
-                        </span>,
-                        <span key="s" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(148,163,184,0.3)]"
-                          style={{ background: 'linear-gradient(135deg, #E2E8F0, #94A3B8, #64748B)' }}>
-                          <span className="chrome-shine-overlay" />
-                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
-                          </svg>
-                        </span>,
-                        <span key="b" className="relative w-7 h-7 rounded-full overflow-hidden shrink-0 drop-shadow-[0_2px_10px_rgba(217,119,6,0.3)]"
-                          style={{ background: 'linear-gradient(135deg, #FDBA74, #F97316, #92400E)' }}>
-                          <span className="chrome-shine-overlay" />
-                          <svg className="relative z-10 w-full h-full p-0.5" viewBox="0 0 24 24" fill="none">
-                            <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
-                          </svg>
-                        </span>
+                        <svg key="g" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.45)]" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
+                        </svg>,
+                        <svg key="s" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(148,163,184,0.35)]" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
+                        </svg>,
+                        <svg key="b" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(217,119,6,0.35)]" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
+                        </svg>
                       ];
 
                       const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
@@ -1018,7 +1010,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 {i + 1}
                               </span>
                             )}
-                            <span className="font-extrabold text-slate-900 text-sm leading-tight truncate">{displayName}</span>
+                            <span className="font-extrabold text-slate-900 text-sm leading-tight truncate">
+                              {i <= 2 ? displayName : `Rank ${i + 1}`}
+                            </span>
                           </div>
                           <span className="font-black text-green-700 text-sm sm:text-base shrink-0 ml-3">{row.prize}</span>
                         </div>
