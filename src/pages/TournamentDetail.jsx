@@ -87,19 +87,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return 'EMERALD PRESTIGE';
   };
 
-  const generateMockCardDetails = (s, index) => {
-    const seed = (s.name || '').charCodeAt(0) || index;
-    const lastFour = String(1000 + (seed % 9000));
-    const middleFour = String(2000 + ((seed * 17) % 8000));
-    const firstEight = "4321 8976";
-    const cardNumber = `${firstEight} ${middleFour} ${lastFour}`;
-    const cvv = String(100 + (seed % 900));
-    const expMonth = String(1 + (seed % 12)).padStart(2, '0');
-    const expYear = String(26 + (seed % 5));
-    const expiry = `${expMonth}/${expYear}`;
-    return { cardNumber, cvv, expiry };
-  };
-
   const handleToggleFreeze = (cardId) => {
     setFrozenCards(prev => ({
       ...prev,
@@ -569,11 +556,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const formattedDate = startDateStr ? startDateStr.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
   const formattedTime = startDateStr ? startDateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
 
-  // Generate prize distribution split lists
+  // Generate prize distribution split lists against total prize (base + sponsored)
   const prizeDistributions = useMemo(() => {
     if (!tourney) return [];
     const list = [];
-    const pool = parseInt(tourney.prize_pool_amount || tourney.prizePool || tourney.prize, 10) || 0;
+    const pool = totalPrize || parseInt(tourney.prize_pool_amount || tourney.prizePool || tourney.prize, 10) || 0;
 
     let usedPrizePositions = false;
     try {
@@ -601,7 +588,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const secondVal = tourney.prize_split_2nd || (pool > 0 ? `₹${Math.round(pool * 0.3).toLocaleString('en-IN')}` : '30%');
       const thirdVal = tourney.prize_split_3rd || (pool > 0 ? `₹${Math.round(pool * 0.2).toLocaleString('en-IN')}` : '20%');
 
-      list.push({ position: '1st Place', prize: firstVal, badge: '🥇', badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' });
+      list.push({ position: 'WWCD', prize: firstVal, badge: '🥇', badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' });
       list.push({ position: '2nd Place', prize: secondVal, badge: '🥈', badgeBg: 'bg-slate-400/20 text-slate-300 border border-slate-400/30' });
       list.push({ position: '3rd Place', prize: thirdVal, badge: '🥉', badgeBg: 'bg-amber-700/20 text-amber-600 border border-amber-700/30' });
     }
@@ -623,7 +610,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       });
     }
     return list;
-  }, [tourney]);
+  }, [tourney, totalPrize]);
 
   const getParsedRules = (rulesData) => {
     if (!rulesData) return null;
@@ -775,10 +762,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {/* Prize */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Prize</span>
-                      <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1.5">
                         <span className="text-sm sm:text-base font-extrabold text-green-600">{prizeDisplay}</span>
                         {sponsoredAmount > 0 && (
-                          <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider">Sponsored</span>
+                          <svg className="w-4 h-4 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
                         )}
                       </div>
                     </div>
@@ -944,36 +933,86 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'prize' && (
-              <div className="flex flex-col gap-3 max-w-2xl">
-                {/* Prize Breakdown Summary */}
-                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                  <h4 className="text-xs font-black text-slate-700 uppercase tracking-widest mb-3">Prize Pool Breakdown</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-medium">Base Prize</span>
-                      <span className="font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
+              <div className="flex flex-col gap-5 max-w-2xl">
+                {/* Premium Prize Pool Breakdown Summary */}
+                <div className="relative overflow-hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-lg">
+                  <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-32 bg-emerald-400/10 rounded-full blur-3xl pointer-events-none" />
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-5 relative z-10">Prize Pool Breakdown</h4>
+
+                  {/* Base Prize */}
+                  <div className="flex items-center justify-between relative z-10">
+                    <span className="text-sm text-slate-600 font-medium">Base Prize</span>
+                    <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
+                  </div>
+
+                  {/* Sponsored */}
+                  {sponsoredAmount > 0 && (
+                    <div className="flex items-center justify-between mt-4 relative z-10">
+                      <span className="text-sm text-slate-600 font-medium flex items-center gap-2">
+                        <svg className="w-4 h-4 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
+                        </svg>
+                        Sponsored Contributions
+                      </span>
+                      <span className="text-sm font-bold text-amber-600">+{formatIndianCurrency(sponsoredAmount)}</span>
                     </div>
-                    {sponsoredAmount > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium flex items-center gap-1">
-                          Sponsored Contributions
-                          <span className="text-[9px] text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md uppercase tracking-wider font-bold">Sponsored</span>
-                        </span>
-                        <span className="font-bold text-emerald-600">+{formatIndianCurrency(sponsoredAmount)}</span>
-                      </div>
-                    )}
-                    <div className="border-t border-slate-200 pt-2 flex items-center justify-between">
-                      <span className="font-bold text-slate-800">Total Prize Pool</span>
-                      <span className="font-black text-lg text-green-700">{formatIndianCurrency(totalPrize)}</span>
-                    </div>
+                  )}
+
+                  {/* Separator */}
+                  <div className="border-t border-slate-100 my-4 relative z-10" />
+
+                  {/* Hero Total Prize Pool */}
+                  <div className="flex items-center justify-between relative z-10">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Prize Pool</span>
+                    <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-3xl sm:text-4xl font-black tracking-tight drop-shadow-sm">
+                      {formatIndianCurrency(totalPrize)}
+                    </span>
                   </div>
                 </div>
-                {prizeDistributions.length > 0 ? prizeDistributions.map((row, i) => (
-                  <div key={i} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-xl shadow-sm">
-                    <span className="text-slate-800 font-bold text-sm">{row.position}</span>
-                    <span className="text-green-600 font-black text-sm">{row.prize}</span>
+
+                {/* Prize Distribution Cards */}
+                {prizeDistributions.length > 0 ? (
+                  <div className="flex flex-col gap-2.5">
+                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">Prize Distribution</h5>
+                    {prizeDistributions.slice(0, 15).map((row, i) => {
+                      const medalSvgs = [
+                        <svg key="g" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
+                        </svg>,
+                        <svg key="s" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
+                        </svg>,
+                        <svg key="b" className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
+                        </svg>
+                      ];
+
+                      const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
+
+                      return (
+                        <div key={i} className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-3.5 shadow-sm">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {i <= 2 ? (
+                              medalSvgs[i]
+                            ) : (
+                              <span className="w-5 h-5 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                                {i + 1}
+                              </span>
+                            )}
+                            <span className="font-extrabold text-slate-900 text-sm leading-tight truncate">{displayName}</span>
+                          </div>
+                          <span className="font-black text-green-700 text-sm sm:text-base shrink-0 ml-3">{row.prize}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                )) : (
+                ) : (
                   <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No prize distribution data available.</div>
                 )}
               </div>
@@ -1164,8 +1203,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 tagName: getCardTagName(amt),
                                 balance: amt,
                                 cardmemberName: item.cardmemberName || item.name || 'Anonymous Sponsor',
-                                ...generateMockCardDetails(item, idx),
-                                lastFour: String(cardId).replace(/[^0-9a-zA-Z]/g, '').slice(-4).padStart(4, '0'),
                                 isFrozen: !!frozenCards[cardId]
                               };
                               return (
