@@ -555,6 +555,26 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create extension tables:', extErr.message);
     }
 
+    // CREATE slot_grid table for admin tournament slot occupancy mapping
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS slot_grid (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          room_index INTEGER NOT NULL,
+          slot_index INTEGER NOT NULL,
+          status VARCHAR(20) DEFAULT 'empty',
+          registration_id VARCHAR(50) REFERENCES tournament_registrations(id) ON DELETE SET NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(tournament_id, room_index, slot_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_slot_grid_tournament ON slot_grid(tournament_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] slot_grid table initialized.');
+    } catch (slotErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create slot_grid table:', slotErr.message);
+    }
+
     // --- ENABLE REALTIME REPLICATION ---
     try {
       await client.query(`
@@ -8627,6 +8647,234 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Staff permissions updated.' }));
       } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── ADMIN TOURNAMENT CREATE: Bypass all verification, instant live state ──
+  if (req.url === '/api/admin/tournaments/create' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || authUser.role !== 'admin') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        const t = JSON.parse(body);
+
+        // ── Validate required fields ──
+        if (!t.title || t.title.length < 5 || t.title.length > 100) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Title must be 5-100 characters.' }));
+          return;
+        }
+        if (!t.game) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Game selection is required.' }));
+          return;
+        }
+
+        const matchType = (t.match_type || 'squad').toLowerCase();
+        if (!['solo', 'duo', 'squad'].includes(matchType)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Match type must be solo, duo, or squad.' }));
+          return;
+        }
+
+        const perspective = (t.perspective || 'tpp').toLowerCase();
+        if (!['tpp', 'fpp'].includes(perspective)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Perspective must be tpp or fpp.' }));
+          return;
+        }
+
+        const floors = { solo: 50, duo: 25, squad: 13 };
+        const ceilings = { solo: 100, duo: 50, squad: 25 };
+        const floor = floors[matchType] || 13;
+        const ceiling = ceilings[matchType] || 25;
+        const label = matchType.charAt(0).toUpperCase() + matchType.slice(1);
+
+        const slotsTotal = parseInt(t.slotsTotal) || 64;
+        if (slotsTotal < 2 || slotsTotal > 10000) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Total slots must be between 2 and 10,000.' }));
+          return;
+        }
+
+        let maxSlotsPerRoom = t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== ''
+          ? parseInt(t.max_slots_per_room) : null;
+
+        if (maxSlotsPerRoom !== null) {
+          if (maxSlotsPerRoom > ceiling) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `${label} tournaments allow at most ${ceiling} slots per room.` }));
+            return;
+          }
+          if (maxSlotsPerRoom < floor) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `Target capacity cannot be less than ${floor} teams for ${label} matches.` }));
+            return;
+          }
+        }
+
+        // ── Default maxSlotsPerRoom to ceiling if not set ──
+        if (maxSlotsPerRoom === null) maxSlotsPerRoom = ceiling;
+
+        const entryFeeAmount = parseInt(t.entry_fee_amount) || 0;
+        const prizePoolAmount = parseInt(t.prize_pool_amount) || 0;
+        const reservedSlots = parseInt(t.reserved_slots) || 0;
+        if (reservedSlots > slotsTotal) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Reserved slots cannot exceed total slots.' }));
+          return;
+        }
+
+        // ── Calculate number of rooms ──
+        const numRooms = Math.ceil(slotsTotal / maxSlotsPerRoom);
+
+        // ── Generate tournament ID ──
+        const tournamentId = `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+        // ── Admin org identity ──
+        const orgName = 'Match District';
+        const orgHandle = 'matchdistrict';
+        const orgLogo = '';
+
+        // ── Construct prize/entry display values ──
+        const prizeDisplay = prizePoolAmount > 0 ? `₹${prizePoolAmount.toLocaleString('en-IN')}` : '';
+        const entryDisplay = entryFeeAmount > 0 ? `₹${entryFeeAmount}` : 'Free';
+
+        // ── Registration dates: open now, close in 7 days ──
+        const now = new Date();
+        const regOpen = now.toISOString().slice(0, 16);
+        const regClose = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+        const startDate = t.startDate || new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+
+        // ── Insert tournament with status='live' ──
+        const dbRes = await pool.query(
+          `INSERT INTO tournaments (
+            id, title, game, status, "badgeBg", "badgeText", date, prize, entry, "teamsCount", featured, "orgName",
+            "orgLogo", "orgHandle", "orgMotto",
+            "registrationOpenDate", "registrationCloseDate", "startDate",
+            rules, chat, notices, teams, region, format, "slotsTotal", "slotsFilled", "roomID", "roomPassword",
+            timeline, "bannerUrl", "logoUrl", "isDraft", version, "orgId",
+            match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
+            prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url,
+            lobby_start_time, mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions,
+            sponsors_enabled, max_slots_per_room
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+            $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
+            $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54)
+          RETURNING *`,
+          [
+            tournamentId,
+            t.title,
+            t.game,
+            'live',
+            'bg-primary',
+            'LIVE',
+            now.toISOString(),
+            prizeDisplay,
+            entryDisplay,
+            '',
+            true,
+            orgName,
+            orgLogo,
+            orgHandle,
+            'Admin Hosted',
+            t.registrationOpenDate || regOpen,
+            t.registrationCloseDate || regClose,
+            startDate,
+            t.rules ? (typeof t.rules === 'string' ? t.rules : JSON.stringify(t.rules)) : '[]',
+            '[]',
+            '[]',
+            '[]',
+            t.region || 'India',
+            t.format || matchType.toUpperCase(),
+            slotsTotal,
+            0,
+            t.roomID || '',
+            t.roomPassword || '',
+            t.timeline ? (typeof t.timeline === 'string' ? t.timeline : JSON.stringify(t.timeline)) : '[]',
+            t.bannerUrl || (t.cover_image_url || ''),
+            '',
+            false,
+            1,
+            authUser.id,
+            matchType,
+            perspective,
+            reservedSlots,
+            entryFeeAmount,
+            prizePoolAmount > 0 ? 'fixed' : 'dynamic',
+            prizePoolAmount,
+            t.prize_split_1st || '',
+            t.prize_split_2nd || '',
+            t.prize_split_3rd || '',
+            t.prize_split_mvp || '',
+            t.description || '',
+            t.cover_image_url || '',
+            t.lobby_start_time || '',
+            t.mvp_enabled || false,
+            t.mvp_amount ? parseInt(t.mvp_amount) : 0,
+            t.kill_reward_enabled || false,
+            t.kill_reward_per_kill ? parseInt(t.kill_reward_per_kill) : 0,
+            t.prize_positions || '[]',
+            t.sponsors_enabled || false,
+            maxSlotsPerRoom
+          ]
+        );
+
+        const createdTournament = dbRes.rows[0];
+
+        // ── Initialize slot_grid empty occupancy map ──
+        const slotInserts = [];
+        for (let r = 0; r < numRooms; r++) {
+          const slotsInThisRoom = r < numRooms - 1
+            ? maxSlotsPerRoom
+            : slotsTotal - r * maxSlotsPerRoom;
+          for (let s = 0; s < slotsInThisRoom; s++) {
+            slotInserts.push(
+              `('SG-${tournamentId}-R${r}-S${s}', '${tournamentId}', ${r}, ${s}, 'empty', NULL, CURRENT_TIMESTAMP)`
+            );
+          }
+        }
+        // Batch insert in chunks of 500 to avoid query size limits
+        const chunkSize = 500;
+        for (let i = 0; i < slotInserts.length; i += chunkSize) {
+          const chunk = slotInserts.slice(i, i + chunkSize);
+          await pool.query(
+            `INSERT INTO slot_grid (id, tournament_id, room_index, slot_index, status, registration_id, created_at)
+             VALUES ${chunk.join(', ')}
+             ON CONFLICT (tournament_id, room_index, slot_index) DO NOTHING`
+          );
+        }
+
+        // ── Track admin action ──
+        try {
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            ['LOG-' + crypto.randomBytes(4).toString('hex').toUpperCase(), authUser.id,
+             'admin_create_tournament', 'tournament', tournamentId,
+             JSON.stringify({ title: t.title, game: t.game, slotsTotal, maxSlotsPerRoom, numRooms })]
+          );
+        } catch (logErr) { /* non-critical */ }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          tournament: createdTournament,
+          slotGrid: { totalSlots: slotsTotal, maxSlotsPerRoom, numRooms, initialized: slotInserts.length }
+        }));
+      } catch (err) {
+        console.warn('⚠️ [ADMIN] Create tournament failed:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }

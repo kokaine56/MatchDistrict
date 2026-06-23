@@ -22,6 +22,7 @@ const TermsService    = lazy(() => import('./pages/TermsService.jsx'))
 const Profile         = lazy(() => import('./pages/Profile.jsx'))
 const AdminDashboard  = lazy(() => import('./pages/AdminDashboard.jsx'))
 const AdminPayments   = lazy(() => import('./pages/AdminPayments.jsx'))
+const AdminCreateTournament = lazy(() => import('./pages/AdminCreateTournament.jsx'))
 const Auth            = lazy(() => import('./pages/Auth.jsx'))
 const BecomeOrganizer = lazy(() => import('./pages/BecomeOrganizer.jsx'))
 const CreateTournament = lazy(() => import('./components/tournament-creation/CreationWizard.jsx'))
@@ -50,6 +51,7 @@ const PAGE_URL_MAP = {
   'auth':             '/login', // fallback for any existing key uses
   'profile':          '/profile',
   'admin':            '/admin',
+  'admin-create-tournament': '/admin/create-tournament',
   'become-organizer': '/become-organizer',
   'create-tournament':'/create-tournament',
   'manage-tournaments': '/manage/tournaments',
@@ -416,6 +418,12 @@ function AppInner() {
                 <Route path="/admin/payments" element={
                   <PageTransition>
                     <AdminPayments />
+                  </PageTransition>
+                } />
+
+                <Route path="/admin/create-tournament" element={
+                  <PageTransition>
+                    <AdminCreateTournament />
                   </PageTransition>
                 } />
 

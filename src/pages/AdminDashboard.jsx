@@ -9,6 +9,7 @@ import { subscriptionApi } from '../services/subscriptionApi.js'
 import Header from '../components/Header.jsx'
 import ActivityFeed from '../components/ActivityFeed'
 import { injectDummyRegistrations } from '../utils/testInjector'
+import AdminCreateTournament from './AdminCreateTournament.jsx'
 
 export default function AdminDashboard({ onNavigate }) {
   const { theme, setTheme } = useTheme()
@@ -528,6 +529,7 @@ export default function AdminDashboard({ onNavigate }) {
               { id: 'upgrades', label: `Plan Upgrades (${upgradeRequests.filter(r => r.status === 'pending').length})`, icon: 'upgrade' },
               { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
               { id: 'tournaments', label: 'Tournaments Governance', icon: 'stadium' },
+              { id: 'create-tournament', label: 'Create Tournament', icon: 'add_circle' },
               { id: 'activity', label: 'System Logs', icon: 'list_alt' },
               { id: 'abusefilter', label: `Abuse Filter (${badWordsList.length})`, icon: 'security' },
               { id: 'registrations', label: 'Registrations', icon: 'assignment' },
@@ -1459,6 +1461,23 @@ export default function AdminDashboard({ onNavigate }) {
                 </div>
               )}
             </AnimatePresence>
+          </div>
+        )}
+
+        {/* TAB: CREATE TOURNAMENT */}
+        {activeTab === 'create-tournament' && (
+          <div className="animate-in fade-in duration-300">
+            <div className="flex items-center justify-between mb-6">
+              <div className="space-y-1">
+                <h2 className="font-headline-lg text-sm sm:text-base font-extrabold text-slate-900 dark:text-white uppercase tracking-tight">
+                  Create Tournament
+                </h2>
+                <p className="font-body-sm text-[10px] sm:text-xs text-slate-700 dark:text-white/50">
+                  Deploy tournaments with LIVE status instantly — bypassing all verification pipelines.
+                </p>
+              </div>
+            </div>
+            <AdminCreateTournament />
           </div>
         )}
 
