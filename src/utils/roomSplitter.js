@@ -1,13 +1,20 @@
 /**
  * roomSplitter.js — Dynamic Room Allocation with Overflow Balancing
+ *                    and Minimum Floor Constraints.
  *
  * Hard ceilings per match type (absolute max bounds):
  *   Solo  → 100 slots/room
  *   Duo   → 50  slots/room
  *   Squad → 25  slots/room
  *
- * Organizer may set a custom maxSlotsPerRoom (M) ≤ the hard ceiling.
- * If unspecified, defaults to the hard ceiling.
+ * Floor constraints (50 % of ceiling, rounded up):
+ *   Solo  →  50 slots/room
+ *   Duo   →  25 slots/room
+ *   Squad →  13 slots/room
+ *
+ * Organizer may set a custom maxSlotsPerRoom (M) between the floor
+ * constraint and the hard ceiling.  If unspecified, defaults to
+ * the hard ceiling.
  *
  * Phase 1 — Initial split:
  *   initialRooms  = floor(totalSlots / M)
@@ -17,7 +24,8 @@
  *
  * Phase 2 — Overflow balance check:
  *   newCapacity = ceil(totalSlots / initialRooms)
- *   If newCapacity ≤ gameCeiling → COLLAPSE the extra room.
+ *   If newCapacity ≤ gameCeiling  AND  newCapacity ≥ floorConstraint
+ *     → COLLAPSE the extra room.
  *     Redistribute totalSlots evenly across initialRooms rooms:
  *       base  = floor(totalSlots / initialRooms)
  *       extra = totalSlots % initialRooms
@@ -35,6 +43,15 @@ const HARD_CEILINGS = Object.freeze({
 });
 
 /**
+ * 50 % of the hard ceiling, rounded up.
+ */
+const FLOOR_CONSTRAINTS = Object.freeze({
+  solo: 50,
+  duo: 25,
+  squad: 13,
+});
+
+/**
  * Returns the absolute max slots allowed per room for a match type.
  * @param {string} matchType
  * @returns {number}
@@ -44,7 +61,17 @@ function getHardCeiling(matchType) {
 }
 
 /**
+ * Returns the minimum slots per room (50 % ceiling, rounded up).
+ * @param {string} matchType
+ * @returns {number}
+ */
+function getFloorConstraint(matchType) {
+  return FLOOR_CONSTRAINTS[(matchType || '').toLowerCase()] || FLOOR_CONSTRAINTS.squad;
+}
+
+/**
  * Validates an organizer-supplied maxSlotsPerRoom value.
+ * Checks both the floor constraint and the hard ceiling.
  * Returns { valid: true, value } or { valid: false, error }.
  * @param {string} matchType
  * @param {number|string|null|undefined} maxSlotsPerRoom
@@ -52,6 +79,7 @@ function getHardCeiling(matchType) {
  */
 function validateMaxSlotsPerRoom(matchType, maxSlotsPerRoom) {
   const ceiling = getHardCeiling(matchType);
+  const floor = getFloorConstraint(matchType);
   const label = (matchType || 'Squad').charAt(0).toUpperCase() + (matchType || 'Squad').slice(1);
 
   if (maxSlotsPerRoom == null || maxSlotsPerRoom === '') {
@@ -68,12 +96,22 @@ function validateMaxSlotsPerRoom(matchType, maxSlotsPerRoom) {
       error: `${label} tournaments allow at most ${ceiling} slots per room.`,
     };
   }
+  if (m < floor) {
+    return {
+      valid: false,
+      error: `Target capacity cannot be less than ${floor} teams for ${label} matches.`,
+    };
+  }
   return { valid: true, value: m };
 }
 
 /**
  * Compute room metadata from totalSlots, the effective maxSlotsPerRoom,
  * and the match type's hard ceiling (for overflow balancing).
+ *
+ * The collapse condition requires BOTH:
+ *   1. newCapacity ≤ gameCeiling
+ *   2. newCapacity ≥ floorConstraint
  *
  * @param {number} totalSlots       — total tournament slots (e.g. 128)
  * @param {number} maxSlotsPerRoom  — organizer target per room (M, e.g. 18)
@@ -82,6 +120,7 @@ function validateMaxSlotsPerRoom(matchType, maxSlotsPerRoom) {
  *   totalRooms: number,
  *   maxSlotsPerRoom: number,
  *   gameCeiling: number,
+ *   floorConstraint: number,
  *   balanced: boolean,
  *   rooms: Array<{ roomNumber: number, slotStart: number, slotEnd: number, slotsInRoom: number }>
  * }}
@@ -90,9 +129,13 @@ function computeRooms(totalSlots, maxSlotsPerRoom, gameCeiling) {
   const m = Math.max(1, Math.floor(Number(maxSlotsPerRoom) || 1));
   const total = Math.max(0, Math.floor(Number(totalSlots) || 0));
   const ceiling = gameCeiling || getHardCeiling('squad');
+  const floor = getFloorConstraint(ceiling === 100 ? 'solo' : ceiling === 50 ? 'duo' : 'squad');
 
   if (total === 0) {
-    return { totalRooms: 0, maxSlotsPerRoom: m, gameCeiling: ceiling, balanced: false, rooms: [] };
+    return {
+      totalRooms: 0, maxSlotsPerRoom: m, gameCeiling: ceiling, floorConstraint: floor,
+      balanced: false, rooms: [],
+    };
   }
 
   // Phase 1 — simple split
@@ -103,13 +146,16 @@ function computeRooms(totalSlots, maxSlotsPerRoom, gameCeiling) {
   if (total <= m || remainder === 0) {
     const count = Math.ceil(total / m);
     const rooms = buildRooms(count, m, total);
-    return { totalRooms: count, maxSlotsPerRoom: m, gameCeiling: ceiling, balanced: false, rooms };
+    return {
+      totalRooms: count, maxSlotsPerRoom: m, gameCeiling: ceiling, floorConstraint: floor,
+      balanced: false, rooms,
+    };
   }
 
   // Phase 2 — overflow balance check
   const newCapacity = Math.ceil(total / initialRooms);
 
-  if (newCapacity <= ceiling) {
+  if (newCapacity <= ceiling && newCapacity >= floor) {
     // COLLAPSE: redistribute evenly across initialRooms rooms
     const base = Math.floor(total / initialRooms);
     const extra = total % initialRooms;
@@ -122,6 +168,7 @@ function computeRooms(totalSlots, maxSlotsPerRoom, gameCeiling) {
       totalRooms: initialRooms,
       maxSlotsPerRoom: m,
       gameCeiling: ceiling,
+      floorConstraint: floor,
       balanced: true,
       rooms,
     };
@@ -130,7 +177,10 @@ function computeRooms(totalSlots, maxSlotsPerRoom, gameCeiling) {
   // Cannot collapse — keep the partial final room
   const count = Math.ceil(total / m);
   const rooms = buildRooms(count, m, total);
-  return { totalRooms: count, maxSlotsPerRoom: m, gameCeiling: ceiling, balanced: false, rooms };
+  return {
+    totalRooms: count, maxSlotsPerRoom: m, gameCeiling: ceiling, floorConstraint: floor,
+    balanced: false, rooms,
+  };
 }
 
 /**
@@ -197,8 +247,8 @@ function getRoomSlots(allSlots, roomNumber, rooms) {
   const roomDef = rooms[roomIdx];
   if (!roomDef) return [];
 
-  const startIdx = roomDef.slotStart - 1; // 0-indexed
-  const endIdx = roomDef.slotEnd;          // exclusive
+  const startIdx = roomDef.slotStart - 1;
+  const endIdx = roomDef.slotEnd;
   const slice = allSlots.slice(startIdx, endIdx);
 
   return slice.map((slot, i) => ({
@@ -230,7 +280,9 @@ function getOccupiedRoomSlots(allSlots, roomNumber, rooms) {
 
 export {
   HARD_CEILINGS,
+  FLOOR_CONSTRAINTS,
   getHardCeiling,
+  getFloorConstraint,
   validateMaxSlotsPerRoom,
   computeRooms,
   getRoomSlots,

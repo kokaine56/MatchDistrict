@@ -9,11 +9,25 @@ const PLAN_VALIDATION = {
 }
 
 const ROOM_CEILINGS = { solo: 100, duo: 50, squad: 25 }
+const ROOM_FLOORS = { solo: 50, duo: 25, squad: 13 }
 
 export default function Step3Slots({ data, onChange, errors, planLimits, userTier }) {
   const tier = userTier || 'Free'
   const maxSlots = planLimits?.maxSlots || PLAN_MAX_SLOTS[tier] || 100
   const validationMsg = PLAN_VALIDATION[tier] || PLAN_VALIDATION.Free
+
+  const matchType = data.match_type || 'squad'
+  const ceiling = ROOM_CEILINGS[matchType] || 25
+  const floor = ROOM_FLOORS[matchType] || 13
+
+  const roomError = (() => {
+    const v = data.max_slots_per_room
+    if (!v) return ''
+    const n = parseInt(v)
+    if (n > ceiling) return `${matchType.charAt(0).toUpperCase() + matchType.slice(1)} tournaments allow at most ${ceiling} slots per room.`
+    if (n < floor) return `Target capacity cannot be less than ${floor} teams for ${matchType.charAt(0).toUpperCase() + matchType.slice(1)} matches.`
+    return ''
+  })()
 
   const handleSlotsChange = (e) => {
     const v = e.target.value
@@ -27,6 +41,13 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
     const total = parseInt(data.slotsTotal) || 0
     if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= total)) {
       onChange({ ...data, reserved_slots: v })
+    }
+  }
+
+  const handleRoomChange = (e) => {
+    const v = e.target.value
+    if (v === '' || (parseInt(v) > 0 && parseInt(v) <= ceiling)) {
+      onChange({ ...data, max_slots_per_room: v })
     }
   }
 
@@ -111,7 +132,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         </div>
 
         <p className="text-xs text-on-surface-variant mb-3">
-          Optionally split slots across multiple game lobbies. 
+          Optionally split slots across multiple game lobbies.
           Leave blank to use the match type's default maximum per room.
         </p>
 
@@ -121,22 +142,19 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           </label>
           <input
             type="number"
-            min={1}
-            max={ROOM_CEILINGS[data.match_type] || 25}
+            min={floor}
+            max={ceiling}
             value={data.max_slots_per_room || ''}
-            onChange={(e) => {
-              const v = e.target.value
-              const ceiling = ROOM_CEILINGS[data.match_type] || 25
-              if (v === '' || (parseInt(v) > 0 && parseInt(v) <= ceiling)) {
-                onChange({ ...data, max_slots_per_room: v })
-              }
-            }}
+            onChange={handleRoomChange}
             placeholder="e.g. 16"
-            className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors"
+            className={`w-full px-4 py-3 rounded-xl bg-surface-container border ${
+              roomError ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
+            } text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors`}
           />
           <div className="flex items-center justify-between mt-1">
             <span className="text-xs text-on-surface-variant">
-              Hard ceiling for <strong className="text-on-background capitalize">{data.match_type || 'squad'}</strong>: <strong>{ROOM_CEILINGS[data.match_type] || 25}</strong> slots/room
+              <strong className="text-on-background capitalize">{matchType}</strong>
+              {' '}— floor: <strong>{floor}</strong> &middot; ceiling: <strong>{ceiling}</strong> slots/room
             </span>
             {data.max_slots_per_room && parseInt(data.max_slots_per_room) > 0 && data.slotsTotal && (
               <span className="text-xs text-on-surface-variant">
@@ -144,12 +162,13 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
               </span>
             )}
           </div>
+          {roomError && <p className="text-xs text-error">{roomError}</p>}
           <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
             <svg className="w-4 h-4 mt-0.5 shrink-0 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
             <p className="text-xs text-indigo-700 dark:text-indigo-300">
-              Players see room tabs in the Live Slot Occupancy Map. Each room's slot numbers restart at 1, mirroring actual in-game lobby display.
+              Rooms cannot drop below <strong>{floor} teams</strong> (50% of {ceiling} ceiling). Overflow rooms are collapsed automatically when balanced re-sharding stays within floor and ceiling bounds.
             </p>
           </div>
         </div>

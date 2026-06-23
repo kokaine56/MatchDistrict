@@ -2708,6 +2708,27 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        // Validate max_slots_per_room against floor constraint
+        if (t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '') {
+          const matchType = (t.match_type || 'squad').toLowerCase();
+          const floors = { solo: 50, duo: 25, squad: 13 };
+          const ceilings = { solo: 100, duo: 50, squad: 25 };
+          const floor = floors[matchType] || 13;
+          const ceiling = ceilings[matchType] || 25;
+          const label = matchType.charAt(0).toUpperCase() + matchType.slice(1);
+          const mVal = parseInt(t.max_slots_per_room);
+          if (mVal > ceiling) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `${label} tournaments allow at most ${ceiling} slots per room.` }));
+            return;
+          }
+          if (mVal < floor) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `Target capacity cannot be less than ${floor} teams for ${label} matches.` }));
+            return;
+          }
+        }
+
         const dbRes = await pool.query(
           `INSERT INTO tournaments (
             id, title, game, status, "badgeBg", "badgeText", date, prize, entry, "teamsCount", featured, "orgName",
@@ -2892,6 +2913,27 @@ const server = http.createServer(async (req, res) => {
           if (!planCheck.plan.sponsorSections) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'FEATURE_LOCKED', message: 'Sponsor Contributions require the Basic plan or higher.' }));
+            return;
+          }
+        }
+
+        // Validate max_slots_per_room against floor constraint
+        if (t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '') {
+          const matchType = (t.match_type || existing.match_type || 'squad').toLowerCase();
+          const floors = { solo: 50, duo: 25, squad: 13 };
+          const ceilings = { solo: 100, duo: 50, squad: 25 };
+          const floor = floors[matchType] || 13;
+          const ceiling = ceilings[matchType] || 25;
+          const label = matchType.charAt(0).toUpperCase() + matchType.slice(1);
+          const mVal = parseInt(t.max_slots_per_room);
+          if (mVal > ceiling) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `${label} tournaments allow at most ${ceiling} slots per room.` }));
+            return;
+          }
+          if (mVal < floor) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: `Target capacity cannot be less than ${floor} teams for ${label} matches.` }));
             return;
           }
         }
@@ -4522,7 +4564,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const roomCeilings = { solo: 100, duo: 50, squad: 25 };
+      const roomFloors = { solo: 50, duo: 25, squad: 13 };
       const gameCeiling = roomCeilings[matchType] || 25;
+      const floorConstraint = roomFloors[matchType] || 13;
       const effectiveMaxPerRoom = maxSlotsPerRoom || gameCeiling;
       const m = Math.max(1, effectiveMaxPerRoom);
       const total = Math.max(0, slotsTotal);
@@ -4535,7 +4579,7 @@ const server = http.createServer(async (req, res) => {
         const remainder = total % m;
         if (remainder > 0) {
           const newCapacity = Math.ceil(total / initialRooms);
-          if (newCapacity <= gameCeiling) {
+          if (newCapacity <= gameCeiling && newCapacity >= floorConstraint) {
             // Balanced collapse
             const base = Math.floor(total / initialRooms);
             const extra = total % initialRooms;
@@ -4578,6 +4622,7 @@ const server = http.createServer(async (req, res) => {
           matchType,
           maxSlotsPerRoom: effectiveMaxPerRoom,
           gameCeiling,
+          floorConstraint,
           totalRooms: rooms.length,
           balanced,
           rooms,

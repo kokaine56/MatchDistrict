@@ -4,17 +4,9 @@ import {
   getRoomSlots,
   getOccupiedRoomSlots,
   getHardCeiling,
+  getFloorConstraint,
 } from '../utils/roomSplitter';
 
-/**
- * RoomSlotGrid — Interactive multi-room slot occupancy map
- *                  with room‑wise team roster table.
- *
- * Props:
- *   slotsData   — { slotsTotal, slotsFilled, slotsAvailable, slots[], roomMeta? }
- *   matchType   — 'solo' | 'duo' | 'squad' (used for hard‑ceiling default)
- *   maxSlotsPerRoom — optional override; falls back to roomMeta or hard ceiling
- */
 export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: customMax }) {
   const [currentRoom, setCurrentRoom] = useState(1);
 
@@ -59,80 +51,53 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
     );
   }
 
-  const { totalRooms, rooms, balanced, maxSlotsPerRoom } = roomMeta;
+  const { totalRooms, rooms, maxSlotsPerRoom, floorConstraint } = roomMeta;
+  const currentRoomDef = rooms[currentRoom - 1];
+  const isUnderFloor = currentRoomDef && currentRoomDef.slotsInRoom < floorConstraint;
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm w-full">
-      {/* Title row */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-        <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">
-          Live Slot Occupancy Map
-        </h3>
-        {balanced && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            Balanced
-          </span>
-        )}
-      </div>
+      <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">
+        Live Slot Occupancy Map
+      </h3>
 
-      {/* Room selector tabs */}
       {totalRooms > 1 && (
-        <div className="flex flex-wrap gap-2 mb-5">
+        <div className="max-sm:flex max-sm:overflow-x-auto max-sm:scrollbar-none max-sm:gap-2 max-sm:pb-2 sm:flex sm:flex-wrap sm:gap-2 mb-5">
           {rooms.map((r) => (
             <button
               key={r.roomNumber}
               onClick={() => setCurrentRoom(r.roomNumber)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all tracking-wide ${
+              className={`max-sm:shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all tracking-wide ${
                 currentRoom === r.roomNumber
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
               }`}
             >
               Room {r.roomNumber}
-              <span className="ml-1.5 opacity-70 font-normal">
-                ({r.slotStart}–{r.slotEnd})
-              </span>
             </button>
           ))}
         </div>
       )}
 
-      {/* Room header info */}
-      {totalRooms > 1 && (
-        <div className="mb-4 flex items-center gap-2 text-xs text-slate-500 font-medium">
-          <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          </svg>
-          <span>
-            Viewing <strong className="text-slate-700">Room {currentRoom}</strong>
-            {' '}— slots {rooms[currentRoom - 1]?.slotStart} to {rooms[currentRoom - 1]?.slotEnd}
-            {' '}({rooms[currentRoom - 1]?.slotsInRoom} total, {filledCount} filled, {availableCount} available)
-          </span>
+      {totalRooms > 1 ? (
+        <div className="mb-4 text-xs text-slate-500 font-medium">
+          Room {currentRoom} &middot; {currentRoomDef?.slotsInRoom || 0} slots &middot; {filledCount} filled &middot; {availableCount} available
+        </div>
+      ) : (
+        <div className="mb-4 text-xs text-slate-500 font-medium">
+          {filledCount} filled &middot; {availableCount} available
         </div>
       )}
 
-      {/* Single-room header (no tabs) */}
-      {totalRooms <= 1 && (
-        <div className="mb-4 flex items-center gap-2 text-xs text-slate-500 font-medium">
-          <span>
-            {filledCount} filled &middot; {availableCount} available
-          </span>
-        </div>
-      )}
-
-      {/* Slot grid */}
-      <div className="grid grid-cols-4 sm:grid-cols-8 md:grid-cols-10 gap-2.5 w-full">
+      <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 max-sm:gap-2 sm:gap-2.5 w-full">
         {currentRoomSlots.map((slot, idx) => {
           const slotNum = slot.number;
           if (slot.status === 'occupied') {
             return (
               <div
                 key={idx}
-                className="aspect-square bg-red-50 border border-red-200 text-red-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs"
-                title={`Occupied by ${slot.teamName || 'Unknown'}`}
+                className="aspect-square bg-red-50 border border-red-200 text-red-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center"
+                title={slot.teamName ? `Occupied by ${slot.teamName}` : 'Occupied'}
               >
                 {slotNum}
               </div>
@@ -142,8 +107,8 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
             return (
               <div
                 key={idx}
-                className="aspect-square bg-amber-50 border border-amber-200 text-amber-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs animate-pulse"
-                title={`Pending: ${slot.teamName || 'Unknown'}`}
+                className="aspect-square bg-amber-50 border border-amber-200 text-amber-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center animate-pulse"
+                title={slot.teamName ? `Pending: ${slot.teamName}` : 'Pending'}
               >
                 {slotNum}
               </div>
@@ -152,7 +117,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
           return (
             <div
               key={idx}
-              className="aspect-square bg-green-50 border border-green-200 text-green-600 text-xs font-black rounded-xl flex items-center justify-center shadow-xs"
+              className="aspect-square bg-green-50 border border-green-200 text-green-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center"
               title="Available"
             >
               {slotNum}
@@ -161,7 +126,6 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         })}
       </div>
 
-      {/* Legend */}
       <div className="flex items-center gap-4 mt-6 pt-4 border-t border-slate-100 text-xs font-bold text-slate-500">
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
@@ -175,20 +139,8 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
           <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
           <span>Pending</span>
         </div>
-        {totalRooms > 1 && (
-          <div className="flex items-center gap-1.5 ml-auto">
-            <svg className="w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 4h16v4H4z" /><path d="M4 10h16v4H4z" /><path d="M4 16h16v4H4z" />
-            </svg>
-            <span className="font-normal text-[11px] text-slate-400">
-              {rooms.length} room{rooms.length > 1 ? 's' : ''} &middot; {maxSlotsPerRoom} target/room
-              {balanced && <> &middot; balanced</>}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* ===== Room Registration Details ===== */}
       <div className="mt-8 pt-6 border-t border-slate-200">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">
@@ -202,8 +154,8 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         </div>
 
         {occupiedSlots.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-slate-400">
-            <svg className="w-8 h-8 mb-2 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+            <svg className="w-7 h-7 mb-3 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
               <circle cx="9" cy="7" r="4" />
               <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
@@ -216,35 +168,18 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">
-                    Slot #
-                  </th>
-                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">
-                    Team Name
-                  </th>
-                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">
-                    Team Leader
-                  </th>
-                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">
-                    Status
-                  </th>
+                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Slot #</th>
+                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Name</th>
+                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Leader</th>
+                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {occupiedSlots.map((entry) => (
-                  <tr
-                    key={entry.slotNumber}
-                    className="hover:bg-slate-50 transition-colors"
-                  >
-                    <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">
-                      Slot {entry.slotNumber}
-                    </td>
-                    <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">
-                      {entry.teamName}
-                    </td>
-                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">
-                      {entry.captain}
-                    </td>
+                  <tr key={entry.slotNumber} className="hover:bg-slate-50 transition-colors">
+                    <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">Slot {entry.slotNumber}</td>
+                    <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{entry.teamName}</td>
+                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{entry.captain}</td>
                     <td className="py-2.5 whitespace-nowrap">
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -270,7 +205,24 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
 
         {occupiedSlots.length > 0 && (
           <div className="mt-3 text-[11px] text-slate-400 font-medium">
-            Showing {occupiedSlots.length} of {rooms[currentRoom - 1]?.slotsInRoom || 0} slots occupied in this room.
+            Showing {occupiedSlots.length} of {currentRoomDef?.slotsInRoom || 0} slots occupied in this room.
+          </div>
+        )}
+
+        {isUnderFloor && (
+          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+            <svg className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <div>
+              <p className="text-xs font-bold text-amber-800">Room Below Minimum Density</p>
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                This room has {currentRoomDef?.slotsInRoom} slots, which is below the {floorConstraint}-slot minimum for{' '}
+                {(matchType || 'squad').charAt(0).toUpperCase() + (matchType || 'squad').slice(1)} matches.
+              </p>
+            </div>
           </div>
         )}
       </div>
