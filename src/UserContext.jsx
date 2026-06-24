@@ -110,7 +110,7 @@ export function UserProvider({ children }) {
         if (!active) return;
         
         // Preserve admin state across auth events (admin users may not have Supabase auth sessions)
-        if (userRef.current?.role === 'admin' || userRef.current?.id === 'ADM-001' || userRef.current?.email === 'matchdistrict.in@gmail.com') {
+        if (userRef.current?.role === 'admin' || userRef.current?.id === 'ADM-001' || (import.meta.env.ADMIN_EMAIL && userRef.current?.email === import.meta.env.ADMIN_EMAIL)) {
           setLoading(false);
           return;
         }

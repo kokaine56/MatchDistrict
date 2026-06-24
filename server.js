@@ -628,7 +628,11 @@ async function initDb() {
 
     // Seed admin user if not present
     try {
-      const adminEmail = process.env.ADMIN_EMAIL || 'matchdistrict.in@gmail.com';
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (!adminEmail) {
+        console.warn('⚠️ [MATCH DISTRICT DB] ADMIN_EMAIL not set — skipping admin user seed.');
+        return;
+      }
       const adminPassword = process.env.ADMIN_PASSWORD || '101010';
       const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
       if (checkAdmin.rows.length === 0) {
@@ -653,6 +657,17 @@ async function initDb() {
           ]
         );
         console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
+      } else {
+        // Safety repair: ensure the admin roles array always contains 'admin'
+        const existing = checkAdmin.rows[0];
+        const currentRoles = existing.roles || [];
+        if (!currentRoles.includes('admin')) {
+          await client.query(
+            `UPDATE users SET role = 'admin', roles = $1 WHERE email = $2`,
+            [['user', 'admin'], adminEmail]
+          );
+          console.log(`🛡️ [MATCH DISTRICT DB] Repaired admin roles for ${adminEmail} — 'admin' was missing.`);
+        }
       }
     } catch (seedErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
@@ -5999,6 +6014,25 @@ const server = http.createServer(async (req, res) => {
         }
 
         const targetUser = userRes.rows[0];
+
+        // ─── CRITICAL: Root admin account safety guard ───
+        const rootAdminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase();
+        if (targetUser.email && rootAdminEmail && targetUser.email.toLowerCase() === rootAdminEmail) {
+          if (newRole !== ROLES.ADMIN) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'SECURITY_CONSTRAINT',
+              message: 'Security Constraint Violation: The root administrator account cannot be demoted or have its admin role removed.'
+            }));
+            return;
+          }
+          // Ensure the roles array always contains 'admin'
+          if (!Array.isArray(targetUser.roles) || !targetUser.roles.includes(ROLES.ADMIN)) {
+            await pool.query('UPDATE users SET roles = $1 WHERE id = $2', [['user', 'admin'], targetUserId]);
+          }
+        }
+        // ─── End root admin guard ───
 
         // Build the new roles array:
         // - USER: reset to ["user"] and clear orgApplicationStatus

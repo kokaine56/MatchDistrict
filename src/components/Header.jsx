@@ -199,7 +199,7 @@ function Header({ activePage, onNavigate }) {
             
             {currentUser ? (
               <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-outline-variant/40 ml-1">
-                {hasRole(getUserRoles(currentUser), 'admin') && (
+                {hasRole(getUserRoles(currentUser), 'admin') ? (
                   <button 
                     onClick={() => onNavigate && onNavigate('admin')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 font-headline-md text-xs font-bold tracking-wide border border-rose-500/35 transition-all shadow-sm shrink-0"
@@ -207,7 +207,15 @@ function Header({ activePage, onNavigate }) {
                     <span className="material-symbols-outlined text-sm">admin_panel_settings</span>
                     <span>Admin Panel</span>
                   </button>
-                )}
+                ) : hasRole(getUserRoles(currentUser), 'organiser') ? (
+                  <button 
+                    onClick={() => onNavigate && onNavigate('create-tournament')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-primary font-headline-md text-xs font-bold tracking-wide border border-primary/30 transition-all shadow-sm shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-sm">add_circle</span>
+                    <span>Host Event</span>
+                  </button>
+                ) : null}
                 <div 
                   onClick={() => onNavigate && onNavigate('profile')} 
                   className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-headline-md text-[10px] md:text-xs font-bold text-primary uppercase overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all shadow-sm"
@@ -283,7 +291,7 @@ function Header({ activePage, onNavigate }) {
                       </div>
                     </div>
                   )}
-                  {currentUser && hasRole(getUserRoles(currentUser), 'admin') && (
+                  {hasRole(getUserRoles(currentUser), 'admin') ? (
                     <button
                       onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('admin'); }}
                       className="px-3 py-2 rounded-xl text-[13px] font-bold tracking-wide text-left transition-all hover:bg-rose-500/10 hover:text-rose-500 text-rose-500 flex items-center gap-1.5 mb-2 border border-rose-500/20 shadow-sm"
@@ -291,7 +299,15 @@ function Header({ activePage, onNavigate }) {
                       <span className="material-symbols-outlined text-base">admin_panel_settings</span>
                       <span>Admin Panel</span>
                     </button>
-                  )}
+                  ) : hasRole(getUserRoles(currentUser), 'organiser') ? (
+                    <button
+                      onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('create-tournament'); }}
+                      className="px-3 py-2 rounded-xl text-[13px] font-bold tracking-wide text-left transition-all hover:bg-indigo-500/10 hover:text-primary text-primary flex items-center gap-1.5 mb-2 border border-primary/30 shadow-sm"
+                    >
+                      <span className="material-symbols-outlined text-base">add_circle</span>
+                      <span>Host Event</span>
+                    </button>
+                  ) : null}
                   
                   {navLinks.map((link) => (
                     <button

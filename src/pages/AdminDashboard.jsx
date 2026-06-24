@@ -3285,6 +3285,7 @@ function getEffectiveRole(user) {
 }
 
 function RoleManagementTab({ triggerToast }) {
+  const rootAdminEmail = (import.meta.env.ADMIN_EMAIL || '').toLowerCase()
   const [searchQuery, setSearchQuery] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
@@ -3440,6 +3441,7 @@ function RoleManagementTab({ triggerToast }) {
           <div className="divide-y divide-outline-variant/10 max-h-48 overflow-y-auto">
             {privilegedUsers.map(u => {
               const effectiveRole = getEffectiveRole(u)
+              const isRootAdmin = u.email && rootAdminEmail && u.email.toLowerCase() === rootAdminEmail
               return (
                 <div key={u.id} className="flex items-center justify-between px-4 py-2 hover:bg-surface-container-highest/10 transition-colors">
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -3455,9 +3457,16 @@ function RoleManagementTab({ triggerToast }) {
                       <p className="text-[9px] text-on-surface-variant truncate">{u.email}</p>
                     </div>
                   </div>
-                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${ROLE_COLORS[effectiveRole] || ROLE_COLORS[ROLES.USER]}`}>
-                    {ROLE_LABELS[effectiveRole] || effectiveRole}
-                  </span>
+                  {isRootAdmin ? (
+                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border border-red-200 dark:border-red-500/20 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400">
+                      <span className="material-symbols-outlined text-[10px]">lock</span>
+                      System Root
+                    </span>
+                  ) : (
+                    <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${ROLE_COLORS[effectiveRole] || ROLE_COLORS[ROLES.USER]}`}>
+                      {ROLE_LABELS[effectiveRole] || effectiveRole}
+                    </span>
+                  )}
                 </div>
               )
             })}
@@ -3526,6 +3535,14 @@ function RoleManagementTab({ triggerToast }) {
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {/* ─── ROOT ADMIN: Immutable System Account ─── */}
+                          {user.email && rootAdminEmail && user.email.toLowerCase() === rootAdminEmail ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 dark:bg-red-500/5 border border-red-200 dark:border-red-500/20 text-[10px] font-semibold text-slate-500 dark:text-slate-400 italic shadow-sm">
+                              <span className="material-symbols-outlined text-[12px]">lock</span>
+                              Immutable System Account
+                            </span>
+                          ) : (
+                            <>
                           {/* Promote: to reg_payment_verifier */}
                           {roleIdx < ROLE_ORDER.indexOf(ROLES.REG_PAYMENT_VERIFIER) && (
                             <button
@@ -3574,6 +3591,8 @@ function RoleManagementTab({ triggerToast }) {
                           {/* No actions possible (already admin) */}
                           {effectiveRole === ROLES.ADMIN && (
                             <span className="text-[10px] text-on-surface-variant/50 italic px-2">Protected</span>
+                          )}
+                          </>
                           )}
                         </div>
                       </td>
