@@ -100,7 +100,7 @@ Game badge colors defined in `src/components/TournamentCard.jsx` (`GAME_BADGE` m
 | **PostgreSQL** | Database via `pg` pool |
 | **Supabase** | Auth (OAuth, fallback login), Realtime subscriptions |
 | **Resend** | Email sending (OTP, password reset, notifications) |
-| **Cloudinary** | Image hosting (tournament covers, avatars) |
+| **ImgBB API** | Image hosting (tournament covers, avatars) |
 
 ### Key Dependencies (`package.json`)
 ```json
@@ -151,8 +151,8 @@ SUPABASE_URL=https://ahgokqbjrpeotqzwilts.supabase.co
 SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 # Image Upload (VITE_ prefix required for client-side access in Vite)
-VITE_CLOUDINARY_CLOUD_NAME=dwiol3q0f
-VITE_CLOUDINARY_UPLOAD_PRESET=matchdistrict_default
+VITE_IMGBB_API_KEY=05cd784fb7ca69e2f0c8eefb78ff9506
+IMGBB_API_KEY=05cd784fb7ca69e2f0c8eefb78ff9506
 
 # Feature Flags
 ENABLE_ESCROW_CONTRACTS=true
@@ -162,7 +162,7 @@ ENABLE_ANTI_CHEAT_LOGS=true
 
 ### Vite Configuration (`vite.config.js`)
 - **envPrefix**: Extended to include `APP_`, `API_`, `SOCKET_`, `AUTH_`, `OTP_`, `ADMIN_`, `JWT_`, `ENABLE_`, `ANALYTICS_`, `DATABASE_`, `SUPABASE_`, and `VITE_` prefixes.
-- **Proxy**: All `/api` requests proxied to `http://localhost:10000` in dev. In production (Render, etc.), image uploads use Cloudinary unsigned client-side upload directly via `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET`.
+- **Proxy**: All `/api` requests proxied to `http://localhost:10000` in dev. In production (Render, etc.), third-party API keys like ImgBB require the `VITE_` prefix to be accessible via `import.meta.env.VITE_IMGBB_API_KEY`. The upload utility also attempts a server-side proxy (`/api/imgbb-upload`) first for security, falling back to direct ImgBB API v1 calls.
 - **Build chunking**: React/Framer-Motion/React-Router → `vendor` chunk; all other `node_modules` → `dependencies` chunk.
 - **historyApiFallback**: Enabled for SPA routing.
 
@@ -602,7 +602,7 @@ The server runs on **port 10000** as a raw Node.js HTTP server with manual routi
 |---|---|---|---|---|
 | PUT | `/api/users/update-profile/:id` | Ownership | 5500 | Update user profile |
 | GET | `/api/users/:id` | Auth | 5600 | Get user profile |
-| POST | `/api/upload` | Auth | 5700 | Upload image (base64 → Cloudinary via proxy) — **Removed, all uploads use direct client-side Cloudinary unsigned upload** |
+| POST | `/api/upload` | Auth | 5700 | Upload image (base64 → ImgBB) |
 | GET | `/api/users` | Admin | 5800 | List all users |
 | DELETE | `/api/users/:id` | Admin | 5900 | Delete user (with cascade) |
 
@@ -689,7 +689,7 @@ The server runs on **port 10000** as a raw Node.js HTTP server with manual routi
 | POST | `/api/inject-dummy-registrations` | Admin | 7550 | Test inject dummy registrations |
 | POST | `/api/admin/toggle-early-access` | Admin | 7600 | Toggle user early access |
 | POST | `/api/admin/save-feature-flag` | Admin | 7650 | Save feature flag |
-| POST | `/api/upload` | Auth | ~4268 | **Removed** — all uploads use direct client-side Cloudinary unsigned upload |
+| POST | `/api/imgbb-upload` | Auth | ~7700 | Server-side ImgBB proxy (base64 → ImgBB via API key) |
 
 ---
 
@@ -1086,9 +1086,9 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 ### 10.10 Image Upload System (`Step5Media.jsx` + `CropModal.jsx`)
 1. User clicks dashed upload zone (accepts `image/jpeg, image/png, image/webp`)
 2. Validation: type must be JPEG/PNG/WebP, max 5MB, min resolution 600×800 (inferred from crop logic)
-3. If ratio is already 3:4 (within 0.02 tolerance) → upload directly to Cloudinary via `uploadImage()` using unsigned upload preset
+3. If ratio is already 3:4 (within 0.02 tolerance) → upload to ImgBB directly via `uploadToImgbb()`
 4. If ratio differs → open CropModal with locked 3:4 frame
-5. Upload via `uploadImage()` which sends `FormData` with `file` + `upload_preset` directly to Cloudinary unsigned API
+5. Upload via `uploadToImgbb()` which first tries server-side proxy (`/api/imgbb-upload`), then falls back to direct ImgBB API using `VITE_IMGBB_API_KEY`
 6. On success: `cover_image_url` updated in form data
 
 **CropModal**:
@@ -1096,13 +1096,13 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 - Drag reposition, scroll/zoom (0.5x–5x)
 - Cannot change crop ratio, resize crop box, use freeform crop
 - Canvas output: JPEG at 92% quality
-### 10.11 Image Upload — Cloudinary Unsigned Upload (`src/utils/cloudinaryUpload.js`)
 
-The `uploadImage()` function performs a direct unsigned upload to Cloudinary:
-1. Converts the input (File, Blob, data URL) to a Blob
-2. Sends `FormData` with `file` and `upload_preset` to `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
-3. Returns `secure_url` from the Cloudinary JSON response
-4. Requires `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET` in `.env` — no API key or secret needed
+### 10.11 Image Upload — Server Proxy & Fallback (`src/utils/imgbbUpload.js`)
+The `uploadToImgbb()` function uses a dual-approach strategy:
+1. **Proxy (preferred)**: Sends base64 data to `/api/imgbb-upload` server endpoint which uses the server-side API key to upload. This avoids exposing the key and avoids CORS issues.
+2. **Direct fallback**: If the proxy fails, uses `import.meta.env.VITE_IMGBB_API_KEY` to call `https://api.imgbb.com/1/upload` directly.
+
+**Important for production (Render, etc.)**: The env var **must** be prefixed with `VITE_` (i.e., `VITE_IMGBB_API_KEY`) to be available to `import.meta.env` in the client bundle. Both `VITE_IMGBB_API_KEY` and `IMGBB_API_KEY` are present in `.env`.
 
 ---
 
@@ -1579,7 +1579,7 @@ The hero section consists of two visual layers:
 │  Welcome to the District.                  │
 │                                            │
 │  ┌──────────────────────────────────────┐  │
-│  │  BGIS 2026        │ [CLAIM SLOTS]   │  │
+│  │  BGIS 2026        │ [CLAIM SLOTS]    │  │
 │  │  PRIZE │ ENTRY │ STARTS              │  │
 │  └──────────────────────────────────────┘  │
 │      ● ○                                   │
@@ -1810,9 +1810,11 @@ The `<Footer />` component must always be placed at the **absolute root layout l
 - `sanitizeUserRecord(user)` — Strips password, sanitizes avatar/banner
 - `parseStoredUser(raw)`, `setStoredUser(user)`
 - `buildPlayerProfilePayload(form)`, `buildOrgProfilePayload(form)`
-### 24.6 Image Upload (`src/utils/cloudinaryUpload.js`)
 
-- `uploadImage(image)` — Direct unsigned Cloudinary upload via `FormData` with `file` + `upload_preset`. Accepts File, Blob, blob: URL, http URL, or data: URL. Requires `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET` in `.env`.
+### 24.6 Image Upload (`src/utils/imgbbUpload.js`)
+- `uploadToImgbb(image)` — Two-phase upload: server proxy (`/api/imgbb-upload`) first, direct ImgBB API as fallback using `import.meta.env.VITE_IMGBB_API_KEY`
+- Supports File/Blob, base64 strings, and remote URLs as input
+- Transforms blobs to base64 for proxy transport
 
 ### 24.7 Test Injector (`src/utils/testInjector.js`)
 - `injectDummyRegistrations(tournamentId, targetSlots=1000)` — Inserts dummy teams in chunks of 500 via Supabase
@@ -1933,7 +1935,7 @@ src/assets/
 14. **Image crop tolerance** — 0.02 ratio tolerance means near-3:4 images skip crop modal
 15. **Dead code**: `CreateTournament.jsx` (1515 lines) not imported anywhere; `RegistrationWizard.jsx` (475 lines) not imported; `TournamentCreationModal.jsx` not imported
 16. **Footer only on homepage** — no global footer component, currently embedded in `Homepage.jsx`
-17. **`VITE_` env prefix requirement** — for production builds on Render, Cloudinary env vars need the `VITE_` prefix to be accessible client-side
+17. **`VITE_` env prefix requirement** — for production builds on Render, ImgBB API key needs the `VITE_` prefix to be accessible client-side
 18. **Touch-gesture consistency** — some horizontal scroll containers use `!touch-auto` instead of `pan-x`, risking inconsistent behavior
 
 ---
@@ -1973,4 +1975,4 @@ src/assets/
 | Date | Change | Author |
 |---|---|---|
 | Initial creation | Full platform documentation | — |
-| 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), Cloudinary upload integration (§10.11, §24.6), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |
+| 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), ImgBB dual-upload strategy (§10.11, §24.6), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |

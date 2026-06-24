@@ -285,9 +285,6 @@ function Header({ activePage, onNavigate }) {
                         <div className="font-headline-md text-xs font-bold text-black dark:text-white truncate">
                           {currentUser.name || currentUser.gamerTag}
                         </div>
-                        <div className="font-label-caps text-[9px] text-primary uppercase">
-                          {currentUser.tier || 'Player'}
-                        </div>
                       </div>
                     </div>
                   )}
@@ -298,14 +295,6 @@ function Header({ activePage, onNavigate }) {
                     >
                       <span className="material-symbols-outlined text-base">admin_panel_settings</span>
                       <span>Admin Panel</span>
-                    </button>
-                  ) : hasRole(getUserRoles(currentUser), 'organiser') ? (
-                    <button
-                      onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('create-tournament'); }}
-                      className="px-3 py-2 rounded-xl text-[13px] font-bold tracking-wide text-left transition-all hover:bg-indigo-500/10 hover:text-primary text-primary flex items-center gap-1.5 mb-2 border border-primary/30 shadow-sm"
-                    >
-                      <span className="material-symbols-outlined text-base">add_circle</span>
-                      <span>Host Event</span>
                     </button>
                   ) : null}
                   

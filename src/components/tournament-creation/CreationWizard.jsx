@@ -197,10 +197,6 @@ export default function CreationWizard() {
       navigate('/profile', { replace: true })
       return
     }
-    if (currentUser.orgApplicationStatus !== 'approved' && !hasRole(getUserRoles(currentUser), 'admin')) {
-      navigate('/become-organizer', { replace: true })
-      return
-    }
   }, [currentUser, loading, navigate])
 
   // Sync userTier
@@ -535,9 +531,13 @@ export default function CreationWizard() {
     return result
   }, [formData, planLimits, saveToServer, orgName, userTier, currentUser])
 
+  const debounceRef = useRef(null)
   const handleChange = useCallback((newData) => {
-    setFormData(newData)
+    clearTimeout(debounceRef.current)
     setErrors({})
+    debounceRef.current = setTimeout(() => {
+      setFormData(newData)
+    }, 180)
   }, [])
 
   const stepComponent = useMemo(() => {

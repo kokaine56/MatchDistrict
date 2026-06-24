@@ -248,10 +248,6 @@ function AppInner() {
       return <Navigate to="/profile" replace />
     }
 
-    if (currentUser.orgApplicationStatus !== 'approved' && !hasRole(getUserRoles(currentUser), 'admin')) {
-      return <Navigate to="/become-organizer" replace />
-    }
-
     return (
       <PageTransition>
         <CreateTournament />

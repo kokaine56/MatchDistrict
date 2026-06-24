@@ -7716,7 +7716,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const tournamentsRes = await pool.query('SELECT id, prize, entry, "slotsFilled" FROM tournaments');
+      const tournamentsRes = await pool.query(
+        `SELECT id, prize, entry, "slotsFilled", status FROM tournaments WHERE status IN ('live', 'upcoming')`
+      );
+
+      // Fetch dynamic platform fee percentage
+      const feeRes = await pool.query(`SELECT value FROM site_settings WHERE key = 'platform_fee_percentage'`);
+      const platformFeePercentage = feeRes.rows.length > 0 ? parseFloat(feeRes.rows[0].value) : 10;
+      const commissionRate = platformFeePercentage / 100;
 
       let totalPrizePools = 0;
       let totalAvailableCommission = 0;
@@ -7728,7 +7735,7 @@ const server = http.createServer(async (req, res) => {
         const slots = parseInt(t.slotsFilled) || 0;
 
         totalPrizePools += prizeNum;
-        totalAvailableCommission += (entryNum * slots) * 0.05;
+        totalAvailableCommission += (entryNum * slots) * commissionRate;
         activeTourneysCount++;
       });
 
@@ -7788,6 +7795,7 @@ const server = http.createServer(async (req, res) => {
         totalOperationalRevenue: totalAvailableCommission,
         totalPrizePools,
         activeTourneysCount,
+        platformFeePercentage,
         ledger: ledgers,
         engagementCurve,
         trafficBars

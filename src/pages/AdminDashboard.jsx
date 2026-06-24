@@ -30,10 +30,12 @@ export default function AdminDashboard({ onNavigate }) {
     totalPrizePools: 0,
     totalOperationalRevenue: 0,
     activeTourneysCount: 0,
+    platformFeePercentage: 10,
     ledger: [],
     engagementCurve: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     trafficBars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   })
+  const [commissionSaving, setCommissionSaving] = useState(false)
   const [themeMode, setThemeMode] = useState('dark')
 
   // UI state for Toast
@@ -170,6 +172,7 @@ export default function AdminDashboard({ onNavigate }) {
         totalPrizePools: Number(data.totalPrizePools || 0),
         totalOperationalRevenue: Number(data.totalOperationalRevenue || 0),
         activeTourneysCount: Number(data.activeTourneysCount || 0),
+        platformFeePercentage: Number(data.platformFeePercentage || 10),
         ledger: data.ledger || [],
         engagementCurve: data.engagementCurve || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         trafficBars: data.trafficBars || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -287,6 +290,30 @@ export default function AdminDashboard({ onNavigate }) {
     } catch (e) {
       console.error('Error changing global theme setting:', e)
       triggerToast('Error saving theme configuration')
+    }
+  }
+
+  // Handle commission percentage save
+  const handleSaveCommission = async (newPercentage) => {
+    setCommissionSaving(true)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/settings/platform-fee', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ percentage: newPercentage })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setFinancials(prev => ({ ...prev, platformFeePercentage: data.percentage }))
+        triggerToast(`Commission rate updated to ${data.percentage}%`)
+      } else {
+        triggerToast(data.error || 'Failed to update commission rate')
+      }
+    } catch (err) {
+      triggerToast('Network error saving commission rate')
+    } finally {
+      setCommissionSaving(false)
     }
   }
 
@@ -531,7 +558,7 @@ export default function AdminDashboard({ onNavigate }) {
         <div className="glass-card rounded-2xl border border-outline-variant/30 shadow-sm bg-surface-container-low/40 backdrop-blur-md">
           <div className="flex overflow-x-auto border-b border-outline-variant/20 bg-surface-container-lowest/10 px-3 sm:px-6 py-1 no-scrollbar justify-start">
             {[
-              { id: 'overview', label: 'Overview & Telemetry', icon: 'monitoring' },
+              { id: 'overview', label: 'Overview', icon: 'monitoring' },
               { id: 'kyc', label: `Organizer KYC (${kycApplications.filter(a => a.status === 'pending').length})`, icon: 'how_to_reg' },
               { id: 'upgrades', label: `Plan Upgrades (${upgradeRequests.filter(r => r.status === 'pending').length})`, icon: 'upgrade' },
               { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
@@ -566,31 +593,67 @@ export default function AdminDashboard({ onNavigate }) {
           </div>
         </div>
 
-        {/* TAB 1: OVERVIEW & TELEMETRY */}
+        {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-300">
             {/* Core KPIs grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-              {[
-                { label: 'Total Prize pools', value: `₹${financials.totalPrizePools.toLocaleString('en-IN')}`, icon: 'payments', desc: 'Total locked prize pools', color: 'text-indigo-500 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20' },
-                { label: 'Commission pool', value: `₹${Math.round(financials.totalOperationalRevenue).toLocaleString('en-IN')}`, icon: 'percent', desc: '5% host platform revenue', color: 'text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
-                { label: 'Active Arenas', value: financials.activeTourneysCount, icon: 'stadium', desc: 'Live & upcoming tournaments', color: 'text-secondary bg-secondary/10 border-secondary/20' },
-                { label: 'Gamer Roster', value: usersList.length, icon: 'groups', desc: 'Registered user base', color: 'text-primary bg-primary/10 border-primary/20' }
-              ].map((kpi, idx) => (
-                <div 
-                  key={idx}
-                  className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md"
-                >
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${kpi.color} shadow-sm shrink-0`}>
-                    <span className="material-symbols-outlined text-lg sm:text-xl">{kpi.icon}</span>
-                  </div>
-                  <div className="space-y-0.5">
-                    <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">{kpi.label}</div>
-                    <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">{kpi.value}</div>
-                    <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">{kpi.desc}</p>
-                  </div>
+
+              {/* Card 1: Total Prize Pools */}
+              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-indigo-500 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20 shadow-sm shrink-0">
+                  <span className="material-symbols-outlined text-lg sm:text-xl">payments</span>
                 </div>
-              ))}
+                <div className="space-y-0.5">
+                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">TOTAL PRIZE POOLS</div>
+                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">₹{financials.totalPrizePools.toLocaleString('en-IN')}</div>
+                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Sum of ongoing &amp; upcoming arenas</p>
+                </div>
+              </div>
+
+              {/* Card 2: Commission Pool (editable %) */}
+              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
+                <div className="flex items-center justify-between">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20 shadow-sm shrink-0">
+                    <span className="material-symbols-outlined text-lg sm:text-xl">percent</span>
+                  </div>
+                  <CommissionEditor
+                    percentage={financials.platformFeePercentage}
+                    onSave={handleSaveCommission}
+                    saving={commissionSaving}
+                  />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">COMMISSION POOL</div>
+                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">₹{Math.round(financials.totalOperationalRevenue).toLocaleString('en-IN')}</div>
+                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">At {financials.platformFeePercentage}% platform fee</p>
+                </div>
+              </div>
+
+              {/* Card 3: Active Arenas */}
+              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-secondary bg-secondary/10 border-secondary/20 shadow-sm shrink-0">
+                  <span className="material-symbols-outlined text-lg sm:text-xl">stadium</span>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">ACTIVE ARENAS</div>
+                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">{financials.activeTourneysCount}</div>
+                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Live &amp; upcoming tournaments</p>
+                </div>
+              </div>
+
+              {/* Card 4: Gamer Roster */}
+              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-primary bg-primary/10 border-primary/20 shadow-sm shrink-0">
+                  <span className="material-symbols-outlined text-lg sm:text-xl">groups</span>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">GAMER ROSTER</div>
+                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">{usersList.length}</div>
+                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Total registered platform users</p>
+                </div>
+              </div>
+
             </div>
 
             {/* Charts section */}
@@ -3284,6 +3347,61 @@ function getEffectiveRole(user) {
   return highest;
 }
 
+// Inline commission percentage editor with pencil icon toggle
+function CommissionEditor({ percentage, onSave, saving }) {
+  const [editing, setEditing] = useState(false)
+  const [inputVal, setInputVal] = useState(percentage)
+
+  useEffect(() => { setInputVal(percentage) }, [percentage])
+
+  const handleSave = () => {
+    const num = parseFloat(inputVal)
+    if (isNaN(num) || num < 0 || num > 100) return
+    onSave(num)
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={0.5}
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          className="w-14 px-1.5 py-1 rounded-lg border border-emerald-500/50 bg-surface/60 text-on-background text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+          autoFocus
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setEditing(false) }}
+        />
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="w-6 h-6 rounded-md bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-all shrink-0"
+        >
+          {saving ? (
+            <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : (
+            <span className="material-symbols-outlined text-xs">check</span>
+          )}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => setEditing(true)}
+      className="flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold transition-all"
+      title="Edit commission rate"
+    >
+      <span>{percentage}%</span>
+      <span className="material-symbols-outlined text-[12px]">edit</span>
+    </button>
+  )
+}
+
 function RoleManagementTab({ triggerToast }) {
   const rootAdminEmail = (import.meta.env.ADMIN_EMAIL || '').toLowerCase()
   const [searchQuery, setSearchQuery] = useState('')
@@ -3385,6 +3503,10 @@ function RoleManagementTab({ triggerToast }) {
           u.id === targetUserId ? { ...u, ...updatedUser } : u
         ))
         fetchAllUsers() // refresh privileged directory
+        // If the target user is the current admin, update context state immediately
+        if (currentUser && targetUserId === currentUser.id) {
+          setCurrentUser(prev => ({ ...prev, role: newRole, roles: newRoles }))
+        }
       } else {
         triggerToast(data.message || data.error || 'Failed to update role')
       }
