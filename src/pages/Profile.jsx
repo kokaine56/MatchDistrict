@@ -14,7 +14,7 @@ import {
 } from '../utils/userStorage.js'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
-import { hasCapability, getUserRoles, ROLES } from '../utils/iamRoles.js'
+import { hasCapability, getUserRoles, ROLES, hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import VerificationBadge from '../components/VerificationBadge.jsx'
@@ -2315,7 +2315,16 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             >
                               <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
                             </motion.button>
-                            {currentUser?.role === 'organiser' ? (
+                            {isSystemAdmin(currentUser) ? (
+                              <motion.button
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                onClick={() => onNavigate && onNavigate('admin')}
+                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                              >
+                                <span className="material-symbols-outlined text-sm">admin_panel_settings</span> Admin Panel
+                              </motion.button>
+                            ) : hasOrganizerRights(currentUser) ? (
                               <motion.button
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
@@ -2347,7 +2356,16 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           >
                             <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
                           </motion.button>
-                          {currentUser?.role === 'organiser' ? (
+                          {isSystemAdmin(currentUser) ? (
+                            <motion.button
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => onNavigate && onNavigate('admin')}
+                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
+                            >
+                              <span className="material-symbols-outlined text-sm">admin_panel_settings</span> Admin Panel
+                            </motion.button>
+                          ) : hasOrganizerRights(currentUser) ? (
                             <motion.button
                               whileHover={{ scale: 1.02 }}
                               whileTap={{ scale: 0.98 }}
