@@ -517,6 +517,24 @@ async function initDb() {
         CREATE INDEX IF NOT EXISTS idx_registrations_payment_id ON tournament_registrations(payment_id);
       `);
       console.log('📦 [MATCH DISTRICT DB] Registration/payment indexes created.');
+
+      // CREATE admin_action_log table for audit trail (supports both action and action_type columns for backward compat)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS admin_action_log (
+          id VARCHAR(50) PRIMARY KEY,
+          admin_id VARCHAR(50),
+          action TEXT,
+          action_type TEXT,
+          target_type VARCHAR(50),
+          target_id VARCHAR(50),
+          target_user VARCHAR(50),
+          details TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_admin_action_log_admin ON admin_action_log(admin_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_admin_action_log_created ON admin_action_log(created_at DESC)`);
+      console.log('📦 [MATCH DISTRICT DB] admin_action_log table ensured.');
     } catch (idxErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create indexes:', idxErr.message);
     }
@@ -628,11 +646,7 @@ async function initDb() {
 
     // Seed admin user if not present
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (!adminEmail) {
-        console.warn('⚠️ [MATCH DISTRICT DB] ADMIN_EMAIL not set — skipping admin user seed.');
-        return;
-      }
+      const adminEmail = process.env.ADMIN_EMAIL || ROOT_ADMIN_EMAIL;
       const adminPassword = process.env.ADMIN_PASSWORD || '101010';
       const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
       if (checkAdmin.rows.length === 0) {
@@ -758,6 +772,12 @@ const ROLES = Object.freeze({
   REG_PAYMENT_VERIFIER: 'reg_payment_verifier',
   USER:                'user',
 });
+
+// ─── Absolute immutable root admin protection ───
+// This hardcoded constant ensures the root admin account can NEVER be demoted,
+// even if the ADMIN_EMAIL env variable is accidentally cleared or misconfigured.
+// The primary guard uses env.ADMIN_EMAIL; this constant acts as the failsafe.
+const ROOT_ADMIN_EMAIL = 'matchdistrict.in@gmail.com';
 
 const ROLE_HIERARCHY = Object.freeze({
   [ROLES.USER]:               1,
@@ -6015,9 +6035,14 @@ const server = http.createServer(async (req, res) => {
 
         const targetUser = userRes.rows[0];
 
-        // ─── CRITICAL: Root admin account safety guard ───
-        const rootAdminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase();
-        if (targetUser.email && rootAdminEmail && targetUser.email.toLowerCase() === rootAdminEmail) {
+        // ─── CRITICAL: Root admin account absolute safety guard ───
+        const envRoot = (process.env.ADMIN_EMAIL || '').toLowerCase();
+        const hardRoot = ROOT_ADMIN_EMAIL.toLowerCase();
+        const isTargetRootAdmin = targetUser.email && (
+          (envRoot && targetUser.email.toLowerCase() === envRoot) ||
+          targetUser.email.toLowerCase() === hardRoot
+        );
+        if (isTargetRootAdmin) {
           if (newRole !== ROLES.ADMIN) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -6048,6 +6073,7 @@ const server = http.createServer(async (req, res) => {
           newRoles = ['user', 'reg_payment_verifier'];
         } else if (newRole === ROLES.ORGANISER) {
           newRoles = ['user', 'organiser'];
+          orgStatusClear = ', "orgApplicationStatus" = \'approved\'';
         } else {
           newRoles = ['user'];
         }
@@ -6057,12 +6083,26 @@ const server = http.createServer(async (req, res) => {
           [newRole, newRoles, targetUserId]
         );
 
+        // Auto-create a Free subscription for newly assigned organisers
+        if (newRole === ROLES.ORGANISER) {
+          try {
+            await pool.query(
+              `INSERT INTO subscriptions (id, organizer_id, plan_id, billing_status)
+               VALUES ($1, $2, 'plan_free', 'active')
+               ON CONFLICT (organizer_id) DO NOTHING`,
+              ['SUB-' + Date.now(), targetUserId]
+            );
+          } catch (subErr) {
+            console.warn('⚠️ [IAM] Could not auto-create subscription for organizer:', subErr.message);
+          }
+        }
+
         // Audit log
         const logId = 'ADM-' + crypto.randomBytes(6).toString('hex').toUpperCase();
         await pool.query(
-          `INSERT INTO admin_action_log (id, admin_id, action, target_user, details, created_at)
-           VALUES ($1, $2, $3, $4, $5, NOW())`,
-          [logId, authUser.id, 'UPDATE_ROLE', targetUserId, `${targetUser.role || JSON.stringify(targetUser.roles)} → ${newRole} (roles: ${JSON.stringify(newRoles)})`]
+          `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [logId, authUser.id, 'role_change', 'user', targetUserId, `${targetUser.role || JSON.stringify(targetUser.roles)} → ${newRole} (roles: ${JSON.stringify(newRoles)})`]
         );
 
         console.log(`🔐 [IAM] Admin ${authUser.id} changed ${targetUserId} role: ${targetUser.role} → ${newRole}, roles: ${JSON.stringify(newRoles)}`);
@@ -7461,6 +7501,97 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
+    return;
+  }
+
+  // --- ADMIN: BULK APPROVE ALL VERIFIED REGISTRATIONS (Approve All) ---
+  if (req.url === '/api/admin/bulk-approve-all' && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
+      // Fetch all registrations staged as VERIFIED_BY_HOST
+      const pendingRes = await pool.query(
+        `SELECT r.*, t.title AS tournament_title, t.game AS tournament_game
+         FROM tournament_registrations r
+         JOIN tournaments t ON r.tournament_id = t.id
+         WHERE r.status = 'VERIFIED_BY_HOST'
+         ORDER BY r.created_at ASC`
+      );
+
+      if (pendingRes.rows.length === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'No pending verifications found to approve.', approvedCount: 0 }));
+        return;
+      }
+
+      const ids = pendingRes.rows.map(r => r.id);
+      const approvedCount = ids.length;
+
+      // Atomically approve all
+      await pool.query(
+        `UPDATE tournament_registrations SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE status = 'VERIFIED_BY_HOST'`
+      );
+
+      // Update linked payment_submissions
+      for (const reg of pendingRes.rows) {
+        if (reg.payment_id) {
+          await pool.query(
+            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+            [authUser.id, reg.payment_id]
+          );
+        }
+      }
+
+      // Notify each user and reconcile slots
+      const tournamentIds = new Set();
+      for (const reg of pendingRes.rows) {
+        tournamentIds.add(reg.tournament_id);
+        try {
+          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO alerts (id, user_id, title, message, tournament_id)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [alertId, reg.user_id, 'Registration Approved',
+             `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}!`,
+             reg.tournament_id]
+          );
+        } catch (alertErr) { /* non-critical */ }
+      }
+
+      // Reconcile slots for each affected tournament
+      for (const tid of tournamentIds) {
+        await reconcileTournamentSlots(pool, tid);
+      }
+
+      // Audit log
+      try {
+        const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(
+          `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [logId, authUser.id, 'approve_all_verified', 'registration', 'bulk',
+           JSON.stringify({ approvedCount, tournamentsAffected: tournamentIds.size })]
+        );
+      } catch (logErr) { /* non-critical */ }
+
+      console.log(`\n📦 [ADMIN] Bulk approved ALL ${approvedCount} VERIFIED_BY_HOST registrations across ${tournamentIds.size} tournaments.\n`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        message: `Successfully approved all ${approvedCount} staged registrations.`,
+        approvedCount,
+        tournamentsAffected: tournamentIds.size
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
     return;
   }
 

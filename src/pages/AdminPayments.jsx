@@ -13,6 +13,8 @@ export default function AdminPayments() {
   const [showToast, setShowToast] = useState(false)
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [bulkApproving, setBulkApproving] = useState(false)
+  const [verifiedCount, setVerifiedCount] = useState(0)
 
   const triggerToast = (msg) => {
     setToastMessage(msg)
@@ -37,7 +39,44 @@ export default function AdminPayments() {
     }
   }
 
-  useEffect(() => { fetchPending() }, [])
+  const fetchVerifiedCount = async () => {
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/verifier/pending-payments', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        const verified = (data.registrations || []).filter(r => r.status === 'VERIFIED_BY_HOST')
+        setVerifiedCount(verified.length)
+      }
+    } catch {}
+  }
+
+  const handleBulkApproveAll = async () => {
+    setBulkApproving(true)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/admin/bulk-approve-all', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        triggerToast(data.message || `Approved ${data.approvedCount} registrations.`)
+        setVerifiedCount(0)
+        fetchPending()
+      } else {
+        triggerToast(data.error || 'Bulk approval failed.')
+      }
+    } catch {
+      triggerToast('Error during bulk approval.')
+    } finally {
+      setBulkApproving(false)
+    }
+  }
+
+  useEffect(() => { fetchPending(); fetchVerifiedCount() }, [])
 
   const groupedByGame = registrations.reduce((acc, reg) => {
     const game = reg.tournament_game || 'Unknown Game'
@@ -205,13 +244,29 @@ export default function AdminPayments() {
             <h1 className="font-headline-lg text-lg sm:text-xl font-black text-on-background">Payment Verification</h1>
             <p className="font-body-sm text-[11px] text-on-surface-variant">Approve or reject pending squad registrations</p>
           </div>
-          <button
-            onClick={fetchPending}
-            disabled={loading}
-            className="px-4 min-h-[44px] bg-surface border border-outline-variant/30 hover:bg-surface-variant text-on-background rounded-xl font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-40"
-          >
-            <span className="material-symbols-outlined text-sm">refresh</span> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            {verifiedCount > 0 && (
+              <button
+                onClick={handleBulkApproveAll}
+                disabled={bulkApproving}
+                className="px-4 min-h-[44px] bg-emerald-500/15 hover:bg-emerald-500 border border-emerald-500/30 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-xl font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-40"
+              >
+                {bulkApproving ? (
+                  <div className="w-3.5 h-3.5 rounded-full border-2 border-emerald-400/40 border-t-emerald-400 animate-spin" />
+                ) : (
+                  <span className="material-symbols-outlined text-sm">select_all</span>
+                )}
+                Approve All ({verifiedCount})
+              </button>
+            )}
+            <button
+              onClick={fetchPending}
+              disabled={loading}
+              className="px-4 min-h-[44px] bg-surface border border-outline-variant/30 hover:bg-surface-variant text-on-background rounded-xl font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-40"
+            >
+              <span className="material-symbols-outlined text-sm">refresh</span> Refresh
+            </button>
+          </div>
         </div>
 
         {/* Stats */}
