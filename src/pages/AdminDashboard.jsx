@@ -6,10 +6,10 @@ import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { subscriptionApi } from '../services/subscriptionApi.js'
-import Header from '../components/Header.jsx'
 import ActivityFeed from '../components/ActivityFeed'
 import { injectDummyRegistrations } from '../utils/testInjector'
 import { ROLES, hasRole, getUserRoles, hasCapability, hasOrganizerRights, ROLE_LABELS, getNextPromotionRole, getNextDemotionRole } from '../utils/iamRoles.js'
+import AdminLayout from '../components/admin/AdminLayout.jsx'
 
 export default function AdminDashboard({ onNavigate }) {
   const { theme, setTheme } = useTheme()
@@ -505,93 +505,17 @@ export default function AdminDashboard({ onNavigate }) {
   }
 
   return (
-    <div className="admin-dashboard min-h-screen bg-background text-on-background relative overflow-x-hidden transition-colors duration-300">
-      <Header activePage="admin" onNavigate={onNavigate} />
-      <div className="absolute inset-0 bg-grid-pattern pointer-events-none z-0" />
-      
-      {/* Dynamic Ambient Glows */}
-      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-[300px] sm:w-[600px] h-[300px] sm:h-[600px] bg-primary/8 blur-[90px] sm:blur-[130px] rounded-full pointer-events-none" />
-        <div className="absolute bottom-1/4 right-1/4 w-[250px] sm:w-[450px] h-[250px] sm:h-[450px] bg-secondary/6 blur-[80px] sm:blur-[110px] rounded-full pointer-events-none" />
-      </div>
-
-      <main className="w-full max-w-6xl mx-auto px-3 sm:px-4 pt-20 sm:pt-28 pb-10 sm:pb-16 relative z-10 space-y-6 sm:space-y-8">
-        
-        {/* Banner Title */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-outline-variant/30 pb-5">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 text-rose-500 font-label-caps text-[9px] font-bold tracking-wider uppercase">
-                Secure Terminal
-              </span>
-              <span className="text-[10px] text-on-surface-variant/50 font-mono tracking-widest font-semibold">
-                SYSADMIN v1.4
-              </span>
-            </div>
-            <h1 className="font-display-lg text-xl sm:text-2xl font-extrabold uppercase tracking-tight text-white">
-              Platform Command Center
-            </h1>
-            <p className="font-body-sm text-[11px] sm:text-xs text-on-surface-variant">
-              Welcome back, Superadmin. Monitor system telemetry, approve organizer tiers, and manage database records.
-            </p>
-          </div>
-          {/* Action buttons */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onNavigate && onNavigate('create-tournament')}
-              className="px-4 py-2.5 bg-primary text-white rounded-xl font-bold text-xs hover:-translate-y-0.5 transition-all shadow-[0_0_20px_rgba(99,102,241,0.3)] flex items-center gap-1.5"
-            >
-              <span className="material-symbols-outlined text-[16px]">add_circle</span>
-              <span>Host Event</span>
-            </button>
-            <button
-              onClick={() => onNavigate && onNavigate('profile')}
-              className="px-3.5 py-2 bg-surface-container-high border border-outline-variant/30 rounded-xl font-headline-md text-xs font-bold text-white hover:bg-surface-variant transition-all flex items-center gap-1.5"
-            >
-              <span className="material-symbols-outlined text-[16px]">account_circle</span>
-              <span>Profile Hub</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Horizontal Scrollable Sub-navigation pills (mobile view) & normal layout */}
-        <div className="glass-card rounded-2xl border border-outline-variant/30 shadow-sm bg-surface-container-low/40 backdrop-blur-md">
-          <div className="flex overflow-x-auto border-b border-outline-variant/20 bg-surface-container-lowest/10 px-3 sm:px-6 py-1 no-scrollbar justify-start">
-            {[
-              { id: 'overview', label: 'Overview', icon: 'monitoring' },
-              { id: 'kyc', label: `Organizer KYC (${kycApplications.filter(a => a.status === 'pending').length})`, icon: 'how_to_reg' },
-              { id: 'upgrades', label: `Plan Upgrades (${upgradeRequests.filter(r => r.status === 'pending').length})`, icon: 'upgrade' },
-              { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
-              { id: 'tournaments', label: 'Tournaments Governance', icon: 'stadium' },
-              { id: 'activity', label: 'System Logs', icon: 'list_alt' },
-              { id: 'abusefilter', label: `Abuse Filter (${badWordsList.length})`, icon: 'security' },
-              { id: 'registrations', label: 'Registrations', icon: 'assignment' },
-              { id: 'subscriptions', label: 'Subscriptions', icon: 'credit_card' },
-              { id: 'payments', label: 'Payments', icon: 'payments' },
-              { id: 'sponsor', label: 'Sponsorships', icon: 'sponsor' },
-              { id: 'verify', label: 'Verify Sponsor', icon: 'verified' },
-              { id: 'featureflags', label: 'Feature Flags', icon: 'flag' },
-              { id: 'rolemanagement', label: 'Role Management', icon: 'admin_panel_settings' },
-              { id: 'bulk-approvals', label: 'Bulk Approvals', icon: 'how_to_reg' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id)
-                  triggerToast(`Opened ${tab.label.split(' (')[0]}`)
-                }}
-                className={`flex items-center gap-1.5 py-3.5 px-4 font-headline-md text-[11px] sm:text-xs font-bold border-b-2 whitespace-nowrap transition-all touch-manipulation profile-tab-btn ${
-                  activeTab === tab.id 
-                    ? 'active-tab border-primary text-primary bg-primary/10' 
-                    : 'border-transparent text-on-surface-variant hover:text-on-background dark:hover:text-white dark:hover:bg-white/5 hover:bg-slate-900/5'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px] sm:text-[18px]">{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+    <AdminLayout
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      onNavigate={onNavigate}
+      currentUser={currentUser}
+      badges={{
+        kyc: kycApplications.filter(a => a.status === 'pending').length,
+        upgrades: upgradeRequests.filter(r => r.status === 'pending').length,
+        badWordsCount: badWordsList.length,
+      }}
+    >
 
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
@@ -1809,40 +1733,7 @@ export default function AdminDashboard({ onNavigate }) {
           <BulkApprovalsTab triggerToast={triggerToast} />
         )}
 
-      </main>
-
-      {/* Global CSS Toast notification Overlay */}
-      <AnimatePresence>
-        {showToast && (
-          <motion.div 
-            initial={{ opacity: 0, y: 30, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 25, scale: 0.95 }}
-            className="fixed bottom-4 right-4 left-4 sm:left-auto sm:bottom-6 sm:right-6 z-50 glass-card bg-slate-900/90 dark:bg-white/90 border border-slate-800 dark:border-white/20 px-4 py-3 rounded-xl shadow-xl flex items-center gap-2"
-          >
-            <span className="material-symbols-outlined text-primary dark:text-background text-[18px]">verified</span>
-            <span className="font-headline-md text-xs font-bold text-white dark:text-background select-none">{toastMessage}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Platform Standard Footer */}
-      <footer className="w-full bg-slate-100 dark:bg-surface-container-lowest border-t border-slate-200 dark:border-outline-variant py-6 px-4 mt-20">
-        <div className="w-full max-w-container-max mx-auto flex flex-col gap-4">
-          <div className="flex justify-center items-center gap-5 border-b border-slate-200 dark:border-white/5 pb-3">
-            <button onClick={() => onNavigate && onNavigate('terms-service')} className="font-body-sm text-[10px] text-slate-700 dark:text-white/50 hover:text-primary transition-colors">Terms</button>
-            <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="font-body-sm text-[10px] text-slate-700 dark:text-white/50 hover:text-primary transition-colors">Privacy</button>
-            <button onClick={() => onNavigate && onNavigate('help-support')} className="font-body-sm text-[10px] text-slate-700 dark:text-white/50 hover:text-primary transition-colors">Support</button>
-          </div>
-          <div className="flex flex-col items-center justify-center gap-1 text-center">
-            <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[14px] font-extrabold text-primary tracking-tight hover:opacity-85 transition-opacity">
-              Match District
-            </button>
-            <p className="font-body-sm text-[9px] text-slate-600 dark:text-white/40">© 2024 MATCH DISTRICT SECURE ADMIN PORTAL. ALL RIGHTS RESERVED.</p>
-          </div>
-        </div>
-      </footer>
-    </div>
+    </AdminLayout>
   )
 }
 
