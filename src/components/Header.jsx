@@ -3,6 +3,7 @@ import SafeImage from './SafeImage.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
 import { supabase } from '../utils/supabaseClient'
+import { hasRole, getUserRoles } from '../utils/iamRoles.js'
 
 function Header({ activePage, onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -198,7 +199,7 @@ function Header({ activePage, onNavigate }) {
             
             {currentUser ? (
               <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-outline-variant/40 ml-1">
-                {currentUser.role === 'admin' && (
+                {hasRole(getUserRoles(currentUser), 'admin') && (
                   <button 
                     onClick={() => onNavigate && onNavigate('admin')}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 font-headline-md text-xs font-bold tracking-wide border border-rose-500/35 transition-all shadow-sm shrink-0"
@@ -282,7 +283,7 @@ function Header({ activePage, onNavigate }) {
                       </div>
                     </div>
                   )}
-                  {currentUser && currentUser.role === 'admin' && (
+                  {currentUser && hasRole(getUserRoles(currentUser), 'admin') && (
                     <button
                       onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('admin'); }}
                       className="px-3 py-2 rounded-xl text-[13px] font-bold tracking-wide text-left transition-all hover:bg-rose-500/10 hover:text-rose-500 text-rose-500 flex items-center gap-1.5 mb-2 border border-rose-500/20 shadow-sm"

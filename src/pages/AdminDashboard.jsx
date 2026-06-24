@@ -9,6 +9,7 @@ import { subscriptionApi } from '../services/subscriptionApi.js'
 import Header from '../components/Header.jsx'
 import ActivityFeed from '../components/ActivityFeed'
 import { injectDummyRegistrations } from '../utils/testInjector'
+import { ROLES, hasRole, getUserRoles, hasCapability, hasOrganizerRights, ROLE_LABELS, getNextPromotionRole, getNextDemotionRole } from '../utils/iamRoles.js'
 
 export default function AdminDashboard({ onNavigate }) {
   const { theme, setTheme } = useTheme()
@@ -147,7 +148,7 @@ export default function AdminDashboard({ onNavigate }) {
       const res = await fetch(`/api/users/${user.id}`, {
         method: 'PUT',
         headers: await getHeaders(),
-        body: JSON.stringify({ role: 'player', orgApplicationStatus: 'none', tier: 'Amateur' })
+        body: JSON.stringify({ role: 'user', orgApplicationStatus: 'none', tier: 'Amateur' })
       })
       const data = await res.json()
       if (data.success) {
@@ -472,7 +473,7 @@ export default function AdminDashboard({ onNavigate }) {
   }, [trafficBars])
 
   // Render nothing while redirecting if the user is not verified admin
-  if (!currentUser || currentUser.role !== 'admin') {
+  if (!currentUser || !hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
     return null
   }
 
@@ -542,7 +543,9 @@ export default function AdminDashboard({ onNavigate }) {
               { id: 'payments', label: 'Payments', icon: 'payments' },
               { id: 'sponsor', label: 'Sponsorships', icon: 'sponsor' },
               { id: 'verify', label: 'Verify Sponsor', icon: 'verified' },
-              { id: 'featureflags', label: 'Feature Flags', icon: 'flag' }
+              { id: 'featureflags', label: 'Feature Flags', icon: 'flag' },
+              { id: 'rolemanagement', label: 'Role Management', icon: 'admin_panel_settings' },
+              { id: 'bulk-approvals', label: 'Bulk Approvals', icon: 'how_to_reg' }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1731,6 +1734,16 @@ export default function AdminDashboard({ onNavigate }) {
 
         {activeTab === 'featureflags' && (
           <FeatureFlagsTab triggerToast={triggerToast} />
+        )}
+
+        {/* TAB 11: ROLE MANAGEMENT */}
+        {activeTab === 'rolemanagement' && (
+          <RoleManagementTab triggerToast={triggerToast} />
+        )}
+
+        {/* TAB 15: BULK APPROVALS */}
+        {activeTab === 'bulk-approvals' && (
+          <BulkApprovalsTab triggerToast={triggerToast} />
         )}
 
       </main>
@@ -3251,6 +3264,354 @@ function FeatureFlagsTab({ triggerToast }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Role Management Tab — Admin-only: promote/demote user roles
+// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Multi-Role Helpers (local to this file)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns the highest-privilege role from a user's roles array.
+ */
+function getEffectiveRole(user) {
+  const roles = user.roles || (user.role ? [user.role] : ['user']);
+  const order = [ROLES.USER, ROLES.REG_PAYMENT_VERIFIER, ROLES.ORGANISER, ROLES.ADMIN];
+  let highest = ROLES.USER;
+  for (const r of order) {
+    if (roles.includes(r)) highest = r;
+  }
+  return highest;
+}
+
+function RoleManagementTab({ triggerToast }) {
+  const [searchQuery, setSearchQuery] = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [actioningUserId, setActioningUserId] = useState(null)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [privilegedUsers, setPrivilegedUsers] = useState([])
+
+  const fetchAllUsers = useCallback(async () => {
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/users', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        const allUsers = data.users || []
+        // Filter to users with privileged roles
+        const priv = allUsers.filter(u => {
+          const roles = u.roles || (u.role ? [u.role] : ['user'])
+          return roles.some(r => r === ROLES.ADMIN || r === ROLES.ORGANISER || r === ROLES.REG_PAYMENT_VERIFIER)
+        })
+        setPrivilegedUsers(priv)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const fetchSearchResults = useCallback(async (query) => {
+    if (!query.trim()) {
+      setResults([])
+      setHasSearched(false)
+      return
+    }
+    setLoading(true)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/users', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) {
+        const q = query.toLowerCase()
+        const filtered = (data.users || []).filter(u =>
+          (u.name || '').toLowerCase().includes(q) ||
+          (u.email || '').toLowerCase().includes(q) ||
+          (u.orgHandle || '').toLowerCase().includes(q) ||
+          (u.gamerTag || '').toLowerCase().includes(q)
+        )
+        setResults(filtered)
+        setHasSearched(true)
+      } else {
+        triggerToast('Failed to fetch users')
+      }
+    } catch {
+      triggerToast('Network error')
+    }
+    setLoading(false)
+  }, [triggerToast])
+
+  // Load privileged directory on mount
+  useEffect(() => { fetchAllUsers() }, [fetchAllUsers])
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery) fetchSearchResults(searchQuery)
+      else { setResults([]); setHasSearched(false) }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery, fetchSearchResults])
+
+  const handleUpdateRole = async (targetUserId, newRole, userName) => {
+    const roleLabel = ROLE_LABELS[newRole] || newRole
+    const confirmed = window.confirm(
+      `Change ${userName || 'this user'}'s role to "${roleLabel}"?`
+    )
+    if (!confirmed) return
+
+    setActioningUserId(targetUserId)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch('/api/admin/update-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ targetUserId, newRole })
+      })
+      const data = await res.json()
+      if (data.success) {
+        triggerToast(`Role updated to ${roleLabel}`)
+        const updatedUser = { ...data.user }
+        // Build expected roles array for local state
+        const newRoles = newRole === ROLES.USER ? ['user'] :
+          newRole === ROLES.ADMIN ? ['user', 'admin'] :
+          newRole === ROLES.ORGANISER ? ['user', 'organiser'] :
+          newRole === ROLES.REG_PAYMENT_VERIFIER ? ['user', 'reg_payment_verifier'] : ['user']
+        updatedUser.roles = newRoles
+        setResults(prev => prev.map(u =>
+          u.id === targetUserId ? { ...u, ...updatedUser } : u
+        ))
+        fetchAllUsers() // refresh privileged directory
+      } else {
+        triggerToast(data.message || data.error || 'Failed to update role')
+      }
+    } catch {
+      triggerToast('Network error')
+    }
+    setActioningUserId(null)
+  }
+
+  const ROLE_ORDER = [ROLES.USER, ROLES.REG_PAYMENT_VERIFIER, ROLES.ORGANISER, ROLES.ADMIN]
+  const ROLE_COLORS = {
+    [ROLES.ADMIN]: 'text-rose-400 bg-rose-500/10 border-rose-500/20',
+    [ROLES.ORGANISER]: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
+    [ROLES.REG_PAYMENT_VERIFIER]: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+    [ROLES.USER]: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-bold text-on-background">Role Management</h2>
+        <p className="text-xs text-on-surface-variant">Search users by name, email, or handle to promote or demote their platform role.</p>
+      </div>
+
+      {/* Search Bar */}
+      <div className="relative">
+        <span className="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[18px]">search</span>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search by Name, Email, or Handle..."
+          className="w-full bg-surface-container-highest/50 border border-outline-variant/30 rounded-xl pl-10 pr-4 py-2.5 text-xs text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
+        />
+        {searchQuery && (
+          <button onClick={() => { setSearchQuery(''); setResults([]); setHasSearched(false) }}
+            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        )}
+      </div>
+
+      {/* Assigned Privileged Users Directory */}
+      {privilegedUsers.length > 0 && (
+        <div className="glass-card rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-outline-variant/20 bg-surface-container-lowest/20 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-primary">security</span>
+              <h3 className="text-[11px] font-bold text-on-surface uppercase tracking-wider">Assigned Privileged Users</h3>
+            </div>
+            <span className="text-[10px] text-on-surface-variant/60">{privilegedUsers.length} user{privilegedUsers.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="divide-y divide-outline-variant/10 max-h-48 overflow-y-auto">
+            {privilegedUsers.map(u => {
+              const effectiveRole = getEffectiveRole(u)
+              return (
+                <div key={u.id} className="flex items-center justify-between px-4 py-2 hover:bg-surface-container-highest/10 transition-colors">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-6 h-6 rounded-full bg-surface-container-highest/30 border border-outline-variant/20 flex items-center justify-center shrink-0 overflow-hidden">
+                      {u.avatar ? (
+                        <img src={u.avatar} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="material-symbols-outlined text-[12px] text-on-surface-variant">person</span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold text-on-background truncate">{u.name || 'Unknown'}</p>
+                      <p className="text-[9px] text-on-surface-variant truncate">{u.email}</p>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-bold border ${ROLE_COLORS[effectiveRole] || ROLE_COLORS[ROLES.USER]}`}>
+                    {ROLE_LABELS[effectiveRole] || effectiveRole}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="space-y-3">{[1,2,3].map(i => (
+          <div key={i} className="h-16 bg-surface-container-low/30 rounded-xl animate-pulse" />
+        ))}</div>
+      )}
+
+      {/* No results */}
+      {!loading && hasSearched && results.length === 0 && (
+        <div className="glass-card p-8 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md text-center">
+          <span className="material-symbols-outlined text-3xl text-on-surface-variant/40 block mb-3">person_search</span>
+          <p className="text-sm font-semibold text-on-background">No users found</p>
+          <p className="text-xs text-on-surface-variant">Try a different search term.</p>
+        </div>
+      )}
+
+      {/* Results Table */}
+      {!loading && results.length > 0 && (
+        <div className="glass-card rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-outline-variant/20 bg-surface-container-lowest/20">
+                  <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">User</th>
+                  <th className="text-left py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Current Role</th>
+                  <th className="text-right py-3 px-4 font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map(user => {
+                  const effectiveRole = getEffectiveRole(user)
+                  const roleIdx = ROLE_ORDER.indexOf(effectiveRole)
+                  return (
+                    <tr key={user.id} className="border-b border-outline-variant/10 hover:bg-surface-container-highest/10 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-surface-container-highest/30 border border-outline-variant/20 flex items-center justify-center shrink-0 overflow-hidden">
+                            {user.avatar ? (
+                              <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="material-symbols-outlined text-[14px] text-on-surface-variant">person</span>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-on-background truncate">{user.name || 'Unknown'}</p>
+                            <p className="text-[10px] text-on-surface-variant truncate">{user.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${ROLE_COLORS[effectiveRole] || ROLE_COLORS[ROLES.USER]}`}>
+                          <span className="material-symbols-outlined text-[12px]">
+                            {effectiveRole === ROLES.ADMIN ? 'shield' :
+                             effectiveRole === ROLES.ORGANISER ? 'event' :
+                             effectiveRole === ROLES.REG_PAYMENT_VERIFIER ? 'verified' : 'person'}
+                          </span>
+                          {ROLE_LABELS[effectiveRole] || effectiveRole}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {/* Promote: to reg_payment_verifier */}
+                          {roleIdx < ROLE_ORDER.indexOf(ROLES.REG_PAYMENT_VERIFIER) && (
+                            <button
+                              onClick={() => handleUpdateRole(user.id, ROLES.REG_PAYMENT_VERIFIER, user.name)}
+                              disabled={actioningUserId === user.id}
+                              className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 text-[10px] font-bold rounded-lg transition-all disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {actioningUserId === user.id ? (
+                                <div className="w-3 h-3 rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin" />
+                              ) : (
+                                <span className="material-symbols-outlined text-[12px]">verified</span>
+                              )}
+                              <span>Make Verifier</span>
+                            </button>
+                          )}
+                          {/* Promote: to organiser */}
+                          {roleIdx < ROLE_ORDER.indexOf(ROLES.ORGANISER) && (
+                            <button
+                              onClick={() => handleUpdateRole(user.id, ROLES.ORGANISER, user.name)}
+                              disabled={actioningUserId === user.id}
+                              className="px-2.5 py-1.5 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 text-sky-400 text-[10px] font-bold rounded-lg transition-all disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {actioningUserId === user.id ? (
+                                <div className="w-3 h-3 rounded-full border-2 border-sky-400/30 border-t-sky-400 animate-spin" />
+                              ) : (
+                                <span className="material-symbols-outlined text-[12px]">event</span>
+                              )}
+                              <span>Make Organiser</span>
+                            </button>
+                          )}
+                          {/* Demote: revoke to user */}
+                          {roleIdx > ROLE_ORDER.indexOf(ROLES.USER) && (
+                            <button
+                              onClick={() => handleUpdateRole(user.id, ROLES.USER, user.name)}
+                              disabled={actioningUserId === user.id}
+                              className="px-2.5 py-1.5 bg-slate-500/10 hover:bg-slate-500/20 border border-slate-500/20 text-slate-400 text-[10px] font-bold rounded-lg transition-all disabled:opacity-50 flex items-center gap-1"
+                            >
+                              {actioningUserId === user.id ? (
+                                <div className="w-3 h-3 rounded-full border-2 border-slate-400/30 border-t-slate-400 animate-spin" />
+                              ) : (
+                                <span className="material-symbols-outlined text-[12px]">undo</span>
+                              )}
+                              <span>Revoke to User</span>
+                            </button>
+                          )}
+                          {/* No actions possible (already admin) */}
+                          {effectiveRole === ROLES.ADMIN && (
+                            <span className="text-[10px] text-on-surface-variant/50 italic px-2">Protected</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-2.5 border-t border-outline-variant/10 text-[10px] text-on-surface-variant/60">
+            {results.length} user{results.length !== 1 ? 's' : ''} found
+          </div>
+        </div>
+      )}
+
+      {/* Quick role reference */}
+      <div className="glass-card p-4 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
+        <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-3">Role Hierarchy Reference</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[ROLES.USER, ROLES.REG_PAYMENT_VERIFIER, ROLES.ORGANISER, ROLES.ADMIN].map(role => (
+            <div key={role} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${ROLE_COLORS[role]}`}>
+              <span className="material-symbols-outlined text-[16px]">
+                {role === ROLES.ADMIN ? 'shield' :
+                 role === ROLES.ORGANISER ? 'event' :
+                 role === ROLES.REG_PAYMENT_VERIFIER ? 'verified' : 'person'}
+              </span>
+              <div>
+                <p className="text-[11px] font-bold">{ROLE_LABELS[role]}</p>
+                <p className="text-[9px] opacity-70">{role}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Organizer Usage Stats for Admin Overview
 function OrganizerUsageStats() {
   const [stats, setStats] = useState(null);
@@ -3287,6 +3648,158 @@ function OrganizerUsageStats() {
           <p className="text-[10px] text-on-surface-variant">{m.label}</p>
           <p className="text-base font-bold text-on-surface">{m.value}</p>
           {m.change && <p className="text-[9px] text-emerald-400">+{m.change} growth</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Bulk Approvals Tab for Admin — VERIFIED_BY_HOST → APPROVED
+function BulkApprovalsTab({ triggerToast }) {
+  const [registrations, setRegistrations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState({});
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [selectAll, setSelectAll] = useState(false);
+
+  const fetchVerified = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch('/api/admin/pending-registrations', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRegistrations(data.registrations.filter(r => r.status === 'VERIFIED_BY_HOST'));
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  useRefetchOnFocus(fetchVerified);
+  useEffect(() => { fetchVerified(); }, [fetchVerified]);
+
+  const groupedByTournament = useMemo(() => {
+    const map = {};
+    registrations.forEach(r => {
+      const key = r.tournament_id;
+      if (!map[key]) map[key] = { id: key, title: r.tournament_title, game: r.tournament_game, entryFee: r.entry_fee_amount, registrations: [] };
+      map[key].registrations.push(r);
+    });
+    return Object.values(map).sort((a, b) => a.title?.localeCompare(b.title));
+  }, [registrations]);
+
+  const totalSelected = Object.values(selected).filter(Boolean).length;
+
+  const handleSelectAll = () => {
+    const newVal = !selectAll;
+    setSelectAll(newVal);
+    const newSelected = {};
+    registrations.forEach(r => { newSelected[r.id] = newVal; });
+    setSelected(newSelected);
+  };
+
+  const handleToggle = (id) => {
+    setSelected(prev => ({ ...prev, [id]: !prev[id] }));
+    setSelectAll(false);
+  };
+
+  const handleBulkApprove = async () => {
+    const ids = Object.entries(selected).filter(([, v]) => v).map(([k]) => k);
+    if (ids.length === 0) { triggerToast('No registrations selected.'); return; }
+    setBulkLoading(true);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch('/api/admin/bulk-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ registrationIds: ids })
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerToast(`${data.results.approved.length} registrations approved!`);
+        setRegistrations(prev => prev.filter(r => !ids.includes(r.id)));
+        setSelected({});
+        setSelectAll(false);
+        if (data.results.skipped.length > 0) {
+          triggerToast(`${data.results.skipped.length} skipped (not in VERIFIED_BY_HOST status).`);
+        }
+      } else {
+        triggerToast(data.message || 'Bulk approval failed.');
+      }
+    } catch { triggerToast('Network error.'); }
+    setBulkLoading(false);
+  };
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+    </div>
+  );
+
+  return (
+    <div className="space-y-5 animate-in fade-in duration-300">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-on-background">Bulk Approvals</h2>
+          <p className="text-xs text-on-surface-variant">{registrations.length} registrations awaiting final approval (VERIFIED_BY_HOST)</p>
+        </div>
+        <div className="flex gap-2">
+          {totalSelected > 0 && (
+            <button onClick={handleBulkApprove} disabled={bulkLoading}
+              className="px-4 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold hover:bg-emerald-600 transition-all disabled:opacity-40 flex items-center gap-1.5">
+              {bulkLoading ? <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <span className="material-symbols-outlined text-[14px]">how_to_reg</span>}
+              Approve {totalSelected} Selected
+            </button>
+          )}
+          <button onClick={fetchVerified} disabled={loading}
+            className="px-4 py-2 rounded-xl bg-surface border border-outline-variant/30 text-xs font-bold text-on-background hover:bg-surface-variant transition-all flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[16px]">refresh</span> Refresh
+          </button>
+        </div>
+      </div>
+
+      {registrations.length > 0 && (
+        <div className="flex items-center gap-3 px-1">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={selectAll} onChange={handleSelectAll}
+              className="w-4 h-4 rounded border-outline-variant/30 text-primary focus:ring-primary/30" />
+            <span className="text-xs font-medium text-on-background">Select All ({registrations.length})</span>
+          </label>
+        </div>
+      )}
+
+      {groupedByTournament.length === 0 ? (
+        <div className="text-center py-16">
+          <span className="material-symbols-outlined text-4xl text-on-surface-variant/30 mb-3">how_to_reg</span>
+          <p className="text-sm font-medium text-on-surface-variant">No registrations awaiting final approval</p>
+        </div>
+      ) : groupedByTournament.map(group => (
+        <div key={group.id} className="rounded-xl bg-surface border border-outline-variant/30 overflow-hidden">
+          <div className="px-4 py-3 border-b border-outline-variant/20 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">{group.game || 'Game'}</span>
+              <h3 className="font-bold text-sm text-on-background truncate">{group.title}</h3>
+              <span className="text-[11px] text-on-surface-variant bg-surface-variant/50 px-2 py-0.5 rounded-full">{group.registrations.length} regs</span>
+            </div>
+            {group.entryFee > 0 && <span className="text-[11px] font-bold text-emerald-500">₹{group.entryFee}/slot</span>}
+          </div>
+          <div className="divide-y divide-outline-variant/10">
+            {group.registrations.map(reg => (
+              <div key={reg.id} className="px-4 py-3 flex items-center gap-3">
+                <input type="checkbox" checked={!!selected[reg.id]} onChange={() => handleToggle(reg.id)}
+                  className="w-4 h-4 rounded border-outline-variant/30 text-primary focus:ring-primary/30 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[13px] font-semibold text-on-background">{reg.team_name}</p>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">Verified</span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant">Captain: {reg.captain} &middot; UTR: {reg.payment_utr || reg.transaction_id || '—'}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       ))}
     </div>

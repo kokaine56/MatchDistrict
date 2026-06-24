@@ -14,6 +14,7 @@ import {
 } from '../utils/userStorage.js'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
+import { hasCapability, getUserRoles, ROLES } from '../utils/iamRoles.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import VerificationBadge from '../components/VerificationBadge.jsx'
@@ -2398,7 +2399,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           { id: 'teams', label: 'Teams & Squads', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
                           { id: 'wallet', label: 'Wallet & Payouts', icon: 'account_balance_wallet' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' }
+                          { id: 'settings', label: 'Settings', icon: 'settings' },
+                          ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
+                            ? [{ id: 'verifier', label: 'Verifier Panel', icon: 'verified' }]
+                            : [])
                         ].map((tab) => (
                           <button
                             key={tab.id}
@@ -2431,7 +2435,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           { id: 'teams', label: 'Teams', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
                           { id: 'wallet', label: 'Wallet', icon: 'account_balance_wallet' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' }
+                          { id: 'settings', label: 'Settings', icon: 'settings' },
+                          ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
+                            ? [{ id: 'verifier', label: 'Verifier', icon: 'verified' }]
+                            : [])
                         ].map((tab) => (
                           <button
                             key={tab.id}
@@ -3571,6 +3578,10 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                   </div>
                 </motion.div>
               )}
+              {/* Tab 6: Verifier Panel (conditional) */}
+              {activeTab === 'verifier' && (
+                <VerifierPanelTab triggerToast={triggerToast} />
+              )}
             </AnimatePresence>
           </div>
         )}
@@ -3960,6 +3971,176 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
       </AnimatePresence>
     </>
   )
+}
+
+// --- VERIFIER PANEL TAB COMPONENT ---
+function VerifierPanelTab({ triggerToast }) {
+  const [registrations, setRegistrations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionRegId, setActionRegId] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [screenshotModal, setScreenshotModal] = useState(null);
+  const [paymentAppInputs, setPaymentAppInputs] = useState({});
+
+  const fetchPending = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch('/api/verifier/pending-payments', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) setRegistrations(data.registrations);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchPending(); }, [fetchPending]);
+  useRefetchOnFocus(fetchPending);
+
+  const groupedByTournament = useMemo(() => {
+    const map = {};
+    registrations.forEach(r => {
+      const key = r.tournament_id;
+      if (!map[key]) map[key] = { id: key, title: r.tournament_title, game: r.tournament_game, entryFee: r.entry_fee_amount, orgName: r.tournament_org_name, registrations: [] };
+      map[key].registrations.push(r);
+    });
+    return Object.values(map).sort((a, b) => a.title?.localeCompare(b.title));
+  }, [registrations]);
+
+  const handleVerify = async (reg) => {
+    setActionRegId(reg.id);
+    setActionLoading(true);
+    try {
+      const token = await getAuthToken();
+      const paymentApp = paymentAppInputs[reg.id] || reg.pay_app || '';
+      const res = await fetch(`/api/verifier/verify/${reg.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ payment_app: paymentApp })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRegistrations(prev => prev.filter(r => r.id !== reg.id));
+        triggerToast('Payment verified! Status set to VERIFIED_BY_HOST.');
+      } else {
+        triggerToast(data.message || 'Verification failed.');
+      }
+    } catch { triggerToast('Network error.'); }
+    setActionLoading(false);
+    setActionRegId(null);
+  };
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+    </div>
+  );
+
+  return (
+    <motion.div variants={tabContentVariants} initial="initial" animate="animate" exit="exit" className="space-y-5">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-on-background">Payment Verifier Panel</h2>
+          <p className="text-xs text-on-surface-variant">{registrations.length} payments pending verification</p>
+        </div>
+        <button onClick={fetchPending} disabled={loading}
+          className="px-4 py-2 rounded-xl bg-surface border border-outline-variant/30 text-xs font-bold text-on-background hover:bg-surface-variant transition-all flex items-center gap-1.5">
+          <span className="material-symbols-outlined text-[16px]">refresh</span> Refresh
+        </button>
+      </div>
+
+      {groupedByTournament.length === 0 ? (
+        <div className="text-center py-16">
+          <span className="material-symbols-outlined text-4xl text-on-surface-variant/30 mb-3">verified</span>
+          <p className="text-sm font-medium text-on-surface-variant">No payments pending verification</p>
+        </div>
+      ) : groupedByTournament.map(group => (
+        <div key={group.id} className="rounded-xl bg-surface border border-outline-variant/30 overflow-hidden">
+          <div className="px-4 py-3 border-b border-outline-variant/20 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-primary/10 text-primary border border-primary/20">{group.game || 'Game'}</span>
+              <h3 className="font-bold text-sm text-on-background truncate">{group.title}</h3>
+              <span className="text-[11px] text-on-surface-variant bg-surface-variant/50 px-2 py-0.5 rounded-full">{group.registrations.length} pending</span>
+            </div>
+            {group.entryFee > 0 && <span className="text-[11px] font-bold text-emerald-500">₹{group.entryFee}/slot</span>}
+          </div>
+          <div className="divide-y divide-outline-variant/10">
+            {group.registrations.map(reg => (
+              <div key={reg.id} className="px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] font-semibold text-on-background">{reg.team_name}</p>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-500/10 text-amber-500 border border-amber-500/20">Payment Pending</span>
+                    </div>
+                    <p className="text-[11px] text-on-surface-variant">Captain: {reg.captain}</p>
+                    <p className="text-[11px] text-on-surface-variant">Email: {reg.email || reg.user_email || '—'}</p>
+                  </div>
+                </div>
+
+                {/* Payment Details */}
+                <div className="mt-3 p-3 rounded-lg bg-amber-500/5 border border-amber-500/15">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                    <div>
+                      <p className="text-[9px] text-on-surface-variant/50">UTR / Transaction ID</p>
+                      <p className="text-[12px] font-semibold text-on-background">{reg.payment_utr || reg.transaction_id || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-on-surface-variant/50">Amount</p>
+                      <p className="text-[12px] font-semibold text-on-background">₹{group.entryFee || reg.entry_fee_amount || 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-on-surface-variant/50">Payment App</p>
+                      <input type="text" value={paymentAppInputs[reg.id] || reg.pay_app || reg.payment_app || ''}
+                        onChange={e => setPaymentAppInputs(prev => ({ ...prev, [reg.id]: e.target.value }))}
+                        placeholder="e.g. GPay, PhonePe, PayTM"
+                        className="mt-1 w-full px-2.5 py-1.5 rounded-lg bg-surface border border-outline-variant/30 text-[11px] text-on-background placeholder:text-on-surface-variant/40 outline-none focus:border-primary" />
+                    </div>
+                    <div>
+                      <p className="text-[9px] text-on-surface-variant/50">Registered By</p>
+                      <p className="text-[12px] font-semibold text-on-background">{reg.user_name || '—'}</p>
+                    </div>
+                  </div>
+                  {(reg.payment_proof_url || reg.screenshot_url) && (
+                    <button onClick={() => setScreenshotModal(reg.payment_proof_url || reg.screenshot_url)}
+                      className="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 text-[11px] font-bold hover:bg-amber-500/20 transition-colors">
+                      View Screenshot
+                    </button>
+                  )}
+                </div>
+
+                {/* Action */}
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => handleVerify(reg)} disabled={actionLoading && actionRegId === reg.id}
+                    className="px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-[11px] font-bold hover:bg-emerald-500/25 transition-all disabled:opacity-40 flex items-center gap-1.5">
+                    {actionLoading && actionRegId === reg.id ? (
+                      <span className="w-3.5 h-3.5 border-2 border-emerald-400/30 border-t-emerald-400 rounded-full animate-spin" />
+                    ) : <span className="material-symbols-outlined text-[14px]">verified</span>}
+                    Verify Payment
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Screenshot Modal */}
+      {screenshotModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setScreenshotModal(null)}>
+          <div className="relative max-w-lg w-full max-h-[80vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setScreenshotModal(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-surface border border-outline-variant/30 flex items-center justify-center shadow-lg z-10 hover:bg-surface-variant transition-colors">
+              <span className="material-symbols-outlined text-[16px] text-on-background">close</span>
+            </button>
+            <img src={screenshotModal} alt="Payment screenshot" className="w-full rounded-xl shadow-2xl" />
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
 }
 
 export default Profile

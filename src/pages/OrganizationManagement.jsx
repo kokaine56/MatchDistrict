@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Header from '../components/Header.jsx';
+import { hasOrganizerRights } from '../utils/iamRoles.js';
 import OrganizerDashboard from '../components/OrganizerDashboard.jsx';
 import SafeImage from '../components/SafeImage.jsx';
 import { useUser } from '../UserContext.jsx';
@@ -82,7 +83,7 @@ function OrganizationManagement({ onNavigate }) {
 
   // Restrict access on mount
   useEffect(() => {
-    if (!currentUser || (currentUser.role !== 'organiser' && currentUser.role !== 'admin')) {
+    if (!currentUser || !hasOrganizerRights(currentUser)) {
       onNavigate && onNavigate('profile');
     }
   }, [currentUser, onNavigate]);
@@ -249,7 +250,7 @@ function OrganizationManagement({ onNavigate }) {
     };
   }, [tournamentsList, orgData.tier]);
 
-  if (!currentUser || (currentUser.role !== 'organiser' && currentUser.role !== 'admin')) {
+  if (!currentUser || !hasOrganizerRights(currentUser)) {
     return null;
   }
 

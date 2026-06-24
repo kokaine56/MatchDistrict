@@ -166,6 +166,7 @@ async function initDb() {
         password VARCHAR(255) NOT NULL,
         "gamerTag" VARCHAR(255),
         role VARCHAR(50) DEFAULT 'gamer',
+        roles TEXT[] DEFAULT '{user}',
         tier VARCHAR(50) DEFAULT 'Amateur',
         experience TEXT,
         "socialLinks" TEXT,
@@ -246,7 +247,10 @@ async function initDb() {
         ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS priority_support BOOLEAN DEFAULT false;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT[] DEFAULT '{user}';
       `);
+      // Backfill roles array from legacy `role` column for existing rows where roles IS NULL
+      await client.query(`UPDATE users SET roles = ARRAY[role] WHERE roles IS NULL AND role IS NOT NULL`);
       console.log('📦 [MATCH DISTRICT DB] Supabase users and organizer tables schema verified and updated.');
     } catch (alterErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tables:', alterErr.message);
@@ -631,8 +635,8 @@ async function initDb() {
         const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
         const hashedAdminPassword = hashPassword(adminPassword);
         await client.query(
-          `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, tier, "orgApplicationStatus", avatar, status) 
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
           [
             adminId,
             adminId,
@@ -641,6 +645,7 @@ async function initDb() {
             hashedAdminPassword,
             '@admin',
             'admin',
+            ['user', 'admin'],
             'Pro',
             'none',
             'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=500&q=80',
@@ -725,16 +730,115 @@ function getAuthUser(req) {
   return user;
 }
 
-// Middleware to validate organizer status
+// ─────────────────────────────────────────────────────────────
+// IAM Role Hierarchy Engine (Multi-Role Array)
+// Role inheritance model:
+//   admin (4) → organiser (3) → reg_payment_verifier (2) → user (1)
+// Every user has a `roles TEXT[]` array (e.g. ["user", "organiser"]).
+// Admin in the array grants automatic system-wide override.
+// ─────────────────────────────────────────────────────────────
+const ROLES = Object.freeze({
+  ADMIN:               'admin',
+  ORGANISER:           'organiser',
+  REG_PAYMENT_VERIFIER: 'reg_payment_verifier',
+  USER:                'user',
+});
+
+const ROLE_HIERARCHY = Object.freeze({
+  [ROLES.USER]:               1,
+  [ROLES.REG_PAYMENT_VERIFIER]: 2,
+  [ROLES.ORGANISER]:           3,
+  [ROLES.ADMIN]:              4,
+});
+
+/**
+ * Normalizes a user object to always return a roles array.
+ * Handles migration: if `roles` is missing but `role` exists, wraps it in an array.
+ * @param {object} user - User object with optional `roles` (array) or `role` (string)
+ * @returns {string[]}
+ */
+function getUserRoles(user) {
+  if (!user) return [];
+  if (user.roles && Array.isArray(user.roles) && user.roles.length > 0) return user.roles;
+  if (user.role) return [user.role];
+  return [];
+}
+
+/**
+ * Checks if a user's roles array includes the target role.
+ * Admin in the roles array grants automatic system-wide override.
+ * @param {object} user       - User object with `roles` (array) or legacy `role` (string)
+ * @param {string} targetRole - The role to check for
+ * @returns {boolean}
+ */
+function hasRole(user, targetRole) {
+  if (!user || !targetRole) return false;
+  const roles = getUserRoles(user);
+  if (roles.includes(ROLES.ADMIN)) return true;
+  return roles.includes(targetRole);
+}
+
+/**
+ * Checks if a user's highest role has sufficient hierarchical clearance.
+ * @param {object} user        - User object
+ * @param {string} requiredRole - The minimum role required
+ * @returns {boolean}
+ */
+function hasRoleClearance(user, requiredRole) {
+  if (!user || !requiredRole) return false;
+  const roles = getUserRoles(user);
+  if (roles.includes(ROLES.ADMIN)) return true;
+  // Find the user's highest hierarchy level among their roles
+  let userLevel = 0;
+  for (const r of roles) {
+    const level = ROLE_HIERARCHY[r] ?? 0;
+    if (level > userLevel) userLevel = level;
+  }
+  const requiredLevel = ROLE_HIERARCHY[requiredRole] ?? Infinity;
+  return userLevel >= requiredLevel;
+}
+
+/**
+ * Returns true if the user has at least organiser-level clearance.
+ */
+function hasOrganizerRights(user) {
+  if (!user) return false;
+  return hasRoleClearance(user, ROLES.ORGANISER);
+}
+
+/**
+ * Permission matrix — maps capabilities to the roles allowed to perform them.
+ * Admin auto-passes all capabilities via hasCapability.
+ */
+const PERMISSIONS = Object.freeze({
+  PUBLISH_TOURNAMENT: [ROLES.ADMIN, ROLES.ORGANISER],
+  VERIFY_PAYMENTS:    [ROLES.ADMIN, ROLES.REG_PAYMENT_VERIFIER],
+  MANAGE_ROLES:       [ROLES.ADMIN],
+});
+
+/**
+ * Validates if a user has the required capability.
+ * Accepts a user object (with `roles` or `role` property).
+ */
+function hasCapability(user, capability) {
+  if (!user || !capability) return false;
+  const roles = getUserRoles(user);
+  if (roles.includes(ROLES.ADMIN)) return true;
+  const authorizedRoles = PERMISSIONS[capability];
+  if (!authorizedRoles) return false;
+  return roles.some(r => authorizedRoles.includes(r));
+}
+
+// Middleware to validate organizer status (uses hasOrganizerRights)
 function requireOrganizer(req, res, authUser) {
   if (!authUser) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
     return false;
   }
-  if (authUser.role !== 'organiser' && authUser.role !== 'admin') {
+  if (!hasOrganizerRights(authUser)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied. Verified organizer role is required.' }));
+    res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only organizers or administrators can perform this action.' }));
     return false;
   }
   return true;
@@ -742,8 +846,17 @@ function requireOrganizer(req, res, authUser) {
 
 // Middleware to validate organizer is approved (DB check) — for create/update tournament endpoints
 async function requireApprovedOrganizer(req, res, authUser, pool) {
-  if (!requireOrganizer(req, res, authUser)) return false;
-  if (authUser.role === 'admin') return true; // admins bypass approval check
+  if (!authUser) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+    return false;
+  }
+  if (!hasOrganizerRights(authUser)) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only organizers or administrators can perform this action.' }));
+    return false;
+  }
+  if (hasRole(authUser, ROLES.ADMIN)) return true; // admins bypass approval check
   try {
     const result = await pool.query(
       `SELECT "orgApplicationStatus" FROM users WHERE id = $1`,
@@ -1031,7 +1144,7 @@ const server = http.createServer(async (req, res) => {
             }
           }
 
-          const token = signJwt({ email: foundUser.email, role: foundUser.role, id: foundUser.uid || foundUser.id });
+          const token = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
           const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
           console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via database verification. JWT Generated.\n`);
           res.writeHead(200, {
@@ -1043,7 +1156,7 @@ const server = http.createServer(async (req, res) => {
             token,
             encryptedSession,
             user: publicUserRow(foundUser),
-            message: foundUser.role === 'admin'
+            message: hasRole(foundUser, ROLES.ADMIN)
               ? 'Superadmin credentials verified! Accessing Platform Command Center...'
               : `Welcome back, ${foundUser.name || foundUser.email.split('@')[0]}! Redirecting...`
           }));
@@ -1077,8 +1190,8 @@ const server = http.createServer(async (req, res) => {
           }
         } else {
           const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, tier, "orgApplicationStatus") 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus") 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
             [
               authData.user.id,
               authData.user.id,
@@ -1087,6 +1200,7 @@ const server = http.createServer(async (req, res) => {
               'REDACTED',
               '@' + email.split('@')[0],
               'player',
+              ['user'],
               'Amateur',
               'none'
             ]
@@ -1094,7 +1208,7 @@ const server = http.createServer(async (req, res) => {
           foundUser = insertRes.rows[0];
         }
 
-        const token = signJwt({ email: foundUser.email, role: foundUser.role, id: foundUser.uid || foundUser.id });
+        const token = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
         console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via Supabase Auth. JWT Generated.\n`);
         res.writeHead(200, {
@@ -1218,8 +1332,8 @@ const server = http.createServer(async (req, res) => {
         let newUser = null;
         try {
           const dbRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, tier, "orgApplicationStatus", avatar, status) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
             [
               userUUID, // id
               userUUID, // uid
@@ -1228,6 +1342,7 @@ const server = http.createServer(async (req, res) => {
               tempUser.password, // Store hashed password from tempUser
               defaultGamerTag,
               defaultRole,
+              ['user'],
               'Amateur',
               'none',
               'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80',
@@ -1246,7 +1361,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const token = signJwt({ email: newUser.email, role: newUser.role, id: newUser.uid || newUser.id });
+        const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: newUser.uid || newUser.id, email: newUser.email }));
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -1588,7 +1703,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const foundUser = dbRes.rows[0];
-        const freshToken = signJwt({ email: foundUser.email, role: foundUser.role, id: foundUser.uid || foundUser.id });
+        const freshToken = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
         const newEncryptedSession = encryptSessionData(JSON.stringify({ token: freshToken, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
 
         res.writeHead(200, {
@@ -1874,7 +1989,7 @@ const server = http.createServer(async (req, res) => {
 
       let query = 'SELECT * FROM organizer_applications';
       const params = [];
-      if (authUser.role !== 'admin') {
+      if (!hasRole(authUser, ROLES.ADMIN)) {
         query += ' WHERE email = $1';
         params.push(authUser.email);
       }
@@ -1898,7 +2013,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only admins can approve organizer applications.' }));
           return;
@@ -1924,17 +2039,19 @@ const server = http.createServer(async (req, res) => {
 
             // Sync approved tier and org details to user table
             const initialOrgHandle = '@' + (updatedApp.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_@]/g, '');
+            const newRoles = ['user', 'organiser'];
             const userRes = await pool.query(
               `UPDATE users SET 
                 role = $1, 
-                "orgApplicationStatus" = $2, 
-                tier = $3, 
-                "orgName" = $4, 
-                "orgMotto" = $5,
-                "orgImage" = $6,
-                "orgHandle" = $7
-               WHERE email = $8 RETURNING id`,
-              [newRole, status, approvedTier, updatedApp.orgName, orgMotto, updatedApp.orgImage, initialOrgHandle, email]
+                roles = $2,
+                "orgApplicationStatus" = $3, 
+                tier = $4, 
+                "orgName" = $5, 
+                "orgMotto" = $6,
+                "orgImage" = $7,
+                "orgHandle" = $8
+               WHERE email = $9 RETURNING id`,
+              [newRole, newRoles, status, approvedTier, updatedApp.orgName, orgMotto, updatedApp.orgImage, initialOrgHandle, email]
             );
 
             if (userRes.rows.length > 0) {
@@ -1976,7 +2093,7 @@ const server = http.createServer(async (req, res) => {
         `SELECT u.id, u.name, u."orgName", u.tier, u.experience AS "bio", u."orgHandle", u.avatar, u.banner, u."orgImage", u."orgMotto", u.email, u.wallet_balance,
                 u."customDashboardSlug", u.created_at, u."orgBanner", u."orgBio"
          FROM users u
-         WHERE u."customDashboardSlug" = $1 AND (u.role = 'organiser' OR u.role = 'admin')`,
+         WHERE u."customDashboardSlug" = $1 AND ('organiser' = ANY(u.roles) OR 'admin' = ANY(u.roles))`,
         [slug]
       );
       if (dbRes.rows.length === 0) {
@@ -2011,7 +2128,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
-        if (authUser.role !== 'organiser' && authUser.role !== 'admin') {
+        if (!hasRole(authUser, ROLES.ORGANISER)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only organizers can update organization profiles.' }));
           return;
@@ -2146,7 +2263,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/users' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only admins can view users list.' }));
         return;
@@ -2172,7 +2289,7 @@ const server = http.createServer(async (req, res) => {
           u."orgName", u."orgHandle", u."orgImage", u."orgMotto",
           (SELECT COUNT(*) FROM tournaments t WHERE t."orgId" = u.id AND t."isDraft" = false) AS "tournamentsHosted"
         FROM users u
-        WHERE LOWER(u.role) = 'organiser' OR LOWER(u.role) = 'verified organizer'
+        WHERE 'organiser' = ANY(u.roles)
         ORDER BY u.created_at DESC
       `);
 
@@ -2345,7 +2462,7 @@ const server = http.createServer(async (req, res) => {
     const id = urlPath.split('/api/users/')[1];
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only admins can delete users.' }));
         return;
@@ -2440,7 +2557,7 @@ const server = http.createServer(async (req, res) => {
         }
         const authUserRecord = authUserRes.rows[0];
 
-        if (authUserRecord.role !== 'admin' && authUserRecord.id !== id && authUserRecord.uid !== id) {
+        if (!hasRole(authUserRecord, ROLES.ADMIN) && authUserRecord.id !== id && authUserRecord.uid !== id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this user profile.' }));
           return;
@@ -2448,8 +2565,8 @@ const server = http.createServer(async (req, res) => {
 
         const updateData = JSON.parse(body);
 
-        // Prevent modifying email or username (gamerTag) for organisers
-        if (authUserRecord.role === 'organiser') {
+        // Prevent modifying email or username (gamerTag) for organisers (admins exempt)
+        if (!hasRole(authUserRecord, ROLES.ADMIN) && hasRole(authUserRecord, ROLES.ORGANISER)) {
           if (updateData.email !== undefined || updateData.gamerTag !== undefined) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizers are not permitted to modify their account credentials (email/username).' }));
@@ -2560,8 +2677,9 @@ const server = http.createServer(async (req, res) => {
             banner = COALESCE($14, banner),
             "gamertag_last_changed" = COALESCE($15, "gamertag_last_changed"),
             "email_last_changed" = COALESCE($16, "email_last_changed"),
-            role = COALESCE($17, role)
-           WHERE (id = $18 OR uid = $18) RETURNING *`,
+            role = COALESCE($17, role),
+            roles = COALESCE($18, roles)
+           WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
             updateData.gamerTag,
@@ -2580,6 +2698,12 @@ const server = http.createServer(async (req, res) => {
             gamertagLastChangedVal,
             emailLastChangedVal,
             updateData.role,
+            updateData.role ? (
+              updateData.role === 'player' || updateData.role === 'user' ? ['user'] :
+              updateData.role === 'organiser' ? ['user', 'organiser'] :
+              updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
+              updateData.role === 'admin' ? ['user', 'admin'] : ['user']
+            ) : undefined,
             id
           ]
         );
@@ -2714,7 +2838,7 @@ const server = http.createServer(async (req, res) => {
         const slotsTotal = t.slotsTotal !== undefined ? parseInt(t.slotsTotal) : 100;
 
         // ── ADMIN PATH: Full bypass, instant live state ──
-        if (authUser.role === 'admin') {
+        if (hasRole(authUser, ROLES.ADMIN)) {
           if (!t.title || t.title.length < 5 || t.title.length > 100) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Title must be 5-100 characters.' }));
@@ -2829,8 +2953,8 @@ const server = http.createServer(async (req, res) => {
         const orgHandle = orgUserRow.orgHandle || '';
         const orgMotto = orgUserRow.orgMotto || '';
 
-        // Block publishing without an organization profile
-        if (!isDraft && !orgUserRow.orgName) {
+        // Block publishing without an organization profile (admins bypass)
+        if (!hasRole(authUser, ROLES.ADMIN) && !isDraft && !orgUserRow.orgName) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
@@ -2840,16 +2964,16 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Check plan limits
+        // Check plan limits (admins bypass)
         const limitCheck = await checkPlanLimits(pool, authUser.id, slotsTotal, isDraft);
-        if (!limitCheck.allowed) {
+        if (!hasRole(authUser, ROLES.ADMIN) && !limitCheck.allowed) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'LIMIT_EXCEEDED', message: limitCheck.error }));
           return;
         }
 
         // Plan gate sponsors_enabled — only Basic/Pro can enable
-        if (t.sponsors_enabled && !limitCheck.plan.sponsorSections) {
+        if (!hasRole(authUser, ROLES.ADMIN) && t.sponsors_enabled && !limitCheck.plan.sponsorSections) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FEATURE_LOCKED', message: 'Sponsor Contributions require the Basic plan or higher.', requiredPlan: 'Basic' }));
           return;
@@ -2996,6 +3120,179 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+          return;
+        }
+
+        const t = JSON.parse(body);
+
+        // ── ADMIN PATH: Full bypass ──
+        if (hasRole(authUser, ROLES.ADMIN)) {
+          const existRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [id]);
+          if (existRes.rows.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+            return;
+          }
+          const existing = existRes.rows[0];
+
+          // Admin is always allowed — force live + featured + Match District branding
+          const slotsTotal = t.slotsTotal !== undefined ? parseInt(t.slotsTotal) : existing.slotsTotal;
+          const prizePoolAmount = parseInt(t.prize_pool_amount) || existing.prize_pool_amount || 0;
+          const entryFeeAmount = parseInt(t.entry_fee_amount) || existing.entry_fee_amount || 0;
+          const prizeDisplay = prizePoolAmount > 0 ? `₹${prizePoolAmount.toLocaleString('en-IN')}` : existing.prize;
+          const entryDisplay = entryFeeAmount > 0 ? `₹${entryFeeAmount}` : 'Free';
+
+          // Validate title/game if present
+          if (t.title !== undefined && (t.title.length < 5 || t.title.length > 100)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Title must be 5-100 characters.' }));
+            return;
+          }
+
+          const dbRes = await pool.query(
+            `UPDATE tournaments SET
+              title = COALESCE($1, title),
+              game = COALESCE($2, game),
+              status = $3,
+              "badgeBg" = COALESCE($4, "badgeBg"),
+              "badgeText" = COALESCE($5, "badgeText"),
+              date = COALESCE($6, date),
+              prize = COALESCE($7, prize),
+              entry = COALESCE($8, entry),
+              "teamsCount" = COALESCE($9, "teamsCount"),
+              featured = true,
+              "orgName" = 'Match District',
+              "orgLogo" = COALESCE($10, "orgLogo"),
+              "orgHandle" = 'matchdistrict',
+              "orgMotto" = 'Admin Hosted',
+              "registrationOpenDate" = COALESCE($11, "registrationOpenDate"),
+              "registrationCloseDate" = COALESCE($12, "registrationCloseDate"),
+              "startDate" = COALESCE($13, "startDate"),
+              rules = COALESCE($14, rules),
+              chat = COALESCE($15, chat),
+              notices = COALESCE($16, notices),
+              teams = COALESCE($17, teams),
+              region = COALESCE($18, region),
+              format = COALESCE($19, format),
+              "slotsTotal" = COALESCE($20, "slotsTotal"),
+              "slotsFilled" = COALESCE($21, "slotsFilled"),
+              "roomID" = COALESCE($22, "roomID"),
+              "roomPassword" = COALESCE($23, "roomPassword"),
+              timeline = COALESCE($24, timeline),
+              "bannerUrl" = COALESCE($25, "bannerUrl"),
+              "logoUrl" = COALESCE($26, "logoUrl"),
+              "isDraft" = false,
+              version = COALESCE($27, version) + 1,
+              "orgId" = COALESCE($28, "orgId"),
+              match_type = COALESCE($29, match_type),
+              perspective = COALESCE($30, perspective),
+              reserved_slots = COALESCE($31, reserved_slots),
+              entry_fee_amount = COALESCE($32, entry_fee_amount),
+              prize_pool_type = COALESCE($33, prize_pool_type),
+              prize_pool_amount = $34,
+              prize_split_1st = COALESCE($35, prize_split_1st),
+              prize_split_2nd = COALESCE($36, prize_split_2nd),
+              prize_split_3rd = COALESCE($37, prize_split_3rd),
+              prize_split_mvp = COALESCE($38, prize_split_mvp),
+              description = COALESCE($39, description),
+              cover_image_url = COALESCE($40, cover_image_url),
+              lobby_start_time = COALESCE($41, lobby_start_time),
+              mvp_enabled = COALESCE($42, mvp_enabled),
+              mvp_amount = COALESCE($43, mvp_amount),
+              kill_reward_enabled = COALESCE($44, kill_reward_enabled),
+              kill_reward_per_kill = COALESCE($45, kill_reward_per_kill),
+              prize_positions = COALESCE($46, prize_positions),
+              sponsors_enabled = COALESCE($47, sponsors_enabled),
+              max_slots_per_room = COALESCE($48, max_slots_per_room)
+            WHERE id = $49 RETURNING *`,
+            [
+              t.title || null,
+              t.game || null,
+              'live',
+              t.badgeBg || null,
+              'LIVE',
+              t.date || null,
+              prizeDisplay,
+              entryDisplay,
+              t.teamsCount || null,
+              t.orgLogo || null,
+              t.registrationOpenDate || null,
+              t.registrationCloseDate || null,
+              t.startDate || null,
+              t.rules ? (typeof t.rules === 'string' ? t.rules : JSON.stringify(t.rules)) : null,
+              t.chat || null,
+              t.notices || null,
+              t.teams || null,
+              t.region || null,
+              t.format || null,
+              slotsTotal,
+              t.slotsFilled !== undefined ? parseInt(t.slotsFilled) : null,
+              t.roomID || null,
+              t.roomPassword || null,
+              t.timeline ? (typeof t.timeline === 'string' ? t.timeline : JSON.stringify(t.timeline)) : null,
+              t.bannerUrl || null,
+              t.logoUrl || null,
+              t.version !== undefined ? parseInt(t.version) : null,
+              authUser.id,
+              t.match_type || null,
+              t.perspective || null,
+              t.reserved_slots !== undefined ? parseInt(t.reserved_slots) : null,
+              entryFeeAmount,
+              t.prize_pool_type || null,
+              prizePoolAmount,
+              t.prize_split_1st || null,
+              t.prize_split_2nd || null,
+              t.prize_split_3rd || null,
+              t.prize_split_mvp || null,
+              t.description || null,
+              t.cover_image_url || null,
+              t.lobby_start_time || null,
+              t.mvp_enabled !== undefined ? t.mvp_enabled : null,
+              t.mvp_amount !== undefined ? parseInt(t.mvp_amount) : null,
+              t.kill_reward_enabled !== undefined ? t.kill_reward_enabled : null,
+              t.kill_reward_per_kill !== undefined ? parseInt(t.kill_reward_per_kill) : null,
+              t.prize_positions || null,
+              t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
+              t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
+              id
+            ]
+          );
+          const updated = dbRes.rows[0];
+          // Attempt slot_grid init for admin path (non-critical)
+          try {
+            await pool.query(`DELETE FROM slot_grid WHERE tournament_id = $1`, [id]);
+            const matchType = (t.match_type || existing.match_type || 'squad').toLowerCase();
+            const ceilings = { solo: 100, duo: 50, squad: 25 };
+            const maxPerRoom = ceilings[matchType] || 25;
+            const numRooms = Math.ceil(slotsTotal / maxPerRoom);
+            const slotInserts = [];
+            for (let r = 0; r < numRooms; r++) {
+              const slotsInThisRoom = r < numRooms - 1 ? maxPerRoom : slotsTotal - r * maxPerRoom;
+              for (let s = 0; s < slotsInThisRoom; s++) {
+                slotInserts.push(`('SG-${id}-R${r}-S${s}', '${id}', ${r}, ${s}, 'empty', NULL, CURRENT_TIMESTAMP)`);
+              }
+            }
+            for (let i = 0; i < slotInserts.length; i += 500) {
+              await pool.query(`INSERT INTO slot_grid (id, tournament_id, room_index, slot_index, status, registration_id, created_at) VALUES ${slotInserts.slice(i, i + 500).join(', ')} ON CONFLICT (tournament_id, room_index, slot_index) DO NOTHING`);
+            }
+          } catch (sgErr) { /* slot_grid non-critical */ }
+          try {
+            await pool.query(
+              `INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details) VALUES ($1, $2, $3, $4, $5, $6)`,
+              ['LOG-' + crypto.randomBytes(4).toString('hex').toUpperCase(), authUser.id,
+               'admin_update_tournament', 'tournament', id,
+               JSON.stringify({ title: t.title || existing.title, game: t.game || existing.game })]
+            );
+          } catch (logErr) { /* non-critical */ }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, tournament: updated }));
+          return;
+        }
+
+        // ── ORGANIZER PATH: Standard verification ──
         if (!requireOrganizer(req, res, authUser)) return;
         const isApproved = await requireApprovedOrganizer(req, res, authUser, pool);
         if (!isApproved) return;
@@ -3009,14 +3306,12 @@ const server = http.createServer(async (req, res) => {
         }
         const existing = existRes.rows[0];
 
-        // Authorization check: User must be admin or the original organizer
-        if (authUser.role !== 'admin' && existing.orgId !== authUser.id) {
+        // Authorization check: User must be the original organizer
+        if (existing.orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this tournament.' }));
           return;
         }
-
-        const t = JSON.parse(body);
 
         // Fetch user's organization data for orgName/orgLogo (never trust client-supplied values)
         const orgUserRes = await pool.query(
@@ -3029,9 +3324,9 @@ const server = http.createServer(async (req, res) => {
         t.orgHandle = orgUserRow.orgHandle || '';
         t.orgMotto = orgUserRow.orgMotto || '';
 
-        // Block publishing without an organization profile
+        // Block publishing without an organization profile (admins bypass)
         const newIsDraftPublish = t.isDraft !== undefined ? t.isDraft : existing.isDraft;
-        if (!newIsDraftPublish && existing.isDraft === true && !orgUserRow.orgName) {
+        if (!hasRole(authUser, ROLES.ADMIN) && !newIsDraftPublish && existing.isDraft === true && !orgUserRow.orgName) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
@@ -3047,15 +3342,15 @@ const server = http.createServer(async (req, res) => {
 
         if ((newIsDraft === false && existing.isDraft === true) || (t.slotsTotal !== undefined && parseInt(t.slotsTotal) !== existing.slotsTotal)) {
           const limitCheck = await checkPlanLimits(pool, existing.orgId || authUser.id, newSlotsTotal, newIsDraft, id);
-          if (!limitCheck.allowed) {
+          if (!hasRole(authUser, ROLES.ADMIN) && !limitCheck.allowed) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'LIMIT_EXCEEDED', message: limitCheck.error }));
             return;
           }
         }
 
-        // Plan gate sponsors_enabled
-        if (t.sponsors_enabled) {
+        // Plan gate sponsors_enabled (admins bypass)
+        if (!hasRole(authUser, ROLES.ADMIN) && t.sponsors_enabled) {
           const planCheck = await checkPlanLimits(pool, existing.orgId || authUser.id, 0, true, id);
           if (!planCheck.plan.sponsorSections) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -3227,7 +3522,7 @@ const server = http.createServer(async (req, res) => {
       }
       const existing = existRes.rows[0];
 
-      if (authUser.role !== 'admin' && existing.orgId !== authUser.id) {
+      if (!hasRole(authUser, ROLES.ADMIN) && existing.orgId !== authUser.id) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to delete this tournament.' }));
         return;
@@ -3271,7 +3566,7 @@ const server = http.createServer(async (req, res) => {
       const t = dbRes.rows[0];
 
       let isAllowed = false;
-      if (authUser.role === 'admin' || t.orgId === authUser.id) {
+      if (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id) {
         isAllowed = true;
       } else {
         const regRes = await pool.query(
@@ -3343,7 +3638,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const src = srcRes.rows[0];
-      if (src.orgId !== authUser.id && authUser.role !== 'admin') {
+      if (src.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to duplicate this tournament.' }));
         return;
@@ -3399,7 +3694,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      if (existRes.rows[0].orgId !== authUser.id && authUser.role !== 'admin') {
+      if (existRes.rows[0].orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to archive this tournament.' }));
         return;
@@ -3428,7 +3723,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const t = tRes.rows[0];
-      if (authUser && t.orgId !== authUser.id && authUser.role !== 'admin') {
+      if (authUser && t.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
         return;
@@ -4112,7 +4407,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
         return;
       }
-      if (authUser.id !== userId && authUser.role !== 'admin') {
+      if (authUser.id !== userId && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You can only view your own registrations.' }));
         return;
@@ -4152,7 +4447,7 @@ const server = http.createServer(async (req, res) => {
         const t = tRes.rows[0];
 
         // Authorization check: User must be admin or the original organizer
-        if (authUser.role !== 'admin' && t.orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to manage this tournament.' }));
           return;
@@ -4160,7 +4455,7 @@ const server = http.createServer(async (req, res) => {
 
         const data = JSON.parse(body);
         const newStatus = data.status; // 'approved', 'rejected', 'pending', 'pending_payment', 'confirmed', 'cancelled', 'expired', 'waitlisted', 'PENDING_PAYMENT_VERIFICATION', 'PAYMENT_REJECTED', 'CONFIRMED'
-        const validStatuses = ['approved', 'rejected', 'pending', 'pending_payment', 'confirmed', 'cancelled', 'expired', 'waitlisted', 'PENDING_PAYMENT_VERIFICATION', 'PAYMENT_REJECTED', 'CONFIRMED'];
+        const validStatuses = ['approved', 'rejected', 'pending', 'pending_payment', 'confirmed', 'cancelled', 'expired', 'waitlisted', 'PENDING_PAYMENT_VERIFICATION', 'PAYMENT_REJECTED', 'CONFIRMED', 'VERIFIED_BY_HOST'];
         if (!validStatuses.includes(newStatus)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: `Invalid status: ${newStatus}` }));
@@ -4394,7 +4689,7 @@ const server = http.createServer(async (req, res) => {
         const t = tRes.rows[0];
 
         // Authorization check: User must be admin or the original organizer
-        if (authUser.role !== 'admin' && t.orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to post notices.' }));
           return;
@@ -4448,7 +4743,7 @@ const server = http.createServer(async (req, res) => {
       const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tournamentId]);
       if (tRes.rows.length > 0) {
         const t = tRes.rows[0];
-        if (authUser.role !== 'admin' && t.orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to delete this notice.' }));
           return;
@@ -4544,7 +4839,7 @@ const server = http.createServer(async (req, res) => {
   // --- SITE SETTINGS: SET GLOBAL THEME (admin only) ---
   if (req.url === '/api/settings/theme' && req.method === 'PUT') {
     const authUser = getAuthUser(req);
-    if (!authUser || authUser.role !== 'admin') {
+    if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }));
       return;
@@ -4595,7 +4890,7 @@ const server = http.createServer(async (req, res) => {
   // --- SITE SETTINGS: SET PLATFORM FEE PERCENTAGE (admin only) ---
   if (req.url === '/api/settings/platform-fee' && req.method === 'PUT') {
     const authUser = getAuthUser(req);
-    if (!authUser || authUser.role !== 'admin') {
+    if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }));
       return;
@@ -4647,7 +4942,7 @@ const server = http.createServer(async (req, res) => {
   // --- SITE SETTINGS: SET ORGANIZER FEE PERCENTAGE (admin only) ---
   if (req.url === '/api/settings/organizer-fee' && req.method === 'PUT') {
     const authUser = getAuthUser(req);
-    if (!authUser || authUser.role !== 'admin') {
+    if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }));
       return;
@@ -4858,7 +5153,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Draft not found.' }));
         return;
       }
-      if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
+      if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -4893,7 +5188,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Draft not found.' }));
           return;
         }
-        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -4978,7 +5273,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -5166,7 +5461,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
           return;
         }
-        if (ownerRes.rows[0].orgId !== authUser.id && authUser.role !== 'admin') {
+        if (ownerRes.rows[0].orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -5369,7 +5664,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/payments' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -5406,9 +5701,9 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
           return;
         }
 
@@ -5568,9 +5863,9 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
           return;
         }
 
@@ -5628,9 +5923,9 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/payments/stats' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
         return;
       }
 
@@ -5655,6 +5950,99 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // POST /api/admin/update-role — Admin-only: promote/demote user role
+  // ─────────────────────────────────────────────────────────────
+  if (req.url === '/api/admin/update-role' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Unauthorized: Only administrators can access Role Management.' }));
+          return;
+        }
+
+        const { targetUserId, newRole } = JSON.parse(body);
+        if (!targetUserId || !newRole) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'targetUserId and newRole are required.' }));
+          return;
+        }
+
+        // Validate newRole is a known role
+        const validRoles = Object.values(ROLES);
+        if (!validRoles.includes(newRole)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_ROLE', message: `Invalid role "${newRole}". Must be one of: ${validRoles.join(', ')}` }));
+          return;
+        }
+
+        // Safety restraint: admins cannot demote themselves
+        if (targetUserId === authUser.id && newRole !== ROLES.ADMIN) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SELF_DEMOTE', message: 'Safety Restraint: You cannot remove your own administrator status.' }));
+          return;
+        }
+
+        // Check target user exists
+        const userRes = await pool.query('SELECT id, name, email, role, roles FROM users WHERE id = $1', [targetUserId]);
+        if (userRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }));
+          return;
+        }
+
+        const targetUser = userRes.rows[0];
+
+        // Build the new roles array:
+        // - USER: reset to ["user"] and clear orgApplicationStatus
+        // - Any privileged role: keep "user" base + add the new role (deduplicated)
+        let newRoles;
+        let orgStatusClear = '';
+        if (newRole === ROLES.USER) {
+          newRoles = ['user'];
+          orgStatusClear = ', "orgApplicationStatus" = COALESCE("orgApplicationStatus", \'none\')';
+        } else if (newRole === ROLES.ADMIN) {
+          newRoles = ['user', 'admin'];
+        } else if (newRole === ROLES.REG_PAYMENT_VERIFIER) {
+          newRoles = ['user', 'reg_payment_verifier'];
+        } else if (newRole === ROLES.ORGANISER) {
+          newRoles = ['user', 'organiser'];
+        } else {
+          newRoles = ['user'];
+        }
+
+        const updateRes = await pool.query(
+          `UPDATE users SET role = $1, roles = $2${orgStatusClear} WHERE id = $3 RETURNING id, name, email, role, roles, "orgApplicationStatus"`,
+          [newRole, newRoles, targetUserId]
+        );
+
+        // Audit log
+        const logId = 'ADM-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(
+          `INSERT INTO admin_action_log (id, admin_id, action, target_user, details, created_at)
+           VALUES ($1, $2, $3, $4, $5, NOW())`,
+          [logId, authUser.id, 'UPDATE_ROLE', targetUserId, `${targetUser.role || JSON.stringify(targetUser.roles)} → ${newRole} (roles: ${JSON.stringify(newRoles)})`]
+        );
+
+        console.log(`🔐 [IAM] Admin ${authUser.id} changed ${targetUserId} role: ${targetUser.role} → ${newRole}, roles: ${JSON.stringify(newRoles)}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: `User role successfully updated to ${newRole}`,
+          user: updateRes.rows[0]
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
@@ -5690,7 +6078,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (authUser.role !== 'admin' && authUser.id !== userId) {
+        if (!hasRole(authUser, ROLES.ADMIN) && authUser.id !== userId) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           client.release();
@@ -6675,7 +7063,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/subscriptions' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -6704,7 +7092,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -6754,16 +7142,16 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/subscriptions/stats' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
       }
 
       const planCounts = await pool.query(
-        `SELECT tier, COUNT(*) as count FROM users WHERE role = 'organiser' GROUP BY tier`
+        `SELECT tier, COUNT(*) as count FROM users WHERE 'organiser' = ANY(roles) GROUP BY tier`
       );
-      const totalOrganizers = await pool.query(`SELECT COUNT(*) FROM users WHERE role = 'organiser'`);
+      const totalOrganizers = await pool.query(`SELECT COUNT(*) FROM users WHERE 'organiser' = ANY(roles)`);
       const monthlyRevenue = await pool.query(
         `SELECT COALESCE(SUM(amount), 0) as total FROM billing_history WHERE status = 'completed' AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)`
       );
@@ -6792,7 +7180,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/pending-registrations' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
         return;
@@ -6817,12 +7205,237 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- VERIFIER: GET PENDING PAYMENT REGISTRATIONS ---
+  if (req.url === '/api/verifier/pending-payments' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+        return;
+      }
+
+      const dbRes = await pool.query(`
+        SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
+               t.entry_fee_amount, t.orgid AS tournament_org_id, t.orgname AS tournament_org_name,
+               ps.payment_status AS pay_status, ps.id AS payment_submission_id,
+               ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr,
+               ps.payment_app AS pay_app, u.name AS user_name, u.email AS user_email
+        FROM tournament_registrations r
+        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+        LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.status IN ('pending_payment', 'PENDING_PAYMENT_VERIFICATION')
+        ORDER BY t.game, t.title, r.created_at ASC
+      `);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- VERIFIER: VERIFY A SINGLE REGISTRATION PAYMENT ---
+  if (req.url.startsWith('/api/verifier/verify/') && req.method === 'POST') {
+    const regId = req.url.split('/api/verifier/verify/')[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+          return;
+        }
+
+        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [regId]);
+        if (regRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
+          return;
+        }
+
+        const currentReg = regRes.rows[0];
+        if (currentReg.status !== 'pending_payment' && currentReg.status !== 'PENDING_PAYMENT_VERIFICATION') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Registration is not awaiting payment verification.' }));
+          return;
+        }
+
+        const data = JSON.parse(body);
+        const paymentApp = data.payment_app || currentReg.payment_app || null;
+
+        // Update registration to VERIFIED_BY_HOST
+        await pool.query(
+          `UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          [paymentApp, regId]
+        );
+
+        // Update payment_submissions if linked
+        if (currentReg.payment_id) {
+          await pool.query(
+            `UPDATE payment_submissions SET payment_status = 'verified_by_host', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+            [authUser.id, currentReg.payment_id]
+          );
+        }
+
+        // Alert the registering user
+        try {
+          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO alerts (id, user_id, title, message, is_read)
+             VALUES ($1, $2, $3, $4, false)`,
+            [alertId, currentReg.user_id, 'Payment Verified',
+             `Your payment for team "${currentReg.team_name}" has been verified. Pending final approval from the tournament organizer.`]
+          );
+        } catch (alertErr) { /* non-critical */ }
+
+        // Audit log
+        try {
+          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [logId, authUser.id, 'payment_verified_by_host', 'registration', regId,
+             JSON.stringify({ teamName: currentReg.team_name, tournamentId: currentReg.tournament_id, paymentApp })]
+          );
+        } catch (logErr) { /* non-critical */ }
+
+        console.log(`\n📦 [VERIFIER] Registration "${regId}" verified by ${authUser.id}. Status → VERIFIED_BY_HOST\n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Payment verified successfully. Status set to VERIFIED_BY_HOST.' }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // --- ADMIN: BULK APPROVE VERIFIED REGISTRATIONS ---
+  if (req.url === '/api/admin/bulk-approve' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        const { registrationIds } = JSON.parse(body);
+        if (!registrationIds || !Array.isArray(registrationIds) || registrationIds.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Registration IDs array is required.' }));
+          return;
+        }
+
+        const results = { approved: [], skipped: [], errors: [] };
+
+        for (const regId of registrationIds) {
+          try {
+            const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [regId]);
+            if (regRes.rows.length === 0) {
+              results.skipped.push({ id: regId, reason: 'Not found' });
+              continue;
+            }
+
+            const reg = regRes.rows[0];
+            if (reg.status !== 'VERIFIED_BY_HOST') {
+              results.skipped.push({ id: regId, reason: `Status is "${reg.status}", not VERIFIED_BY_HOST` });
+              continue;
+            }
+
+            await pool.query(
+              `UPDATE tournament_registrations SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+              [regId]
+            );
+
+            // Update payment_submissions if linked
+            if (reg.payment_id) {
+              await pool.query(
+                `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+                [authUser.id, reg.payment_id]
+              );
+            }
+
+            // Alert the user
+            try {
+              const tRes = await pool.query('SELECT title FROM tournaments WHERE id = $1', [reg.tournament_id]);
+              const tourneyTitle = tRes.rows[0]?.title || 'Tournament';
+              const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+              await pool.query(
+                `INSERT INTO alerts (id, user_id, title, message, tournament_id)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [alertId, reg.user_id, 'Registration Approved',
+                 `Your team "${reg.team_name}" has been approved for ${tourneyTitle}!`,
+                 reg.tournament_id]
+              );
+            } catch (alertErr) { /* non-critical */ }
+
+            // Analytics event
+            try {
+              await pool.query(
+                `INSERT INTO analytics_events (id, organizer_id, event_type, event_data, tournament_id)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                ['AE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), authUser.id, 'registration_bulk_approved',
+                 JSON.stringify({ teamName: reg.team_name, captain: reg.captain, verifiedBy: reg.id }), reg.tournament_id]
+              );
+            } catch (aeErr) { /* analytics non-critical */ }
+
+            results.approved.push(regId);
+          } catch (err) {
+            results.errors.push({ id: regId, error: err.message });
+          }
+        }
+
+        // Reconcile slots for each affected tournament
+        const tournamentIds = [...new Set(registrationIds.map(id => id.split('-')[0] === id ? null : null))]; // placeholder
+        // Actually fetch tournament_ids from DB for the approved regs
+        const tIdsRes = await pool.query(
+          `SELECT DISTINCT tournament_id FROM tournament_registrations WHERE id = ANY($1)`,
+          [registrationIds]
+        );
+        for (const row of tIdsRes.rows) {
+          await reconcileTournamentSlots(pool, row.tournament_id);
+        }
+
+        // Audit log
+        try {
+          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [logId, authUser.id, 'bulk_approve_registrations', 'registration', 'bulk',
+             JSON.stringify({ approvedCount: results.approved.length, skippedCount: results.skipped.length, errorCount: results.errors.length })]
+          );
+        } catch (logErr) { /* non-critical */ }
+
+        console.log(`\n📦 [ADMIN] Bulk approved ${results.approved.length} registrations (${results.skipped.length} skipped, ${results.errors.length} errors)\n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, results }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // --- POST DYNAMIC SYSTEM PURGE (ADMIN ONLY) ---
   if (req.url === '/api/admin/purge' && req.method === 'POST') {
     const client = await pool.connect();
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
         client.release();
@@ -6861,7 +7474,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/activity-log' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
         return;
@@ -6932,7 +7545,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/financials' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
         return;
@@ -7051,7 +7664,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
           return;
@@ -7150,7 +7763,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url.startsWith('/api/admin/sponsor/requests') && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -7184,7 +7797,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7235,7 +7848,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7286,7 +7899,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7405,7 +8018,7 @@ const server = http.createServer(async (req, res) => {
     (async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7437,7 +8050,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7508,7 +8121,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7545,7 +8158,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/early-access' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -7568,7 +8181,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -7606,7 +8219,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url.startsWith('/api/admin/early-access') && req.method === 'DELETE') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -7638,7 +8251,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/organizer-usage' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -7646,7 +8259,7 @@ const server = http.createServer(async (req, res) => {
       const [tourneyRes, slotRes, orgRes, avgRes, staffRes, analyticsRes] = await Promise.all([
         pool.query('SELECT COUNT(*) as total FROM tournaments'),
         pool.query('SELECT COALESCE(SUM(slotsFilled), 0) as total FROM tournaments'),
-        pool.query(`SELECT COUNT(*) as total FROM users WHERE role = 'organiser'`),
+        pool.query(`SELECT COUNT(*) as total FROM users WHERE 'organiser' = ANY(roles)`),
         pool.query(`SELECT COALESCE(AVG(tournament_count), 0) as avg FROM (SELECT COUNT(*) as tournament_count FROM tournaments GROUP BY "orgId") sub`),
         pool.query('SELECT COUNT(*) as total FROM staff_members'),
         pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM billing_history WHERE status = 'completed'`),
@@ -7886,7 +8499,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Custom link not found.' }));
           return;
         }
-        if (linkRes.rows[0].organizer_id !== user.id && authUser.role !== 'admin') {
+        if (linkRes.rows[0].organizer_id !== user.id && !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this link.' }));
           return;
@@ -7936,7 +8549,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Custom link not found.' }));
         return;
       }
-      if (linkRes.rows[0].organizer_id !== user.id && authUser.role !== 'admin') {
+      if (linkRes.rows[0].organizer_id !== user.id && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this link.' }));
         return;
@@ -8007,7 +8620,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      if (tRes.rows[0].orgId !== user.id && authUser.role !== 'admin') {
+      if (tRes.rows[0].orgId !== user.id && !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
         return;
@@ -8349,7 +8962,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/action-log' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || authUser.role !== 'admin') {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
         return;
@@ -8580,7 +9193,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
@@ -8618,7 +9231,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || authUser.role !== 'admin') {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;

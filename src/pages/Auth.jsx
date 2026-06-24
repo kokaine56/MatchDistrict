@@ -395,7 +395,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         if (data.encryptedSession) {
           localStorage.setItem('md_persistent_session', data.encryptedSession)
         }
-        if (data.user.role === 'admin') {
+        const loginRoles = data.user?.roles || (data.user?.role ? [data.user.role] : []);
+        if (loginRoles.includes('admin')) {
           setCurrentUser(data.user)
           triggerToast(data.message || 'Welcome back, Admin! Redirecting...')
           setTimeout(() => {

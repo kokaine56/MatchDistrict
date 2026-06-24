@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useUser } from '../UserContext'
 import { getAuthToken } from '../utils/getAuthToken'
 import { normalizeTournamentRow } from '../utils/api'
+import { hasOrganizerRights } from '../utils/iamRoles.js'
 import TournamentCard from '../components/TournamentCard'
 
 const TABS = ['All Tournaments', 'Drafts', 'Published', 'Completed', 'Archived']
@@ -68,7 +69,7 @@ export default function TournamentManagement({ onNavigate }) {
   }
 
   useEffect(() => {
-    if (!currentUser || (currentUser.role !== 'organiser' && currentUser.role !== 'admin')) {
+    if (!currentUser || !hasOrganizerRights(currentUser)) {
       onNavigate?.('profile')
       return
     }
@@ -200,7 +201,7 @@ export default function TournamentManagement({ onNavigate }) {
     }
   }
 
-  if (!currentUser || (currentUser.role !== 'organiser' && currentUser.role !== 'admin')) return null
+  if (!currentUser || !hasOrganizerRights(currentUser)) return null
 
   return (
     <div className="min-h-screen bg-background">

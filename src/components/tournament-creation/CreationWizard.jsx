@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useUser } from '../../UserContext'
 import { getAuthToken } from '../../utils/getAuthToken'
 import { uploadImage } from '../../utils/cloudinaryUpload'
+import { hasOrganizerRights, isSystemAdmin, hasRole, getUserRoles } from '../../utils/iamRoles.js'
 import StepIndicator from './StepIndicator'
 import StepNavigation from './StepNavigation'
 import Step1BasicDetails from './steps/Step1BasicDetails'
@@ -51,7 +52,7 @@ function emptyForm() {
   }
 }
 
-function validateStep(step, data, planLimits, orgName, userTier) {
+function validateStep(step, data, planLimits, orgName, userTier, userRole) {
   const errs = {}
   switch (step) {
     case 1:
@@ -130,7 +131,10 @@ function validateStep(step, data, planLimits, orgName, userTier) {
     case 8:
       break
     case 9: {
-      if (!orgName || orgName === 'Match District Organizer') {
+      // Enforce org profile ONLY if the user does NOT have structural admin rights.
+      // isSystemAdmin() uses the hierarchical role engine — any role with admin-level
+      // clearance bypasses the organization profile requirement.
+      if (!isSystemAdmin({ role: userRole }) && (!orgName || orgName === 'Match District Organizer')) {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
       if (!data.title || data.title.length < 5) errs.title = 'Tournament title missing or too short (min 5 characters).'
@@ -189,11 +193,11 @@ export default function CreationWizard() {
       navigate('/login', { replace: true })
       return
     }
-    if (currentUser.role !== 'organiser' && currentUser.role !== 'admin') {
+    if (!hasOrganizerRights(currentUser)) {
       navigate('/profile', { replace: true })
       return
     }
-    if (currentUser.orgApplicationStatus !== 'approved' && currentUser.role !== 'admin') {
+    if (currentUser.orgApplicationStatus !== 'approved' && !hasRole(getUserRoles(currentUser), 'admin')) {
       navigate('/become-organizer', { replace: true })
       return
     }
@@ -455,14 +459,14 @@ export default function CreationWizard() {
   }, [])
 
   const handleNext = useCallback(() => {
-    const errs = validateStep(currentStep, formData, planLimits, orgName, userTier)
+    const errs = validateStep(currentStep, formData, planLimits, orgName, userTier, currentUser?.role)
     console.log('[CreationWizard] handleNext | step:', currentStep, '| errors:', errs, '| isNavigationBlocked:', isNavigationBlocked, '| stepValidationBlocked:', stepValidationBlocked)
     setErrors(errs)
     if (hasErrors(errs)) return
     if (isNavigationBlocked) return
     setCurrentStep((s) => Math.min(s + 1, totalSteps))
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [currentStep, formData, planLimits, totalSteps, isNavigationBlocked, orgName, userTier, stepValidationBlocked])
+  }, [currentStep, formData, planLimits, totalSteps, isNavigationBlocked, orgName, userTier, stepValidationBlocked, currentUser])
 
   const handleBack = useCallback(() => {
     setErrors({})
@@ -492,7 +496,7 @@ export default function CreationWizard() {
     setPublishError(null)
     let allErrors = {}
     for (const step of STEPS) {
-      const errs = validateStep(step, formData, planLimits, orgName, userTier)
+      const errs = validateStep(step, formData, planLimits, orgName, userTier, currentUser?.role)
       if (hasErrors(errs)) allErrors = { ...allErrors, ...errs }
     }
     if (hasErrors(allErrors)) {
@@ -507,14 +511,14 @@ export default function CreationWizard() {
     } else if (result?.error) {
       setPublishError(result.message)
     }
-  }, [formData, planLimits, saveToServer, navigate, orgName, userTier])
+  }, [formData, planLimits, saveToServer, navigate, orgName, userTier, currentUser])
 
   const handlePublishStep9 = useCallback(async (preUploadedImageUrl) => {
     setPublishError(null)
     // Full validation across all steps
     let allErrors = {}
     for (const step of STEPS) {
-      const errs = validateStep(step, formData, planLimits, orgName, userTier)
+      const errs = validateStep(step, formData, planLimits, orgName, userTier, currentUser?.role)
       if (hasErrors(errs)) allErrors = { ...allErrors, ...errs }
     }
     if (hasErrors(allErrors)) {
@@ -529,7 +533,7 @@ export default function CreationWizard() {
       setPublishError(result.message)
     }
     return result
-  }, [formData, planLimits, saveToServer, orgName, userTier])
+  }, [formData, planLimits, saveToServer, orgName, userTier, currentUser])
 
   const handleChange = useCallback((newData) => {
     setFormData(newData)

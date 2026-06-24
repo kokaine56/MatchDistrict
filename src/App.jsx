@@ -6,6 +6,7 @@ import LoadingScreen from './components/LoadingScreen.jsx'
 import RouteErrorBoundary from './components/RouteErrorBoundary.jsx'
 import { fetchJsonWithRetry } from './utils/api.js'
 import { useUser } from './UserContext.jsx'
+import { hasOrganizerRights, hasRole, getUserRoles } from './utils/iamRoles.js'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import './App.css'
 
@@ -220,7 +221,7 @@ function AppInner() {
       return <Navigate to="/login" replace />
     }
 
-    if (currentUser.role !== 'organiser' && currentUser.role !== 'admin') {
+    if (!hasOrganizerRights(currentUser)) {
       return <Navigate to="/profile" replace />
     }
 
@@ -243,11 +244,11 @@ function AppInner() {
       return <Navigate to="/login" replace />
     }
 
-    if (currentUser.role !== 'organiser' && currentUser.role !== 'admin') {
+    if (!hasOrganizerRights(currentUser)) {
       return <Navigate to="/profile" replace />
     }
 
-    if (currentUser.orgApplicationStatus !== 'approved' && currentUser.role !== 'admin') {
+    if (currentUser.orgApplicationStatus !== 'approved' && !hasRole(getUserRoles(currentUser), 'admin')) {
       return <Navigate to="/become-organizer" replace />
     }
 

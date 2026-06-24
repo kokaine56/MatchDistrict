@@ -24,7 +24,7 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
 
     // Map occupied slots for approved or pending registrations
     for (const reg of regs) {
-      if (reg.status === 'approved' || reg.status === 'confirmed' || reg.status === 'pending' || reg.status === 'pending_payment') {
+      if (reg.status === 'approved' || reg.status === 'confirmed' || reg.status === 'pending' || reg.status === 'pending_payment' || reg.status === 'VERIFIED_BY_HOST') {
         const slot = parseInt(reg.slot_number);
         if (slot >= 1 && slot <= slotsTotal && !occupiedSlots.has(slot)) {
           occupiedSlots.add(slot);

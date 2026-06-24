@@ -128,7 +128,7 @@ async function requireFeature(pool, req, res, featureKey) {
 }
 
 async function checkPlanLimits(pool, userId, slotsTotal, isDraft, tournamentId = null) {
-  const userRes = await pool.query('SELECT role, tier, status FROM users WHERE id = $1', [userId]);
+  const userRes = await pool.query('SELECT role, roles, tier, status FROM users WHERE id = $1', [userId]);
   if (userRes.rows.length === 0) {
     return { allowed: false, error: 'User profile not found.' };
   }
@@ -139,7 +139,8 @@ async function checkPlanLimits(pool, userId, slotsTotal, isDraft, tournamentId =
   }
 
   if (isDraft) return { allowed: true, plan: PLAN_FEATURES[user.tier] || PLAN_FEATURES.Free };
-  if (user.role === 'admin') return { allowed: true, plan: PLAN_FEATURES.Pro };
+  const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0) ? user.roles : [user.role];
+  if (userRoles.includes('admin')) return { allowed: true, plan: PLAN_FEATURES.Pro };
 
   const tier = user.tier || 'Free';
   const plan = PLAN_FEATURES[tier] || PLAN_FEATURES.Free;

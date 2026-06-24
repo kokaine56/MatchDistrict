@@ -8,6 +8,7 @@ import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
 import SponsoredStar from '../components/SponsoredStar'
 import VerificationBadge from '../components/VerificationBadge'
+import { hasOrganizerRights } from '../utils/iamRoles.js'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
@@ -82,7 +83,7 @@ function Homepage({ onNavigate }) {
       return
     }
 
-    if (currentUser.role === 'organiser' || currentUser.role === 'Verified Organizer') {
+    if (hasOrganizerRights(currentUser)) {
       onNavigate && onNavigate('profile')
       return
     }
