@@ -12,6 +12,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
 import { generateUniqueUsername } from '../utils/helpers.js'
 import { SignOutModal } from '../components/SignOutModal.jsx'
+import { ConfirmIdentityOTP } from '../components/ConfirmIdentityOTP.jsx'
 
 const baseContentVariants = {
   initial: { opacity: 0, y: 12 },
@@ -118,7 +119,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   // OTP Verification State (used for registration otp step)
   const [showOtpModal, setShowOtpModal] = useState(false)
   const [otpExpiry, setOtpExpiry] = useState(null)
-  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
   const [otpSent, setOtpSent] = useState(false)
 
   const triggerToast = (msg) => {
@@ -575,14 +575,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     }
   }
 
-  const handleOtpVerification = async (e) => {
-    e && e.preventDefault()
+  const handleOtpVerification = async (enteredOtp) => {
     if (Date.now() > otpExpiry) {
       triggerToast('OTP code has expired. Please request a new one.')
       return
     }
 
-    const enteredOtp = otpDigits.join('')
     setLoadingMessage('Please wait while your account is being created...')
     setIsLoading(true)
     
@@ -720,39 +718,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       triggerToast('Server connection failed. Please try again.')
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  // --- OTP Input Jump Utility ---
-
-  const handleOtpDigitChange = (index, value) => {
-    if (value.length > 1) {
-      const pasted = value.slice(0, 6).split('')
-      const newDigits = [...otpDigits]
-      pasted.forEach((char, i) => {
-        if (index + i < 6) newDigits[index + i] = char
-      })
-      setOtpDigits(newDigits)
-      const nextIndex = Math.min(index + pasted.length, 5)
-      const el = document.getElementById(`otp-input-${nextIndex}`)
-      if (el) el.focus()
-      return
-    }
-
-    const newDigits = [...otpDigits]
-    newDigits[index] = value
-    setOtpDigits(newDigits)
-
-    if (value && index < 5) {
-      const nextEl = document.getElementById(`otp-input-${index + 1}`)
-      if (nextEl) nextEl.focus()
-    }
-  }
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
-      const prevEl = document.getElementById(`otp-input-${index - 1}`)
-      if (prevEl) prevEl.focus()
     }
   }
 
@@ -1055,82 +1020,40 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                   transition={contentTransition}
                   className="w-full space-y-6 text-center"
                 >
-                  <form onSubmit={otpSent ? handleOtpVerification : handleRequestOtp} className="space-y-6 w-full">
+                  <form onSubmit={otpSent ? (e) => e.preventDefault() : handleRequestOtp} className="space-y-6 w-full">
                     {otpSent ? (
-                      <div className="space-y-4">
-                        <div className="text-center pb-2">
-                          <p className="font-body-sm text-xs text-emerald-400 font-bold">Verification code sent to {regForm.email}</p>
-                        </div>
-                        <div className="flex items-center justify-center gap-1.5 sm:gap-2">
-                          {otpDigits.map((digit, index) => (
-                            <input
-                              key={index}
-                              id={`otp-input-${index}`}
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={6}
-                              value={digit}
-                              onChange={(e) => handleOtpDigitChange(index, e.target.value)}
-                              onKeyDown={(e) => handleOtpKeyDown(index, e)}
-                              className="w-9 sm:w-10 h-12 text-center bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl text-slate-900 dark:text-white font-display-lg text-lg font-black focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all shadow-sm"
-                              required
-                            />
-                          ))}
-                        </div>
-                      </div>
+                      <ConfirmIdentityOTP
+                        email={regForm.email}
+                        onVerify={handleOtpVerification}
+                        onBack={() => {
+                          setShowOtpModal(false)
+                          if (!isFormEditedSinceLastSubmit) {
+                            setBackWithoutEditCount(prev => prev + 1)
+                          }
+                        }}
+                      />
                     ) : (
-                      <div className="text-center py-4">
-                        <p className="font-body-sm text-sm text-slate-900 dark:text-white font-bold">{regForm.email}</p>
-                      </div>
-                    )}
-
-                    <div className="space-y-4">
-                      {otpSent ? (
-                        <button type="submit" className="w-full h-11 bg-primary hover:bg-primary/95 active:scale-[0.98] text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_12px_rgba(90,93,250,0.2)] flex items-center justify-center gap-1.5 group">
-                          <span>Verify Code & Join</span>
-                          <span className="material-symbols-outlined text-[18px] group-hover:translate-x-0.5 transition-transform">rocket_launch</span>
-                        </button>
-                      ) : (
-                        <button 
-                          type="button" 
+                      <div className="space-y-6">
+                        <div className="text-center py-4">
+                          <p className="font-body-sm text-sm text-slate-900 dark:text-white font-bold">{regForm.email}</p>
+                        </div>
+                        <button
+                          type="button"
                           onClick={handleRequestOtp}
                           disabled={cooldownSeconds > 0 || isLoading || regSpamCooldownSeconds > 0}
                           className="w-full h-11 bg-primary hover:bg-primary/95 active:scale-[0.98] disabled:opacity-50 text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_12px_rgba(90,93,250,0.2)] flex items-center justify-center gap-1.5"
                         >
                           <span>
-                            {regSpamCooldownSeconds > 0 
-                              ? `Spam Lock: Wait ${regSpamCooldownSeconds}s` 
-                              : cooldownSeconds > 0 
-                                ? `Request Code in ${Math.floor(cooldownSeconds / 60)}:${String(cooldownSeconds % 60).padStart(2, '0')}` 
+                            {regSpamCooldownSeconds > 0
+                              ? `Spam Lock: Wait ${regSpamCooldownSeconds}s`
+                              : cooldownSeconds > 0
+                                ? `Request Code in ${Math.floor(cooldownSeconds / 60)}:${String(cooldownSeconds % 60).padStart(2, '0')}`
                                 : 'Request Verification Code'}
                           </span>
                           <span className="material-symbols-outlined text-[18px]">send</span>
                         </button>
-                      )}
-
-                      <div className="flex flex-col gap-3 items-center font-body-sm text-xs text-on-surface-variant">
-                        {otpSent && (
-                          <p>
-                            No receipt?{' '}
-                            <button 
-                              type="button" 
-                              disabled={cooldownSeconds > 0 || regSpamCooldownSeconds > 0}
-                              onClick={handleResendOtp} 
-                              className="text-primary font-bold hover:underline underline-offset-4 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
-                            >
-                              {regSpamCooldownSeconds > 0 
-                                ? `Spam Lock: Wait ${regSpamCooldownSeconds}s` 
-                                : cooldownSeconds > 0 
-                                  ? `Resend Code (${Math.floor(cooldownSeconds / 60)}:${String(cooldownSeconds % 60).padStart(2, '0')})` 
-                                  : 'Resend Code'}
-                            </button>
-                          </p>
-                        )}
-                        <button type="button" onClick={() => { setShowOtpModal(false); if (!isFormEditedSinceLastSubmit) { setBackWithoutEditCount(prev => prev + 1); } }} className="text-on-surface-variant/60 hover:text-primary transition-colors flex items-center gap-1 font-bold">
-                          <span className="material-symbols-outlined text-sm">arrow_back</span> Back to Registration
-                        </button>
                       </div>
-                    </div>
+                    )}
                   </form>
                 </motion.div>
               ) : authMode === 'forgot' ? (

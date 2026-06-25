@@ -11,6 +11,8 @@ import { injectDummyRegistrations } from '../utils/testInjector'
 import { ROLES, hasRole, getUserRoles, hasCapability, hasOrganizerRights, ROLE_LABELS, getNextPromotionRole, getNextDemotionRole } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 import DangerZoneSettings from '../components/admin/DangerZoneSettings.jsx'
+import { ReviewKYCModal } from '../components/admin/ReviewKYCModal.jsx'
+import { UserGovernance } from '../components/admin/UserGovernance.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function AdminDashboard({ onNavigate }) {
@@ -54,7 +56,6 @@ export default function AdminDashboard({ onNavigate }) {
 
   // Modals & Details view states
   const [selectedKycApp, setSelectedKycApp] = useState(null)
-  const [adminNotes, setAdminNotes] = useState('')
   const [kycActionLoading, setKycActionLoading] = useState(false)
   const [upgradeActionLoading, setUpgradeActionLoading] = useState(false)
   const [deleteUserId, setDeleteUserId] = useState(null)
@@ -349,7 +350,7 @@ export default function AdminDashboard({ onNavigate }) {
   }
 
   // Handle KYC verification approval / rejection
-  const handleKycReview = async (status) => {
+  const handleKycReview = async (status, notes) => {
     if (!selectedKycApp) return
     setKycActionLoading(true)
 
@@ -361,14 +362,13 @@ export default function AdminDashboard({ onNavigate }) {
           id: selectedKycApp.id,
           status,
           email: selectedKycApp.email,
-          adminNotes: adminNotes.trim()
+          adminNotes: notes?.trim() || ''
         })
       })
       const data = await res.json()
       if (data.success) {
         triggerToast(`KYC Request ${selectedKycApp.id} ${status.toUpperCase()}!`)
         setSelectedKycApp(null)
-        setAdminNotes('')
         fetchKycApplications()
         fetchActivityLogs()
       } else {
@@ -914,10 +914,7 @@ export default function AdminDashboard({ onNavigate }) {
                     {/* Right Section: Actions */}
                     <div className="flex flex-col items-stretch gap-3 pt-4 border-t sm:pt-0 sm:border-t-0 sm:flex-row sm:items-center sm:justify-end border-slate-100 dark:border-white/10">
                       <button
-                            onClick={() => {
-                              setSelectedKycApp(app)
-                              setAdminNotes('')
-                            }}
+                            onClick={() => setSelectedKycApp(app)}
                             className="flex items-center justify-center w-full px-4 py-2.5 text-sm font-semibold transition-colors bg-white dark:bg-transparent border rounded-lg sm:w-auto text-slate-700 dark:text-white/70 border-slate-200 dark:border-outline-variant/20 hover:bg-slate-50 dark:hover:bg-white/5"
                           >
                             Review Details
@@ -925,20 +922,14 @@ export default function AdminDashboard({ onNavigate }) {
                           </button>
                           <div className="flex w-full gap-2 sm:w-auto">
                             <button
-                              onClick={() => {
-                                setSelectedKycApp(app)
-                                setAdminNotes('')
-                              }}
+                              onClick={() => setSelectedKycApp(app)}
                               className="flex items-center justify-center flex-1 px-4 py-2.5 text-sm font-semibold text-white transition-colors rounded-lg sm:flex-none bg-emerald-600 hover:bg-emerald-700"
                             >
                               <span className="material-symbols-outlined text-sm mr-1.5">check_circle</span>
                               Approve
                             </button>
                             <button
-                              onClick={() => {
-                                setSelectedKycApp(app)
-                                setAdminNotes('')
-                              }}
+                              onClick={() => setSelectedKycApp(app)}
                               className="flex items-center justify-center flex-1 px-4 py-2.5 text-sm font-semibold text-red-700 dark:text-red-400 transition-colors bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-lg sm:flex-none hover:bg-red-100 dark:hover:bg-red-500/20"
                             >
                               <span className="material-symbols-outlined text-sm mr-1.5">cancel</span>
@@ -952,92 +943,12 @@ export default function AdminDashboard({ onNavigate }) {
               </div>
             )}
 
-            {/* KYC Review Drawer/Modal Dialog */}
-            <AnimatePresence>
-              {selectedKycApp && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                  {/* Backdrop */}
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    onClick={() => setSelectedKycApp(null)}
-                    className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                  />
-                  
-                  {/* Container card */}
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                    className="w-full max-w-lg glass-card profile-edit-modal-card p-5 sm:p-6 rounded-2xl shadow-2xl relative z-10 space-y-4 border border-outline-variant/30 max-h-[90vh] overflow-y-auto"
-                  >
-                    <div className="flex items-center justify-between border-b border-outline-variant/30 pb-3">
-                      <h3 className="font-headline-lg text-sm sm:text-base font-extrabold uppercase text-slate-900 dark:text-white">
-                        Review KYC: {selectedKycApp.orgName}
-                      </h3>
-                      <button 
-                        onClick={() => setSelectedKycApp(null)}
-                        className="w-7 h-7 rounded-full bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 flex items-center justify-center text-slate-700 dark:text-white/55"
-                      >
-                        <span className="material-symbols-outlined text-sm">close</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-3 text-xs leading-normal">
-                      <div className="bg-slate-50 dark:bg-white/[0.02] p-3 rounded-xl border border-slate-200 dark:border-white/5 space-y-1.5">
-                        <div><span className="font-bold text-slate-700 dark:text-white/60">Applicant:</span> {selectedKycApp.applicantName}</div>
-                        <div><span className="font-bold text-slate-700 dark:text-white/60">Email:</span> {selectedKycApp.email}</div>
-                        <div><span className="font-bold text-slate-700 dark:text-white/60">Phone:</span> {selectedKycApp.phone}</div>
-                        <div><span className="font-bold text-slate-700 dark:text-white/60">Selected Plan:</span> {selectedKycApp.selectedPlan || 'Free'}</div>
-                        <div><span className="font-bold text-slate-700 dark:text-white/60">Portfolio:</span> {selectedKycApp.portfolio || 'N/A'}</div>
-                        <div>
-                          <span className="font-bold text-slate-700 dark:text-white/60">KYC Document:</span>{' '}
-                          <a 
-                            href={selectedKycApp.kycDoc && selectedKycApp.kycDoc.startsWith('http') ? selectedKycApp.kycDoc : '#'}
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="text-primary dark:text-indigo-400 font-semibold underline hover:text-primary-hover"
-                          >
-                            {selectedKycApp.kycDoc || 'Aadhaar / Passport / ID Upload'}
-                          </a>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-700 dark:text-white/50 font-bold uppercase tracking-wider font-label-caps">
-                          Accreditation Feedback / Admin Notes
-                        </label>
-                        <textarea
-                          rows="3"
-                          value={adminNotes}
-                          onChange={(e) => setAdminNotes(e.target.value)}
-                          placeholder="Provide reasoning for approval/rejection or staff guidelines..."
-                          className="w-full bg-slate-50 dark:bg-white/5 border border-outline-variant/30 rounded-xl p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
-                      <button
-                        onClick={() => handleKycReview('rejected')}
-                        disabled={kycActionLoading}
-                        className="flex-1 py-3 min-h-[44px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 font-headline-md text-xs font-bold uppercase tracking-wider rounded-xl transition-all border border-rose-500/25 active:scale-95"
-                      >
-                        Reject Application
-                      </button>
-                      <button
-                        onClick={() => handleKycReview('approved')}
-                        disabled={kycActionLoading}
-                        className="flex-1 py-3 min-h-[44px] bg-emerald-500 text-white hover:bg-emerald-600 font-headline-md text-xs font-bold uppercase tracking-wider rounded-xl transition-all shadow-md shadow-emerald-500/10 active:scale-95"
-                      >
-                        Approve &amp; Activate
-                      </button>
-                    </div>
-                  </motion.div>
-                </div>
-              )}
-            </AnimatePresence>
+            <ReviewKYCModal
+              application={selectedKycApp}
+              onClose={() => setSelectedKycApp(null)}
+              onApprove={(notes) => handleKycReview('approved', notes)}
+              onReject={(notes) => handleKycReview('rejected', notes)}
+            />
           </div>
         )}
 
@@ -1246,141 +1157,16 @@ export default function AdminDashboard({ onNavigate }) {
         {/* TAB 4: USER GOVERNANCE & ROSTER */}
         {activeTab === 'users' && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h2 className="font-headline-lg text-sm sm:text-base font-extrabold text-slate-900 dark:text-white uppercase tracking-tight">
-                  Gamer Database Governance
-                </h2>
-                <p className="font-body-sm text-[10px] sm:text-xs text-slate-700 dark:text-white/50">
-                  Inspect gaming profiles, check subscription tiers, and terminate violating accounts.
-                </p>
-              </div>
 
-              {/* User search bar */}
-              <div className="relative w-full sm:max-w-xs shrink-0">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-600 dark:text-white/40 text-[18px]">search</span>
-                <input
-                  type="text"
-                  placeholder="Search tag, email, name..."
-                  value={userSearchQuery}
-                  onChange={(e) => setUserSearchQuery(e.target.value)}
-                  className="w-full bg-white dark:bg-white/5 border border-outline-variant/30 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-            </div>
-
-            {/* Users Roster Table */}
-            <div className="glass-card border border-outline-variant/30 rounded-2xl bg-surface-container-low/40 overflow-hidden shadow-sm backdrop-blur-md">
-              <div className="overflow-x-auto w-full">
-                <table className="w-full border-collapse text-left text-xs leading-normal">
-                  <thead>
-                    <tr className="border-b border-outline-variant/30 bg-surface-container-highest/50 text-slate-700 dark:text-white/50 font-bold">
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider">Gamer Tag / Name</th>
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider">Email</th>
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider">Role</th>
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider">Tier</th>
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider">Status</th>
-                      <th className="p-3 sm:p-4 text-[10px] uppercase font-bold tracking-wider text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredUsers.length > 0 ? (
-                      filteredUsers.map((user) => (
-                        <tr 
-                          key={user.id} 
-                          className="border-b border-slate-200 dark:border-white/5 hover:bg-slate-100/30 dark:hover:bg-white/[0.01] transition-colors"
-                        >
-                          <td className="p-3 sm:p-4">
-                            <div className="flex items-center gap-2.5">
-                              <img 
-                                src={user.avatar || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80'} 
-                                alt={user.name} 
-                                className="avatar-img w-7 h-7 rounded-full border border-outline-variant/30 shrink-0"
-                              />
-                              <div className="leading-tight">
-                                <p className="font-bold text-slate-900 dark:text-white text-[12px] sm:text-xs">
-                                  {user.gamerTag && user.gamerTag.startsWith('@') ? user.gamerTag : `@${user.gamerTag || (user.name || 'Anonymous').toLowerCase().replace(/\s+/g, '_')}`}
-                                </p>
-                                <p className="text-[10px] text-slate-600 dark:text-white/40 truncate max-w-[120px]">{user.name}</p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="p-3 sm:p-4 text-[11px] text-slate-700 dark:text-white/50">{user.email}</td>
-                          <td className="p-3 sm:p-4">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-label-caps uppercase ${
-                              user.role === 'admin' 
-                                ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' 
-                                : (user.role === 'organiser' ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-white/40')
-                            }`}>
-                              {user.role}
-                            </span>
-                          </td>
-                          <td className="p-3 sm:p-4 text-[10px] text-slate-700 dark:text-white/50 font-semibold">{user.tier || 'Amateur'}</td>
-                          <td className="p-3 sm:p-4">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold font-label-caps uppercase ${
-                              user.status === 'Active' 
-                                ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
-                                : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-                            }`}>
-                              {user.status || 'Active'}
-                            </span>
-                          </td>
-                          <td className="p-3 sm:p-4 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                onClick={() => onNavigate && onNavigate('profile', user)}
-                                className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-700 dark:text-white/50 hover:text-primary dark:hover:text-white transition-colors"
-                                title="View User Profile"
-                              >
-                                <span className="material-symbols-outlined text-[18px]">visibility</span>
-                              </button>
-                              
-                              {(user.role === 'organiser' || user.role === 'verified organizer') && (
-                                <>
-                                  <button
-                                    onClick={() => handleToggleUserStatus(user)}
-                                    className={`p-2 min-h-[44px] min-w-[44px] flex items-center justify-center transition-colors ${user.status === 'Held' ? 'text-amber-500 hover:text-emerald-500' : 'text-slate-700 dark:text-white/50 hover:text-amber-500'}`}
-                                    title={user.status === 'Held' ? "Resume event hosting privilege" : "Hold event hosting privilege"}
-                                  >
-                                    <span className="material-symbols-outlined text-[18px]">
-                                      {user.status === 'Held' ? 'play_circle' : 'pause_circle'}
-                                    </span>
-                                  </button>
-                                  
-                                  <button
-                                    onClick={() => handleRevokeOrganizerRole(user)}
-                                    className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-700 dark:text-white/50 hover:text-rose-500 transition-colors"
-                                    title="Revoke organizer role (demote to player)"
-                                  >
-                                    <span className="material-symbols-outlined text-[18px]">gavel</span>
-                                  </button>
-                                </>
-                              )}
-
-                              {user.role !== 'admin' && (
-                                <button
-                                  onClick={() => setDeleteUserId(user.id)}
-                                  className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-700 dark:text-white/50 hover:text-rose-500 transition-colors"
-                                  title="Terminate Account"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan="6" className="text-center py-10 text-slate-600 dark:text-white/40 text-xs">
-                          No matching users found in roster.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <UserGovernance
+              users={filteredUsers}
+              userSearchQuery={userSearchQuery}
+              onSearchChange={setUserSearchQuery}
+              onNavigate={onNavigate}
+              onToggleStatus={handleToggleUserStatus}
+              onRevokeRole={handleRevokeOrganizerRole}
+              onDelete={setDeleteUserId}
+            />
 
             {/* Delete Confirmation Modal */}
             <AnimatePresence>
