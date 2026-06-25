@@ -77,7 +77,7 @@ function BecomeOrganizer({ onNavigate }) {
 
   const [cropImageSrc, setCropImageSrc] = useState('');
   const [cropImageName, setCropImageName] = useState('');
-  const [zoom, setZoom] = useState(1);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -400,7 +400,7 @@ function BecomeOrganizer({ onNavigate }) {
     reader.onloadend = () => {
       setCropImageSrc(reader.result);
       setCropImageName(file.name);
-      setZoom(1);
+      setZoomPercent(100);
       setOffset({ x: 0, y: 0 });
     };
     reader.readAsDataURL(file);
@@ -474,8 +474,9 @@ function BecomeOrganizer({ onNavigate }) {
       let renderW = containerSize, renderH = containerSize;
       if (imgRatio > 1) renderW = containerSize * imgRatio;
       else renderH = containerSize / imgRatio;
-      const zoomedW = renderW * zoom;
-      const zoomedH = renderH * zoom;
+      const effZoom = zoomPercent / 100
+      const zoomedW = renderW * effZoom;
+      const zoomedH = renderH * effZoom;
       const scale = 512 / containerSize;
       const tx = ((containerSize - zoomedW) / 2 + offset.x) * scale;
       const ty = ((containerSize - zoomedH) / 2 + offset.y) * scale;
@@ -1636,15 +1637,15 @@ function BecomeOrganizer({ onNavigate }) {
                 onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
                 onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleMouseUp}>
                 <img src={cropImageSrc} alt="Crop preview" draggable={false} className="max-w-none origin-center select-none"
-                  style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`, transition: isDragging ? 'none' : 'transform 0.1s ease-out', width: '100%', height: '100%', objectFit: 'contain' }} />
+                  style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoomPercent / 100})`, transition: isDragging ? 'none' : 'transform 0.1s ease-out', width: '100%', height: '100%', objectFit: 'contain' }} />
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
                 <span>Zoom</span>
-                <span>{zoom.toFixed(2)}x</span>
+                <span>{zoomPercent}%</span>
               </div>
-              <input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))}
+              <input type="range" min="10" max="200" step="1" value={zoomPercent} onChange={(e) => setZoomPercent(Number(e.target.value))}
                 className="w-full h-1 bg-surface-container rounded-lg appearance-none cursor-pointer accent-primary" />
             </div>
             <div className="flex gap-3 pt-2">

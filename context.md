@@ -1093,9 +1093,17 @@ Centralized `validateStep(step, data, planLimits, orgName, userTier)`:
 
 **CropModal**:
 - Locked aspect ratio 3:4, export 1200×1600px
-- Drag reposition, scroll/zoom (0.5x–5x)
+- Drag reposition, scroll/zoom (10%–200%)
 - Cannot change crop ratio, resize crop box, use freeform crop
 - Canvas output: JPEG at 92% quality
+
+**Zoom Slider Standard** (global across all crop modals):
+All crop zoom sliders across the platform use a **10% to 200%** range with **step="1"** (1% increments). The slider stores an integer `zoomPercent` (10–200), and the cropper scale factor is computed as `zoomPercent / 100` (e.g. 150% → scale 1.5). This standard applies to:
+1. `CropModal.jsx` (Event Creation Banner — `Step5Media`)
+2. `Profile.jsx` (User Avatar & Banner — circle/rectangle)
+3. `BecomeOrganizer.jsx` (Org Logo — 512×512 square)
+4. `OrganizerDashboard.jsx` (Org Logo & Banner — staged upload)
+5. `OrgPage.jsx` (Org Logo & Banner — inline edit modal)
 
 ### 10.11 Image Upload — Server Proxy & Fallback (`src/utils/imgbbUpload.js`)
 The `uploadToImgbb()` function uses a dual-approach strategy:
@@ -1976,3 +1984,4 @@ src/assets/
 |---|---|---|
 | Initial creation | Full platform documentation | — |
 | 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), ImgBB dual-upload strategy (§10.11, §24.6), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |
+| 2026-06-25 | Standardized zoom slider across all 5 crop modals: 10%–200% range, step=1, percent-based state (`zoomPercent / 100` → cropper scale). Affected files: `CropModal.jsx`, `Profile.jsx`, `BecomeOrganizer.jsx`, `OrganizerDashboard.jsx`, `OrgPage.jsx`. Documented in Section 10.10. | System |

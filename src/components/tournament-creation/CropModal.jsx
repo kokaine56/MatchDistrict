@@ -5,7 +5,7 @@ const EXPORT_W = 1200
 const EXPORT_H = 1600
 
 export default function CropModal({ imageSrc, onCrop, onCancel }) {
-  const [zoom, setZoom] = useState(1)
+  const [zoomPercent, setZoomPercent] = useState(100)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragAnchor = useRef({ x: 0, y: 0 })
@@ -23,7 +23,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
       if (!c) return
       const cw = c.clientWidth, ch = c.clientHeight
       const base = Math.max(cw / img.naturalWidth, ch / img.naturalHeight)
-      setZoom(base)
+      setZoomPercent(Math.round(Math.max(10, Math.min(200, base * 100))))
     }
     if (img.complete) onLoad()
     else img.addEventListener('load', onLoad)
@@ -50,7 +50,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
 
   const handleWheel = useCallback((e) => {
     e.preventDefault()
-    setZoom(z => Math.max(0.1, Math.min(5, z + (e.deltaY > 0 ? -0.1 : 0.1))))
+    setZoomPercent(z => Math.max(10, Math.min(200, z + (e.deltaY > 0 ? -10 : 10))))
   }, [])
 
   const doCrop = useCallback(() => {
@@ -59,7 +59,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
     const n = imgNatural.current
     if (!c || !img || !n.w || !n.h) return
     const cw = c.clientWidth, ch = c.clientHeight
-    const effZoom = zoom
+    const effZoom = zoomPercent / 100
     const dispW = n.w * effZoom
     const dispH = n.h * effZoom
     const imgCX = cw / 2 + position.x
@@ -74,7 +74,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
     const ctx = canvas.getContext('2d')
     ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, EXPORT_W, EXPORT_H)
     canvas.toBlob((blob) => { if (blob) onCrop(blob) }, 'image/jpeg', 0.92)
-  }, [zoom, position, onCrop])
+  }, [zoomPercent, position, onCrop])
 
   return (
     <AnimatePresence>
@@ -97,14 +97,14 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
               <span className="text-xs text-on-surface-variant">Zoom</span>
               <input
                 type="range"
-                min="0"
-                max="100"
+                min="10"
+                max="200"
                 step="1"
-                value={Math.round(((zoom - 0.1) / 4.9) * 100)}
-                onChange={(e) => setZoom(0.1 + (Number(e.target.value) / 100) * 4.9)}
+                value={zoomPercent}
+                onChange={(e) => setZoomPercent(Number(e.target.value))}
                 className="w-24 h-1.5 bg-slate-600 rounded-full appearance-none cursor-pointer accent-indigo-500"
               />
-              <span className="text-[11px] text-on-surface-variant font-semibold w-10 text-right tabular-nums">{Math.round(zoom * 100)}%</span>
+              <span className="text-[11px] text-on-surface-variant font-semibold w-10 text-right tabular-nums">{zoomPercent}%</span>
             </div>
           </div>
 
@@ -127,7 +127,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
                 className="absolute pointer-events-none"
                 style={{
                   left: '50%', top: '50%',
-                  transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px)) scale(${zoom})`,
+                  transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px)) scale(${zoomPercent / 100})`,
                   transformOrigin: 'center center',
                   maxWidth: 'none', maxHeight: 'none',
                 }}
@@ -137,7 +137,7 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
           </div>
 
           <div className="px-5 py-3.5 border-t border-outline-variant/10 space-y-3">
-            <p className="text-[11px] text-on-surface-variant/70 text-center">Drag to reposition · Scroll to zoom · Crop locked to 3:4 (1200 × 1600)</p>
+            <p className="text-[11px] text-on-surface-variant/70 text-center">Drag to reposition · Scroll to zoom · Crop locked to 3:4 (1200 x 1600)</p>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={onCancel}
                 className="px-4 py-2 rounded-xl text-xs font-semibold border border-outline-variant/30 text-on-surface-variant hover:bg-surface/50 transition-colors"

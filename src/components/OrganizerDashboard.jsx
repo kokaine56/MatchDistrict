@@ -76,7 +76,7 @@ function OrganizerDashboard({
   // --- Crop modal ---
   const [cropState, setCropState] = useState(null)
   const [cropOffset, setCropOffset] = useState({ x: 0, y: 0 })
-  const [cropZoom, setCropZoom] = useState(1)
+  const [cropZoomPercent, setCropZoomPercent] = useState(100)
   const cropImgRef = useRef(null)
   const isDraggingRef = useRef(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
@@ -84,18 +84,16 @@ function OrganizerDashboard({
 
   useEffect(() => {
     if (cropState) {
-      let startingZoom = 1
+      let startingZoomPercent = 100
       if (cropState.shape === 'rectangle') {
         const fillZoomX = 360 / cropState.width
         const fillZoomY = 120 / cropState.height
-        startingZoom = Math.max(fillZoomX, fillZoomY)
-        startingZoom = Math.min(Math.max(startingZoom, 0.5), 5)
+        startingZoomPercent = Math.round(Math.max(fillZoomX, fillZoomY) * 100)
       } else {
         const minDimension = Math.min(cropState.width, cropState.height)
-        startingZoom = 280 / minDimension
-        startingZoom = Math.min(Math.max(startingZoom, 0.5), 3)
+        startingZoomPercent = Math.round((280 / minDimension) * 100)
       }
-      setCropZoom(startingZoom)
+      setCropZoomPercent(Math.max(10, Math.min(200, startingZoomPercent)))
       setCropOffset({ x: 0, y: 0 })
     }
   }, [cropState])
@@ -165,26 +163,27 @@ function OrganizerDashboard({
     if (!img) return
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
+    const effZoom = cropZoomPercent / 100
     if (cropState.shape === 'rectangle') {
       const containerW = 360, containerH = 120
-      const imgLeft = containerW / 2 + cropOffset.x - (cropState.width * cropZoom) / 2
-      const imgTop = containerH / 2 + cropOffset.y - (cropState.height * cropZoom) / 2
-      const srcX = Math.max(0, (0 - imgLeft) / cropZoom)
-      const srcY = Math.max(0, (0 - imgTop) / cropZoom)
-      const srcW = Math.min(cropState.width - srcX, containerW / cropZoom)
-      const srcH = Math.min(cropState.height - srcY, containerH / cropZoom)
+      const imgLeft = containerW / 2 + cropOffset.x - (cropState.width * effZoom) / 2
+      const imgTop = containerH / 2 + cropOffset.y - (cropState.height * effZoom) / 2
+      const srcX = Math.max(0, (0 - imgLeft) / effZoom)
+      const srcY = Math.max(0, (0 - imgTop) / effZoom)
+      const srcW = Math.min(cropState.width - srcX, containerW / effZoom)
+      const srcH = Math.min(cropState.height - srcY, containerH / effZoom)
       canvas.width = 1200
       canvas.height = 400
       ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, 1200, 400)
     } else {
       canvas.width = 400
       canvas.height = 400
-      const imgLeft = 140 + cropOffset.x - (cropState.width * cropZoom) / 2
-      const imgTop = 140 + cropOffset.y - (cropState.height * cropZoom) / 2
-      const cropX_img = (40 - imgLeft) / cropZoom
-      const cropY_img = (40 - imgTop) / cropZoom
-      const cropW_img = 200 / cropZoom
-      const cropH_img = 200 / cropZoom
+      const imgLeft = 140 + cropOffset.x - (cropState.width * effZoom) / 2
+      const imgTop = 140 + cropOffset.y - (cropState.height * effZoom) / 2
+      const cropX_img = (40 - imgLeft) / effZoom
+      const cropY_img = (40 - imgTop) / effZoom
+      const cropW_img = 200 / effZoom
+      const cropH_img = 200 / effZoom
       ctx.drawImage(img, cropX_img, cropY_img, cropW_img, cropH_img, 0, 0, 400, 400)
     }
     canvas.toBlob((blob) => {
@@ -1990,7 +1989,7 @@ function OrganizerDashboard({
                       alt="To Crop"
                       className="absolute pointer-events-none origin-center"
                       style={{
-                        transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoom})`,
+                        transform: `translate(${cropOffset.x}px, ${cropOffset.y}px) scale(${cropZoomPercent / 100})`,
                         left: '50%',
                         top: '50%',
                         marginLeft: `-${cropState.width / 2}px`,
@@ -2014,17 +2013,17 @@ function OrganizerDashboard({
                   <div className="w-full space-y-1">
                     <div className="flex justify-between text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
                       <span>Zoom</span>
-                      <span>{Math.round(cropZoom * 100)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.1"
-                      max={cropState.shape === 'rectangle' ? 5 : 3}
-                      step="0.05"
-                      value={cropZoom}
-                      onChange={(e) => setCropZoom(parseFloat(e.target.value))}
-                      className="w-full accent-primary bg-surface-container h-1 rounded-lg cursor-pointer"
-                    />
+                    <span>{cropZoomPercent}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="200"
+                    step="1"
+                    value={cropZoomPercent}
+                    onChange={(e) => setCropZoomPercent(Number(e.target.value))}
+                    className="w-full accent-primary bg-surface-container h-1 rounded-lg cursor-pointer"
+                  />
                   </div>
                 </div>
 
