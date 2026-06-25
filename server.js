@@ -7654,6 +7654,108 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- FULL DATABASE PURGE (ADMIN ONLY, DANGER ZONE) — Isolated Sequential Loop ---
+  if (req.url === '/api/admin/purge-database' && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
+      // Each table is TRUNCATE'd in isolation. CASCADE resolves FK dependencies automatically.
+      // A missing table fails quietly without affecting the rest.
+      const tablesToWipe = [
+        'subscriptions',
+        'alerts',
+        'staff_members',
+        'team_presets',
+        'organiser_followers',
+        'payment_verifications',
+        'billing_history',
+        'payment_submissions',
+        'registration_sessions',
+        'wallet_transactions',
+        'export_usage_log',
+        'api_keys',
+        'custom_subdomains',
+        'white_label_settings',
+        'plan_upgrade_requests',
+        'analytics_events',
+        'tournament_registrations',
+        'tournament_notices',
+        'tournament_messages',
+        'automation_rules',
+        'sponsor_contributions',
+        'slot_grid',
+        'room_credentials',
+        'sponsor_list',
+        'sponsor_requests',
+        'admin_action_log',
+        'admin_subscription_log',
+        'otps',
+        'password_resets',
+        'temp_users',
+        'registration_cooldowns',
+        'tournaments',
+        'organizer_applications',
+        'registrations',
+        'notices',
+        'organizer_profiles',
+        'site_settings'
+      ];
+
+      let wipedCount = 0;
+      let failedCount = 0;
+
+      for (const tableName of tablesToWipe) {
+        try {
+          await pool.query(`TRUNCATE TABLE "${tableName}" CASCADE;`);
+          wipedCount++;
+        } catch (error) {
+          console.warn(`[PURGE] Skipped table "${tableName}": relation might not exist.`);
+          failedCount++;
+        }
+      }
+
+      // Users table is special — preserve admin accounts so the platform isn't orphaned
+      try {
+        await pool.query(`DELETE FROM users WHERE role != 'admin'`);
+        wipedCount++;
+      } catch (error) {
+        console.warn(`[PURGE] Could not delete from "users": ${error.message}`);
+        failedCount++;
+      }
+
+      // Re-seed default site settings
+      try {
+        await pool.query(`
+          INSERT INTO site_settings (key, value, updated_at) VALUES
+            ('theme', 'dark', CURRENT_TIMESTAMP),
+            ('platform_fee_percentage', '10', CURRENT_TIMESTAMP),
+            ('organizer_fee_percentage', '5', CURRENT_TIMESTAMP)
+          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+        `);
+      } catch (error) {
+        console.warn(`[PURGE] Could not re-seed site_settings: ${error.message}`);
+      }
+
+      console.log(`🛡️ [ADMIN COMMAND] Full database purge executed. Wiped ${wipedCount} tables, skipped ${failedCount}.`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        message: 'CRITICAL ALARM: Database has been entirely wiped.',
+        details: `Successfully wiped ${wipedCount} tables. Skipped ${failedCount} tables.`
+      }));
+    } catch (err) {
+      console.error('❌ [ADMIN COMMAND] Database purge failed:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // --- GET DYNAMIC SYSTEM ACTIVITY LOGS (ADMIN ONLY) ---
   if (req.url === '/api/admin/activity-log' && req.method === 'GET') {
     try {

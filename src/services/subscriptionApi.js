@@ -220,6 +220,11 @@ export const subscriptionApi = {
   adminToggleEarlyAccess: (userId, enabled) => apiRequest(`/admin/early-access/${userId}`, {
     method: 'PUT',
     body: JSON.stringify({ enabled })
+  }),
+
+  // Admin purge database (danger zone)
+  purgeDatabase: () => apiRequest('/admin/purge-database', {
+    method: 'POST'
   })
 };
 

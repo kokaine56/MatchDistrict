@@ -10,6 +10,7 @@ import ActivityFeed from '../components/ActivityFeed'
 import { injectDummyRegistrations } from '../utils/testInjector'
 import { ROLES, hasRole, getUserRoles, hasCapability, hasOrganizerRights, ROLE_LABELS, getNextPromotionRole, getNextDemotionRole } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
+import DangerZoneSettings from '../components/admin/DangerZoneSettings.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function AdminDashboard({ onNavigate }) {
@@ -73,6 +74,29 @@ export default function AdminDashboard({ onNavigate }) {
   
   // Search state for users
   const [userSearchQuery, setUserSearchQuery] = useState('')
+
+  // Global state reset for database purge
+  const resetGlobalState = useCallback(({ totalUsers, activeArenas, totalLivePrizePools, allTimePrizePool, allTimeCommission, abuseFilters, applications }) => {
+    setKycApplications(applications || [])
+    setUpgradeRequests([])
+    setUsersList([])
+    setTournamentsList([])
+    setActivityLogs([])
+    setBadWordsList(abuseFilters || [])
+    setFinancials({
+      totalPrizePools: totalLivePrizePools ?? 0,
+      totalOperationalRevenue: 0,
+      activeTourneysCount: activeArenas ?? 0,
+      platformFeePercentage: 10,
+      allTimePrizePool: allTimePrizePool ?? 0,
+      allTimeCommission: allTimeCommission ?? 0,
+      totalHostedArenas: 0,
+      ledger: [],
+      engagementCurve: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      trafficBars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    })
+    triggerToast('CRITICAL ALARM: Database has been entirely wiped.')
+  }, [])
 
   // Build auth headers using Supabase session token — no localStorage
   const getHeaders = async () => {
@@ -789,6 +813,9 @@ export default function AdminDashboard({ onNavigate }) {
                   </div>
                 </div>
               </div>
+
+              {/* Danger Zone — Database Purge */}
+              <DangerZoneSettings resetGlobalState={resetGlobalState} />
 
               {/* Organizer Usage Stats */}
               <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
