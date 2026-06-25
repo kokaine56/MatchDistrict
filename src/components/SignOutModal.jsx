@@ -1,13 +1,29 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 export const SignOutModal = ({ isOpen, onClose, onConfirm }) => {
   const [signOutType, setSignOutType] = useState('only')
+  const [mounted, setMounted] = useState(false)
 
-  if (!isOpen) return null
+  useEffect(() => {
+    setMounted(true)
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="w-full max-w-sm p-6 bg-white shadow-2xl rounded-3xl">
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+
+    return () => {
+      document.body.style.overflow = 'unset'
+    }
+  }, [isOpen])
+
+  if (!isOpen || !mounted) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+      <div className="w-full max-w-sm p-6 bg-white shadow-2xl rounded-3xl shrink-0">
         <h2 className="text-2xl font-bold text-slate-900">Sign Out</h2>
         <p className="mt-2 text-sm text-slate-500">How would you like to sign out?</p>
 
@@ -82,6 +98,7 @@ export const SignOutModal = ({ isOpen, onClose, onConfirm }) => {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
