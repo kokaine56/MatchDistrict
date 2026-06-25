@@ -2072,8 +2072,15 @@ const server = http.createServer(async (req, res) => {
               if (match) orgMotto = match[1];
             }
 
-            // Sync approved tier and org details to user table
-            const initialOrgHandle = '@' + (updatedApp.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_@]/g, '');
+            // Generate unique org handle from applicant name
+            const baseName = updatedApp.applicantName || updatedApp.orgName || 'organizer';
+            const cleanName = baseName.split(' ')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const randomSuffix = Math.random().toString(36).substring(2, 8);
+            const initialOrgHandle = '@' + cleanName + '_' + randomSuffix;
+
+            // Use applicant real name as org name if orgName is empty
+            const orgName = updatedApp.orgName || updatedApp.applicantName || 'Organizer';
+
             const newRoles = ['user', 'organiser'];
             const userRes = await pool.query(
               `UPDATE users SET 
@@ -2086,7 +2093,7 @@ const server = http.createServer(async (req, res) => {
                 "orgImage" = $7,
                 "orgHandle" = $8
                WHERE email = $9 RETURNING id`,
-              [newRole, newRoles, status, approvedTier, updatedApp.orgName, orgMotto, updatedApp.orgImage, initialOrgHandle, email]
+              [newRole, newRoles, status, approvedTier, orgName, orgMotto, updatedApp.orgImage, initialOrgHandle, email]
             );
 
             if (userRes.rows.length > 0) {
@@ -2138,7 +2145,7 @@ const server = http.createServer(async (req, res) => {
       }
       const org = dbRes.rows[0];
       const tourneyRes = await pool.query(
-        `SELECT id, title, game, "startDate", status FROM tournaments WHERE "orgId" = $1 ORDER BY created_at DESC LIMIT 6`,
+        `SELECT id, title, game, "startDate", status FROM tournaments WHERE "orgId" = $1 AND ("isDraft" = false OR "isDraft" IS NULL) ORDER BY created_at DESC LIMIT 6`,
         [org.id]
       );
       org.recent_tournaments = tourneyRes.rows || [];
@@ -2766,6 +2773,7 @@ const server = http.createServer(async (req, res) => {
         SELECT t.*, u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
         FROM tournaments t
         LEFT JOIN users u ON t."orgId" = u.id
+        WHERE (t."isDraft" = false OR t."isDraft" IS NULL)
         ORDER BY t.created_at DESC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2826,6 +2834,17 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const row = dbRes.rows[0];
+
+      // Block draft access for non-owners (drafts should only be visible to the organizer)
+      if (row.isDraft) {
+        const authUser = getAuthUser(req);
+        if (!authUser || (authUser.id !== row.orgId && !hasRole(authUser, ROLES.ADMIN))) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+      }
+
       row.orgName = row.orgName || row.userOrgName || row.userName || 'Match District Organizer';
       row.orgLogo = row.orgLogo || row.userOrgImage || '';
       delete row.userOrgName;

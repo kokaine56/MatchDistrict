@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { OptimizedInput } from '../../OptimizedInput'
 
 export const DEFAULT_CATEGORIES = [
   {
@@ -326,10 +327,9 @@ export default function Step7Rules({ data, onChange }) {
             {customRules.map((rule, idx) => (
               <div key={idx} className="flex items-center gap-2">
                 <span className="text-xs font-bold text-on-surface-variant/80 min-w-[20px]">{idx + 1}.</span>
-                <input
-                  type="text"
+                <OptimizedInput
                   value={rule}
-                  onChange={(e) => handleCustomRuleChange(idx, e.target.value)}
+                  onChange={(v) => handleCustomRuleChange(idx, v)}
                   placeholder="e.g. Map coordinates will be sent to the discord channel."
                   className="flex-1 bg-background/50 border border-outline-variant/35 rounded-xl px-3 py-2 text-xs text-white placeholder-on-surface-variant/50 focus:outline-none focus:border-primary transition-colors"
                 />

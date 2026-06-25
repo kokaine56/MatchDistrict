@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { OptimizedInput } from '../OptimizedInput'
 
 const BGMI_MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Karakin', 'Nusa', 'Rondo']
 
@@ -49,10 +50,9 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
         <label className="block text-xs text-on-surface-variant mb-1">
           <span className="text-error mr-1">*</span>Round Name
         </label>
-        <input
-          type="text"
+        <OptimizedInput
           value={round.name || ''}
-          onChange={(e) => onChange({ ...round, name: e.target.value })}
+          onChange={(v) => onChange({ ...round, name: v })}
           placeholder="e.g. Qualifier"
           className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
         />
@@ -63,10 +63,10 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           <label className="block text-xs text-on-surface-variant mb-1">
             <span className="text-error mr-1">*</span>Date
           </label>
-          <input
+          <OptimizedInput
             type="date"
             value={round.date || ''}
-            onChange={(e) => onChange({ ...round, date: e.target.value })}
+            onChange={(v) => onChange({ ...round, date: v })}
             className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:border-primary/40"
           />
         </div>
@@ -74,10 +74,10 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           <label className="block text-xs text-on-surface-variant mb-1">
             <span className="text-error mr-1">*</span>Time
           </label>
-          <input
+          <OptimizedInput
             type="time"
             value={round.time || ''}
-            onChange={(e) => onChange({ ...round, time: e.target.value })}
+            onChange={(v) => onChange({ ...round, time: v })}
             className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:border-primary/40"
           />
         </div>
@@ -102,11 +102,11 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
         <label className="block text-xs text-on-surface-variant mb-1">
           <span className="text-error mr-1">*</span>Teams Advancing to Next Round
         </label>
-        <input
+        <OptimizedInput
           type="number"
           min="0"
           value={round.qualified || ''}
-          onChange={(e) => onChange({ ...round, qualified: e.target.value })}
+          onChange={(v) => onChange({ ...round, qualified: v })}
           placeholder="e.g. 16"
           className="w-full px-3 py-2 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background placeholder-on-surface-variant focus:outline-none focus:border-primary/40"
         />

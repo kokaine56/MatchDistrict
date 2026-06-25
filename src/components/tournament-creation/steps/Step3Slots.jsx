@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import SlotCalculator from '../SlotCalculator'
+import { OptimizedInput } from '../../OptimizedInput'
 
 const PLAN_MAX_SLOTS = { Free: 100, Basic: 300, Pro: 1000 }
 const PLAN_VALIDATION = {
@@ -29,23 +30,20 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
     return ''
   })()
 
-  const handleSlotsChange = (e) => {
-    const v = e.target.value
+  const handleSlotsChange = (v) => {
     if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= maxSlots)) {
       onChange({ ...data, slotsTotal: v })
     }
   }
 
-  const handleReservedChange = (e) => {
-    const v = e.target.value
+  const handleReservedChange = (v) => {
     const total = parseInt(data.slotsTotal) || 0
     if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= total)) {
       onChange({ ...data, reserved_slots: v })
     }
   }
 
-  const handleRoomChange = (e) => {
-    const v = e.target.value
+  const handleRoomChange = (v) => {
     if (v === '' || (parseInt(v) > 0 && parseInt(v) <= ceiling)) {
       onChange({ ...data, max_slots_per_room: v })
     }
@@ -66,7 +64,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         <label className="block text-sm font-medium text-on-surface-variant">
           Total Slots <span className="text-error">*</span>
         </label>
-        <input
+        <OptimizedInput
           type="number"
           min={2}
           max={maxSlots}
@@ -102,7 +100,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         <label className="block text-sm font-medium text-on-surface-variant">
           Reserved Slots <span className="text-on-surface-variant/50">(optional)</span>
         </label>
-        <input
+        <OptimizedInput
           type="number"
           min={0}
           max={parseInt(data.slotsTotal) || 0}
@@ -140,7 +138,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           <label className="block text-sm font-medium text-on-surface-variant">
             Max Slots Per Room <span className="text-on-surface-variant/50">(optional)</span>
           </label>
-          <input
+          <OptimizedInput
             type="number"
             min={floor}
             max={ceiling}

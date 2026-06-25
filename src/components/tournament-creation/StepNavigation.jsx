@@ -33,7 +33,7 @@ export default function StepNavigation({
           whileTap={{ scale: 0.97 }}
           onClick={onSaveDraft}
           disabled={isSubmitting}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl bg-primary text-white text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(99,102,241,0.55)] hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl border-2 border-slate-300 dark:border-outline-variant/40 bg-white dark:bg-white/5 text-xs sm:text-sm font-semibold text-slate-700 dark:text-on-surface hover:bg-slate-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
         >
           {isSubmitting ? (
             <span className="flex items-center gap-1.5">
@@ -55,7 +55,7 @@ export default function StepNavigation({
             disabled={isSubmitting}
             className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl bg-primary text-white text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(99,102,241,0.55)] hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
-            {isSubmitting ? (isEditMode ? 'Saving...' : 'Publishing...') : (isEditMode ? 'Save Changes' : 'Publish')}
+            {isSubmitting ? (isEditMode ? 'Saving...' : 'Publishing...') : (isEditMode ? 'Save Changes' : 'Publish Tournament')}
           </motion.button>
         ) : (
           <motion.button

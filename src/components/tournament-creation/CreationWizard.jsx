@@ -317,10 +317,11 @@ export default function CreationWizard() {
   const startNew = () => { localStorage.removeItem(LS_KEY); setFormData(emptyForm()); setCurrentStep(1); setShowRecovery(false) }
 
   // Save to server
-  const saveToServer = useCallback(async (publish = false, preUploadedImageUrl = null) => {
+  const saveToServer = useCallback(async (intendedStatus = 'DRAFT', preUploadedImageUrl = null) => {
     setIsSubmitting(true)
     try {
-      const isDraft = !publish
+      const isPublished = intendedStatus === 'PUBLISHED'
+      const isDraft = !isPublished
 
       // Calculate prize pool
       const basePrizePool = (parseInt(formData.entry_fee_amount) || 0) * (parseInt(formData.slotsTotal) || 0)
@@ -338,10 +339,10 @@ export default function CreationWizard() {
         title: formData.title,
         game: formData.game,
         isDraft,
-        status: publish ? 'upcoming' : 'draft',
+        status: isPublished ? 'upcoming' : 'draft',
         date: formData.registrationOpenDate || '',
         badgeBg: 'bg-primary',
-        badgeText: publish ? 'UPCOMING' : 'DRAFT',
+        badgeText: isPublished ? 'UPCOMING' : 'DRAFT',
         orgName: '',
         teamsCount: '0',
         featured: false,
@@ -481,11 +482,11 @@ export default function CreationWizard() {
   }, [])
 
   const handleSaveDraft = useCallback(async () => {
-    const result = await saveToServer(false)
+    const result = await saveToServer('DRAFT')
     if (result?.error) {
       showToast(result.message || 'Failed to save draft', 'error')
     } else {
-      showToast('Draft saved successfully')
+      showToast('Draft saved to your Organizer Dashboard.')
     }
   }, [saveToServer, showToast])
 
@@ -502,7 +503,7 @@ export default function CreationWizard() {
       setPublishError(errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.')
       return
     }
-    const result = await saveToServer(true)
+    const result = await saveToServer('PUBLISHED')
     if (result?.tournament) {
       navigate(`/tournaments/${result.tournament.id}`)
     } else if (result?.error) {
@@ -525,7 +526,7 @@ export default function CreationWizard() {
       const errMessages = Object.values(allErrors).filter(Boolean)
       return { tournament: null, error: 'VALIDATION', message: errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.' }
     }
-    const result = await saveToServer(true, preUploadedImageUrl)
+    const result = await saveToServer('PUBLISHED', preUploadedImageUrl)
     if (result?.error) {
       setPublishError(result.message)
     }

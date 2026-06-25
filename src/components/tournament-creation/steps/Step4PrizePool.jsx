@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
 import PrizeAllocationEngine from '../PrizeAllocationEngine'
+import { OptimizedInput } from '../../OptimizedInput'
 
 export default function Step4PrizePool({ data, onChange, errors, userTier }) {
   const [platformFeePct, setPlatformFeePct] = useState(0)
@@ -67,11 +68,11 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         <div className="flex items-center gap-3">
           <div className="relative flex-1 max-w-xs">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
-            <input
+            <OptimizedInput
               type="number"
               min="0"
               value={data.entry_fee_amount || ''}
-              onChange={(e) => onChange({ ...data, entry_fee_amount: e.target.value })}
+              onChange={(v) => onChange({ ...data, entry_fee_amount: v })}
               placeholder="Enter Entry Fee"
               className="w-full pl-8 pr-4 py-2.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
             />
@@ -96,11 +97,11 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
             <div className="flex items-center gap-3 pl-1">
               <div className="relative min-w-[120px] max-w-[200px]">
                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
-                <input
+                <OptimizedInput
                   type="number"
                   min="0"
                   value={data.mvp_amount || ''}
-                  onChange={(e) => onChange({ ...data, mvp_amount: e.target.value })}
+                  onChange={(v) => onChange({ ...data, mvp_amount: v })}
                   placeholder="0"
                   className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
                 />
@@ -123,11 +124,11 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
               <div className="flex items-center gap-3">
                 <div className="relative min-w-[120px] max-w-[200px]">
                   <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
-                  <input
+                  <OptimizedInput
                     type="number"
                     min="0"
                     value={data.kill_reward_per_kill || ''}
-                    onChange={(e) => onChange({ ...data, kill_reward_per_kill: e.target.value })}
+                    onChange={(v) => onChange({ ...data, kill_reward_per_kill: v })}
                     placeholder="0"
                     className="w-full pl-7 pr-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40"
                   />

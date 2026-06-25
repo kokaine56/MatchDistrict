@@ -1,4 +1,5 @@
 import { useMemo, useCallback } from 'react'
+import { OptimizedInput } from '../OptimizedInput'
 
 function generateOrdinal(n) {
   const s = ['th', 'st', 'nd', 'rd']
@@ -167,13 +168,13 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
 
             {/* 3. Wider Percentage Input — no truncation */}
             <div className="relative flex items-center">
-              <input
+              <OptimizedInput
                 type="number"
                 min="0"
                 max="100"
                 step="0.01"
                 value={pos.percentage}
-                onChange={(e) => updatePercentage(pos.id, e.target.value)}
+                onChange={(v) => updatePercentage(pos.id, v)}
                 className="w-20 sm:w-24 px-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background text-center focus:outline-none focus:border-primary/40"
               />
               <span className="absolute text-xs text-on-surface-variant right-2 pointer-events-none">%</span>

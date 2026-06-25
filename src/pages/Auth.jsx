@@ -10,6 +10,7 @@ import LoadingScreen from '../components/LoadingScreen.jsx'
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
+import { generateUniqueUsername } from '../utils/helpers.js'
 
 const baseContentVariants = {
   initial: { opacity: 0, y: 12 },
@@ -97,13 +98,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     email: '',
     password: '',
     confirmPassword: '',
-    gamerTag: '',
     agreeTerms: false
   })
   
   // Abuse tracking for register fields
   const [regNameAbuse, setRegNameAbuse] = useState(false)
-  const [regTagAbuse, setRegTagAbuse] = useState(false)
   const [isFormEditedSinceLastSubmit, setIsFormEditedSinceLastSubmit] = useState(true)
   const [backWithoutEditCount, setBackWithoutEditCount] = useState(0)
   const [regAttempts, setRegAttempts] = useState(0)
@@ -226,11 +225,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           } else {
             // First-time social sign-in: register local database profile
             const nameFromMetadata = session.user.user_metadata?.full_name || session.user.user_metadata?.name
+            const autoGamerTag = '@' + generateUniqueUsername(nameFromMetadata || session.user.email.split('@')[0])
             const newUser = {
               name: nameFromMetadata || session.user.email.split('@')[0],
               email: session.user.email,
               password: 'OAuthAccountPasswordPlaceholder_' + Math.random().toString(36).slice(-8),
-              gamerTag: '@' + (nameFromMetadata || session.user.email.split('@')[0]).toLowerCase().replace(/\s+/g, '_')
+              gamerTag: autoGamerTag
             }
             
             const regRes = await fetch('/api/auth/register', {
@@ -354,7 +354,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // Register Validation
   const isNameValid = regForm.name.trim().length > 0 && regForm.name.trim().length <= 20 && /^[A-Za-z\s]+$/.test(regForm.name)
-  const isUsernameValid = regForm.gamerTag.trim().length > 0 && regForm.gamerTag.trim().length <= 12 && /^[a-z0-9]+$/.test(regForm.gamerTag)
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regForm.email)
   
   const regPassStrength = checkPasswordStrength(regForm.password)
@@ -363,13 +362,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   const isRegisterFormValid = 
     isNameValid &&
-    isUsernameValid &&
     isEmailValid &&
     isPasswordValid &&
     isConfirmPasswordValid &&
     regForm.agreeTerms &&
-    !regNameAbuse &&
-    !regTagAbuse
+    !regNameAbuse
 
   // Forgot Password Validation
   const isForgotEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotForm.email)
@@ -513,11 +510,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setLoadingMessage('Processing...')
     setIsLoading(true)
     try {
+      const autoGamerTag = '@' + generateUniqueUsername(regForm.name)
       const tempUser = {
         name: regForm.name,
         email: regForm.email,
         password: regForm.password,
-        gamerTag: regForm.gamerTag.startsWith('@') ? regForm.gamerTag : '@' + regForm.gamerTag,
+        gamerTag: autoGamerTag,
         role: 'player'
       }
 
@@ -1622,29 +1620,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         </AbuseFieldWrapper>
                         {regForm.name && !isNameValid && !regNameAbuse && (
                           <p className="text-red-500 text-[10px] font-bold pl-1">Name must only contain letters & spaces, max 20 characters.</p>
-                        )}
-                      </div>
-
-                      {/* Username */}
-                      <div className="space-y-0.5">
-                        <AbuseFieldWrapper fieldId="reg-gamerTag" value={regForm.gamerTag} onWarning={setRegTagAbuse}>
-                          <div className="relative group">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">alternate_email</span>
-                            <input 
-                              type="text" 
-                              name="username"
-                              autoComplete="username"
-                              placeholder="Username (Lowercase & Numbers)" 
-                              maxLength={12}
-                              value={regForm.gamerTag} 
-                              onChange={(e) => { setRegForm({...regForm, gamerTag: e.target.value.toLowerCase().replace(/\s+/g, '')}); setIsFormEditedSinceLastSubmit(true); setBackWithoutEditCount(0); }}
-                              className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
-                              required 
-                            />
-                          </div>
-                        </AbuseFieldWrapper>
-                        {regForm.gamerTag && !isUsernameValid && !regTagAbuse && (
-                          <p className="text-red-500 text-[10px] font-bold pl-1">Username must be lowercase letters & numbers, max 12 characters.</p>
                         )}
                       </div>
 
