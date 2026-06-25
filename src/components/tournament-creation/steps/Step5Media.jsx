@@ -108,7 +108,13 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
   }, [cropSrc])
 
   const handleReplace = () => {
-    fileRef.current?.click()
+    setUploadFile(null)
+    setUploadStatus('idle')
+    setUploadError('')
+    if (data.cover_image_url) {
+      onChange({ ...data, cover_image_url: '' })
+    }
+    setTimeout(() => fileRef.current?.click(), 50)
   }
 
   const formatSize = (bytes) => {

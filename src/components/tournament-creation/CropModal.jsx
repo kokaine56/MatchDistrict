@@ -93,14 +93,18 @@ export default function CropModal({ imageSrc, onCrop, onCancel }) {
         >
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-outline-variant/10">
             <h3 className="text-sm font-bold text-on-background">Crop Cover Image</h3>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setZoom(z => Math.max(0.1, z - 0.15))}
-                className="w-7 h-7 rounded-lg bg-surface-container-high text-on-surface-variant hover:text-on-background flex items-center justify-center text-sm font-bold transition-colors"
-              >−</button>
-              <span className="text-[11px] text-on-surface-variant font-semibold w-10 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
-              <button type="button" onClick={() => setZoom(z => Math.min(5, z + 0.15))}
-                className="w-7 h-7 rounded-lg bg-surface-container-high text-on-surface-variant hover:text-on-background flex items-center justify-center text-sm font-bold transition-colors"
-              >+</button>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-on-surface-variant">Zoom</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={Math.round(((zoom - 0.1) / 4.9) * 100)}
+                onChange={(e) => setZoom(0.1 + (Number(e.target.value) / 100) * 4.9)}
+                className="w-24 h-1.5 bg-slate-600 rounded-full appearance-none cursor-pointer accent-indigo-500"
+              />
+              <span className="text-[11px] text-on-surface-variant font-semibold w-10 text-right tabular-nums">{Math.round(zoom * 100)}%</span>
             </div>
           </div>
 
