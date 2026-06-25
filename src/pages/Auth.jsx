@@ -11,6 +11,7 @@ import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
 import { generateUniqueUsername } from '../utils/helpers.js'
+import { SignOutModal } from '../components/SignOutModal.jsx'
 
 const baseContentVariants = {
   initial: { opacity: 0, y: 12 },
@@ -85,7 +86,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [loginPageState, setLoginPageState] = useState('loading')
   const [selectedAccount, setSelectedAccount] = useState(null)
   const [showSignOutModal, setShowSignOutModal] = useState(false)
-  const [signOutOption, setSignOutOption] = useState('signout-only')
   const [activeMenuId, setActiveMenuId] = useState(null)
   const [rememberedAccounts, setRememberedAccounts] = useState([])
   const menuRef = useRef(null)
@@ -844,13 +844,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   }
 
   const handleSignOutClick = () => {
-    setSignOutOption('signout-only')
     setShowSignOutModal(true)
   }
 
-  const handleSignOutConfirm = async () => {
+  const handleSignOutConfirm = async (type) => {
     setShowSignOutModal(false)
-    if (signOutOption === 'signout-and-remove') {
+    if (type === 'remove') {
       const accounts = getRememberedAccounts().filter(a => a.id !== currentUser?.id)
       saveRememberedAccounts(accounts)
       setRememberedAccounts(accounts)
@@ -1725,75 +1724,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
             </AnimatePresence>
             </div>
 
-            {/* Sign Out Modal */}
-            <AnimatePresence>
-              {showSignOutModal && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-3xl p-4"
-                  onClick={() => setShowSignOutModal(false)}
-                >
-                  <motion.div
-                    initial={{ scale: 0.92, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.92, opacity: 0 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
-                    className="bg-[#07080C] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-2xl"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <h3 className="font-bold text-[18px] sm:text-xl text-white mb-2">Sign Out</h3>
-                    <p className="text-[13px] sm:text-sm text-on-surface-variant mb-4">How would you like to sign out?</p>
-                    <div className="space-y-3">
-                      <label className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/[0.08] transition-colors">
-                        <input
-                          type="radio"
-                          name="signOutOption"
-                          checked={signOutOption === 'signout-only'}
-                          onChange={() => setSignOutOption('signout-only')}
-                          className="mt-0.5 accent-primary"
-                        />
-                        <div>
-                          <p className="text-[13px] sm:text-sm font-bold text-white">Sign out only</p>
-                          <p className="text-[10px] text-on-surface-variant">Keep this account visible in account switcher.</p>
-                        </div>
-                      </label>
-                      <label className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:bg-white/[0.08] transition-colors">
-                        <input
-                          type="radio"
-                          name="signOutOption"
-                          checked={signOutOption === 'signout-and-remove'}
-                          onChange={() => setSignOutOption('signout-and-remove')}
-                          className="mt-0.5 accent-primary"
-                        />
-                        <div>
-                          <p className="text-[13px] sm:text-sm font-bold text-white">Sign out and remove this account from this device</p>
-                          <p className="text-[10px] text-on-surface-variant">Remove this account from remembered list.</p>
-                        </div>
-                      </label>
-                    </div>
-                    <div className="flex gap-2 mt-5">
-                      <button
-                        type="button"
-                        onClick={() => setShowSignOutModal(false)}
-                        className="flex-1 h-10 bg-white/5 border border-white/10 hover:bg-white/10 active:scale-[0.98] text-white rounded-xl font-bold text-xs transition-all"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSignOutConfirm}
-                        className="flex-1 h-10 bg-red-600 hover:bg-red-700 active:scale-[0.98] text-white rounded-xl font-bold text-xs transition-all"
-                      >
-                        Continue
-                      </button>
-                    </div>
-                  </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <SignOutModal
+              isOpen={showSignOutModal}
+              onClose={() => setShowSignOutModal(false)}
+              onConfirm={handleSignOutConfirm}
+            />
           </motion.div>
         </motion.div>
         </div>
