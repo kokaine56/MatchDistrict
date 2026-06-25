@@ -7739,6 +7739,21 @@ const server = http.createServer(async (req, res) => {
         activeTourneysCount++;
       });
 
+      // All-time historical metrics (all statuses including completed/archived)
+      const allTimeRes = await pool.query(
+        `SELECT prize, entry, "slotsFilled", status FROM tournaments WHERE status != 'draft'`
+      );
+      let allTimePrizePool = 0;
+      let allTimeCommission = 0;
+      allTimeRes.rows.forEach(t => {
+        const prizeNum = parseInt(String(t.prize).replace(/[^0-9]/g, '')) || 0;
+        const entryNum = parseInt(String(t.entry).replace(/[^0-9]/g, '')) || 0;
+        const slots = parseInt(t.slotsFilled) || 0;
+        allTimePrizePool += prizeNum;
+        allTimeCommission += (entryNum * slots) * commissionRate;
+      });
+      const totalHostedArenas = allTimeRes.rows.length;
+
       const txnRes = await pool.query('SELECT * FROM wallet_transactions ORDER BY created_at DESC LIMIT 10');
       const ledgers = txnRes.rows.map(tx => ({
         id: tx.id,
@@ -7796,6 +7811,9 @@ const server = http.createServer(async (req, res) => {
         totalPrizePools,
         activeTourneysCount,
         platformFeePercentage,
+        allTimePrizePool,
+        allTimeCommission,
+        totalHostedArenas,
         ledger: ledgers,
         engagementCurve,
         trafficBars

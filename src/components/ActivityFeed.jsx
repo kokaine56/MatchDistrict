@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import VerificationBadge from './VerificationBadge'
 
@@ -35,26 +34,24 @@ export default function ActivityFeed({ onNavigate }) {
   }
 
   return (
-    <div className="glass-card rounded-xl overflow-hidden divide-y divide-outline-variant/20 bg-surface-container-low/30 backdrop-blur-sm border border-outline-variant/20 shadow-sm">
+    <div className="flex flex-col gap-1 py-1">
       {tournamentsList.slice(0, 8).map((match, idx) => (
         <div
           key={match.id || idx}
           onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
-          className="p-2.5 sm:p-3 flex gap-2.5 sm:gap-3 hover:bg-surface-variant/40 transition-colors cursor-pointer items-center"
+          className="flex items-start gap-2.5 p-2.5 sm:p-3 rounded-lg hover:bg-surface-variant/40 transition-colors cursor-pointer"
         >
-          <img
-            alt="Organiser"
-            className="avatar-img w-7 h-7 sm:w-8 sm:h-8 rounded-full shrink-0 border border-primary/20 bg-surface-container"
-            src={match.logo || match.logoUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=100&q=80"}
-          />
-          <div className="space-y-0.5 min-w-0 flex-grow">
-            <p className="font-body-sm text-xs text-on-background leading-snug flex items-center gap-1 min-w-0">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-indigo-50 dark:bg-indigo-500/10 flex items-center justify-center shrink-0 border border-indigo-200 dark:border-indigo-500/20">
+            <span className="material-symbols-outlined text-sm sm:text-base text-indigo-500">stadium</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-on-background leading-snug flex items-center gap-1 flex-wrap">
               <span className="text-primary font-bold truncate max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
               <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
-              <span className="text-on-surface-variant/80 shrink-0">hosted</span>
-              <span className="font-bold text-on-background truncate flex-1 min-w-0">{match.title}</span>
+              <span className="text-on-surface-variant/60">hosted</span>
+              <span className="font-bold text-on-background truncate">{match.title}</span>
             </p>
-            <p className="text-[9px] sm:text-[10px] text-on-surface-variant/80 font-label-caps tracking-wider">{timeAgo(match.created_at)}</p>
+            <p className="text-[9px] sm:text-[10px] text-on-surface-variant/60 font-label-caps tracking-wider mt-0.5">{timeAgo(match.created_at)}</p>
           </div>
         </div>
       ))}

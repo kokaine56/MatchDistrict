@@ -97,11 +97,12 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       if (!positions.length) {
         errs.prize_positions = 'Please add at least one prize distribution position.'
       }
-      const totalPct = positions.reduce((s, p) => s + (parseInt(p.percentage) || 0), 0)
-      if (positions.length && totalPct !== 100) {
+      const totalPct = positions.reduce((s, p) => s + (parseFloat(p.percentage) || 0), 0)
+      const isExactly100 = Number(totalPct.toFixed(2)) === 100.00
+      if (positions.length && !isExactly100) {
         errs.prize_positions_total = 'Prize distribution total must equal exactly 100%.'
       }
-      if (totalPct > 100) errs.prize_split = 'Prize distribution exceeds 100%.'
+      if (totalPct > 100.01) errs.prize_split = 'Prize distribution exceeds 100%.'
 
       if (data.sponsors_enabled && (userTier === 'Free' || !userTier)) {
         errs.sponsors_enabled = 'Sponsor Contributions require the Basic plan or higher.'

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useTheme } from '../../ThemeContext.jsx'
+import Logo from '../Logo.jsx'
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'monitoring' },
@@ -54,7 +55,7 @@ export default function AdminLayout({
   }
 
   return (
-    <div className="admin-layout min-h-screen bg-slate-50 dark:bg-[#0B1020] text-on-background relative transition-colors duration-300 flex">
+    <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-[#0B1020] text-on-background transition-colors duration-300">
       {/* Mobile overlay backdrop */}
       {mobileOpen && (
         <div
@@ -67,24 +68,24 @@ export default function AdminLayout({
       <aside
         ref={sidebarRef}
         className={`
-          fixed lg:static inset-y-0 left-0 z-50
+          fixed lg:relative inset-y-0 left-0 z-50
           w-60 bg-white dark:bg-[#0F1729] border-r border-slate-200 dark:border-outline-variant/20
-          flex flex-col transition-transform duration-200 ease-in-out
+          flex flex-col h-full flex-shrink-0 transition-transform duration-200 ease-in-out
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
           ${!sidebarOpen && !mobileOpen ? 'lg:w-16' : ''}
         `}
       >
         {/* Logo area */}
-        <div className="flex items-center justify-between h-14 px-4 border-b border-slate-200 dark:border-outline-variant/20 shrink-0">
+        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-200 dark:border-outline-variant/20 shrink-0 gap-3">
           <button
             onClick={() => onNavigate && onNavigate('home')}
-            className="flex items-center gap-2.5"
+            className="flex items-center gap-3 min-w-0"
           >
-            <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-extrabold text-xs shrink-0">
-              MD
+            <div className="shrink-0">
+              <Logo showText={false} size="sm" />
             </div>
             {(sidebarOpen || mobileOpen) && (
-              <span className="font-bold text-sm text-slate-900 dark:text-white tracking-tight">
+              <span className="font-bold text-sm text-slate-900 dark:text-white tracking-tight truncate">
                 Match District
               </span>
             )}
@@ -100,7 +101,7 @@ export default function AdminLayout({
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5 scrollbar-thin">
+        <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5 custom-scrollbar">
           {NAV_ITEMS.map((item) => {
             const badgeCount = getBadgeCount(item)
             const isActive = activeTab === item.id
@@ -149,55 +150,48 @@ export default function AdminLayout({
       </aside>
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-full">
         {/* Top utility bar */}
-        <header className="h-14 bg-white/80 dark:bg-[#0F1729]/80 backdrop-blur-md border-b border-slate-200 dark:border-outline-variant/20 flex items-center justify-between px-4 lg:px-6 shrink-0 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-40 flex items-center justify-between w-full h-16 px-4 sm:px-6 bg-white dark:bg-[#0F1729] border-b border-slate-200 dark:border-outline-variant/20 shrink-0 font-sans antialiased tracking-tight">
+          <div className="flex items-center gap-3 sm:gap-6">
             {/* Mobile hamburger */}
             <button
               onClick={() => setMobileOpen(true)}
-              className="lg:hidden w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center text-slate-600 dark:text-white/60 hover:bg-slate-200 dark:hover:bg-white/10 transition-all"
+              className="lg:hidden flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-white/60 transition-all"
             >
               <span className="material-symbols-outlined text-lg">menu</span>
             </button>
 
             {/* Breadcrumb */}
-            <nav className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-white/40">
-              <button
-                onClick={() => onNavigate && onNavigate('home')}
-                className="hover:text-slate-700 dark:hover:text-white/70 transition-colors"
-              >
-                Home
-              </button>
-              <span className="material-symbols-outlined text-[10px]">chevron_right</span>
-              <span className="text-slate-800 dark:text-white/80 font-medium">Admin</span>
-              <span className="material-symbols-outlined text-[10px]">chevron_right</span>
-              <span className="text-indigo-600 dark:text-indigo-400 font-semibold capitalize">
+            <nav className="hidden sm:flex items-center text-sm">
+              <span className="font-medium text-slate-500 dark:text-white/40">Admin</span>
+              <span className="material-symbols-outlined mx-1.5 text-sm text-slate-300 dark:text-white/20">chevron_right</span>
+              <span className="font-semibold text-slate-900 dark:text-white capitalize">
                 {NAV_ITEMS.find(n => n.id === activeTab)?.label || activeTab}
               </span>
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={() => onNavigate && onNavigate('create-tournament')}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm"
+              className="flex items-center justify-center h-10 px-3 sm:px-4 text-sm font-semibold text-white transition-colors bg-indigo-600 rounded-lg shadow-sm hover:bg-indigo-700"
             >
-              <span className="material-symbols-outlined text-sm">add_circle</span>
-              <span>Host Event</span>
+              <span className="material-symbols-outlined text-lg leading-none sm:mr-2">add_circle</span>
+              <span className="hidden sm:inline">Host Event</span>
             </button>
             <button
               onClick={() => onNavigate && onNavigate('profile')}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-700 dark:text-white/70 rounded-lg text-xs font-semibold transition-all border border-slate-200 dark:border-outline-variant/20"
+              className="flex items-center justify-center h-10 px-3 sm:px-4 text-sm font-semibold transition-colors bg-white border rounded-lg shadow-sm text-slate-700 dark:text-white/70 border-slate-200 dark:border-outline-variant/20 hover:bg-slate-50 dark:hover:bg-white/10"
             >
-              <span className="material-symbols-outlined text-sm">account_circle</span>
-              <span>Profile Hub</span>
+              <span className="material-symbols-outlined text-lg leading-none sm:mr-2 text-slate-500 dark:text-white/40">account_circle</span>
+              <span className="hidden sm:inline">Profile Hub</span>
             </button>
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 p-4 lg:p-6 overflow-y-auto">
+        {/* Scrollable page content */}
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6">
           {children}
         </main>
       </div>

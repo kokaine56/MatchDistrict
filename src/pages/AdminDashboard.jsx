@@ -10,6 +10,7 @@ import ActivityFeed from '../components/ActivityFeed'
 import { injectDummyRegistrations } from '../utils/testInjector'
 import { ROLES, hasRole, getUserRoles, hasCapability, hasOrganizerRights, ROLE_LABELS, getNextPromotionRole, getNextDemotionRole } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 export default function AdminDashboard({ onNavigate }) {
   const { theme, setTheme } = useTheme()
@@ -31,6 +32,9 @@ export default function AdminDashboard({ onNavigate }) {
     totalOperationalRevenue: 0,
     activeTourneysCount: 0,
     platformFeePercentage: 10,
+    allTimePrizePool: 0,
+    allTimeCommission: 0,
+    totalHostedArenas: 0,
     ledger: [],
     engagementCurve: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     trafficBars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -173,6 +177,9 @@ export default function AdminDashboard({ onNavigate }) {
         totalOperationalRevenue: Number(data.totalOperationalRevenue || 0),
         activeTourneysCount: Number(data.activeTourneysCount || 0),
         platformFeePercentage: Number(data.platformFeePercentage || 10),
+        allTimePrizePool: Number(data.allTimePrizePool || 0),
+        allTimeCommission: Number(data.allTimeCommission || 0),
+        totalHostedArenas: Number(data.totalHostedArenas || 0),
         ledger: data.ledger || [],
         engagementCurve: data.engagementCurve || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         trafficBars: data.trafficBars || [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -467,37 +474,16 @@ export default function AdminDashboard({ onNavigate }) {
     )
   }, [usersList, userSearchQuery])
 
-  // Custom Chart SVG Coordinates (overview stats)
-  const svgWidth = 500
-  const svgHeight = 220
-  const padding = 30
-  
   const engagementCurve = financials.engagementCurve
   const trafficBars = financials.trafficBars
 
-  const linePoints = useMemo(() => {
-    const maxVal = Math.max(...engagementCurve) * 1.1 || 1
-    return engagementCurve.map((val, idx) => {
-      const x = padding + (idx * (svgWidth - 2 * padding)) / (engagementCurve.length - 1)
-      const y = svgHeight - padding - (val * (svgHeight - 2 * padding)) / maxVal
-      return { x, y, val }
-    })
-  }, [engagementCurve])
-
-  const linePath = useMemo(() => {
-    return linePoints.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-  }, [linePoints])
-
-  const barWidth = 18
-  const barChartPoints = useMemo(() => {
-    const maxVal = Math.max(...trafficBars) * 1.1 || 1
-    return trafficBars.map((val, idx) => {
-      const x = padding + (idx * (svgWidth - 2 * padding)) / (trafficBars.length - 1) - barWidth / 2
-      const height = (val * (svgHeight - 2 * padding)) / maxVal
-      const y = svgHeight - padding - height
-      return { x, y, height, val }
-    })
-  }, [trafficBars])
+  const chartData = useMemo(() => {
+    return financials.engagementCurve.map((val, idx) => ({
+      name: `D${idx + 1}`,
+      signups: val,
+      visits: financials.trafficBars[idx] || 0
+    }))
+  }, [financials.engagementCurve, financials.trafficBars])
 
   // Render nothing while redirecting if the user is not verified admin
   if (!currentUser || !hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
@@ -520,26 +506,41 @@ export default function AdminDashboard({ onNavigate }) {
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-300">
-            {/* Core KPIs grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+            {/* Core KPIs grid — Rich Cards with Live + All-Time */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 
-              {/* Card 1: Total Prize Pools */}
-              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-indigo-500 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20 shadow-sm shrink-0">
-                  <span className="material-symbols-outlined text-lg sm:text-xl">payments</span>
+              {/* Card 1: Prize Pools (Live + All-Time) */}
+              <div className="flex flex-col p-5 rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-white dark:bg-[#111827] shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center text-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 shrink-0">
+                    <span className="material-symbols-outlined text-lg">payments</span>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wider">Prize Pools</span>
                 </div>
-                <div className="space-y-0.5">
-                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">TOTAL PRIZE POOLS</div>
-                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">₹{financials.totalPrizePools.toLocaleString('en-IN')}</div>
-                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Sum of ongoing &amp; upcoming arenas</p>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">₹{financials.totalPrizePools.toLocaleString('en-IN')}</span>
+                  <span className="flex items-center px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-500/10 rounded-full gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    LIVE
+                  </span>
+                </div>
+                <div className="mt-auto pt-3 border-t border-slate-100 dark:border-white/10 flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1.5 text-slate-500 dark:text-white/40">
+                    <span className="material-symbols-outlined text-sm">history</span>
+                    All-Time History
+                  </span>
+                  <span className="font-semibold text-slate-700 dark:text-white/80">₹{financials.allTimePrizePool.toLocaleString('en-IN')}</span>
                 </div>
               </div>
 
-              {/* Card 2: Commission Pool (editable %) */}
-              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
-                <div className="flex items-center justify-between">
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20 shadow-sm shrink-0">
-                    <span className="material-symbols-outlined text-lg sm:text-xl">percent</span>
+              {/* Card 2: Platform Earnings (Live + All-Time) */}
+              <div className="flex flex-col p-5 rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-white dark:bg-[#111827] shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 shrink-0">
+                      <span className="material-symbols-outlined text-lg">percent</span>
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wider">Platform Earnings</span>
                   </div>
                   <CommissionEditor
                     percentage={financials.platformFeePercentage}
@@ -547,34 +548,57 @@ export default function AdminDashboard({ onNavigate }) {
                     saving={commissionSaving}
                   />
                 </div>
-                <div className="space-y-0.5">
-                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">COMMISSION POOL</div>
-                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">₹{Math.round(financials.totalOperationalRevenue).toLocaleString('en-IN')}</div>
-                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">At {financials.platformFeePercentage}% platform fee</p>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">₹{Math.round(financials.totalPrizePools * (financials.platformFeePercentage / 100)).toLocaleString('en-IN')}</span>
+                  <span className="flex items-center px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-500/10 rounded-full gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    LIVE
+                  </span>
+                </div>
+                <div className="mt-auto pt-3 border-t border-slate-100 dark:border-white/10 flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1.5 text-slate-500 dark:text-white/40">
+                    <span className="material-symbols-outlined text-sm">history</span>
+                    All-Time Revenue
+                  </span>
+                  <span className="font-semibold text-slate-700 dark:text-white/80">₹{Math.round(financials.allTimeCommission).toLocaleString('en-IN')}</span>
                 </div>
               </div>
 
-              {/* Card 3: Active Arenas */}
-              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-secondary bg-secondary/10 border-secondary/20 shadow-sm shrink-0">
-                  <span className="material-symbols-outlined text-lg sm:text-xl">stadium</span>
+              {/* Card 3: Arenas (Active + Total Hosted) */}
+              <div className="flex flex-col p-5 rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-white dark:bg-[#111827] shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center text-sky-500 bg-sky-50 dark:bg-sky-500/10 shrink-0">
+                    <span className="material-symbols-outlined text-lg">stadium</span>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wider">Arenas</span>
                 </div>
-                <div className="space-y-0.5">
-                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">ACTIVE ARENAS</div>
-                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">{financials.activeTourneysCount}</div>
-                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Live &amp; upcoming tournaments</p>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{financials.activeTourneysCount}</span>
+                  <span className="flex items-center px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-500/10 rounded-full gap-1">
+                    ACTIVE
+                  </span>
+                </div>
+                <div className="mt-auto pt-3 border-t border-slate-100 dark:border-white/10 flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1.5 text-slate-500 dark:text-white/40">
+                    <span className="material-symbols-outlined text-sm">history</span>
+                    Total Hosted
+                  </span>
+                  <span className="font-semibold text-slate-700 dark:text-white/80">{financials.totalHostedArenas}</span>
                 </div>
               </div>
 
               {/* Card 4: Gamer Roster */}
-              <div className="glass-card p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-outline-variant/30 bg-surface-container-low/40 flex flex-col justify-between space-y-3 shadow-sm backdrop-blur-md">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center border text-primary bg-primary/10 border-primary/20 shadow-sm shrink-0">
-                  <span className="material-symbols-outlined text-lg sm:text-xl">groups</span>
+              <div className="flex flex-col p-5 rounded-xl border border-slate-200 dark:border-outline-variant/20 bg-white dark:bg-[#111827] shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center text-primary bg-primary/10 shrink-0">
+                    <span className="material-symbols-outlined text-lg">groups</span>
+                  </div>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wider">Gamer Roster</span>
                 </div>
-                <div className="space-y-0.5">
-                  <div className="font-label-caps text-[9px] sm:text-[10px] text-slate-700 dark:text-white/50 uppercase font-bold tracking-wider">GAMER ROSTER</div>
-                  <div className="font-prize-display text-base sm:text-xl font-black text-slate-900 dark:text-white">{usersList.length}</div>
-                  <p className="font-body-sm text-[8px] sm:text-[10px] text-slate-600 dark:text-white/40 truncate leading-none">Total registered platform users</p>
+                <span className="text-2xl font-bold text-slate-900 dark:text-white mb-3">{usersList.length}</span>
+                <div className="mt-auto pt-3 border-t border-slate-100 dark:border-white/10 text-sm text-slate-500 dark:text-white/40 flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-sm">people</span>
+                  Total registered platform users
                 </div>
               </div>
 
@@ -595,77 +619,22 @@ export default function AdminDashboard({ onNavigate }) {
                   </span>
                 </div>
                 
-                <div className="relative w-full overflow-x-auto no-scrollbar pt-2">
-                  <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full min-w-[400px] h-[190px] overflow-visible">
-                    <defs>
-                      <linearGradient id="glowGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#c0c1ff" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="#c0c1ff" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-
-                    {/* Horizontal Ticks */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
-                      <line
-                        key={i}
-                        x1={padding}
-                        y1={padding + ratio * (svgHeight - 2 * padding)}
-                        x2={svgWidth - padding}
-                        y2={padding + ratio * (svgHeight - 2 * padding)}
-                        stroke={theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)'}
-                        strokeWidth="1"
+                <div className="w-full h-[200px] pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? 'rgba(255,255,255,0.06)' : '#e2e8f0'} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', fontSize: '12px' }}
                       />
-                    ))}
-
-                    {/* Area under the line */}
-                    {linePoints.length > 0 && (
-                      <path
-                        d={`${linePath} L ${linePoints[linePoints.length - 1].x} ${svgHeight - padding} L ${linePoints[0].x} ${svgHeight - padding} Z`}
-                        fill="url(#glowGrad)"
-                      />
-                    )}
-
-                    {/* Main Line */}
-                    <path
-                      d={linePath}
-                      fill="none"
-                      stroke="#6366f1"
-                      strokeWidth="3"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]"
-                    />
-
-                    {/* Interactive dots */}
-                    {linePoints.map((pt, idx) => (
-                      <g key={idx}>
-                        <circle
-                          cx={pt.x}
-                          cy={pt.y}
-                          r="5"
-                          fill={theme === 'dark' ? '#07080C' : '#ffffff'}
-                          stroke="#6366f1"
-                          strokeWidth="3"
-                          className="hover:scale-125 cursor-pointer transition-transform duration-100"
-                        />
-                        <text
-                          x={pt.x}
-                          y={pt.y - 12}
-                          textAnchor="middle"
-                          fill="#6366f1"
-                          fontSize="8"
-                          fontWeight="bold"
-                          className="font-mono dark:text-indigo-400"
-                        >
-                          {pt.val}
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
+                      <Line type="monotone" dataKey="signups" stroke="#6366f1" strokeWidth={3} dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              {/* Chart 2: Page Views Bar Chart */}
+              {/* Chart 2: Platform Pulse Bar Chart */}
               <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
                 <div className="border-b border-outline-variant/30 pb-3 flex items-center justify-between">
                   <h3 className="font-headline-md text-xs sm:text-sm font-bold uppercase flex items-center gap-1.5 text-slate-900 dark:text-white">
@@ -677,56 +646,18 @@ export default function AdminDashboard({ onNavigate }) {
                   </span>
                 </div>
 
-                <div className="relative w-full overflow-x-auto no-scrollbar pt-2">
-                  <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full min-w-[400px] h-[190px] overflow-visible">
-                    <defs>
-                      <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#ff0055" stopOpacity="0.45" />
-                        <stop offset="100%" stopColor="#ff0055" stopOpacity="0.05" />
-                      </linearGradient>
-                    </defs>
-
-                    {/* Horizontal Ticks */}
-                    {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
-                      <line
-                        key={i}
-                        x1={padding}
-                        y1={padding + ratio * (svgHeight - 2 * padding)}
-                        x2={svgWidth - padding}
-                        y2={padding + ratio * (svgHeight - 2 * padding)}
-                        stroke={theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)'}
-                        strokeWidth="1"
+                <div className="w-full h-[200px] pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? 'rgba(255,255,255,0.06)' : '#e2e8f0'} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} />
+                      <Tooltip
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', fontSize: '12px' }}
                       />
-                    ))}
-
-                    {/* Columns */}
-                    {barChartPoints.map((bar, idx) => (
-                      <g key={idx} className="group">
-                        <rect
-                          x={bar.x}
-                          y={bar.y}
-                          width={barWidth}
-                          height={bar.height}
-                          fill="url(#barGrad)"
-                          stroke="#ff0055"
-                          strokeWidth="1"
-                          rx="4"
-                          className="hover:opacity-80 transition-all duration-100 cursor-pointer"
-                        />
-                        <text
-                          x={bar.x + barWidth / 2}
-                          y={bar.y - 8}
-                          textAnchor="middle"
-                          fill="#ff0055"
-                          fontSize="8"
-                          fontWeight="bold"
-                          className="font-mono hidden group-hover:block"
-                        >
-                          {bar.val}
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
+                      <Bar dataKey="visits" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
@@ -889,93 +820,110 @@ export default function AdminDashboard({ onNavigate }) {
 
         {/* TAB 2: ORGANIZER KYC APPLICATIONS */}
         {activeTab === 'kyc' && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="space-y-1">
-              <h2 className="font-headline-lg text-sm sm:text-base font-extrabold text-slate-900 dark:text-white uppercase tracking-tight">
-                Organizer Accreditation desk
-              </h2>
-              <p className="font-body-sm text-[10px] sm:text-xs text-slate-700 dark:text-white/50">
+          <div className="flex flex-col max-w-6xl gap-6 mx-auto animate-in fade-in duration-300">
+            
+            {/* Page Header */}
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-2xl">ORGANIZER ACCREDITATION DESK</h1>
+              <p className="mt-1 text-sm text-slate-500 dark:text-white/50">
                 Verify host legal proofs, experience descriptions, and approve matching subscription plans.
               </p>
             </div>
 
-            {/* KYC list cards */}
-            <div className="space-y-3">
-              {kycApplications.length > 0 ? (
-                kycApplications.map((app) => (
-                  <div 
-                    key={app.id}
-                    className={`glass-card p-4 rounded-xl border backdrop-blur-md transition-all ${
-                      app.status === 'pending' 
-                        ? 'border-amber-500/25 bg-amber-500/[0.02] hover:border-amber-500/40' 
-                        : (app.status === 'approved' ? 'border-emerald-500/15 bg-emerald-500/[0.01]' : 'border-slate-200 dark:border-white/5 bg-slate-100/30 dark:bg-white/[0.01]')
-                    }`}
-                  >
-                    <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                      <div className="space-y-1.5 w-full">
+            {kycApplications.filter(a => a.status === 'pending').length === 0 ? (
+
+              /* --- PREMIUM EMPTY STATE --- */
+              <div className="flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-[#111827] border border-dashed rounded-2xl border-slate-300 dark:border-white/10">
+                <div className="flex items-center justify-center w-16 h-16 mb-4 rounded-full bg-slate-50 dark:bg-white/5">
+                  <span className="material-symbols-outlined text-3xl text-slate-400">assignment</span>
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Inbox Clear</h3>
+                <p className="max-w-sm mt-2 text-sm text-slate-500 dark:text-white/40">
+                  There are no organizer KYC applications pending review at this time. New submissions will appear here.
+                </p>
+              </div>
+
+            ) : (
+
+              /* --- POPULATED REVIEW QUEUE --- */
+              <div className="flex flex-col gap-4">
+                {kycApplications.filter(a => a.status === 'pending').map((app) => (
+                  <div key={app.id} className="flex flex-col gap-4 p-5 transition-shadow bg-white dark:bg-[#111827] border border-slate-200 dark:border-outline-variant/20 rounded-xl shadow-sm hover:shadow-md sm:flex-row sm:items-start sm:justify-between">
+                    
+                    {/* Left Section: User Info */}
+                    <div className="flex items-start gap-4">
+                      <div className="flex items-center justify-center flex-shrink-0 w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-500/10">
+                        <span className="material-symbols-outlined text-xl text-indigo-600 dark:text-indigo-400">person</span>
+                      </div>
+                      <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs font-bold text-slate-900 dark:text-white">{app.id}</span>
-                          <span className="font-headline-md text-xs font-black text-primary">{app.orgName}</span>
-                          
-                          {/* Selected Plan Badge */}
-                          <span className="px-2 py-0.5 rounded bg-primary/10 border border-primary/20 text-primary font-label-caps text-[8px] font-bold uppercase tracking-wider">
-                            {app.selectedPlan || 'Free'} Plan
-                          </span>
-                          
-                          {/* Status Pill */}
-                          <span className={`px-2 py-0.5 rounded font-label-caps text-[8px] font-bold uppercase tracking-wider ${
-                            app.status === 'approved' 
-                              ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
-                              : (app.status === 'rejected' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20')
-                          }`}>
-                            {app.status}
+                          <h3 className="text-base font-bold text-slate-900 dark:text-white">{app.applicantName}</h3>
+                          <span className="flex items-center px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-500/10 rounded-full gap-1">
+                            <span className="material-symbols-outlined text-xs">schedule</span>
+                            PENDING REVIEW
                           </span>
                         </div>
-
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-slate-700 dark:text-white/50">
-                          <div><span className="font-semibold text-slate-700 dark:text-white/60">Applicant:</span> {app.applicantName}</div>
-                          <div><span className="font-semibold text-slate-700 dark:text-white/60">Email:</span> {app.email}</div>
-                          <div><span className="font-semibold text-slate-700 dark:text-white/60">Phone:</span> {app.phone}</div>
-                          <div><span className="font-semibold text-slate-700 dark:text-white/60">Region:</span> {app.cityRegion}</div>
-                        </div>
-
+                        <span className="text-sm text-slate-500 dark:text-white/50">{app.email}</span>
                         {app.experience && (
-                          <p className="font-body-sm text-[10px] text-slate-700 dark:text-white/55 border-t border-slate-200 dark:border-white/5 pt-1.5 mt-1.5 leading-relaxed">
-                            <span className="font-semibold text-slate-700 dark:text-white/70">Experience:</span> {app.experience}
+                          <p className="text-xs text-slate-500 dark:text-white/40 mt-1">
+                            <span className="font-semibold text-slate-700 dark:text-white/60">Experience:</span> {app.experience}
                           </p>
                         )}
-                        
-                        {app.adminNotes && (
-                          <div className="bg-rose-500/5 dark:bg-white/[0.02] p-2 rounded-lg border border-slate-200 dark:border-white/5 text-[10px] text-slate-700 dark:text-white/50 mt-2">
-                            <span className="font-bold text-slate-700 dark:text-white/60">Admin Notes:</span> {app.adminNotes}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-4 mt-1.5 text-xs text-slate-500 dark:text-white/40">
+                          <span className="flex items-center gap-1">
+                            <span className="material-symbols-outlined text-xs">description</span>
+                            App ID: {app.id}
+                          </span>
+                          {app.kycDoc && (
+                            <span className="flex items-center gap-1">
+                              <span className="material-symbols-outlined text-xs">check_circle</span>
+                              ID Proof Attached
+                            </span>
+                          )}
+                        </div>
                       </div>
+                    </div>
 
-                      {/* Action buttons */}
-                      {app.status === 'pending' && (
-                        <div className="flex sm:flex-col items-center gap-1.5 w-full sm:w-auto shrink-0 self-stretch justify-end">
-                          <button
+                    {/* Right Section: Actions */}
+                    <div className="flex flex-col items-stretch gap-3 pt-4 border-t sm:pt-0 sm:border-t-0 sm:flex-row sm:items-center sm:justify-end border-slate-100 dark:border-white/10">
+                      <button
                             onClick={() => {
                               setSelectedKycApp(app)
                               setAdminNotes('')
                             }}
-                            className="flex-1 sm:flex-none w-full sm:w-28 py-2 min-h-[44px] bg-primary hover:bg-primary-hover text-white rounded-lg font-headline-md text-[10px] font-bold uppercase tracking-wider transition-all shadow-md shadow-primary/10 flex items-center justify-center gap-1"
+                            className="flex items-center justify-center w-full px-4 py-2.5 text-sm font-semibold transition-colors bg-white dark:bg-transparent border rounded-lg sm:w-auto text-slate-700 dark:text-white/70 border-slate-200 dark:border-outline-variant/20 hover:bg-slate-50 dark:hover:bg-white/5"
                           >
-                            <span className="material-symbols-outlined text-sm">rate_review</span>
-                            <span>Review KYC</span>
+                            Review Details
+                            <span className="material-symbols-outlined ml-1 text-sm text-slate-400">chevron_right</span>
                           </button>
-                        </div>
-                      )}
+                          <div className="flex w-full gap-2 sm:w-auto">
+                            <button
+                              onClick={() => {
+                                setSelectedKycApp(app)
+                                setAdminNotes('')
+                              }}
+                              className="flex items-center justify-center flex-1 px-4 py-2.5 text-sm font-semibold text-white transition-colors rounded-lg sm:flex-none bg-emerald-600 hover:bg-emerald-700"
+                            >
+                              <span className="material-symbols-outlined text-sm mr-1.5">check_circle</span>
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => {
+                                setSelectedKycApp(app)
+                                setAdminNotes('')
+                              }}
+                              className="flex items-center justify-center flex-1 px-4 py-2.5 text-sm font-semibold text-red-700 dark:text-red-400 transition-colors bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-lg sm:flex-none hover:bg-red-100 dark:hover:bg-red-500/20"
+                            >
+                              <span className="material-symbols-outlined text-sm mr-1.5">cancel</span>
+                              Reject
+                            </button>
+                          </div>
                     </div>
+
                   </div>
-                ))
-              ) : (
-                <div className="text-center py-10 text-slate-600 dark:text-white/40 text-xs border border-dashed border-slate-300 dark:border-white/10 rounded-xl bg-white/30 dark:bg-white/[0.01]">
-                  No organizer KYC applications found.
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            )}
 
             {/* KYC Review Drawer/Modal Dialog */}
             <AnimatePresence>

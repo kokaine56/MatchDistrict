@@ -1,29 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import SponsorManager from '../SponsorManager'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
 import PrizeAllocationEngine from '../PrizeAllocationEngine'
-
-function Toggle({ enabled, onChange, label, description }) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="flex-1">
-        <span className="text-sm font-semibold text-on-background">{label}</span>
-        {description && <p className="text-xs text-on-surface-variant mt-0.5">{description}</p>}
-      </div>
-      <label className="toggle-wrapper">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => onChange(e.target.checked)}
-          className="sr-only peer"
-        />
-        <div className="toggle-track" />
-        <div className="toggle-thumb" />
-      </label>
-    </div>
-  )
-}
 
 export default function Step4PrizePool({ data, onChange, errors, userTier }) {
   const [platformFeePct, setPlatformFeePct] = useState(0)
@@ -44,10 +22,6 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
-
-  const handleSponsorsChange = useCallback((sponsors) => {
-    onChange({ ...data, sponsors })
-  }, [data, onChange])
 
   const handlePositionsChange = useCallback((positions) => {
     onChange({ ...data, prize_positions: positions })
@@ -170,27 +144,20 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
           )}
         </div>
 
-        {/* Sponsor Contributions Toggle */}
-        <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/20 p-5 rounded-xl space-y-3">
-          <Toggle
-            enabled={data.sponsors_enabled || false}
-            onChange={(v) => onChange({ ...data, sponsors_enabled: v, sponsors: v ? (data.sponsors || []) : [] })}
-            label="Enable Sponsor Contributions"
-            description="Allow sponsors to contribute additional funds to the prize pool"
-          />
-          {data.sponsors_enabled && (
-            <SponsorManager
-              sponsors={data.sponsors || []}
-              onChange={handleSponsorsChange}
-              userTier={userTier}
-            />
-          )}
-          {!data.sponsors_enabled && userTier !== 'Free' && (
-            <div className="px-3 py-2.5 rounded-lg bg-surface-container-highest/40 border border-outline-variant/20">
-              <p className="text-xs text-on-surface-variant">
-                Toggle on to add sponsors. Your {userTier} plan supports {userTier === 'Basic' ? 'up to 5 sponsors' : 'unlimited sponsors'}.
-              </p>
-            </div>
+        {/* Sponsor Contributions — plan-locked */}
+        <div className="flex items-start justify-between bg-surface-container/50 border border-slate-200 dark:border-outline-variant/20 p-5 rounded-xl">
+          <div>
+            <h3 className="text-sm font-semibold text-on-background">Sponsor Contributions</h3>
+            <p className="text-xs text-on-surface-variant mt-1">Allow sponsors to contribute additional funds to the prize pool.</p>
+          </div>
+          {userTier !== 'Free' ? (
+            <span className="flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 shrink-0">
+              ✓ Enabled by Plan
+            </span>
+          ) : (
+            <span className="flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-white/40 border border-slate-200 dark:border-white/10 shrink-0">
+              Locked (Free Plan)
+            </span>
           )}
         </div>
 
@@ -207,5 +174,27 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         </div>
       </div>
     </motion.div>
+  )
+}
+
+function Toggle({ enabled, onChange, label, description, disabled }) {
+  return (
+    <div className="flex items-center justify-between">
+      <div className="flex-1">
+        <span className={`text-sm font-semibold ${disabled ? 'text-on-surface-variant' : 'text-on-background'}`}>{label}</span>
+        {description && <p className="text-xs text-on-surface-variant mt-0.5">{description}</p>}
+      </div>
+      <label className={`toggle-wrapper ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onChange(e.target.checked)}
+          disabled={disabled}
+          className="sr-only peer"
+        />
+        <div className="toggle-track" />
+        <div className="toggle-thumb" />
+      </label>
+    </div>
   )
 }

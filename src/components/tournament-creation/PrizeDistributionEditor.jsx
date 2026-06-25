@@ -45,12 +45,13 @@ function generateSmartPercentages(count) {
 
 export default function PrizeDistributionEditor({ positions = [], onChange, availablePlacementPool = 0 }) {
   const totalPercentage = useMemo(() => {
-    return Math.round(positions.reduce((sum, p) => sum + (parseFloat(p.percentage) || 0), 0) * 10) / 10
+    const raw = positions.reduce((sum, p) => sum + (parseFloat(p.percentage) || 0), 0)
+    return Number(raw.toFixed(2))
   }, [positions])
 
   const isValid = totalPercentage <= 100
   const isExact = Math.abs(totalPercentage - 100) < 0.01
-  const remaining = Math.max(0, Math.round((100 - totalPercentage) * 10) / 10)
+  const remaining = Math.max(0, Number((100 - totalPercentage).toFixed(2)))
 
   const addPosition = useCallback(() => {
     const count = positions.length + 1
@@ -79,6 +80,28 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
     onChange(renamed)
   }, [positions, onChange])
 
+  const handleSmartRoundup = useCallback(() => {
+    if (positions.length < 2 || availablePlacementPool <= 0) return
+    const totalAvailable = availablePlacementPool
+    let remaining = totalAvailable
+    let percentageSumOthers = 0
+    const updated = positions.map((p, i) => ({ ...p, amount: 0, percentage: 0 }))
+    for (let i = updated.length - 1; i > 0; i--) {
+      const exact = (parseFloat(positions[i].percentage || 0) / 100) * totalAvailable
+      const rounded = Math.round(exact / 10) * 10
+      const newPct = Number(((rounded / totalAvailable) * 100).toFixed(2))
+      updated[i].amount = rounded
+      updated[i].percentage = newPct
+      percentageSumOthers += newPct
+      remaining -= rounded
+    }
+    if (updated.length > 0) {
+      updated[0].amount = remaining
+      updated[0].percentage = Number((100 - percentageSumOthers).toFixed(2))
+    }
+    onChange(updated.map(p => ({ ...p, percentage: String(p.percentage) })))
+  }, [positions, onChange, availablePlacementPool])
+
   const updatePercentage = useCallback((id, value) => {
     const parsedValue = parseFloat(value) || 0
     const otherSum = positions
@@ -93,13 +116,24 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-on-background">Prize Distribution</h3>
-        <button
-          type="button"
-          onClick={addPosition}
-          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
-        >
-          + Add Position
-        </button>
+        <div className="flex items-center gap-2">
+          {positions.length > 1 && (
+            <button
+              type="button"
+              onClick={handleSmartRoundup}
+              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm transition-colors"
+            >
+              Roundup (Nearest 10)
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={addPosition}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors"
+          >
+            + Add Position
+          </button>
+        </div>
       </div>
       <p className="text-xs text-on-surface-variant">
         Positions auto-name and auto-allocate. Edit percentages manually anytime.
@@ -119,35 +153,46 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
         const amount = Math.round((percentage / 100) * availablePlacementPool)
 
         return (
-          <div key={pos.id} className="flex items-center gap-2">
-            <span className="w-16 text-sm font-medium text-on-background truncate">{pos.name}</span>
-            <div className="flex-1 flex items-center gap-2">
-              <div className="flex-1 h-2 bg-surface-container-highest rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all duration-300"
-                  style={{ width: `${Math.min(100, percentage)}%` }}
-                />
-              </div>
+          <div key={pos.id} className="flex items-center justify-between w-full gap-2 sm:gap-4">
+            {/* 1. Placement Label */}
+            <span className="w-8 text-sm font-medium sm:w-12 text-on-background">{pos.name}</span>
+
+            {/* 2. Responsive Progress Bar — shrinks on mobile */}
+            <div className="hidden sm:flex flex-1 h-2 bg-surface-container-highest rounded-full overflow-hidden max-w-[200px]">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(100, percentage)}%` }}
+              />
+            </div>
+
+            {/* 3. Wider Percentage Input — no truncation */}
+            <div className="relative flex items-center">
               <input
                 type="number"
                 min="0"
                 max="100"
-                step="0.1"
+                step="0.01"
                 value={pos.percentage}
                 onChange={(e) => updatePercentage(pos.id, e.target.value)}
-                className="w-16 px-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background text-center focus:outline-none focus:border-primary/40"
+                className="w-20 sm:w-24 px-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background text-center focus:outline-none focus:border-primary/40"
               />
-              <span className="text-xs text-on-surface-variant w-16 text-right font-medium">₹{amount.toLocaleString('en-IN')}</span>
+              <span className="absolute text-xs text-on-surface-variant right-2 pointer-events-none">%</span>
             </div>
-            <button
-              type="button"
-              onClick={() => removePosition(pos.id)}
-              className="p-1.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-error/10 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+
+            {/* 4. Currency Amount & Remove */}
+            <div className="flex items-center justify-end gap-2 w-24 sm:w-32">
+              <span className="text-xs sm:text-sm font-medium text-on-surface-variant">₹{amount.toLocaleString('en-IN')}</span>
+              <button
+                type="button"
+                onClick={() => removePosition(pos.id)}
+                className="p-1.5 rounded-lg text-on-surface-variant hover:text-error hover:bg-error/10 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
           </div>
         )
       })}
