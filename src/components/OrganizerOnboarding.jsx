@@ -7,14 +7,8 @@ export const OrganizerOnboarding = () => {
       
       <div className="max-w-7xl mx-auto text-center mt-6 sm:mt-16 px-4 sm:px-6 lg:px-8">
         
-        <h1
-          className="text-xl xs:text-2xl sm:text-4xl lg:text-6xl font-extrabold text-slate-900 tracking-tight"
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          BECOME AN{' '}
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">
-            ORGANIZER
-          </span>
+        <h1 className="text-lg sm:text-xl md:text-3xl lg:text-4xl xl:text-5xl font-extrabold text-slate-900 tracking-tight whitespace-nowrap max-w-full">
+          Become an organiser
         </h1>
         
         <p className="max-w-4xl mx-auto mt-4 sm:mt-6 text-sm text-slate-600 sm:text-xl leading-relaxed">
@@ -86,7 +80,9 @@ export const OrganizerOnboarding = () => {
           </div>
 
           <div className="hidden md:block flex-1 h-0.5 bg-slate-200 mt-7 mx-4"></div>
-          <div className="md:hidden w-0.5 h-8 sm:h-12 bg-slate-200 my-2 sm:my-4"></div>
+          <div className="md:hidden w-full flex justify-center my-2 sm:my-4">
+            <div className="w-0.5 h-8 sm:h-12 bg-slate-200"></div>
+          </div>
 
           <div className="flex flex-col items-center w-full md:w-64 text-center">
             <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 mb-4 sm:mb-5 text-lg sm:text-xl font-bold text-indigo-600 bg-indigo-50 border-4 border-white rounded-full shadow-sm z-10">02</div>
@@ -95,7 +91,9 @@ export const OrganizerOnboarding = () => {
           </div>
 
           <div className="hidden md:block flex-1 h-0.5 bg-slate-200 mt-7 mx-4"></div>
-          <div className="md:hidden w-0.5 h-8 sm:h-12 bg-slate-200 my-2 sm:my-4"></div>
+          <div className="md:hidden w-full flex justify-center my-2 sm:my-4">
+            <div className="w-0.5 h-8 sm:h-12 bg-slate-200"></div>
+          </div>
 
           <div className="flex flex-col items-center w-full md:w-64 text-center">
             <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 mb-4 sm:mb-5 text-lg sm:text-xl font-bold text-indigo-600 bg-indigo-50 border-4 border-white rounded-full shadow-sm z-10">03</div>

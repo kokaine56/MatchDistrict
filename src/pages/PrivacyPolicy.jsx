@@ -22,7 +22,9 @@ function PrivacyPolicy({ onNavigate }) {
     { id: 'rights', label: 'User Rights', icon: 'person_search' },
     { id: 'third-party', label: 'Third-Party Services', icon: 'hub' },
     { id: 'retention', label: 'Data Retention', icon: 'history' },
-    { id: 'contact', label: 'Contact Information', icon: 'contact_support' }
+    { id: 'contact', label: 'Contact Information', icon: 'contact_support' },
+    { id: 'escrow', label: 'Tournament Escrow & Money', icon: 'account_balance' },
+    { id: 'refund', label: 'Refund & Cancellation', icon: 'undo' }
   ];
 
   useEffect(() => {
@@ -297,6 +299,59 @@ function PrivacyPolicy({ onNavigate }) {
                   <p>Email: <a href="mailto:privacy@matchdistrict.com" className="text-primary hover:underline">privacy@matchdistrict.com</a></p>
                   <p>Address: Tech Hub, Sector-V, Kolkata, India</p>
                 </div>
+              </div>
+            </section>
+
+            {/* Section 10 */}
+            <section id="escrow" className="scroll-mt-24 space-y-3.5">
+              <h2 className="text-sm sm:text-base font-bold text-white uppercase flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-base">account_balance</span>
+                10. Tournament Escrow &amp; Money Management
+              </h2>
+              <div className="glass-card p-5 rounded-2xl border border-outline-variant/20 bg-surface-container-low/10 space-y-3 text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Secure Wallets</h3>
+                <p>
+                  All user deposits, entry fees, and prize allocations are managed through secure user accounts linked via integrated Indian payment gateways (RazorPay/Cashfree).
+                </p>
+
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Escrow Period</h3>
+                <p>
+                  To guarantee competitive integrity, tournament entry fees are securely held by Match District during the tournament lifespan and an additional 24-hour dispute window post-completion before being released.
+                </p>
+
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">KYC Safeguards</h3>
+                <p>
+                  In absolute compliance with Indian financial guidelines, funds cannot be withdrawn to a user's personal bank account or UPI address until their Government ID Verification (Front &amp; Back) has been officially approved.
+                </p>
+              </div>
+            </section>
+
+            {/* Section 11 */}
+            <section id="refund" className="scroll-mt-24 space-y-3.5">
+              <h2 className="text-sm sm:text-base font-bold text-white uppercase flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-base">undo</span>
+                11. Refund and Cancellation Policy (Gateway Compliant)
+              </h2>
+              <div className="glass-card p-5 rounded-2xl border border-outline-variant/20 bg-surface-container-low/10 space-y-3 text-xs sm:text-sm text-on-surface-variant leading-relaxed">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Platform/Organizer Cancellations</h3>
+                <p>
+                  If a tournament is cancelled by the organizer or due to platform technical failures before its formal start time, a 100% refund of the entry fee will be automatically initiated to the user's platform balance or original source of payment.
+                </p>
+
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Participant No-Shows &amp; Forfeits</h3>
+                <p>
+                  No refunds will be issued if a participant fails to check-in, misses their scheduled match window, or is disqualified due to cheating, toxicity, or violating competitive rules.
+                </p>
+
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Failed Gateway Transactions</h3>
+                <p>
+                  In the event of a double-debit or a failed transaction where money is deducted from a user's bank account/UPI but not credited to the Match District wallet, the funds will be automatically rolled back to the original source payment method by the payment gateway provider within 5 to 7 business days.
+                </p>
+
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">Refund Processing Timeline</h3>
+                <p>
+                  Approved operational refunds initiated by Match District are processed immediately on our end. Depending on the user's banking partner or payment method (UPI, NetBanking, Debit/Credit Card), the refunded amount will reflect in the original source account within 5–7 operational business days.
+                </p>
               </div>
             </section>
 

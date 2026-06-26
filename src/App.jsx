@@ -34,6 +34,7 @@ const TournamentPayment    = lazy(() => import('./pages/TournamentPayment.jsx'))
 const OrgPage              = lazy(() => import('./pages/OrgPage.jsx'))
 const TournamentManagement = lazy(() => import('./pages/TournamentManagement.jsx'))
 const MyTournaments        = lazy(() => import('./pages/MyTournaments.jsx'))
+const OrganizerForm        = lazy(() => import('./pages/OrganizerForm.jsx'))
 
 // -------------------------------------------------------------------
 // URL map: page-key => path (used by the handleNavigate shim)
@@ -52,6 +53,7 @@ const PAGE_URL_MAP = {
   'profile':          '/profile',
   'admin':            '/admin',
   'become-organizer': '/become-organizer',
+  'organizer-form':   '/organizer-form',
   'create-tournament':'/create-tournament',
   'manage-tournaments': '/manage/tournaments',
   'my-tournaments':     '/my-tournaments',
@@ -419,6 +421,12 @@ function AppInner() {
                 <Route path="/become-organizer" element={
                   <PageTransition>
                     <BecomeOrganizer onNavigate={handleNavigate} />
+                  </PageTransition>
+                } />
+
+                <Route path="/organizer-form" element={
+                  <PageTransition>
+                    <OrganizerForm onNavigate={handleNavigate} />
                   </PageTransition>
                 } />
 

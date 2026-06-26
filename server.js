@@ -278,6 +278,14 @@ async function initDb() {
         reviewed_at TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS organizer_drafts (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        form_data TEXT NOT NULL,
+        current_step INT DEFAULT 1,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS organizer_plans (
         id VARCHAR(50) PRIMARY KEY,
         name VARCHAR(50),
