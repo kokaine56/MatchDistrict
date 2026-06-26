@@ -77,23 +77,29 @@ function BecomeOrganizer({ onNavigate }) {
   ];
 
   const renderPendingView = () => (
-    <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-      className="glass-card p-6 sm:p-10 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/5 to-transparent space-y-6 shadow-xl">
-      <div className="text-center space-y-3">
-        <div className="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center mx-auto">
-          <span className="material-symbols-outlined text-2xl">hourglass_empty</span>
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-col items-center justify-center min-h-[60vh] px-4 text-center"
+    >
+      <div className="flex flex-col items-center gap-8 w-full max-w-sm mx-auto">
+        <div className="relative inline-flex">
+          <div className="w-16 h-16 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center animate-pulse">
+            <span className="material-symbols-outlined text-3xl">hourglass_empty</span>
+          </div>
+          <div className="absolute inset-0 w-16 h-16 rounded-full border-2 border-amber-400/20 animate-ping opacity-30" />
         </div>
-        <div className="space-y-1">
-          <h2 className="font-display-lg text-lg sm:text-xl font-bold text-white uppercase tracking-tight">Application Under Review</h2>
-          <p className="font-body-md text-xs sm:text-sm text-amber-300/80 leading-relaxed font-semibold">
+        <div className="space-y-3">
+          <h2 className="font-display-lg text-xl font-extrabold text-white uppercase tracking-tight">Application Under Review</h2>
+          <p className="font-body-md text-sm text-amber-300/60 leading-relaxed">
             Your organizer application has been submitted and is currently pending admin review.
           </p>
         </div>
+        <button onClick={() => onNavigate && onNavigate('home')}
+          className="w-full py-3.5 min-h-[44px] bg-primary text-on-primary font-headline-md text-xs font-bold rounded-xl hover:bg-primary/90 transition-all shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_8px_28px_rgba(59,130,246,0.45)] active:scale-[0.98]">
+          Return Home
+        </button>
       </div>
-      <button onClick={() => onNavigate && onNavigate('home')}
-        className="w-full py-3 min-h-[44px] bg-surface-container-high border border-outline-variant/40 text-white rounded-xl font-headline-md text-xs font-bold">
-        Return Home
-      </button>
     </motion.div>
   );
 
@@ -154,7 +160,13 @@ function BecomeOrganizer({ onNavigate }) {
                 Host tournaments, manage brackets, and secure prize payouts. Unlock professional toolsets to grow your competitive gaming community.
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3 max-w-sm mx-auto">
-                <button onClick={() => onNavigate && onNavigate('organizer-form')}
+                <button onClick={() => {
+                  if (currentUser) {
+                    onNavigate && onNavigate('organizer-form');
+                  } else {
+                    window.location.href = '/login?redirect=%2Forganizer-form';
+                  }
+                }}
                   className="w-full py-3.5 min-h-[44px] px-6 bg-primary text-on-primary font-headline-md text-xs font-bold rounded-xl hover:bg-primary/95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.25)] flex items-center justify-center gap-1.5">
                   Apply Form
                   <span className="material-symbols-outlined text-base">arrow_forward</span>

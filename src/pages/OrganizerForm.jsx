@@ -72,7 +72,7 @@ const prizeRanges = ['No Prize Pool', 'Under ₹5,000', '₹5,000–₹25,000', 
 const STORAGE_KEY = 'md_org_onboarding';
 
 function OrganizerForm({ onNavigate }) {
-  const { currentUser } = useUser();
+  const { currentUser, loading: authLoading } = useUser();
   const [allApps, setAllApps] = useState([]);
   const [currentStep, setCurrentStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
@@ -131,16 +131,29 @@ function OrganizerForm({ onNavigate }) {
     formats: [],
     expectedParticipants: '',
     prizePool: '',
-    policies: {
-      fairPlay: false,
-      antiCheat: false,
-      refund: false,
-      prizeDist: false,
-      terms: false,
-    }
+    agreedAll: false
   };
 
   const [form, setForm] = useState(formInit);
+
+  useEffect(() => {
+    if (!authLoading && !currentUser) {
+      window.location.href = '/login?redirect=%2Forganizer-form';
+    }
+  }, [authLoading, currentUser]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#07080C] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-on-surface-variant font-semibold">Loading Arena...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) return null;
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -243,8 +256,8 @@ function OrganizerForm({ onNavigate }) {
     setForm(prev => ({ ...prev, [key]: value }));
   };
 
-  const updatePolicy = (key) => {
-    setForm(prev => ({ ...prev, policies: { ...prev.policies, [key]: !prev.policies[key] } }));
+  const toggleAgreedAll = () => {
+    setForm(prev => ({ ...prev, agreedAll: !prev.agreedAll }));
   };
 
   const toggleArrayItem = (key, item) => {
@@ -270,12 +283,7 @@ function OrganizerForm({ onNavigate }) {
       if (!form.orgName.trim()) errors.push('Organization name is required');
     }
     if (step === 5) {
-      const p = form.policies;
-      if (!p.fairPlay) errors.push('Please accept the Fair Play Policy');
-      if (!p.antiCheat) errors.push('Please accept the Anti-Cheating Rules');
-      if (!p.refund) errors.push('Please accept the Refund Policy');
-      if (!p.prizeDist) errors.push('Please accept the Prize Distribution Policy');
-      if (!p.terms) errors.push('Please accept Match District Terms & Conditions');
+      if (!form.agreedAll) errors.push('Please accept the Terms, Policies, and Rules to continue');
     }
     return errors;
   };
@@ -305,28 +313,6 @@ function OrganizerForm({ onNavigate }) {
     setCurrentStep(step);
   };
 
-  const getTrustScore = () => {
-    let score = 0;
-    if (form.applicantName) score += 5;
-    if (form.phone) score += 5;
-    if (form.country && form.state && form.city) score += 10;
-    if (form.ageGroup) score += 5;
-    if (form.idType && form.kycImage) score += 10;
-    if (form.orgName) score += 10;
-    if (form.orgLogo) score += 5;
-    if (form.orgTagline) score += 5;
-    if (form.tournamentsOrganized) score += 5;
-    if (form.hostingLevel) score += 5;
-    if (form.tournamentsPerMonth) score += 5;
-    if (form.games.length > 0) score += 10;
-    if (form.formats.length > 0) score += 5;
-    if (form.expectedParticipants) score += 5;
-    if (form.prizePool) score += 5;
-    const policyCount = Object.values(form.policies).filter(Boolean).length;
-    score += policyCount * 2;
-    return Math.min(score, 100);
-  };
-
   const handleSubmit = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -337,10 +323,8 @@ function OrganizerForm({ onNavigate }) {
       return;
     }
 
-    const policyKeys = ['fairPlay', 'antiCheat', 'refund', 'prizeDist', 'terms'];
-    const allChecked = policyKeys.every(k => form.policies[k]);
-    if (!allChecked) {
-      alert('Please accept all policies to submit your application.');
+    if (!form.agreedAll) {
+      alert('Please accept the Terms, Policies, and Rules to submit your application.');
       setSubmitting(false);
       return;
     }
@@ -933,18 +917,6 @@ function OrganizerForm({ onNavigate }) {
         </motion.div>
       )}
 
-      <div className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-primary/[0.02] backdrop-blur-sm">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="material-symbols-outlined text-primary text-sm">insights</span>
-          <span className="text-[10px] text-on-surface-variant font-semibold">Your Organizer Profile Strength</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-2 bg-surface-container rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-primary to-secondary rounded-full transition-all duration-500" style={{ width: `${Math.min(40 + (form.tournamentsOrganized ? 15 : 0) + (form.hostingLevel ? 15 : 0) + (form.tournamentsPerMonth ? 15 : 0) + (form.heardFrom ? 15 : 0), 100)}%` }} />
-          </div>
-          <span className="text-xs font-bold text-white">{Math.min(40 + (form.tournamentsOrganized ? 15 : 0) + (form.hostingLevel ? 15 : 0) + (form.tournamentsPerMonth ? 15 : 0) + (form.heardFrom ? 15 : 0), 100)}%</span>
-        </div>
-      </div>
     </div>
   );
 
@@ -960,14 +932,14 @@ function OrganizerForm({ onNavigate }) {
       </div>
 
       {form.games.length > 0 && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.02] backdrop-blur-sm">
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-surface-container-low/10 backdrop-blur-sm">
           <div className="flex items-center gap-2 mb-2">
-            <span className="material-symbols-outlined text-emerald-400 text-sm">checklist</span>
-            <span className="text-[10px] text-emerald-400 font-semibold">Games Selected</span>
+            <span className="material-symbols-outlined text-primary text-sm">checklist</span>
+            <span className="text-[10px] text-on-surface-variant font-semibold">Games Selected</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {form.games.map(g => (
-              <span key={g} className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300 font-semibold">{g}</span>
+              <span key={g} className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-[11px] text-white font-medium">{g}</span>
             ))}
           </div>
         </motion.div>
@@ -976,68 +948,70 @@ function OrganizerForm({ onNavigate }) {
   );
 
   const renderStep5 = () => {
-    const policyItems = [
-      { key: 'fairPlay', label: 'Fair Play Policy', desc: 'I agree to uphold fair competition standards and ensure all matches are conducted with integrity.' },
-      { key: 'antiCheat', label: 'Anti-Cheating Rules', desc: 'I agree to enforce anti-cheating measures and report any suspicious activity to Match District.' },
-      { key: 'refund', label: 'Refund Policy', desc: 'I acknowledge and agree to the platform refund and cancellation policies.' },
-      { key: 'prizeDist', label: 'Prize Distribution Policy', desc: 'I agree to distribute prizes fairly and in accordance with the tournament rules.' },
-      { key: 'terms', label: 'Match District Terms & Conditions', desc: 'I have read and agree to the Match District Terms & Conditions and Privacy Policy.' },
-    ];
-
-    const score = getTrustScore();
-
     return (
       <div className="space-y-5">
-        <div className="glass-card p-5 rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/[0.03] to-transparent backdrop-blur-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-amber-400 text-lg">security</span>
-              <h3 className="font-headline-md text-xs font-bold text-white uppercase tracking-wider">Organizer Trust Score</h3>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-24 h-2 bg-surface-container rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-amber-500 via-primary to-emerald-400 rounded-full transition-all duration-700" style={{ width: `${score}%` }} />
-              </div>
-              <span className={`text-sm font-extrabold ${score >= 80 ? 'text-emerald-400' : score >= 50 ? 'text-primary' : 'text-amber-400'}`}>{score}%</span>
-            </div>
+        <div className="glass-card p-5 rounded-2xl border border-outline-variant/20 bg-surface-container-low/10 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-base">gavel</span>
+            <h3 className="font-headline-md text-xs font-bold text-white uppercase tracking-wider">Agreements &amp; Policies</h3>
           </div>
-          <div className="grid grid-cols-5 gap-1">
-            {[20, 40, 60, 80, 100].map((t) => (
-              <div key={t} className={`text-center text-[8px] font-bold uppercase tracking-wider ${score >= t ? 'text-primary' : 'text-on-surface-variant/40'}`}>
-                <span className={`block w-full h-1 rounded-full mb-1 ${score >= t ? 'bg-primary/30' : 'bg-surface-container'}`} />
-                {t === 100 ? 'Excellent' : t === 80 ? 'Strong' : t === 60 ? 'Good' : t === 40 ? 'Fair' : 'Basic'}
-              </div>
-            ))}
-          </div>
-        </div>
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+            Please review and accept all required policies to proceed with your organizer application.
+          </p>
 
-        <div className="space-y-3">
-          {policyItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => updatePolicy(item.key)}
-              className={`w-full flex items-start gap-3.5 p-4 rounded-xl border transition-all text-left ${
-                form.policies[item.key]
-                  ? 'bg-primary/[0.06] border-primary/40 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
-                  : 'bg-surface-container border-outline-variant/30 hover:border-outline-variant/60'
-              }`}
-            >
-              <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                form.policies[item.key]
-                  ? 'bg-primary text-on-primary shadow-[0_0_8px_rgba(99,102,241,0.3)]'
-                  : 'bg-surface-container-high border border-outline-variant/50'
-              }`}>
-                {form.policies[item.key] && <span className="material-symbols-outlined text-[10px]">check</span>}
-              </div>
-              <div className="min-w-0">
-                <span className={`font-headline-md text-xs font-bold transition-colors ${form.policies[item.key] ? 'text-white' : 'text-on-surface-variant'}`}>
-                  {item.label}
-                </span>
-                <p className="font-body-sm text-[10px] text-on-surface-variant/70 mt-0.5 leading-relaxed">{item.desc}</p>
-              </div>
-            </button>
-          ))}
+          <button
+            type="button"
+            onClick={toggleAgreedAll}
+            className={`w-full flex items-start gap-3.5 p-4 rounded-xl border transition-all text-left ${
+              form.agreedAll
+                ? 'bg-primary/[0.06] border-primary/40 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
+                : 'bg-surface-container border-outline-variant/30 hover:border-outline-variant/60'
+            }`}
+          >
+            <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-all relative ${
+              form.agreedAll
+                ? 'bg-primary shadow-[0_0_8px_rgba(99,102,241,0.3)]'
+                : 'bg-surface-container-high border border-outline-variant/50'
+            }`}>
+              {form.agreedAll && (
+                <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6L4.5 9L10 3" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </div>
+            <div className="min-w-0">
+              <span className={`font-headline-md text-xs font-bold transition-colors ${form.agreedAll ? 'text-white' : 'text-on-surface-variant'}`}>
+                I agree to all policies
+              </span>
+              <p className="font-body-sm text-[10px] text-on-surface-variant/70 mt-0.5 leading-relaxed">
+                I agree to the Match District{' '}
+                <button type="button" onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('terms-service'); }} className="text-primary hover:underline font-semibold inline">Terms of Service</button>
+                {', '}
+                <button type="button" onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('privacy-policy'); }} className="text-primary hover:underline font-semibold inline">Privacy Policy</button>
+                {', '}
+                <button type="button" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline font-semibold inline">Fair Play Policy</button>
+                {', '}
+                <button type="button" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline font-semibold inline">Anti-Cheating Rules</button>
+                {', '}
+                <button type="button" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline font-semibold inline">Refund Policy</button>
+                {', and '}
+                <button type="button" onClick={(e) => e.stopPropagation()} className="text-primary hover:underline font-semibold inline">Prize Distribution Policy</button>
+                .
+              </p>
+            </div>
+          </button>
+
+          <div className="p-3 rounded-xl bg-surface-container border border-outline-variant/20 text-[10px] text-on-surface-variant leading-relaxed space-y-2">
+            <p><strong className="text-white">Fair Play Policy:</strong> I agree to uphold fair competition standards and ensure all matches are conducted with integrity.</p>
+            <p><strong className="text-white">Anti-Cheating Rules:</strong> I agree to enforce anti-cheating measures and report any suspicious activity to Match District.</p>
+            <p><strong className="text-white">Refund Policy:</strong> I acknowledge and agree to the platform refund and cancellation policies.</p>
+            <p><strong className="text-white">Prize Distribution Policy:</strong> I agree to distribute prizes fairly and in accordance with the tournament rules.</p>
+            <p><strong className="text-white">Terms &amp; Conditions:</strong> I have read and agree to the Match District{' '}
+              <button type="button" onClick={() => onNavigate && onNavigate('terms-service')} className="text-primary hover:underline font-semibold inline">Terms &amp; Conditions</button>
+              {' and '}
+              <button type="button" onClick={() => onNavigate && onNavigate('privacy-policy')} className="text-primary hover:underline font-semibold inline">Privacy Policy</button>.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -1137,16 +1111,6 @@ function OrganizerForm({ onNavigate }) {
           </motion.div>
         )}
 
-        <div className="glass-card p-4 rounded-xl border border-amber-500/20 bg-gradient-to-b from-amber-500/[0.03] to-transparent backdrop-blur-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] text-on-surface-variant font-semibold">Trust Score</span>
-            <span className="text-sm font-extrabold text-emerald-400">{getTrustScore()}%</span>
-          </div>
-          <div className="h-2 bg-surface-container rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-amber-500 via-primary to-emerald-400 rounded-full transition-all duration-700" style={{ width: `${getTrustScore()}%` }} />
-          </div>
-        </div>
-
         <button
           type="button"
           onClick={handleSubmit}
@@ -1173,12 +1137,17 @@ function OrganizerForm({ onNavigate }) {
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="glass-card p-6 sm:p-10 rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-emerald-500/[0.04] to-transparent space-y-6 shadow-xl max-w-lg mx-auto"
+      className="glass-card p-6 sm:p-10 rounded-2xl border border-emerald-500/30 bg-gradient-to-b from-emerald-500/[0.04] to-transparent space-y-8 shadow-xl max-w-lg mx-auto"
     >
       <div className="text-center space-y-4">
-        <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 200, damping: 12, delay: 0.1 }}
+          className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto"
+        >
           <span className="material-symbols-outlined text-3xl" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-        </div>
+        </motion.div>
         <div className="space-y-1">
           <h2 className="font-display-lg text-lg sm:text-xl font-extrabold text-white uppercase tracking-tight">Application Submitted!</h2>
           <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed">
@@ -1187,59 +1156,53 @@ function OrganizerForm({ onNavigate }) {
         </div>
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
-          <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-emerald-400 text-sm">check</span>
-          </div>
-          <div>
+      <div className="relative pl-10 space-y-0">
+        <div className="absolute left-[17px] top-0 bottom-0 w-px bg-gradient-to-b from-emerald-500/60 via-amber-500/40 to-surface-container-high pointer-events-none"></div>
+
+        <div className="relative pb-10">
+          <div className="absolute -left-[21px] top-1 w-[10px] h-[10px] rounded-full bg-emerald-500 border-2 border-emerald-500/30 ring-2 ring-emerald-500/10"></div>
+          <div className="p-3 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
             <p className="text-xs text-white font-bold">Application Submitted</p>
-            <p className="text-[10px] text-emerald-400/70">Your application is in our system</p>
+            <p className="text-[10px] text-emerald-400/70 mt-0.5">Your application is in our system</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
-          <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-amber-400 text-sm">hourglass_empty</span>
-          </div>
-          <div>
+        <div className="relative pb-10">
+          <div className="absolute -left-[21px] top-1 w-[10px] h-[10px] rounded-full bg-amber-400 border-2 border-amber-400/30 ring-2 ring-amber-400/10"></div>
+          <div className="p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/20 ring-1 ring-amber-500/10">
             <p className="text-xs text-white font-bold">Under Review</p>
-            <p className="text-[10px] text-amber-400/70">Our team is evaluating your details</p>
+            <p className="text-[10px] text-amber-400/70 mt-0.5">Our team is evaluating your details</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/30 opacity-60">
-          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-on-surface-variant text-sm">gavel</span>
-          </div>
-          <div>
-            <p className="text-xs text-white font-bold">Verification</p>
-            <p className="text-[10px] text-on-surface-variant/70">Identity & document verification</p>
+        <div className="relative pb-10">
+          <div className="absolute -left-[21px] top-1 w-[10px] h-[10px] rounded-full bg-surface-container-high border-2 border-outline-variant/30"></div>
+          <div className="p-3 rounded-xl bg-surface-container border border-outline-variant/30">
+            <p className="text-xs text-on-surface-variant font-bold">Verification</p>
+            <p className="text-[10px] text-on-surface-variant/50 mt-0.5">Identity &amp; document verification</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-container border border-outline-variant/30 opacity-60">
-          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
-            <span className="material-symbols-outlined text-on-surface-variant text-sm">rocket_launch</span>
-          </div>
-          <div>
-            <p className="text-xs text-white font-bold">Organizer Activation</p>
-            <p className="text-[10px] text-on-surface-variant/70">Portal access granted</p>
+        <div className="relative">
+          <div className="absolute -left-[21px] top-1 w-[10px] h-[10px] rounded-full bg-surface-container-high border-2 border-outline-variant/30"></div>
+          <div className="p-3 rounded-xl bg-surface-container border border-outline-variant/30">
+            <p className="text-xs text-on-surface-variant font-bold">Organizer Activation</p>
+            <p className="text-[10px] text-on-surface-variant/50 mt-0.5">Portal access granted</p>
           </div>
         </div>
       </div>
 
-      <div className="glass-card p-4 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/[0.04] to-secondary/[0.02] backdrop-blur-sm text-center">
-        <div className="flex items-center justify-center gap-2 mb-1">
-          <span className="material-symbols-outlined text-primary text-sm">schedule</span>
-          <span className="text-xs text-white font-bold">Estimated Review Time</span>
+      <div className="glass-card p-5 rounded-2xl border border-primary/25 bg-gradient-to-b from-primary/[0.06] to-transparent backdrop-blur-sm text-center shadow-[0_8px_30px_-4px_rgba(59,130,246,0.15)]">
+        <div className="flex items-center justify-center gap-2 mb-1.5">
+          <span className="material-symbols-outlined text-primary text-base">schedule</span>
+          <span className="text-xs text-white font-bold tracking-wide">Estimated Review Time</span>
         </div>
-        <p className="text-lg font-extrabold text-primary">24\u201372 Hours</p>
+        <p className="text-xl font-extrabold text-primary tracking-tight">24-72 Hours</p>
       </div>
 
       <button
         onClick={() => onNavigate && onNavigate('home')}
-        className="w-full py-3 min-h-[44px] bg-surface-container-high border border-outline-variant/40 text-white rounded-xl font-headline-md text-xs font-bold hover:bg-surface-variant transition-all"
+        className="w-full py-3.5 min-h-[44px] bg-gradient-to-r from-primary/90 to-primary text-on-primary rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_16px_rgba(59,130,246,0.25)] hover:shadow-[0_8px_32px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 active:translate-y-0"
       >
         Return Home
       </button>
@@ -1247,23 +1210,29 @@ function OrganizerForm({ onNavigate }) {
   );
 
   const renderPendingView = () => (
-    <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-      className="glass-card p-6 sm:p-10 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/5 to-transparent space-y-6 shadow-xl">
-      <div className="text-center space-y-3">
-        <div className="w-14 h-14 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center mx-auto">
-          <span className="material-symbols-outlined text-2xl">hourglass_empty</span>
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-col items-center justify-center min-h-[60vh] px-4 text-center"
+    >
+      <div className="flex flex-col items-center gap-8 w-full max-w-sm mx-auto">
+        <div className="relative inline-flex">
+          <div className="w-16 h-16 rounded-full bg-amber-500/10 text-amber-400 flex items-center justify-center animate-pulse">
+            <span className="material-symbols-outlined text-3xl">hourglass_empty</span>
+          </div>
+          <div className="absolute inset-0 w-16 h-16 rounded-full border-2 border-amber-400/20 animate-ping opacity-30" />
         </div>
-        <div className="space-y-1">
-          <h2 className="font-display-lg text-lg sm:text-xl font-bold text-white uppercase tracking-tight">Application Under Review</h2>
-          <p className="font-body-md text-xs sm:text-sm text-amber-300/80 leading-relaxed font-semibold">
+        <div className="space-y-3">
+          <h2 className="font-display-lg text-xl font-extrabold text-white uppercase tracking-tight">Application Under Review</h2>
+          <p className="font-body-md text-sm text-amber-300/60 leading-relaxed">
             Your organizer application has been submitted and is currently pending admin review.
           </p>
         </div>
+        <button onClick={() => onNavigate && onNavigate('home')}
+          className="w-full py-3.5 min-h-[44px] bg-primary text-on-primary font-headline-md text-xs font-bold rounded-xl hover:bg-primary/90 transition-all shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_8px_28px_rgba(59,130,246,0.45)] active:scale-[0.98]">
+          Return Home
+        </button>
       </div>
-      <button onClick={() => onNavigate && onNavigate('home')}
-        className="w-full py-3 min-h-[44px] bg-surface-container-high border border-outline-variant/40 text-white rounded-xl font-headline-md text-xs font-bold">
-        Return Home
-      </button>
     </motion.div>
   );
 
