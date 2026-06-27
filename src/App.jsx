@@ -314,7 +314,7 @@ function AppInner() {
   )
 
   return (
-    <div className="min-h-screen bg-background text-on-background font-body-lg relative overflow-x-hidden">
+    <div className="min-h-screen bg-background text-on-background font-body-lg relative overflow-x-clip">
       {/* Universal Background Grid */}
       <div className="absolute inset-0 bg-grid-pattern pointer-events-none z-0" />
 

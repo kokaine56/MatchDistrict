@@ -120,10 +120,10 @@ function PrivacyPolicy({ onNavigate }) {
         </div>
 
         {/* Two-Column Layout */}
-        <div className="lg:flex lg:gap-10">
+        <div className="lg:flex lg:gap-10 items-start">
 
           {/* Desktop Sidebar */}
-          <aside className="hidden lg:block lg:w-[260px] lg:shrink-0 sticky top-24 self-start space-y-4">
+          <aside className="hidden lg:block lg:w-[260px] lg:shrink-0 sticky top-24 self-start max-h-[calc(100vh-6rem)] overflow-y-auto space-y-4">
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-1">
               <span className="text-[10px] font-bold text-blue-600 tracking-wider uppercase block px-3 pt-1 pb-2">
                 Document Sections
@@ -170,20 +170,28 @@ function PrivacyPolicy({ onNavigate }) {
                       For Users
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Name of the user</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Email address</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Phone number</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">UPI number (strictly for secure prize pool distribution)</span>
                       </div>
                     </div>
@@ -198,20 +206,28 @@ function PrivacyPolicy({ onNavigate }) {
                       To become an approved organizer, we collect mandatory Know Your Customer (KYC) data, which includes:
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Name</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Phone number</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100 sm:col-span-2">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100 sm:col-span-2">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Government ID Proof (such as a PAN card, driving license, or other official government IDs) for identity verification</span>
                       </div>
-                      <div className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100">
-                        <div className="w-6 h-6 rounded-md bg-blue-500 text-white flex items-center justify-center shrink-0 text-xs font-bold">✓</div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
                         <span className="text-sm text-slate-700">Location data (specific State and District)</span>
                       </div>
                     </div>
@@ -222,70 +238,217 @@ function PrivacyPolicy({ onNavigate }) {
 
             {/* Section 2 */}
             <section id="use" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">psychology</span>
                   </span>
                   2. How We Use Data
                 </h2>
+
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  User data is processed strictly for identity verification, securing prize distribution via UPI, fraud prevention, and ensuring competitive integrity on the platform.
+                  We believe in keeping your privacy simple and transparent. The information we collect from you is strictly used for only two purposes:
+                </p>
+
+                <div className="space-y-5">
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M8 1.5L3 4v4c0 3.25 1.75 6.25 5 7 3.25-0.75 5-3.75 5-7V4L8 1.5z" />
+                        <path d="M6 8.5l1.5 1.5L10 6.5" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Identity Verification</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        We use your details and ID proof to verify who you are, ensuring a safe, trusted, and fair competitive environment for everyone on the platform.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="1.5" y="4.5" width="13" height="10" rx="1.5" />
+                        <path d="M5 4.5V3.5a3 3 0 016 0v1" />
+                        <path d="M8 9.5v3" />
+                        <path d="M6.5 11h3" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Secure Prize Payouts</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        We use your UPI information solely to process and distribute your tournament winnings securely and promptly.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-sm text-slate-500 leading-relaxed italic border-t border-slate-100 pt-5">
+                  We do not sell your personal data, nor do we use it for any hidden tracking or marketing purposes.
                 </p>
               </div>
             </section>
 
             {/* Section 3 */}
             <section id="cookies" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">cookie</span>
                   </span>
                   3. Cookies &amp; Tracking
                 </h2>
+
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  We utilize cookies and local browser storage to keep you securely signed in across sessions, preserve custom dashboard panel presets, and collect anonymous server performance telemetry.
+                  We respect your digital footprint and believe in absolute minimal tracking. Our platform does not use any third-party tracking cookies or collect anonymous server performance telemetry.
                 </p>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  You can disable cookie collection in your browser parameters, though this will sign you out and limit dashboard access speeds.
-                </p>
+
+                <div className="space-y-5">
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="8" cy="8" r="5.5" />
+                        <path d="M4 4l8 8" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Zero Third-Party Tracking</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Your data stays with us. We do not use external trackers or marketing cookies.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="1.5" y="2" width="13" height="12" rx="1.5" />
+                        <path d="M4.5 8l2.5 2.5L11.5 5" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Session Control</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        You have full control over your session history. If you prefer not to have your session saved, you can simply opt out by leaving the <span className="font-medium text-slate-700">'Remember Me'</span> tick box unchecked when signing in.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
             {/* Section 4 */}
             <section id="payments" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">account_balance_wallet</span>
                   </span>
                   4. Payment Information
                 </h2>
+
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  All tournament buy-ins, tickets, and payout transfers are managed securely. We process cards, banks, and UPI transactions via audited payment gateways.
+                  We believe in a frictionless and secure financial experience. Currently, our platform operates exclusively via UPI for all entry fees and prize distributions.
                 </p>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  We do not store your direct raw bank credentials or credit card numbers on our local databases.
-                </p>
+
+                <div className="space-y-5">
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2" y="1.5" width="12" height="13" rx="1.5" />
+                        <path d="M5 5.5h6" />
+                        <path d="M5 8h6" />
+                        <path d="M5 10.5h3" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">UPI Exclusive</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        We only collect and securely store your UPI ID to facilitate seamless transactions and ensure you receive your prize payouts promptly.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="10" height="10" rx="1.5" />
+                        <path d="M5 8h6" />
+                        <path d="M10 5l-4 6" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">No Card Data Stored</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Your security is our priority. We do not use traditional payment gateways, nor do we process, collect, or store any sensitive banking information, credit card numbers, or debit card details on our servers.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
             {/* Section 5 */}
             <section id="security" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">gpp_good</span>
                   </span>
                   5. Security Measures
                 </h2>
+
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  We deploy premium digital security protections: TLS 1.3 transmission encryptions, salted password hashing, access tokens validation, and automated firewall checks.
+                  We deploy premium digital security protections to ensure your data remains safe and secure:
                 </p>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  In the event of a detected server security incident, we alert affected profiles within 72 hours under global compliance guidelines.
-                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex items-start gap-3 p-3.5 rounded-lg border border-slate-100">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2.5" y="5.5" width="11" height="9" rx="1.5" />
+                        <path d="M5.5 5.5V4a2.5 2.5 0 015 0v1.5" />
+                        <path d="M8 9v2.5" />
+                        <circle cx="8" cy="10" r="3" fill="none" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">TLS 1.3 Transmission Encryptions</span>
+                  </div>
+
+                  <div className="flex items-start gap-3 p-3.5 rounded-lg border border-slate-100">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M8 1.5l2.5 3-2.5 1.5L5.5 4.5 8 1.5z" />
+                        <path d="M8 6l2.5 3L8 10.5 5.5 9 8 6z" />
+                        <path d="M8 10.5l2.5 3L8 15l-2.5-1.5L8 10.5z" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">Salted Password Hashing</span>
+                  </div>
+
+                  <div className="flex items-start gap-3 p-3.5 rounded-lg border border-slate-100">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4.5 8l2.5 2.5L11.5 4" />
+                        <circle cx="8" cy="8" r="5.5" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">Access Tokens Validation</span>
+                  </div>
+
+                  <div className="flex items-start gap-3 p-3.5 rounded-lg border border-slate-100">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2.5" y="3" width="11" height="11" rx="1.5" />
+                        <path d="M5.5 3V1.5h5V3" />
+                        <path d="M8 7v3" />
+                        <circle cx="8" cy="11.5" r="0.75" fill="currentColor" stroke="none" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold text-slate-900">Automated Firewall Checks</span>
+                  </div>
+                </div>
               </div>
             </section>
 
