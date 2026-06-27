@@ -17,6 +17,18 @@ export default defineConfig({
         changeOrigin: true,
         secure: false
       }
+    },
+    headers: {
+      // Enforces TLS (HTTPS) connections strictly for 2 years
+      'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+      // Prevents the browser from guessing the content type (Firewall support)
+      'X-Content-Type-Options': 'nosniff',
+      // Prevents Clickjacking
+      'X-Frame-Options': 'DENY',
+      // Legacy XSS protection for older browsers
+      'X-XSS-Protection': '1; mode=block',
+      // Controls referrer information sent with requests
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
     }
   },
   envPrefix: ['APP_', 'API_', 'SOCKET_', 'AUTH_', 'OTP_', 'ADMIN_', 'JWT_', 'ENABLE_', 'ANALYTICS_', 'DATABASE_', 'SUPABASE_', 'VITE_'],
