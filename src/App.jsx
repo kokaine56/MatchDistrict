@@ -8,6 +8,7 @@ import { fetchJsonWithRetry } from './utils/api.js'
 import { useUser } from './UserContext.jsx'
 import { hasOrganizerRights, hasRole, getUserRoles } from './utils/iamRoles.js'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { useLockdown } from './hooks/useLockdown.js'
 import './App.css'
 
 // Code-split secondary pages — only downloaded when first visited
@@ -495,6 +496,7 @@ function AppInner() {
 }
 
 function App() {
+  useLockdown()
   return <AppInner />
 }
 
