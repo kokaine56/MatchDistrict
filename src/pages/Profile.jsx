@@ -2205,24 +2205,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
           {/* Own Profile View — only rendered when viewing your own profile */}
           {isOwnProfile && (
             <>
-              {/* Computed player statistics */}
-              {(() => {
-                const totalTournaments = playerTournamentsList.length;
-                const wins = playerTournamentsList.filter(t => t.status === 'completed').length * 2 + (totalTournaments > 0 ? 3 : 0);
-                const totalEarnings = walletTransactions
-                  .filter(tx => tx.type === 'credit')
-                  .reduce((sum, tx) => sum + Number(tx.amount.replace(/[^\d]/g, '')), 0) || 85000;
-                
-                const stats = {
-                  xpLevel: 42,
-                  rank: totalTournaments > 8 ? 'Radiant' : totalTournaments > 3 ? 'Diamond II' : 'Platinum I',
-                  tournaments: totalTournaments,
-                  wins: wins,
-                  earnings: `₹${totalEarnings.toLocaleString('en-IN')}`
-                };
-
-                return (
-                  <div className="space-y-6">
+              <div className="space-y-6">
                     {/* Compact Player Header Hero Card */}
                     <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
                       {/* Cover Banner */}
@@ -2390,29 +2373,8 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </div>
                     </div>
 
-                    {/* Premium Stats Grid Row */}
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                      {[
-                        { label: 'XP LEVEL', value: `Lvl ${stats.xpLevel}`, icon: 'military_tech', color: 'text-primary bg-primary/10 border-primary/20' },
-                        { label: 'PLAYER RANK', value: stats.rank, icon: 'grade', color: 'text-secondary bg-secondary/10 border-secondary/20' },
-                        { label: 'TOURNAMENTS', value: `${stats.tournaments} Played`, icon: 'sports_esports', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
-                        { label: 'MATCH WINS', value: `${stats.wins} Gold`, icon: 'emoji_events', color: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
-                        { label: 'TOTAL EARNED', value: stats.earnings, icon: 'payments', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' }
-                      ].map((item, index) => (
-                        <div key={index} className="glass-card p-3 sm:p-4 rounded-xl border border-outline-variant/30 bg-surface/40 flex items-center gap-3 group hover:scale-[1.02] hover:border-primary/25 transition-all shadow-sm">
-                          <div className={`w-9 h-9 rounded-lg flex items-center justify-center border ${item.color} shrink-0`}>
-                            <span className="material-symbols-outlined text-lg">{item.icon}</span>
-                          </div>
-                          <div className="space-y-0.5 min-w-0">
-                            <span className="text-[8px] font-bold tracking-wider text-on-surface-variant uppercase block">{item.label}</span>
-                            <span className="text-[11px] sm:text-xs font-black text-on-background block truncate">{item.value}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
                     {/* Segmented Tab Navigation for Desktop (Hidden on mobile) */}
-                    <div className="hidden md:block glass-card p-1 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm">
+                    <div className="hidden md:block glass-card p-1 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm mt-6">
                       <div className="flex gap-1">
                         {[
                           { id: 'overview', label: 'Overview', icon: 'dashboard' },
@@ -2483,8 +2445,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </div>
                     </div>
                   </div>
-                );
-              })()}
 
             </>
           )}
