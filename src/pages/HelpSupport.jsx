@@ -1,110 +1,69 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
 
 function HelpSupport({ onNavigate }) {
   const { currentUser, signOut } = useUser();
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [openFaqId, setOpenFaqId] = useState(null);
-  const [isScrolled, setIsScrolled] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const toggleFaq = (id) => {
-    setOpenFaqId(openFaqId === id ? null : id);
-  };
-
-  // Form states
-  const [ticketName, setTicketName] = useState('');
-  const [ticketEmail, setTicketEmail] = useState('');
-  const [ticketCategory, setTicketCategory] = useState('Tournament Registration Issue');
+  const [ticketCategory, setTicketCategory] = useState('Payment Issue');
   const [ticketMessage, setTicketMessage] = useState('');
+  const [screenshotFile, setScreenshotFile] = useState(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [ticketId, setTicketId] = useState('');
 
   const handleSignOut = async () => {
     await signOut();
     onNavigate && onNavigate('home');
   };
 
-  const supportCategories = [
-    { id: 'tournament', label: 'Tournament Support', icon: 'stadium', desc: 'Queries on seedings, match check-ins, or score reports.' },
-    { id: 'organizer', label: 'Organizer Help', icon: 'manage_accounts', desc: 'Host guidelines, event setups, and platform tools.' },
-    { id: 'payments', label: 'Payment Issues', icon: 'account_balance_wallet', desc: 'Handling entry ticket payouts and wallet cashouts.' },
-    { id: 'account', label: 'Account & Login', icon: 'account_circle', desc: 'Linking credentials, Discord auths, or gamer tag updates.' },
-    { id: 'reporting', label: 'Match Reporting', icon: 'sports_esports', desc: 'Uploading match results, screenshots, or logs.' },
-    { id: 'technical', label: 'Technical Problems', icon: 'construction', desc: 'API connectivity, stream overlaps, or browser crashes.' }
-  ];
-
   const faqs = [
     {
-      id: 'join-tournaments',
-      category: 'tournament',
-      question: 'How do I join tournaments?',
-      answer: 'Go to the Tournaments directory, choose the game you want to compete in, and select an active bracket. You can register as a solo free agent or sign up with your pre-made team roster. Make sure your game account is linked in your profile before checking in.'
-    },
-    {
-      id: 'organizer-applications',
-      category: 'organizer',
-      question: 'How do organizer applications work?',
-      answer: 'Head to our "Become an Organizer" section to submit your portal application. We verify tournament host credentials, community sizes, and gaming IDs to protect fair play. Once approved, you gain full bracket management, custom tournament lobbies, and secure prize distribution permissions.'
-    },
-    {
-      id: 'approval-time',
-      category: 'organizer',
-      question: 'How long does approval take?',
-      answer: 'Our accreditation review desk typically evaluates applications within 24 to 48 hours. You will receive an automated email confirmation and a Discord notification as soon as your organizer permissions are fully activated.'
-    },
-    {
       id: 'payments-secure',
-      category: 'payments',
-      question: 'Are payments secure?',
-      answer: 'Absolutely. Match District secures all entry buy-ins and sponsor transactions in isolated, PCI-DSS compliant vault layers. Prize pools are legally protected and verified automatically before payouts are initialized.'
-    },
-    {
-      id: 'prize-pools-distribution',
-      category: 'payments',
-      question: 'How are prize pools distributed?',
-      answer: "Once bracket organizers submit verified lobby results, our smart ledger runs a 24-hour verification check to ensure fair play. Following validation, the prize funds are disbursed directly to the winning teams' digital Match District wallets."
-    },
-    {
-      id: 'beginners-organizers',
-      category: 'organizer',
-      question: 'Can beginners become organizers?',
-      answer: 'Yes, we welcome organizers of all experience levels! Beginners can start by hosting community matches or single-elimination brackets. We offer extensive onboarding guides, template rulesets, and active moderator support to help you scale.'
-    },
-    {
-      id: 'supported-games',
-      category: 'tournament',
-      question: 'What games are supported?',
-      answer: 'Currently, Match District officially supports BGMI. Support for other games is coming soon based on community demand and organizer requests.'
+      question: 'Are the payments secure?',
+      answer: 'Yes. We process all transactions directly via secure UPI channels. We strictly use UPI for entries and payouts, and we do not process, collect, or store any sensitive credit/debit card details or bank credentials on our servers.'
     },
     {
       id: 'refunds-work',
-      category: 'payments',
-      question: 'How do refunds work?',
-      answer: 'Entry ticket purchases are fully refundable up to 24 hours before a tournament starts. If an organizer cancels or reschedules an event, all registration fees are automatically refunded back to player wallets without delay.'
+      question: 'How do refunds work and how long do they take?',
+      answer: 'If eligible (such as a cancellation 24 hours prior to a tournament or an organizer cancellation), approved refunds will be processed and credited back to your original payment method (UPI) within 5 to 7 business days.'
     },
     {
-      id: 'match-dispute',
-      category: 'reporting',
-      question: 'What happens if a match dispute occurs?',
-      answer: 'If a player reports cheating, score manipulation, or lobby connection failures, they can file a dispute ticket inside their active match lobby. An accredited Match District arbiter will review uploaded media evidence and make a final ruling.'
+      id: 'prize-pools-distribution',
+      question: 'How do I get my prize pool winnings?',
+      answer: 'Prize pools are distributed securely via the UPI ID you have linked to your profile upon the successful and verified completion of the tournament.'
     },
     {
-      id: 'contact-support',
-      category: 'technical',
-      question: 'How can I contact support?',
-      answer: 'You can submit a support ticket using the contact form below, start a live chat within your active match lobby, or join our official Discord server for real-time help from our community moderators.'
+      id: 'become-organizer-requirements',
+      question: 'What is required to become an organizer?',
+      answer: 'Organizers must complete a KYC process, which includes submitting a Government ID proof and location data for verification.'
     }
   ];
+
+  const toggleFaq = (id) => {
+    setOpenFaqId(openFaqId === id ? null : id);
+  };
+
+  const generateTicketId = () => {
+    const num = Math.floor(10000 + Math.random() * 90000);
+    return `#MD-${num}`;
+  };
+
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
+    if (!ticketCategory || !ticketMessage) return;
+    const id = generateTicketId();
+    setTicketId(id);
+    setIsSubmitted(true);
+  };
+
+  const handleNewTicket = () => {
+    setIsSubmitted(false);
+    setTicketId('');
+    setTicketCategory('Payment Issue');
+    setTicketMessage('');
+    setScreenshotFile(null);
+  };
 
   const trustMetrics = [
     { label: 'Avg Response Time', value: '< 12 Mins', desc: 'Fast, verified resolutions.', icon: 'bolt' },
@@ -113,333 +72,268 @@ function HelpSupport({ onNavigate }) {
     { label: 'Organizer Support', desc: 'Direct host hotline.', value: 'Priority', icon: 'verified_user' }
   ];
 
-  const filteredFaqs = faqs.filter(faq => {
-    const matchesCategory = selectedCategory === 'all' || faq.category === selectedCategory;
-    const matchesSearch = faq.question.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          faq.answer.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
-
-  const handleFormSubmit = (e) => {
-    e.preventDefault();
-    if (!ticketName || !ticketEmail || !ticketMessage) return;
-    setIsSubmitted(true);
-    setTimeout(() => {
-      setIsSubmitted(false);
-      setTicketName('');
-      setTicketEmail('');
-      setTicketMessage('');
-    }, 4500);
-  };
-
   return (
-    <div className="min-h-screen bg-background text-on-background relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
-      {/* Premium responsive grid background design */}
+    <div className="min-h-screen bg-slate-50 text-slate-900 relative selection:bg-blue-200 selection:text-blue-900">
+      {/* Subtle grid background */}
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        {/* Ambient glow meshes */}
-        <div className="absolute top-0 left-1/4 w-[250px] sm:w-[600px] h-[250px] sm:h-[600px] bg-primary/10 blur-[80px] sm:blur-[130px] rounded-full animate-pulse duration-[12s] pointer-events-none"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-[200px] sm:w-[400px] h-[200px] sm:h-[400px] bg-secondary/8 blur-[70px] sm:blur-[100px] rounded-full animate-pulse duration-[9s] delay-[3s] pointer-events-none"></div>
+        <div className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `
+              linear-gradient(to right, #3B82F6 1px, transparent 1px),
+              linear-gradient(to bottom, #3B82F6 1px, transparent 1px)
+            `,
+            backgroundSize: '48px 48px'
+          }}
+        />
+        <div className="absolute top-0 left-1/3 w-[400px] h-[400px] bg-blue-400/8 blur-[100px] rounded-full pointer-events-none" />
+        <div className="absolute bottom-0 right-1/4 w-[300px] h-[300px] bg-indigo-400/6 blur-[80px] rounded-full pointer-events-none" />
       </div>
 
-      {/* Header rendered persistently at App level */}
+      <main className="w-full max-w-4xl mx-auto px-4 pt-24 sm:pt-32 pb-12 sm:pb-20 relative z-10">
 
-      {/* Main Container */}
-      <main className="w-full max-w-4xl mx-auto px-4 pt-20 sm:pt-28 pb-8 sm:pb-14 space-y-12 sm:space-y-16 relative z-10">
-
-        {/* Hero Section */}
-        <motion.section 
-          initial={{ opacity: 0, y: 15 }}
+        {/* Hero */}
+        <motion.section
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-center space-y-5 pt-2 border-b border-outline-variant/10 pb-8"
+          className="text-center space-y-4 pb-8 mb-8 border-b border-slate-200"
         >
-
-          <h1 className="font-display-lg text-3xl sm:text-4xl font-extrabold text-white tracking-tight uppercase leading-tight">
+          <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
             Help &amp; Support
           </h1>
-
-          <p className="font-body-lg text-xs sm:text-sm text-on-surface-variant max-w-xl mx-auto leading-relaxed">
-            Have questions about brackets, check-ins, or payouts? Search our guide network or connect with verified arbiters directly.
+          <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto leading-relaxed">
+            Have questions about payments, tournaments, or your account? Browse our FAQs or submit a support ticket.
           </p>
-
-          {/* Search bar */}
-          <div className="max-w-md mx-auto relative pt-2">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-base">search</span>
-            <input 
-              type="text" 
-              placeholder="Search help articles or FAQs..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 bg-surface-container-low border border-outline-variant/40 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-primary transition-all focus:ring-2 focus:ring-primary/10 placeholder-on-surface-variant/60"
-            />
-          </div>
         </motion.section>
 
-        {/* Support Categories Section */}
-        <section className="space-y-6">
-          <div className="text-center sm:text-left space-y-1">
-            <span className="text-[10px] text-primary font-label-caps tracking-wider uppercase font-bold">Directories</span>
-            <h2 className="font-display-lg text-lg sm:text-xl font-extrabold text-white uppercase">Support Categories</h2>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            {supportCategories.map((cat, idx) => (
-              <div 
-                key={idx}
-                onClick={() => {
-                  setSelectedCategory(cat.id);
-                  handleScrollTo('faq-anchor');
-                }}
-                className="glass-card p-5 rounded-2xl border border-outline-variant/20 bg-surface-container-low/15 flex flex-col justify-between space-y-4 hover:border-primary/30 transition-all hover:-translate-y-0.5 cursor-pointer group"
-              >
-                <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary border border-primary/20 flex items-center justify-center group-hover:bg-primary group-hover:text-on-primary transition-colors shrink-0">
-                  <span className="material-symbols-outlined text-base">{cat.icon}</span>
-                </div>
-                <div className="space-y-1.5">
-                  <h3 className="font-headline-md text-xs sm:text-sm font-bold text-white leading-tight">{cat.label}</h3>
-                  <p className="font-body-sm text-[11px] sm:text-xs text-on-surface-variant leading-relaxed">{cat.desc}</p>
-                </div>
-                <div className="flex items-center gap-1 text-[10px] text-primary font-bold group-hover:underline">
-                  Browse FAQs <span className="material-symbols-outlined text-xs">arrow_right_alt</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
         {/* FAQ Section */}
-        <section id="faq-anchor" className="scroll-mt-24 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-outline-variant/10 pb-4">
-            <div className="space-y-1 text-center sm:text-left">
-              <span className="text-[10px] text-primary font-label-caps tracking-wider uppercase font-bold">Solutions</span>
-              <h2 className="font-display-lg text-lg sm:text-xl font-extrabold text-white uppercase">Frequently Asked Questions</h2>
-            </div>
-            
-            {/* Category Filter Chips */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 justify-start w-full">
-              <button 
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-all shrink-0 border ${
-                  selectedCategory === 'all' 
-                    ? 'bg-primary text-on-primary border-primary shadow-sm shadow-primary/20' 
-                    : 'bg-surface-container-low border-outline-variant/30 text-on-surface-variant hover:text-white hover:bg-surface-container/50'
-                }`}
-              >
-                All
-              </button>
-              {supportCategories.map(cat => (
-                <button 
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-all shrink-0 border ${
-                    selectedCategory === cat.id 
-                      ? 'bg-primary text-on-primary border-primary shadow-sm shadow-primary/20' 
-                      : 'bg-surface-container-low border-outline-variant/30 text-on-surface-variant hover:text-white hover:bg-surface-container/50'
+        <section className="space-y-6 mb-14">
+          <div className="space-y-1 text-center sm:text-left">
+            <h2 className="text-lg sm:text-xl font-bold text-slate-900">Frequently Asked Questions</h2>
+            <p className="text-sm text-slate-500">Quick answers to the most common queries.</p>
+          </div>
+
+          <div className="space-y-3 max-w-3xl mx-auto">
+            {faqs.map((faq) => {
+              const isOpen = openFaqId === faq.id;
+              return (
+                <div
+                  key={faq.id}
+                  className={`bg-white rounded-xl border shadow-sm transition-all duration-200 overflow-hidden ${
+                    isOpen ? 'border-blue-200 shadow-md' : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  {cat.label.replace(' Support', '').replace(' Help', '').replace(' Issues', '').replace(' Problems', '')}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Accordion List */}
-          <div className="space-y-3 max-w-3xl mx-auto">
-            {filteredFaqs.length > 0 ? (
-              filteredFaqs.map((faq) => {
-                const isOpen = openFaqId === faq.id;
-                return (
-                  <div 
-                    key={faq.id}
-                    className={`rounded-xl border transition-all duration-300 overflow-hidden ${
-                      isOpen 
-                        ? 'border-primary/45 bg-surface-container shadow-[0_0_20px_rgba(99,102,241,0.12)]' 
-                        : 'border-outline-variant/20 bg-surface-container-low hover:border-outline-variant/40 hover:bg-surface-variant'
-                    }`}
+                  <button
+                    onClick={() => toggleFaq(faq.id)}
+                    className="w-full flex items-center justify-between p-5 sm:p-6 text-left focus:outline-none"
                   >
-                    <button 
-                      onClick={() => toggleFaq(faq.id)}
-                      className="w-full flex items-center justify-between p-4 sm:p-5 text-left transition-colors focus:outline-none touch-manipulation"
+                    <span className="text-sm sm:text-base font-semibold text-slate-900 pr-4 leading-snug">{faq.question}</span>
+                    <motion.span
+                      animate={{ rotate: isOpen ? 180 : 0 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                      className="material-symbols-outlined text-blue-500 text-xl shrink-0"
                     >
-                      <span className="font-headline-md text-xs sm:text-sm font-bold text-white pr-4 leading-normal select-none">{faq.question}</span>
-                      <motion.span 
-                        animate={{ rotate: isOpen ? 180 : 0 }}
-                        transition={{ duration: 0.22, ease: "easeOut" }}
-                        className="material-symbols-outlined text-primary text-base select-none shrink-0"
+                      expand_more
+                    </motion.span>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {isOpen && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: [0.04, 0.62, 0.23, 0.98] }}
+                        className="overflow-hidden"
                       >
-                        expand_more
-                      </motion.span>
-                    </button>
-
-                    <AnimatePresence initial={false}>
-                      {isOpen && (
-                        <motion.div 
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.25, ease: [0.04, 0.62, 0.23, 0.98] }}
-                          className="overflow-hidden"
-                        >
-                          <div className="border-t border-outline-variant/10 px-4 pb-4 sm:px-5 sm:pb-5 pt-3 text-xs sm:text-sm text-on-surface-variant leading-relaxed">
-                            {faq.answer}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="text-center py-10 text-on-surface-variant text-xs sm:text-sm border border-dashed border-outline-variant/20 rounded-xl">
-                No matching FAQ guides found. Try searching for other terms.
-              </div>
-            )}
+                        <div className="border-t border-slate-100 px-5 sm:px-6 pb-5 sm:pb-6 pt-3.5 text-sm text-slate-600 leading-relaxed">
+                          {faq.answer}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
           </div>
         </section>
 
-        {/* Response Metrics / Trust Section */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-6">
+        {/* Trust Metrics */}
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-14">
           {trustMetrics.map((metric, idx) => (
-            <div 
+            <div
               key={idx}
-              className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-surface-container-low/15 text-center space-y-2"
+              className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-5 text-center space-y-2"
             >
-              <div className="w-7 h-7 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center justify-center mx-auto shrink-0 w-[28px] h-[28px]">
-                <span className="material-symbols-outlined text-sm">{metric.icon}</span>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center mx-auto">
+                <span className="material-symbols-outlined text-base">{metric.icon}</span>
               </div>
               <div className="space-y-0.5">
-                <p className="font-display-lg text-sm sm:text-base font-extrabold text-white leading-none">{metric.value}</p>
-                <p className="font-label-caps text-[9px] text-primary uppercase font-bold leading-none">{metric.label}</p>
-                <p className="font-body-sm text-[10px] text-on-surface-variant/80">{metric.desc}</p>
+                <p className="text-sm sm:text-base font-extrabold text-slate-900">{metric.value}</p>
+                <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">{metric.label}</p>
+                <p className="text-[10px] text-slate-500">{metric.desc}</p>
               </div>
             </div>
           ))}
         </section>
 
-        {/* Contact & Support Section */}
-        <section className="grid grid-cols-1 md:grid-cols-12 gap-8 pt-8 border-t border-outline-variant/20 items-start">
-          
-          {/* Support Channels Column */}
+        {/* Contact & Ticket Section */}
+        <section className="grid grid-cols-1 md:grid-cols-12 gap-8 pt-8 border-t border-slate-200 items-start">
+
+          {/* Contact Channels */}
           <div className="md:col-span-5 space-y-4">
             <div className="space-y-1">
-              <span className="text-[10px] text-primary font-label-caps tracking-wider uppercase font-bold">Channels</span>
-              <h2 className="font-display-lg text-lg sm:text-xl font-extrabold text-white uppercase">Direct Contact</h2>
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900">Contact Channels</h2>
+              <p className="text-sm text-slate-500">Reach us through any of these channels.</p>
             </div>
-            
+
             <div className="space-y-3">
-              {/* Email */}
-              <div className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-surface-container-low/15 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary border border-primary/25 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-sm">mail</span>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">mail</span>
                 </div>
                 <div>
-                  <h4 className="font-headline-md text-xs font-bold text-white">Email Address</h4>
-                  <a href="mailto:support@matchdistrict.com" className="font-body-sm text-[11px] sm:text-xs text-primary hover:underline">support@matchdistrict.com</a>
+                  <h4 className="text-xs font-bold text-slate-900">Email</h4>
+                  <a href="mailto:support@matchdistrict.com" className="text-sm text-blue-600 hover:underline font-medium">support@matchdistrict.com</a>
                 </div>
               </div>
 
-              {/* Discord */}
-              <div className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-surface-container-low/15 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#5865F2]/10 text-[#5865F2] border border-[#5865F2]/25 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-sm">forum</span>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">forum</span>
                 </div>
                 <div>
-                  <h4 className="font-headline-md text-xs font-bold text-white">Discord Guild</h4>
-                  <a href="https://discord.gg/matchdistrict" target="_blank" rel="noreferrer" className="font-body-sm text-[11px] sm:text-xs text-primary hover:underline">discord.gg/matchdistrict</a>
+                  <h4 className="text-xs font-bold text-slate-900">Discord</h4>
+                  <a href="https://discord.gg/matchdistrict" target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:underline font-medium">discord.gg/matchdistrict</a>
                 </div>
               </div>
 
-              {/* Live Chat */}
-              <div className="glass-card p-4 rounded-xl border border-outline-variant/20 bg-surface-container-low/15 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0">
-                  <span className="material-symbols-outlined text-sm">chat</span>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-base">chat</span>
                 </div>
                 <div>
-                  <h4 className="font-headline-md text-xs font-bold text-white">Lobby Live Chat</h4>
-                  <p className="font-body-sm text-[10px] sm:text-xs text-on-surface-variant">Active inside all match interface lobbies.</p>
+                  <h4 className="text-xs font-bold text-slate-900">Lobby Live Chat</h4>
+                  <p className="text-sm text-slate-500">Active inside all match interface lobbies.</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Ticket Submission Form Column */}
+          {/* Ticket Form */}
           <div className="md:col-span-7">
-            <div className="glass-card p-5 sm:p-7 rounded-2xl border border-outline-variant/30 bg-surface-container-low/20 space-y-4">
-              <h3 className="font-display-lg text-sm sm:text-base font-extrabold text-white uppercase text-center sm:text-left">Submit Ticket</h3>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-7 space-y-5">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900">Submit a Ticket</h3>
 
               <AnimatePresence mode="wait">
                 {isSubmitted ? (
-                  <motion.div 
+                  <motion.div
+                    key="success"
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="p-5 bg-emerald-500/10 border border-emerald-500/25 rounded-xl text-center space-y-2"
+                    className="space-y-5"
                   >
-                    <span className="material-symbols-outlined text-emerald-400 text-3xl animate-bounce">check_circle</span>
-                    <h4 className="font-headline-md text-xs sm:text-sm font-bold text-white">Ticket Submitted Successfully</h4>
-                    <p className="font-body-sm text-[11px] sm:text-xs text-on-surface-variant">Our game arbiters will contact your registered email address shortly.</p>
-                  </motion.div>
-                ) : (
-                  <form onSubmit={handleFormSubmit} className="space-y-3.5">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Your Name</label>
-                        <input 
-                          type="text" 
-                          required
-                          value={ticketName}
-                          onChange={(e) => setTicketName(e.target.value)}
-                          className="w-full bg-surface-container border border-outline-variant/30 rounded-xl p-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-primary transition-all placeholder-on-surface-variant/40"
-                          placeholder="Player name" 
-                        />
+                    <div className="p-6 bg-emerald-50 border border-emerald-200 rounded-xl text-center space-y-3">
+                      <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+                        <span className="material-symbols-outlined text-2xl">check_circle</span>
                       </div>
                       <div className="space-y-1">
-                        <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Email Address</label>
-                        <input 
-                          type="email" 
-                          required
-                          value={ticketEmail}
-                          onChange={(e) => setTicketEmail(e.target.value)}
-                          className="w-full bg-surface-container border border-outline-variant/30 rounded-xl p-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-primary transition-all placeholder-on-surface-variant/40"
-                          placeholder="name@email.com" 
-                        />
+                        <h4 className="text-sm font-bold text-slate-900">Ticket Submitted Successfully</h4>
+                        <p className="text-sm text-slate-600">
+                          Your reference ID is{' '}
+                          <span className="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">{ticketId}</span>
+                        </p>
+                        <p className="text-xs text-slate-500">Our support team will reach out to your registered email shortly.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleNewTicket}
+                      className="w-full py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-bold shadow-sm hover:bg-slate-50 transition-all"
+                    >
+                      Submit Another Ticket
+                    </button>
+                  </motion.div>
+                ) : (
+                  <motion.form
+                    key="form"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onSubmit={handleFormSubmit}
+                    className="space-y-4"
+                  >
+                    {/* Current User Info (read-only) */}
+                    <div className="bg-slate-50 rounded-xl border border-slate-100 p-3.5 space-y-1.5">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Submitting as</p>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold uppercase shrink-0">
+                          {currentUser?.name?.charAt(0) || '?'}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{currentUser?.name || 'Player'}</p>
+                          <p className="text-xs text-slate-500">{currentUser?.email || ''}</p>
+                        </div>
                       </div>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Issue Category</label>
-                      <select 
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Issue Category</label>
+                      <select
                         value={ticketCategory}
                         onChange={(e) => setTicketCategory(e.target.value)}
-                        className="w-full bg-surface-container border border-outline-variant/30 rounded-xl p-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-primary transition-all"
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all appearance-none"
+                        style={{ WebkitAppearance: 'none', MozAppearance: 'none', backgroundImage: 'none' }}
                       >
-                        <option>Tournament Registration Issue</option>
-                        <option>Match Dispute / Cheating Report</option>
-                        <option>Prize Pool &amp; Wallet Payouts</option>
-                        <option>Account Verification / Login</option>
-                        <option>Other General Inquiry</option>
+                        <option>Payment Issue</option>
+                        <option>Tournament Dispute</option>
+                        <option>Account Verification</option>
+                        <option>Bug Report</option>
+                        <option>Other</option>
                       </select>
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Description</label>
-                      <textarea 
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Issue Description</label>
+                      <textarea
                         required
                         value={ticketMessage}
                         onChange={(e) => setTicketMessage(e.target.value)}
-                        rows="3"
-                        className="w-full bg-surface-container border border-outline-variant/30 rounded-xl p-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-primary transition-all placeholder-on-surface-variant/40"
-                        placeholder="Detail bracket round or player ID details..."
+                        rows="4"
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all placeholder-slate-400"
+                        placeholder="Describe your issue in detail..."
                       />
                     </div>
 
-                    <button 
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        Screenshot <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                      </label>
+                      <label className="flex items-center gap-3 p-3.5 rounded-xl border border-dashed border-slate-300 bg-white cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-all group">
+                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-400 group-hover:bg-blue-100 group-hover:text-blue-600 flex items-center justify-center shrink-0 transition-colors">
+                          <span className="material-symbols-outlined text-base">image</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-700 group-hover:text-blue-600 transition-colors">
+                            {screenshotFile ? screenshotFile.name : 'Upload a screenshot'}
+                          </p>
+                          <p className="text-xs text-slate-400">PNG, JPG or WebP accepted</p>
+                        </div>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => setScreenshotFile(e.target.files[0] || null)}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    <button
                       type="submit"
-                      className="w-full py-3 bg-primary text-on-primary hover:bg-primary-hover rounded-xl font-headline-md text-xs font-bold shadow-md hover:scale-[1.01] active:scale-95 transition-transform flex items-center justify-center gap-1.5"
+                      className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                     >
                       <span>Submit Ticket</span>
-                      <span className="material-symbols-outlined text-sm">send</span>
+                      <span className="material-symbols-outlined text-base">send</span>
                     </button>
-                  </form>
+                  </motion.form>
                 )}
               </AnimatePresence>
             </div>
@@ -450,18 +344,18 @@ function HelpSupport({ onNavigate }) {
       </main>
 
       {/* Footer */}
-      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6 px-4 mt-20">
-        <div className="w-full max-w-container-max mx-auto flex flex-col gap-5">
-          <div className="flex justify-center items-center gap-5 border-b border-outline-variant/20 pb-4">
-            <button onClick={() => onNavigate && onNavigate('terms-service')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Terms</button>
-            <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Privacy</button>
-            <button onClick={() => onNavigate && onNavigate('help-support')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Support</button>
+      <footer className="w-full border-t border-slate-200 bg-white py-6 px-4">
+        <div className="w-full max-w-6xl mx-auto flex flex-col gap-5">
+          <div className="flex justify-center items-center gap-5 border-b border-slate-100 pb-4">
+            <button onClick={() => onNavigate && onNavigate('terms-service')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">Terms</button>
+            <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">Privacy</button>
+            <button onClick={() => onNavigate && onNavigate('help-support')} className="text-sm text-slate-500 hover:text-blue-600 transition-colors font-medium">Support</button>
           </div>
           <div className="flex flex-col items-center justify-center gap-1.5 text-center">
-            <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[16px] font-extrabold text-primary tracking-tight hover:opacity-85 transition-opacity">
+            <button onClick={() => onNavigate && onNavigate('home')} className="text-base font-extrabold text-blue-600 tracking-tight hover:opacity-80 transition-opacity">
               Match District
             </button>
-            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
+            <p className="text-xs text-slate-400">&copy; {new Date().getFullYear()} MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
           </div>
         </div>
       </footer>

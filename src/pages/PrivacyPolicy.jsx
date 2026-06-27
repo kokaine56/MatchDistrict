@@ -21,8 +21,8 @@ function PrivacyPolicy({ onNavigate }) {
     { id: 'rights', label: 'User Rights', icon: 'person_search' },
     { id: 'retention', label: 'Data Retention', icon: 'history' },
     { id: 'contact', label: 'Contact Information', icon: 'contact_support' },
-    { id: 'escrow', label: 'Tournament Escrow & Money', icon: 'account_balance' },
-    { id: 'refund', label: 'Refund & Cancellation', icon: 'undo' }
+    { id: 'escrow', label: 'Payment, Pricing & Escrow Policy', icon: 'account_balance' },
+    { id: 'refund', label: 'Refund & Cancellation Policy', icon: 'undo' }
   ];
 
   useEffect(() => {
@@ -497,7 +497,7 @@ function PrivacyPolicy({ onNavigate }) {
 
             {/* Section 8 */}
             <section id="contact" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">contact_support</span>
@@ -507,83 +507,185 @@ function PrivacyPolicy({ onNavigate }) {
                 <p className="text-sm text-slate-600 leading-relaxed">
                   If you have concerns, queries, or requests regarding this Privacy Policy, connect with our DPO (Data Protection Officer):
                 </p>
-                <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-1.5">
-                  <p className="font-semibold text-slate-800">Match District Privacy Team</p>
-                  <p className="text-sm text-slate-600">Email: <a href="mailto:privacy@matchdistrict.com" className="text-blue-600 hover:underline font-medium">privacy@matchdistrict.com</a></p>
-                  <p className="text-sm text-slate-600">Address: Tech Hub, Sector-V, Kolkata, India</p>
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-2">
+                  <p className="font-semibold text-slate-800">Match District Support Team</p>
+                  {(() => {
+                    const email = import.meta.env.VITE_PRIVACY_EMAIL;
+                    return (
+                      <p className="text-sm text-slate-600">
+                        Email: <a href={`mailto:${email}`} className="text-blue-600 hover:text-blue-700 font-medium transition-colors">{email}</a>
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
             </section>
 
             {/* Section 9 */}
             <section id="escrow" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">account_balance</span>
                   </span>
-                  9. Tournament Escrow &amp; Money Management
+                  9. Payment, Pricing &amp; Escrow Policy
                 </h2>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Secure Wallets</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    All user deposits, entry fees, and prize allocations are managed through secure user accounts linked via integrated Indian payment gateways (RazorPay/Cashfree).
-                  </p>
-                </div>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Match District acts as a secure facilitator for competitive gaming. To ensure fairness and transparency, all financial transactions comply with standard payment gateway guidelines:
+                </p>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Escrow Period</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    To guarantee competitive integrity, tournament entry fees are securely held by Match District during the tournament lifespan and an additional 24-hour dispute window post-completion before being released.
-                  </p>
-                </div>
+                <div className="space-y-5">
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2.5" y="3.5" width="11" height="11" rx="1.5" />
+                        <path d="M5.5 3.5V2.5a2.5 2.5 0 015 0v1" />
+                        <path d="M8 8.5v3" />
+                        <circle cx="8" cy="8" r="0.75" fill="currentColor" stroke="none" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Entry Fees &amp; Escrow</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Any entry fees collected for tournaments are held securely until the tournament concludes. We do not utilize your funds for platform operations.
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">KYC Safeguards</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    In absolute compliance with Indian financial guidelines, funds cannot be withdrawn to a user's personal bank account or UPI address until their Government ID Verification (Front &amp; Back) has been officially approved.
-                  </p>
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="1.5" y="3.5" width="13" height="10" rx="1.5" />
+                        <path d="M8 6v5" />
+                        <path d="M5.5 8.5h5" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Prize Pool Transparency</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        The total prize pool distribution is fixed, predetermined, and clearly displayed on the tournament page prior to user registration.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="2.5" y="1.5" width="11" height="13" rx="1.5" />
+                        <path d="M5.5 4.5h5" />
+                        <path d="M5.5 7.5h5" />
+                        <path d="M5.5 10.5h3" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Secure UPI Processing</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        All transactions are processed directly via secure UPI (Unified Payments Interface) channels. Match District strictly uses UPI for all entries and payouts, and we do not process, collect, or store any sensitive credit/debit card details or traditional bank account credentials on our servers.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
 
             {/* Section 10 */}
             <section id="refund" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">undo</span>
                   </span>
-                  10. Refund and Cancellation Policy (Gateway Compliant)
+                  10. Refund &amp; Cancellation Policy
                 </h2>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Platform/Organizer Cancellations</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    If a tournament is cancelled by the organizer or due to platform technical failures before its formal start time, a 100% refund of the entry fee will be automatically initiated to the user's platform balance or original source of payment.
-                  </p>
-                </div>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  We adhere to a transparent refund policy to protect our users. Please read the conditions carefully:
+                </p>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Participant No-Shows &amp; Forfeits</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    No refunds will be issued if a participant fails to check-in, misses their scheduled match window, or is disqualified due to cheating, toxicity, or violating competitive rules.
-                  </p>
-                </div>
+                <div className="space-y-5">
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="8" cy="8" r="5.5" />
+                        <path d="M8 4.5v3.5l2 2" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Cancellations by User</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        Users may cancel their registration and request a full refund up to 24 hours before the scheduled tournament start time, provided the tournament brackets have not yet been generated.
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Failed Gateway Transactions</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    In the event of a double-debit or a failed transaction where money is deducted from a user's bank account/UPI but not credited to the Match District wallet, the funds will be automatically rolled back to the original source payment method by the payment gateway provider within 5 to 7 business days.
-                  </p>
-                </div>
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2.5 8l4-4 2 2 5-4.5" />
+                        <path d="M2.5 11.5h11" />
+                        <path d="M2.5 11.5l1.5 2.5" />
+                        <path d="M13.5 11.5l-1.5 2.5" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Platform/Organizer Cancellations</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        If a tournament is cancelled by the organizer or due to platform technical failures, all registered participants will receive a 100% full refund automatically.
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="space-y-3">
-                  <h3 className="text-sm font-bold text-slate-800">Refund Processing Timeline</h3>
-                  <p className="text-sm text-slate-600 leading-relaxed">
-                    Approved operational refunds initiated by Match District are processed immediately on our end. Depending on the user's banking partner or payment method (UPI, NetBanking, Debit/Credit Card), the refunded amount will reflect in the original source account within 5–7 operational business days.
-                  </p>
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="8" cy="8" r="5.5" />
+                        <path d="M4 4l8 8" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">No-Shows &amp; Disqualifications</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        No refunds will be issued for players or teams who fail to check in, do not show up for their scheduled matches, or are disqualified for violating fair play and competitive integrity rules (e.g., cheating, scripting, smurfing).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="8" cy="8" r="5.5" />
+                        <path d="M8 4.5V8l2.5 1.5" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Refund Processing Timeline</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        All approved refunds will be processed and credited back to the original payment method (UPI) within 5 to 7 business days.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-4 p-4 rounded-lg border border-slate-100">
+                    <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M8 1.5v2" />
+                        <path d="M8 12.5v2" />
+                        <path d="M1.5 8h2" />
+                        <path d="M12.5 8h2" />
+                        <path d="M3.5 3.5l1.5 1.5" />
+                        <path d="M11 11l1.5 1.5" />
+                        <path d="M11 3.5L9.5 5" />
+                        <path d="M3.5 12.5L5 11" />
+                      </svg>
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-slate-900">Disputes</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">
+                        For any payment disputes or refund requests, please contact our support team immediately at {import.meta.env.VITE_PRIVACY_EMAIL}.
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -652,7 +754,7 @@ function PrivacyPolicy({ onNavigate }) {
           </div>
           <div className="flex flex-col sm:flex-row gap-3 pt-1 max-w-xs mx-auto">
             <button
-              onClick={() => window.open('mailto:privacy@matchdistrict.com')}
+              onClick={() => window.open(`mailto:${import.meta.env.VITE_PRIVACY_EMAIL}`)}
               className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-[0.98]"
             >
               Contact Support
