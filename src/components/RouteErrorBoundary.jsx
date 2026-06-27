@@ -1,5 +1,8 @@
 import React from 'react'
 
+const CHUNK_RELOAD_KEY = 'md_chunk_reload_count'
+const CHUNK_RELOAD_MAX = 2
+
 export default class RouteErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
@@ -12,6 +15,18 @@ export default class RouteErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('[RouteErrorBoundary]', error, errorInfo)
+
+    const isChunkLoadFailed =
+      /Failed to fetch dynamically imported module|Loading chunk|Importing a module script failed/i
+        .test(error?.message || '')
+
+    if (isChunkLoadFailed) {
+      const reloadCount = parseInt(sessionStorage.getItem(CHUNK_RELOAD_KEY) || '0', 10)
+      if (reloadCount < CHUNK_RELOAD_MAX) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, (reloadCount + 1).toString())
+        window.location.reload()
+      }
+    }
   }
 
   handleTryAgain = () => {
