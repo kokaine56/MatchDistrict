@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useUser } from '../UserContext.jsx';
+import { hasOrganizerRights } from '../utils/iamRoles.js';
 
 const features = [
   "Host tournaments",
@@ -30,6 +32,7 @@ const faqs = [
 ];
 
 const OrganizerShowcase = ({ onNavigate }) => {
+  const { currentUser } = useUser();
   const [openFaq, setOpenFaq] = useState(null);
 
   const containerVariants = {
@@ -80,15 +83,25 @@ const OrganizerShowcase = ({ onNavigate }) => {
             </motion.p>
 
             <motion.div variants={itemVariants} className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3 sm:gap-4 pt-4">
+              {hasOrganizerRights(currentUser) ? (
+                <button
+                  onClick={() => onNavigate && onNavigate('org-management')}
+                  className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 bg-green-600 text-white font-headline-md text-[11px] sm:text-sm font-bold rounded-xl hover:bg-green-700 hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_20px_rgba(34,197,94,0.4)] border border-green-500/20 flex items-center justify-center gap-2 group"
+                >
+                  Manage Tournaments
+                  <span className="material-symbols-outlined text-sm sm:text-lg group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => onNavigate && onNavigate('become-organizer')}
+                  className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 bg-primary text-on-primary font-headline-md text-[11px] sm:text-sm font-bold rounded-xl hover:bg-primary/95 hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_20px_rgba(192,193,255,0.4)] border border-primary/20 flex items-center justify-center gap-2 group"
+                >
+                  Start Hosting Free
+                  <span className="material-symbols-outlined text-sm sm:text-lg group-hover:translate-x-1 transition-transform">arrow_forward</span>
+                </button>
+              )}
               <button
-                onClick={() => onNavigate && onNavigate('become-organizer')}
-                className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 bg-primary text-on-primary font-headline-md text-[11px] sm:text-sm font-bold rounded-xl hover:bg-primary/95 hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_20px_rgba(192,193,255,0.4)] border border-primary/20 flex items-center justify-center gap-2 group"
-              >
-                Start Hosting Free
-                <span className="material-symbols-outlined text-sm sm:text-lg group-hover:translate-x-1 transition-transform">arrow_forward</span>
-              </button>
-              <button
-                onClick={() => onNavigate && onNavigate('become-organizer')}
+                onClick={() => onNavigate && onNavigate('tournaments')}
                 className="w-full sm:w-auto px-5 py-2.5 sm:px-6 sm:py-3 bg-surface-container-low/50 backdrop-blur-md text-white font-headline-md text-[11px] sm:text-sm font-bold rounded-xl hover:bg-surface-variant/80 border border-outline-variant/30 hover:border-primary/50 transition-all flex items-center justify-center gap-2"
               >
                 Explore Dashboard

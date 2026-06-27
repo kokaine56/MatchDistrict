@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import CountUp from '../components/CountUp';
 import { useUser } from '../UserContext.jsx';
+import { hasOrganizerRights } from '../utils/iamRoles.js';
 
 function About({ onNavigate }) {
   const { currentUser } = useUser();
@@ -39,8 +40,8 @@ function About({ onNavigate }) {
   ];
 
   const milestones = [
-    { year: '2024', title: 'District Launch', desc: 'Match District founded, enabling direct player matching and simple tournaments.' },
-    { year: '2025', title: 'Payout Integration', desc: 'Released secure digital wallet payouts to automate prize distribution globally.' },
+    { year: '2026', title: 'District Launch', desc: 'Match District founded, enabling direct player matching and simple tournaments.' },
+    { year: '2026', title: 'Payout Integration', desc: 'Released secure digital wallet payouts to automate prize distribution globally.' },
     { year: '2026', title: 'Global SaaS Expansion', desc: 'Introduced accredited organizer panels, 3D telemetry tracking, and advanced scaling.' }
   ];
 
@@ -76,19 +77,30 @@ function About({ onNavigate }) {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3 max-w-sm mx-auto">
-            <button 
-              onClick={() => onNavigate && onNavigate('tournament-detail')}
-              className="w-full py-3.5 px-6 bg-primary text-on-primary font-headline-md text-xs font-bold rounded-xl hover:bg-primary/95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.25)] flex items-center justify-center gap-1.5"
+            <button
+              onClick={() => onNavigate && onNavigate('tournaments')}
+              className="w-full sm:w-48 px-6 py-3 bg-primary text-on-primary font-headline-md text-xs font-bold rounded-xl hover:bg-primary/95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.25)] flex items-center justify-center gap-1.5"
             >
-              Explore Tournaments
-              <span className="material-symbols-outlined text-base">sports_esports</span>
+              <span className="material-symbols-outlined text-base">stadium</span>
+              Tournaments
             </button>
-            <button 
-              onClick={() => onNavigate && onNavigate('become-organizer')}
-              className="w-full py-3.5 px-6 bg-surface-container-high border border-outline-variant/30 text-white font-headline-md text-xs font-bold rounded-xl hover:bg-surface-variant transition-all"
-            >
-              Apply as Host
-            </button>
+            {hasOrganizerRights(currentUser) ? (
+              <button
+                onClick={() => onNavigate && onNavigate('org-management')}
+                className="w-full sm:w-48 px-6 py-3 bg-green-600 text-white font-headline-md text-xs font-bold rounded-xl hover:bg-green-700 transition-all shadow-[0_0_15px_rgba(34,197,94,0.25)] flex items-center justify-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-base">dashboard</span>
+                Host Dashboard
+              </button>
+            ) : (
+              <button
+                onClick={() => onNavigate && onNavigate('become-organizer')}
+                className="w-full sm:w-48 px-6 py-3 bg-surface-container-high border border-outline-variant/30 text-white font-headline-md text-xs font-bold rounded-xl hover:bg-surface-variant transition-all flex items-center justify-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-base">app_registration</span>
+                Apply as a Host
+              </button>
+            )}
           </div>
         </motion.section>
 
@@ -155,8 +167,12 @@ function About({ onNavigate }) {
         <section className="space-y-8">
           <div className="text-center space-y-2">
             <span className="text-[10px] text-primary font-label-caps tracking-wider uppercase font-bold">Features Highlight</span>
-            <h2 className="font-display-lg text-xl sm:text-2xl font-extrabold text-white uppercase">SaaS Hosting Solutions</h2>
+            <h2 className="font-display-lg text-xl sm:text-2xl font-extrabold text-white uppercase">End-to-End Tournament Management</h2>
           </div>
+
+          <p className="text-on-surface-variant text-xs sm:text-sm text-center max-w-2xl mx-auto leading-relaxed">
+            We provide organizers with all the automated tools they need to host, manage, and distribute prize pools seamlessly — no technical expertise required.
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {highlights.map((highlight, idx) => (
@@ -177,8 +193,8 @@ function About({ onNavigate }) {
         </section>
 
 
-        {/* 5. Stats / Trust Section */}
-        <section className="space-y-8">
+        {/* 5. Stats / Trust Section — hidden during development */}
+        <section className="space-y-8 hidden">
           <div className="text-center space-y-2">
             <span className="text-[10px] text-primary font-label-caps tracking-wider uppercase font-bold">Platform Stats</span>
             <h2 className="font-display-lg text-xl sm:text-2xl font-extrabold text-white uppercase">Our Competitive Scale</h2>
@@ -254,23 +270,32 @@ function About({ onNavigate }) {
           <div className="space-y-1">
             <h2 className="font-display-lg text-lg sm:text-xl font-bold text-white uppercase">Ready to Join the District?</h2>
             <p className="font-body-md text-xs sm:text-sm text-on-surface-variant leading-relaxed max-w-md mx-auto">
-              Compete in verified tournaments or set up your own organizer credentials today. Let’s elevate your game.
+              Compete in verified tournaments or set up your own organizer credentials today. Let's elevate your game.
             </p>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2 max-w-xs mx-auto">
-            <button 
-              onClick={() => onNavigate && onNavigate('register')} 
+            <button
+              onClick={() => onNavigate && onNavigate('register')}
               className="w-full py-3 bg-primary text-on-primary rounded-xl font-headline-md text-xs font-bold shadow-md hover:scale-[1.01] transition-transform"
             >
               Sign Up Now
             </button>
-            <button 
-              onClick={() => onNavigate && onNavigate('become-organizer')} 
-              className="w-full py-3 bg-surface-container-high border border-outline-variant/40 text-white rounded-xl font-headline-md text-xs font-bold"
-            >
-              Apply as Host
-            </button>
+            {hasOrganizerRights(currentUser) ? (
+              <button
+                onClick={() => onNavigate && onNavigate('org-management')}
+                className="w-full py-3 bg-green-600 text-white rounded-xl font-headline-md text-xs font-bold shadow-md hover:scale-[1.01] transition-transform"
+              >
+                Host Dashboard
+              </button>
+            ) : (
+              <button
+                onClick={() => onNavigate && onNavigate('become-organizer')}
+                className="w-full py-3 bg-surface-container-high border border-outline-variant/40 text-white rounded-xl font-headline-md text-xs font-bold"
+              >
+                Apply as Host
+              </button>
+            )}
           </div>
         </motion.section>
 
@@ -288,7 +313,7 @@ function About({ onNavigate }) {
             <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[16px] font-extrabold text-primary tracking-tight hover:opacity-85 transition-opacity">
                Match District
             </button>
-            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
+            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">&copy; 2026 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
           </div>
         </div>
       </footer>

@@ -84,7 +84,7 @@ function Homepage({ onNavigate }) {
     }
 
     if (hasOrganizerRights(currentUser)) {
-      onNavigate && onNavigate('profile')
+      onNavigate && onNavigate('org-management')
       return
     }
 
@@ -192,9 +192,15 @@ Tournaments
                       <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-md mx-auto leading-relaxed">
                         Tournaments can only be hosted by verified organizers who have registered and been approved. Are you an esports organization?
                       </p>
-                      <button onClick={() => onNavigate && onNavigate('become-organizer')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(192,193,255,0.4)] transition-all">
-                        Apply to Become an Organizer
-                      </button>
+                      {hasOrganizerRights(currentUser) ? (
+                        <button onClick={() => onNavigate && onNavigate('org-management')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-all">
+                          Host Dashboard
+                        </button>
+                      ) : (
+                        <button onClick={() => onNavigate && onNavigate('become-organizer')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(192,193,255,0.4)] transition-all">
+                          Apply to Become an Organizer
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
@@ -623,7 +629,7 @@ Tournaments
 
         {/* Organizer showcase */}
         <section id="organizer-showcase">
-          <OrganizerShowcase onBecomeOrganizer={handleBecomeOrganizer} />
+          <OrganizerShowcase onNavigate={onNavigate} />
         </section>
       </main>
 
