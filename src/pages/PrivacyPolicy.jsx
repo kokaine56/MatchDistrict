@@ -19,7 +19,6 @@ function PrivacyPolicy({ onNavigate }) {
     { id: 'payments', label: 'Payment Information', icon: 'account_balance_wallet' },
     { id: 'security', label: 'Security Measures', icon: 'gpp_good' },
     { id: 'rights', label: 'User Rights', icon: 'person_search' },
-    { id: 'third-party', label: 'Third-Party Services', icon: 'hub' },
     { id: 'retention', label: 'Data Retention', icon: 'history' },
     { id: 'contact', label: 'Contact Information', icon: 'contact_support' },
     { id: 'escrow', label: 'Tournament Escrow & Money', icon: 'account_balance' },
@@ -482,28 +481,13 @@ function PrivacyPolicy({ onNavigate }) {
             </section>
 
             {/* Section 7 */}
-            <section id="third-party" className="scroll-mt-28">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                    <span className="material-symbols-outlined text-base">hub</span>
-                  </span>
-                  7. Third-Party Services
-                </h2>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  We synchronize match logs with external game API endpoints (e.g. Steam Match API) to verify winners. These third parties maintain independent privacy agreements which we encourage players to review.
-                </p>
-              </div>
-            </section>
-
-            {/* Section 8 */}
             <section id="retention" className="scroll-mt-28">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">history</span>
                   </span>
-                  8. Data Retention
+                  7. Data Retention
                 </h2>
                 <p className="text-sm text-slate-600 leading-relaxed">
                   We store account coordinates only as long as your profile remains active. Unused, inactive profiles with no tournament logs are flagged and automatically deleted after 2 years.
@@ -511,14 +495,14 @@ function PrivacyPolicy({ onNavigate }) {
               </div>
             </section>
 
-            {/* Section 9 */}
+            {/* Section 8 */}
             <section id="contact" className="scroll-mt-28">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-3">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">contact_support</span>
                   </span>
-                  9. Contact Information
+                  8. Contact Information
                 </h2>
                 <p className="text-sm text-slate-600 leading-relaxed">
                   If you have concerns, queries, or requests regarding this Privacy Policy, connect with our DPO (Data Protection Officer):
@@ -531,14 +515,14 @@ function PrivacyPolicy({ onNavigate }) {
               </div>
             </section>
 
-            {/* Section 10 */}
+            {/* Section 9 */}
             <section id="escrow" className="scroll-mt-28">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">account_balance</span>
                   </span>
-                  10. Tournament Escrow &amp; Money Management
+                  9. Tournament Escrow &amp; Money Management
                 </h2>
 
                 <div className="space-y-3">
@@ -564,14 +548,14 @@ function PrivacyPolicy({ onNavigate }) {
               </div>
             </section>
 
-            {/* Section 11 */}
+            {/* Section 10 */}
             <section id="refund" className="scroll-mt-28">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
                     <span className="material-symbols-outlined text-base">undo</span>
                   </span>
-                  11. Refund and Cancellation Policy (Gateway Compliant)
+                  10. Refund and Cancellation Policy (Gateway Compliant)
                 </h2>
 
                 <div className="space-y-3">
