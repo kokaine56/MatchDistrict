@@ -8,16 +8,6 @@ const NAV_ITEMS = [
   { id: 'upgrades', label: 'Plan Upgrades', icon: 'upgrade', badgeKey: 'upgrades' },
   { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
-  { id: 'registrations', label: 'Registrations', icon: 'assignment' },
-  { id: 'payments', label: 'Payments', icon: 'payments' },
-  { id: 'subscriptions', label: 'Subscriptions', icon: 'credit_card' },
-  { id: 'activity', label: 'System Logs', icon: 'list_alt' },
-  { id: 'rolemanagement', label: 'Role Management', icon: 'admin_panel_settings' },
-  { id: 'bulk-approvals', label: 'Bulk Approvals', icon: 'how_to_reg' },
-  { id: 'abusefilter', label: 'Abuse Filter', icon: 'security' },
-  { id: 'sponsor', label: 'Sponsorships', icon: 'sponsor' },
-  { id: 'verify', label: 'Verify Sponsor', icon: 'verified' },
-  { id: 'featureflags', label: 'Feature Flags', icon: 'flag' },
 ]
 
 export default function AdminLayout({
@@ -26,6 +16,8 @@ export default function AdminLayout({
   onNavigate,
   currentUser,
   badges,
+  activeTournament,
+  onBackTournament,
   children,
 }) {
   const { theme } = useTheme()
@@ -48,9 +40,8 @@ export default function AdminLayout({
 
   const getBadgeCount = (item) => {
     if (!badges) return null
-    if (item.id === 'kyc') return badges.kycPending
-    if (item.id === 'upgrades') return badges.upgradePending
-    if (item.id === 'abusefilter') return badges.badWordsCount
+    if (item.id === 'kyc') return badges.kyc
+    if (item.id === 'upgrades') return badges.upgrades
     return null
   }
 
@@ -166,9 +157,24 @@ export default function AdminLayout({
             <nav className="hidden sm:flex items-center text-sm">
               <span className="font-medium text-slate-500 dark:text-white/40">Admin</span>
               <span className="material-symbols-outlined mx-1.5 text-sm text-slate-300 dark:text-white/20">chevron_right</span>
-              <span className="font-semibold text-slate-900 dark:text-white capitalize">
-                {NAV_ITEMS.find(n => n.id === activeTab)?.label || activeTab}
-              </span>
+              {activeTab === 'tournaments' && activeTournament ? (
+                <div className="flex items-center">
+                  <button
+                    onClick={onBackTournament}
+                    className="font-medium text-slate-500 dark:text-white/40 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline transition-colors"
+                  >
+                    Tournaments
+                  </button>
+                  <span className="material-symbols-outlined mx-1.5 text-sm text-slate-300 dark:text-white/20">chevron_right</span>
+                  <span className="font-semibold text-slate-900 dark:text-white capitalize">
+                    Registration
+                  </span>
+                </div>
+              ) : (
+                <span className="font-semibold text-slate-900 dark:text-white capitalize">
+                  {NAV_ITEMS.find(n => n.id === activeTab)?.label || activeTab}
+                </span>
+              )}
             </nav>
           </div>
 

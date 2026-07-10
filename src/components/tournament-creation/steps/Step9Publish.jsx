@@ -284,64 +284,12 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div>
-              <p className="text-sm font-semibold text-rose-500">{isEditMode ? 'Failed to Save Changes' : 'Failed to Publish Tournament'}</p>
+              <p className="text-sm font-semibold text-rose-500">Failed to Publish Tournament</p>
               <p className="text-xs text-rose-400/80 mt-1">{publishErrorMsg}</p>
             </div>
           </div>
         </motion.div>
       )}
-
-      <div className="grid gap-3">
-        {canDraft ? (
-          <motion.button
-            type="button"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.97 }}
-            onClick={onSaveDraft}
-            disabled={isPublishing || mediaUploading}
-            className="w-full py-3.5 rounded-xl border-2 border-primary/30 text-primary text-sm font-semibold hover:bg-primary/10 hover:border-primary/50 disabled:opacity-40 transition-all"
-          >
-            {isPublishing ? (isEditMode ? 'Saving...' : 'Publishing...') : (isEditMode ? 'Save Changes' : 'Save as Draft')}
-          </motion.button>
-        ) : (
-          <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/25 rounded-xl p-4">
-            <p className="text-sm text-on-surface-variant mb-2">Save as Draft is available on Basic and Pro plans.</p>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.97 }}
-              className="w-full py-2.5 rounded-xl bg-primary text-white text-sm font-semibold"
-            >
-              Upgrade to Save Drafts
-            </motion.button>
-          </div>
-        )}
-
-        <motion.button
-          type="button"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={handlePublish}
-          disabled={isPublishing || mediaUploading || isSubmitting}
-          className="w-full py-4 rounded-xl bg-primary text-white text-base font-bold shadow-[0_0_25px_rgba(99,102,241,0.4)] hover:shadow-[0_0_40px_rgba(99,102,241,0.6)] hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-        >
-          {mediaUploading ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-              Uploading media...
-            </span>
-          ) : isPublishing ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-              Publishing...
-            </span>
-          ) : isEditMode ? (
-            'Save Changes'
-          ) : (
-            'Publish Tournament'
-          )}
-        </motion.button>
-      </div>
 
       <p className="text-xs text-on-surface-variant text-center">
         Publishing will immediately make your tournament visible on the homepage, discover page, and search results.

@@ -30,19 +30,6 @@ function OrganizerDashboard({
   orgData,
   setOrgData,
   handleSaveOrgSettingsTab,
-  // Org Handle Change props
-  settingsOrgHandle,
-  setSettingsOrgHandle,
-  orgOtpCode,
-  setOrgOtpCode,
-  orgOtpSent,
-  orgOtpCountdown,
-  isOrgSendingOtp,
-  sendProfileOtp,
-  handleVerifyAndSaveUsername,
-  handletagCooldownDays,
-  orgHandleAbuse,
-  setOrgHandleAbuse,
 }) {
   const navigate = useNavigate()
   const { theme } = useTheme()
@@ -201,11 +188,6 @@ function OrganizerDashboard({
   const handleSettingsSave = async (e) => {
     e.preventDefault()
     if (!currentUser || isSavingSettings) return
-
-    if (handletagCooldownDays > 0 && orgData.name !== currentUser.orgName) {
-      triggerToast(`You can only change your organization name once every 30 days. Remaining: ${handletagCooldownDays} days.`)
-      return
-    }
 
     setIsSavingSettings(true)
 
@@ -1216,7 +1198,6 @@ function OrganizerDashboard({
                             >
                               <span className="material-symbols-outlined text-sm">analytics</span> Analytics
                             </button>
-                            <div className="h-px bg-outline-variant/20 my-1" />
                             <button
                               onClick={() => { setManageDropdownOpen(null); handleDuplicate(t); }}
                               className="w-full flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium text-on-background hover:bg-surface-variant transition-colors"
@@ -1862,81 +1843,17 @@ function OrganizerDashboard({
             </div>
           </div>
 
-          {/* Change Org Handle Tag */}
+          {/* Org Handle — tied to gamerTag */}
           <div className="glass-card p-4 sm:p-6 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
             <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-              <span className="material-symbols-outlined text-secondary text-xl">alternate_email</span> Change Org Handle
+              <span className="material-symbols-outlined text-secondary text-xl">alternate_email</span> Org Handle
             </h3>
-            {handletagCooldownDays > 0 ? (
-              <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">schedule</span>
-                <p className="text-xs text-amber-300 leading-relaxed font-semibold">
-                  Your Org Handle was recently changed. You can change it again in <strong>{handletagCooldownDays} days</strong>.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3 p-3 bg-surface border border-outline-variant/30 rounded-xl">
-                  <span className="material-symbols-outlined text-on-surface-variant text-base shrink-0">info</span>
-                  <p className="text-[11px] text-on-surface-variant leading-relaxed font-semibold">
-                    Current handle: <strong className="text-on-background">{orgData.handle}</strong>. You can change it once every <strong className="text-secondary">30 days</strong>. A verification code will be sent to your registered email.
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">New Org Handle</label>
-                  <input
-                    type="text"
-                    value={settingsOrgHandle || ''}
-                    onChange={(e) => setSettingsOrgHandle && setSettingsOrgHandle(e.target.value)}
-                    placeholder="e.g. @new_handle"
-                    className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm"
-                  />
-                </div>
-                {settingsOrgHandle && settingsOrgHandle.trim() !== orgData.handle && (
-                  <div className="p-3 bg-secondary/5 border border-secondary/20 rounded-xl space-y-3 animate-in fade-in duration-200">
-                    <p className="text-[10px] font-bold text-secondary uppercase tracking-wider">Verification Required</p>
-                    <p className="text-[11px] text-on-surface-variant leading-relaxed font-semibold">
-                      A one-time code will be sent to <strong className="text-on-background">{orgData.email}</strong>.
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Enter 6-digit Code"
-                        value={orgOtpCode || ''}
-                        onChange={(e) => setOrgOtpCode && setOrgOtpCode(e.target.value)}
-                        maxLength={6}
-                        className="flex-1 bg-surface border border-outline-variant rounded-lg px-3 py-2 text-on-background text-xs outline-none focus:border-secondary tracking-widest font-mono shadow-sm"
-                      />
-                      {orgOtpSent ? (
-                        <button
-                          type="button"
-                          onClick={() => handleVerifyAndSaveUsername && handleVerifyAndSaveUsername(false)}
-                          className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                        >
-                          <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isOrgSendingOtp}
-                          onClick={() => sendProfileOtp && sendProfileOtp(orgData.email, false)}
-                          className="px-4 py-2 bg-secondary hover:bg-secondary/90 disabled:opacity-50 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
-                        >
-                          {isOrgSendingOtp ? (
-                            <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Sending…</>
-                          ) : (
-                            <><span className="material-symbols-outlined text-sm">send</span> Send Code</>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                    {orgOtpSent && orgOtpCountdown > 0 && (
-                      <p className="text-[10px] text-on-surface-variant font-bold">Resend available in <strong className="text-secondary">{orgOtpCountdown}s</strong></p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-xl">
+              <span className="material-symbols-outlined text-primary text-base shrink-0">info</span>
+              <p className="text-[11px] text-on-surface-variant leading-relaxed font-semibold">
+                Your organization handle is tied to your personal gamerTag: <strong className="text-on-background">{orgData.handle}</strong>. To change it, update your gamerTag in your <strong className="text-secondary">Profile Settings</strong>.
+              </p>
+            </div>
           </div>
 
           <div className="flex justify-end gap-3 glass-card p-4 sm:p-5 rounded-xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm">

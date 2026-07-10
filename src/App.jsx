@@ -16,7 +16,6 @@ const Homepage        = lazy(() => import('./pages/Homepage.jsx'))
 const Tournaments     = lazy(() => import('./pages/Tournaments.jsx'))
 const TournamentDetail = lazy(() => import('./pages/TournamentDetail.jsx'))
 const TournamentRegistrations = lazy(() => import('./pages/TournamentRegistrations.jsx'))
-const RegistrationPage        = lazy(() => import('./pages/RegistrationPage.jsx'))
 const About           = lazy(() => import('./pages/About.jsx'))
 const HelpSupport     = lazy(() => import('./pages/HelpSupport.jsx'))
 const PrivacyPolicy   = lazy(() => import('./pages/PrivacyPolicy.jsx'))
@@ -31,11 +30,11 @@ const ExploreOrganisers = lazy(() => import('./pages/ExploreOrganisers.jsx'))
 const OrganizationManagement = lazy(() => import('./pages/OrganizationManagement.jsx'))
 const SubscriptionPayment  = lazy(() => import('./pages/SubscriptionPayment.jsx'))
 const PaymentHistory       = lazy(() => import('./pages/PaymentHistory.jsx'))
-const TournamentPayment    = lazy(() => import('./pages/TournamentPayment.jsx'))
 const OrgPage              = lazy(() => import('./pages/OrgPage.jsx'))
 const TournamentManagement = lazy(() => import('./pages/TournamentManagement.jsx'))
 const MyTournaments        = lazy(() => import('./pages/MyTournaments.jsx'))
 const OrganizerForm        = lazy(() => import('./pages/OrganizerForm.jsx'))
+const RegistrationPage     = lazy(() => import('./pages/RegistrationPage.jsx'))
 
 // -------------------------------------------------------------------
 // URL map: page-key => path (used by the handleNavigate shim)
@@ -61,12 +60,13 @@ const PAGE_URL_MAP = {
   'explore-organisers':'/organisers',
   'org-management':    '/org-management',
   'subscription':      '/subscription/payment',
+  'register-for-tournament': '/tournaments/', // + id + '/register'
 }
 
 // Pages that share the persistent top Header
 const HEADER_PAGES = new Set(['/', '/tournaments', '/about', '/help', '/privacypolicy', '/terms'])
 
-const LoadingArena = () => <LoadingScreen message="Loading Arena..." />
+const LoadingArena = () => <LoadingScreen message="Loading District..." />
 
 // -------------------------------------------------------------------
 // Page Transition Wrapper Component
@@ -130,6 +130,11 @@ function AppInner() {
     if (page === 'profile') {
       // selectedUserProfile is stored in state then consumed by the route
       navigate('/profile', { state: { selectedUserProfile: param } })
+      return
+    }
+
+    if (page === 'register-for-tournament') {
+      navigate(`/tournaments/${param}/register`)
       return
     }
 
@@ -235,6 +240,26 @@ function AppInner() {
     )
   }
 
+  // Registration adapter with auth guard
+  const RegistrationRoute = () => {
+    const { id } = useParams()
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to={`/login?redirect=/tournaments/${id}/register`} replace />
+    }
+
+    return (
+      <PageTransition>
+        <RegistrationPage onNavigate={handleNavigate} />
+      </PageTransition>
+    )
+  }
+
   // CreateTournament adapter with frontend route guard
   const CreateTournamentRoute = () => {
     const { currentUser, loading } = useUser()
@@ -258,54 +283,7 @@ function AppInner() {
     )
   }
 
-  // Registration page adapter with auth guard AND pre-flight duplicate check
-  const RegistrationRoute = () => {
-    const { currentUser, loading } = useUser()
-    const { id } = useParams()
-    const location = useLocation()
-    const [checkingReg, setCheckingReg] = useState(true)
-    const [alreadyRegistered, setAlreadyRegistered] = useState(false)
 
-    useEffect(() => {
-      if (!id || !currentUser) { setCheckingReg(false); return }
-      setCheckingReg(true)
-      fetch(`/api/tournaments/${id}/registrations`)
-        .then(r => r.json())
-        .then(data => {
-          if (data.success && data.registrations) {
-            const myReg = data.registrations.find(r => {
-              if (r.user_id === currentUser.id) return true
-              if (currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase()) return true
-              return false
-            })
-            if (myReg) {
-              const active = ['pending', 'pending_payment', 'approved', 'confirmed', 'PENDING_PAYMENT_VERIFICATION']
-              if (active.includes(myReg.status)) setAlreadyRegistered(true)
-            }
-          }
-        })
-        .catch(() => {})
-        .finally(() => setCheckingReg(false))
-    }, [id, currentUser])
-
-    if (loading || checkingReg) {
-      return <LoadingArena />
-    }
-
-    if (!currentUser) {
-      return <Navigate to={`/login?redirect=${encodeURIComponent('/tournaments/' + id + '/register')}`} replace />
-    }
-
-    if (alreadyRegistered) {
-      return <Navigate to={`/tournaments/${id}`} replace />
-    }
-
-    return (
-      <PageTransition>
-        <RegistrationPage />
-      </PageTransition>
-    )
-  }
 
   // Shared persistent header — shown on public-facing pages
   const SharedHeader = ({ activePage }) => (
@@ -462,17 +440,7 @@ function AppInner() {
                   </PageTransition>
                 } />
 
-                <Route path="/payment/:sessionId" element={
-                  <PageTransition>
-                    <TournamentPayment />
-                  </PageTransition>
-                } />
 
-                <Route path="/tournaments/:id/register/:regId/payment" element={
-                  <PageTransition>
-                    <TournamentPayment />
-                  </PageTransition>
-                } />
 
                 <Route path="/tournaments/:id/register" element={
                   <RegistrationRoute />

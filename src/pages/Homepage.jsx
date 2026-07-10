@@ -110,7 +110,10 @@ function Homepage({ onNavigate }) {
   }, [tournamentsList, now])
 
   const featuredTournaments = useMemo(() => {
-    return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) !== 'live').slice(0, 10)
+    return tournamentsList.filter(t => {
+      const s = getTournamentLifecycleStatus(t, now)
+      return s !== 'live' && s !== 'completed'
+    }).slice(0, 10)
   }, [tournamentsList, now])
 
 

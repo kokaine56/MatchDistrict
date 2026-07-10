@@ -95,11 +95,11 @@ function TimelineNode({ label, date, icon: Icon, isLast, index }) {
         {!isLast && <div className={`w-[2px] flex-1 min-h-[28px] transition-colors duration-300 ${lineStyle}`} />}
       </div>
       <div className={`pb-3 flex-1 min-w-0 transition-opacity duration-300 ${state === 'past' ? 'opacity-50' : 'opacity-100'}`}>
-        <div className="flex items-center gap-2">
-          <span className={`text-xs shrink-0 ${labelColor}`}><Icon className="w-3.5 h-3.5" /></span>
-          <span className={`text-xs font-semibold whitespace-nowrap transition-colors ${labelColor}`}>{label}</span>
+        <div className="flex items-start gap-x-2 gap-y-0.5 flex-wrap">
+          <span className={`text-xs shrink-0 mt-0.5 ${labelColor}`}><Icon className="w-3.5 h-3.5" /></span>
+          <span className={`text-xs font-semibold transition-colors ${labelColor}`}>{label}</span>
           {date && (
-            <span className="text-[11px] text-on-surface-variant ml-auto text-right shrink-0 tabular-nums">
+            <span className="text-[11px] text-on-surface-variant ml-auto text-right shrink-0 tabular-nums w-full sm:w-auto">
               {new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
@@ -115,62 +115,76 @@ export default function TimelinePreview({ registrationOpen, registrationClose, m
     { label: 'Registration Opens', date: registrationOpen, icon: UnlockIcon },
     { label: 'Registration Closes', date: registrationClose, icon: LockIcon },
     { label: 'Match Starts', date: matchStart, icon: GamepadIcon },
-  ].filter((i) => i.date)
+  ]
 
   return (
-    <div className="space-y-4">
-      {items.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-on-background">
-            Timeline Preview
-          </h3>
-          <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-4 sm:p-5">
-            {items.map((item, idx) => (
-              <TimelineNode
-                key={item.label}
-                label={item.label}
-                date={item.date}
-                icon={item.icon}
-                isLast={idx === items.length - 1}
-                index={idx}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+    <div className="space-y-6">
+      {/* Static Timeline Nodes */}
+      <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-4 sm:p-5">
+        {items.map((item, idx) => (
+          <TimelineNode
+            key={item.label}
+            label={item.label}
+            date={item.date}
+            icon={item.icon}
+            isLast={idx === items.length - 1}
+            index={idx}
+          />
+        ))}
+      </div>
 
-      {rounds.length > 0 && (
-        <div className="pt-2">
-          <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-3">Rounds Progression</h4>
-          <div className="flex items-center overflow-x-auto pb-3 gap-2 scrollbar-hide">
+      {/* Rounds Progression */}
+      <div>
+        <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-3 flex items-center gap-2">
+          <span>Rounds Progression</span>
+          <span className="text-[10px] font-normal text-on-surface-variant/50 normal-case">({rounds.length} round{rounds.length !== 1 ? 's' : ''})</span>
+        </h4>
+        {rounds.length === 0 ? (
+          <div className="bg-surface-container/30 border border-dashed border-outline-variant/20 rounded-xl p-5 text-center">
+            <p className="text-xs text-on-surface-variant/50">No rounds added yet. Click <span className="text-primary font-semibold">+ Add Round</span> above to build your tournament bracket.</p>
+          </div>
+        ) : (
+          <div className="flex items-center overflow-x-auto pb-2 gap-2 scrollbar-hide">
             {rounds.map((r, idx) => (
               <div key={r.id || idx} className="flex items-center shrink-0">
                 {/* Node Box */}
-                <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-3 min-w-[170px] space-y-2 flex flex-col justify-between shadow-sm">
-                  <div className="space-y-0.5">
-                    <h4 className="text-xs font-extrabold text-white truncate max-w-[150px]">
-                      {r.name || `Round ${idx + 1}`}
-                    </h4>
-                    <p className="text-[10px] font-mono text-on-surface-variant/80">
+                <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-3.5 min-w-[190px] space-y-2.5 flex flex-col justify-between shadow-sm">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center text-[9px] font-bold text-primary shrink-0">
+                        {idx + 1}
+                      </span>
+                      <h4 className="text-xs font-extrabold text-on-background truncate max-w-[140px]">
+                        {r.name || `Round ${idx + 1}`}
+                      </h4>
+                    </div>
+                    <p className="text-[10px] font-mono text-on-surface-variant/80 pl-7">
+                      <span className="inline-block w-3.5 text-center mr-1">&#128197;</span>
                       {formatRoundDateTime(r.date, r.time)}
                     </p>
                   </div>
-                  
-                  {r.map && (
-                    <div>
+
+                  <div className="flex items-center gap-2 pl-7">
+                    {r.map ? (
                       <span className="inline-block px-2 py-0.5 rounded bg-surface border border-outline-variant/35 text-[9px] font-extrabold text-on-surface-variant uppercase tracking-wider">
                         {r.map}
                       </span>
-                    </div>
-                  )}
+                    ) : (
+                      <span className="inline-block px-2 py-0.5 rounded bg-surface border border-dashed border-outline-variant/20 text-[9px] text-on-surface-variant/40 italic">
+                        Map TBD
+                      </span>
+                    )}
 
-                  {r.qualified && (
-                    <div className="border-t border-outline-variant/10 pt-1.5 mt-1">
-                      <p className="text-[10px] font-bold text-primary">
-                        Top {r.qualified} Teams Advance
-                      </p>
-                    </div>
-                  )}
+                    {r.qualified ? (
+                      <span className="text-[9px] font-bold text-primary whitespace-nowrap">
+                        Top {r.qualified}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-on-surface-variant/40 italic whitespace-nowrap">
+                        Adv. TBD
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Directional Arrow */}
@@ -178,8 +192,8 @@ export default function TimelinePreview({ registrationOpen, registrationClose, m
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }

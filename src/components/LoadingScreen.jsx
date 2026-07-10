@@ -14,7 +14,7 @@ export default function LoadingScreen({
       <div className="flex flex-col items-center gap-5 relative z-10 animate-in fade-in zoom-in-95 duration-300">
         <div className="w-12 h-12 rounded-full loading-spinner border-4 border-transparent border-t-blue-600 dark:border-t-white shrink-0 shadow-[0_0_20px_rgba(37,99,235,0.25)] dark:shadow-[0_0_20px_rgba(192,193,255,0.2)]" />
         <div className="px-4 py-2.5 rounded-xl bg-white border border-slate-200 shadow-md dark:bg-surface-container/80 dark:border-outline-variant/35 dark:shadow-lg">
-          <p className="text-sm font-semibold tracking-widest uppercase text-center text-gray-600 dark:text-on-surface-variant loading-text-pulse">
+          <p className="text-sm font-semibold tracking-wide text-center text-gray-600 dark:text-on-surface-variant loading-text-pulse">
             {message}
           </p>
         </div>

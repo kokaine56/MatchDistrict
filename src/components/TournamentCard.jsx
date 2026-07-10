@@ -367,7 +367,8 @@ function TournamentCardBase({
   registrationOpenDate,
   registrationCloseDate,
   startDate,
-  date
+  date,
+  forceWalletCard
 }) {
   const isSponsored = hasSponsors || (parseInt(sponsoredAmount) > 0)
   const [isExpanded, setIsExpanded] = useState(false)
@@ -439,7 +440,7 @@ function TournamentCardBase({
     badgeTextColor
   }
 
-  if (isLive) {
+  if (isLive && !forceWalletCard) {
     return (
       <motion.div
         whileHover={{ y: -4, scale: 1.01 }}

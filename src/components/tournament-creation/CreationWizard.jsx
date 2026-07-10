@@ -329,6 +329,10 @@ export default function CreationWizard() {
         .filter((s) => s.status === 'approved')
         .reduce((sum, s) => sum + (s.amount || 0), 0)
       const finalPrizePool = basePrizePool + sponsorContribs
+      // Use the net placement pool (after platform fee, organizer fee, MVP, kill rewards)
+      // synced from Step4PrizePool; fall back to gross for backward compat
+      const rawPlacementPool = parseInt(formData.availablePlacementPool) || 0
+      const netPrizePool = rawPlacementPool > 0 ? rawPlacementPool + sponsorContribs : finalPrizePool
 
       const firstRound = (formData.roadmap || [])[0]
       const derivedStartDate = (firstRound?.date && firstRound?.time)
@@ -346,7 +350,7 @@ export default function CreationWizard() {
         orgName: '',
         teamsCount: '0',
         featured: false,
-        prize: `₹${finalPrizePool}`,
+        prize: netPrizePool > 0 ? `₹${netPrizePool.toLocaleString('en-IN')}` : 'TBD',
         entry: formData.entry_fee_amount ? `₹${parseInt(formData.entry_fee_amount)}` : 'Free',
         timeline: JSON.stringify({ roadmap: formData.roadmap || [] }),
         registrationOpenDate: formData.registrationOpenDate || '',
@@ -357,7 +361,7 @@ export default function CreationWizard() {
         reserved_slots: parseInt(formData.reserved_slots) || 0,
         entry_fee_amount: parseInt(formData.entry_fee_amount) || 0,
         prize_pool_type: 'dynamic',
-        prize_pool_amount: finalPrizePool,
+        prize_pool_amount: netPrizePool,
         prize_split_1st: formData.prize_split_1st || '',
         prize_split_2nd: formData.prize_split_2nd || '',
         prize_split_3rd: formData.prize_split_3rd || '',

@@ -18,6 +18,12 @@ const REG_STATUS_CONFIG = {
 
 const FILTER_TABS = ['All', 'Registered', 'Pending', 'Rejected']
 
+const FILTER_STATUSES = {
+  Registered: ['approved', 'confirmed'],
+  Pending: ['pending', 'pending_payment', 'waitlisted'],
+  Rejected: ['rejected', 'cancelled', 'expired'],
+}
+
 function getStatusGroup(regStatus) {
   const config = REG_STATUS_CONFIG[regStatus]
   return config ? config.group : 'Rejected'
@@ -114,12 +120,21 @@ export default function MyTournaments({ onNavigate }) {
 
   const filteredData = useMemo(() => {
     if (filter === 'All') return joinedTournaments
-    return joinedTournaments.filter(t => getStatusGroup(t.regStatus) === filter)
+    const allowed = FILTER_STATUSES[filter]
+    if (!allowed) return []
+    return joinedTournaments.filter(t => allowed.includes(t.regStatus))
   }, [joinedTournaments, filter])
 
   const counts = useMemo(() => {
     const c = { All: joinedTournaments.length, Registered: 0, Pending: 0, Rejected: 0 }
-    joinedTournaments.forEach(t => { c[getStatusGroup(t.regStatus)]++ })
+    joinedTournaments.forEach(t => {
+      for (const [group, statuses] of Object.entries(FILTER_STATUSES)) {
+        if (statuses.includes(t.regStatus)) {
+          c[group]++
+          break
+        }
+      }
+    })
     return c
   }, [joinedTournaments])
 
@@ -177,7 +192,7 @@ export default function MyTournaments({ onNavigate }) {
             variants={containerVariants}
             initial="hidden"
             animate="show"
-            className="flex flex-wrap gap-4 pb-8 overflow-visible"
+            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-8 overflow-visible"
           >
             {filteredData.map(t => (
               <motion.div key={t.id} variants={cardVariants}>
@@ -201,6 +216,7 @@ export default function MyTournaments({ onNavigate }) {
                     buttonText={t.buttonText}
                     buttonClassName={t.buttonClassName}
                     onNavigate={onNavigate}
+                    forceWalletCard
                   />
               </motion.div>
             ))}

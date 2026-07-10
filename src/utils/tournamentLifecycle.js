@@ -1,6 +1,11 @@
 export function getTournamentLifecycleStatus(t, now = new Date()) {
   if (!t) return 'upcoming';
 
+  // Manual organizer overrides take priority over date computation
+  const stored = (t.status || '').toLowerCase();
+  if (stored === 'completed') return 'completed';
+  if (stored === 'live' || stored === 'active') return 'live';
+
   // Support both snake_case and camelCase keys from DB/API normalization
   const regOpenStr = t.registrationOpenDate || t.registration_open_date;
   const regCloseStr = t.registrationCloseDate || t.registration_close_date;
@@ -25,6 +30,7 @@ export function getTournamentLifecycleStatus(t, now = new Date()) {
 
   // Fallback to static status if timestamps are missing
   const fallbackStatus = (t.status || 'upcoming').toLowerCase();
+  if (fallbackStatus === 'completed') return 'completed';
   if (fallbackStatus === 'live' || fallbackStatus === 'active') return 'live';
   if (fallbackStatus === 'open' || fallbackStatus === 'registrations_open') return 'open';
   if (fallbackStatus === 'closed' || fallbackStatus === 'registration_closed') return 'closed';
@@ -52,6 +58,11 @@ export function getStatusBadgeConfig(status) {
       return {
         text: 'Live',
         bg: 'bg-rose-500/20 text-rose-400 border border-rose-500/30 font-black animate-pulse'
+      };
+    case 'completed':
+      return {
+        text: 'Completed',
+        bg: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
       };
     default:
       return {

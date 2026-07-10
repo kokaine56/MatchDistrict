@@ -58,19 +58,11 @@ function OrganizationManagement({ onNavigate }) {
   const [orgEditForm, setOrgEditForm] = useState({ ...orgData });
   const [tournamentsList, setTournamentsList] = useState([]);
   const [isEditingOrg, setIsEditingOrg] = useState(false);
-  const [orgHandleAbuse, setOrgHandleAbuse] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const quickButtonRef = useRef(null);
   const [openUp, setOpenUp] = useState(false);
   const [desktopDropdownPos, setDesktopDropdownPos] = useState({ top: 0, left: 0 });
 
-  // OTP constraints
-  const [orgOtpCode, setOrgOtpCode] = useState('');
-  const [orgOtpSent, setOrgOtpSent] = useState(false);
-  const [orgOtpCountdown, setOrgOtpCountdown] = useState(0);
-  const [isOrgSendingOtp, setIsOrgSendingOtp] = useState(false);
-  const [settingsOrgHandle, setSettingsOrgHandle] = useState('');
-  const [handletagCooldownDays, setHandletagCooldownDays] = useState(0);
   const [orgnameCooldownDays, setOrgnameCooldownDays] = useState(0);
 
   const triggerToast = (msg) => {
@@ -119,8 +111,6 @@ function OrganizationManagement({ onNavigate }) {
       staff: [{ name: currentUser.name || 'Admin', role: 'Owner / Head Admin', email: currentUser.email }]
     });
 
-    setSettingsOrgHandle(currentUser.orgHandle || '');
-
     // Fetch tournaments
     async function fetchTournaments() {
       try {
@@ -140,26 +130,6 @@ function OrganizationManagement({ onNavigate }) {
       }
     }
     fetchTournaments();
-  }, [currentUser]);
-
-  // OTP Countdown Timer
-  useEffect(() => {
-    if (orgOtpCountdown <= 0) return;
-    const timer = setInterval(() => {
-      setOrgOtpCountdown(prev => prev - 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [orgOtpCountdown]);
-
-  // Track Handle Change Cooldown (30 Days)
-  useEffect(() => {
-    if (!currentUser || !currentUser.orghandle_last_changed) {
-      setHandletagCooldownDays(0);
-      return;
-    }
-    const lastChanged = new Date(currentUser.orghandle_last_changed);
-    const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-    setHandletagCooldownDays(daysDiff < 30 ? Math.ceil(30 - daysDiff) : 0);
   }, [currentUser]);
 
   // Track Name Change Cooldown (30 Days)
@@ -299,68 +269,6 @@ function OrganizationManagement({ onNavigate }) {
     } catch (err) {
       console.error(err);
       triggerToast('Error saving settings.');
-    }
-  };
-
-  const sendProfileOtp = async (email) => {
-    if (!email) { triggerToast('No email address found on this account.'); return; }
-    const token = await getAuthToken();
-    setIsOrgSendingOtp(true);
-    try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ email, purpose: 'username_change' })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOrgOtpSent(true);
-        setOrgOtpCountdown(60);
-        triggerToast(`Verification code sent to ${email}`);
-      } else {
-        triggerToast(data.error || 'Failed to send OTP.');
-      }
-    } catch (err) {
-      console.error(err);
-      triggerToast('Error sending verification code.');
-    } finally {
-      setIsOrgSendingOtp(false);
-    }
-  };
-
-  const handleVerifyAndSaveUsername = async () => {
-    const otpCode = orgOtpCode;
-    const newTag = settingsOrgHandle.trim();
-    if (!otpCode || otpCode.length < 6) {
-      triggerToast('Please enter a valid 6-digit OTP code.');
-      return;
-    }
-    if (!newTag) {
-      triggerToast('Please enter a new organization username.');
-      return;
-    }
-
-    const token = await getAuthToken();
-    try {
-      const res = await fetch(`/api/users/${currentUser.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ orgHandle: newTag, otp: otpCode })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOrgData(prev => ({ ...prev, handle: newTag }));
-        setSettingsOrgHandle(newTag);
-        setOrgOtpSent(false);
-        setOrgOtpCode('');
-        setCurrentUser(data.user);
-        triggerToast('Organization username updated successfully!');
-      } else {
-        triggerToast(data.error || 'Verification failed. Please check your OTP code.');
-      }
-    } catch (err) {
-      console.error(err);
-      triggerToast('Error verifying code and saving organization username.');
     }
   };
 
@@ -534,18 +442,6 @@ function OrganizationManagement({ onNavigate }) {
           orgData={orgData}
           setOrgData={setOrgData}
           handleSaveOrgSettingsTab={handleSaveOrgSettingsTab}
-          settingsOrgHandle={settingsOrgHandle}
-          setSettingsOrgHandle={setSettingsOrgHandle}
-          orgOtpCode={orgOtpCode}
-          setOrgOtpCode={setOrgOtpCode}
-          orgOtpSent={orgOtpSent}
-          orgOtpCountdown={orgOtpCountdown}
-          isOrgSendingOtp={isOrgSendingOtp}
-          sendProfileOtp={sendProfileOtp}
-          handleVerifyAndSaveUsername={handleVerifyAndSaveUsername}
-          handletagCooldownDays={handletagCooldownDays}
-          orgHandleAbuse={orgHandleAbuse}
-          setOrgHandleAbuse={setOrgHandleAbuse}
         />
 
       </main>

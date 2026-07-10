@@ -13,7 +13,7 @@ import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
-const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live']
+const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live', 'Completed']
 const GAME_OPTIONS = ['All Games', 'BGMI']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
@@ -151,8 +151,10 @@ function Tournaments({ onNavigate }) {
         matchStatus = status === 'upcoming' || status === 'closed';
       } else if (statusFilter === 'Registrations Open') {
         matchStatus = status === 'open';
+      } else if (statusFilter === 'Completed') {
+        matchStatus = status === 'completed';
       } else if (statusFilter === 'All') {
-        matchStatus = status !== 'live';
+        matchStatus = status !== 'live' && status !== 'completed';
       }
 
       const matchGame = gameFilter === 'All Games' || t.game.toLowerCase() === gameFilter.toLowerCase();

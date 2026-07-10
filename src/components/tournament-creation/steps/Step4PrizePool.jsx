@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
 import PrizeAllocationEngine from '../PrizeAllocationEngine'
@@ -51,6 +51,18 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
     return Math.round(basePrizePool * (organizerFeePct / 100))
   }, [organizerFeePct, basePrizePool])
   const availablePlacementPool = Math.max(0, basePrizePool - mvpAmount - killRewardBudget - organizerFeeAmount - platformFeeAmount)
+
+  // Sync the net placement pool into formData so saveToServer uses the correct (post-fee) amount
+  const prevPool = useRef(null)
+  useEffect(() => {
+    const pool = availablePlacementPool > 0 ? availablePlacementPool : ''
+    if (prevPool.current !== pool) {
+      prevPool.current = pool
+      if (data.availablePlacementPool !== pool) {
+        onChange({ ...data, availablePlacementPool: pool })
+      }
+    }
+  }, [availablePlacementPool])
 
   return (
     <motion.div

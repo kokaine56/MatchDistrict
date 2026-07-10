@@ -36,7 +36,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
 
   const filledCount = useMemo(() => {
     return currentRoomSlots.filter(
-      (s) => s.status === 'occupied' || s.status === 'pending'
+      (s) => s.status === 'occupied' || s.status === 'confirmed'
     ).length;
   }, [currentRoomSlots]);
 
@@ -92,33 +92,20 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
       <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 max-sm:gap-2 sm:gap-2.5 w-full">
         {currentRoomSlots.map((slot, idx) => {
           const slotNum = slot.number;
-          if (slot.status === 'occupied') {
-            return (
-              <div
-                key={idx}
-                className="aspect-square bg-red-50 border border-red-200 text-red-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center"
-                title={slot.teamName ? `Occupied by ${slot.teamName}` : 'Occupied'}
-              >
-                {slotNum}
-              </div>
-            );
-          }
-          if (slot.status === 'pending') {
-            return (
-              <div
-                key={idx}
-                className="aspect-square bg-amber-50 border border-amber-200 text-amber-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center animate-pulse"
-                title={slot.teamName ? `Pending: ${slot.teamName}` : 'Pending'}
-              >
-                {slotNum}
-              </div>
-            );
-          }
+          const isOccupied = slot.status === 'occupied' || slot.status === 'confirmed';
           return (
             <div
               key={idx}
-              className="aspect-square bg-green-50 border border-green-200 text-green-600 max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center"
-              title="Available"
+              className={`aspect-square max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center ${
+                isOccupied
+                  ? 'bg-red-500 text-white border border-red-600'
+                  : 'bg-green-500 text-white border border-green-600'
+              }`}
+              title={
+                isOccupied
+                  ? (slot.teamName ? `Occupied by ${slot.teamName}` : 'Occupied')
+                  : 'Available'
+              }
             >
               {slotNum}
             </div>
@@ -134,10 +121,6 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
           <span>Occupied</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-          <span>Pending</span>
         </div>
       </div>
 
@@ -185,15 +168,17 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           entry.status === 'occupied'
                             ? 'bg-red-50 text-red-600 border border-red-200'
-                            : 'bg-amber-50 text-amber-600 border border-amber-200 animate-pulse'
+                            : entry.status === 'confirmed'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-600 border border-amber-200 animate-pulse'
                         }`}
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            entry.status === 'occupied' ? 'bg-red-500' : 'bg-amber-500'
+                            entry.status === 'occupied' ? 'bg-red-500' : entry.status === 'confirmed' ? 'bg-emerald-500' : 'bg-amber-500'
                           }`}
                         />
-                        {entry.status === 'occupied' ? 'Approved' : 'Pending'}
+                        {entry.status === 'occupied' ? 'Approved' : entry.status === 'confirmed' ? 'Confirmed' : 'Pending'}
                       </span>
                     </td>
                   </tr>

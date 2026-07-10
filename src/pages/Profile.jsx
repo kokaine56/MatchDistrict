@@ -207,11 +207,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [isPlayerSendingOtp, setIsPlayerSendingOtp] = useState(false)
   const [settingsGamerTag, setSettingsGamerTag] = useState('')   // local input in Settings tab
 
-  const [orgOtpCode, setOrgOtpCode] = useState('')
-  const [orgOtpSent, setOrgOtpSent] = useState(false)
-  const [orgOtpCountdown, setOrgOtpCountdown] = useState(0)
-  const [isOrgSendingOtp, setIsOrgSendingOtp] = useState(false)
-  const [settingsOrgHandle, setSettingsOrgHandle] = useState('')  // local input in Org Settings
+  // org handle OTP states removed — handle unified to gamerTag
   const [handletagCooldownDays, setHandletagCooldownDays] = useState(0)
 
   // OTP Verification for Email changes (Settings tab)
@@ -239,18 +235,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
     return () => clearInterval(interval);
   }, [playerOtpCountdown]);
-
-  useEffect(() => {
-    let interval = null;
-    if (orgOtpCountdown > 0) {
-      interval = setInterval(() => {
-        setOrgOtpCountdown(prev => prev - 1);
-      }, 1000);
-    } else {
-      clearInterval(interval);
-    }
-    return () => clearInterval(interval);
-  }, [orgOtpCountdown]);
 
   useEffect(() => {
     let interval = null;
@@ -602,12 +586,11 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }, cropState.file.type || 'image/jpeg');
   };
 
-  // Sends OTP email for username/handle change verification
-  const sendProfileOtp = async (email, isPlayer) => {
+  // Sends OTP email for gamerTag change verification
+  const sendProfileOtp = async (email) => {
     if (!email) { triggerToast('No email address found on this account.'); return; }
     const token = await getAuthToken();
-    if (isPlayer) setIsPlayerSendingOtp(true);
-    else setIsOrgSendingOtp(true);
+    setIsPlayerSendingOtp(true);
     try {
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
@@ -616,8 +599,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
       });
       const data = await res.json();
       if (data.success) {
-        if (isPlayer) { setPlayerOtpSent(true); setPlayerOtpCountdown(60); }
-        else { setOrgOtpSent(true); setOrgOtpCountdown(60); }
+        setPlayerOtpSent(true);
+        setPlayerOtpCountdown(60);
         triggerToast(`Verification code sent to ${email}`);
       } else {
         triggerToast(data.error || 'Failed to send OTP.');
@@ -626,14 +609,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
       console.error(err);
       triggerToast('Error sending verification code.');
     } finally {
-      if (isPlayer) setIsPlayerSendingOtp(false);
-      else setIsOrgSendingOtp(false);
+      setIsPlayerSendingOtp(false);
     }
   };
 
-  const handleVerifyAndSaveUsername = async (isPlayer) => {
-    const otpCode = isPlayer ? playerOtpCode : orgOtpCode;
-    const newTag = isPlayer ? settingsGamerTag.trim() : settingsOrgHandle.trim();
+  const handleVerifyAndSaveUsername = async () => {
+    const otpCode = playerOtpCode;
+    const newTag = settingsGamerTag.trim();
     if (!otpCode || otpCode.length < 6) {
       triggerToast('Please enter a valid 6-digit OTP code.');
       return;
@@ -645,9 +627,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
     const token = await getAuthToken();
     const endpoint = `/api/users/${currentUser.id}`;
-    const payload = isPlayer
-      ? { ...buildPlayerProfilePayload({ ...playerData, gamerTag: newTag }), otp: otpCode }
-      : { ...buildOrgProfilePayload({ ...orgData, handle: newTag }), otp: otpCode };
+    const payload = { ...buildPlayerProfilePayload({ ...playerData, gamerTag: newTag }), otp: otpCode };
 
     try {
       const res = await fetch(endpoint, {
@@ -657,19 +637,11 @@ function Profile({ onNavigate, selectedUserProfile }) {
       });
       const data = await res.json();
       if (data.success) {
-        if (isPlayer) {
-          setPlayerData(prev => ({ ...prev, gamerTag: newTag }));
-          setPlayerEditForm(prev => ({ ...prev, gamerTag: newTag }));
-          setPlayerOtpSent(false);
-          setPlayerOtpCode('');
-          triggerToast('Gamer Tag updated successfully!');
-        } else {
-          setOrgData(prev => ({ ...prev, handle: newTag }));
-          setOrgEditForm(prev => ({ ...prev, handle: newTag }));
-          setOrgOtpSent(false);
-          setOrgOtpCode('');
-          triggerToast('Org Handle updated successfully!');
-        }
+        setPlayerData(prev => ({ ...prev, gamerTag: newTag }));
+        setPlayerEditForm(prev => ({ ...prev, gamerTag: newTag }));
+        setPlayerOtpSent(false);
+        setPlayerOtpCode('');
+        triggerToast('Gamer Tag updated successfully!');
         setCurrentUser(data.user);
         setCurrentUserFromContext(data.user);
       } else {
@@ -1035,7 +1007,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   // Initialise Settings-tab inputs when data loads
   useEffect(() => { setSettingsGamerTag(playerData.gamerTag || '') }, [playerData.gamerTag])
-  useEffect(() => { setSettingsOrgHandle(orgData.handle || '') }, [orgData.handle])
   useEffect(() => { setSettingsEmail(playerData.email || orgData.email || '') }, [playerData.email, orgData.email])
   // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
   const currentUser = currentUserFromContext
@@ -3272,7 +3243,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 {playerOtpSent ? (
                                   <button
                                     type="button"
-                                    onClick={() => handleVerifyAndSaveUsername(true)}
+                                    onClick={() => handleVerifyAndSaveUsername()}
 className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
                                     >
                                       <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
@@ -3281,7 +3252,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                                   <button
                                     type="button"
                                     disabled={isPlayerSendingOtp}
-                                    onClick={() => sendProfileOtp(playerData.email, true)}
+                                    onClick={() => sendProfileOtp(playerData.email)}
                                     className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
                                   >
                                     {isPlayerSendingOtp ? (

@@ -36,9 +36,11 @@ export async function uploadImage(image) {
     if (response.ok && data.secure_url) {
       return data.secure_url
     } else {
+      console.error('[CloudinaryUpload] API Error response:', data)
       throw new Error(data.error?.message || 'Cloudinary upload failed')
     }
   } catch (error) {
+    console.error('[CloudinaryUpload] Network/Request failure:', error)
     throw error
   }
 }

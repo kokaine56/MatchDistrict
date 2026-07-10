@@ -35,7 +35,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [direction, setDirection] = useState(0) // -1 for left, 1 for right, 0 for vertical
   const [forgotStep, setForgotStep] = useState(1) // 1: enter email, 2: link sent confirmation
   const [isLoading, setIsLoading] = useState(false)
-  const [loadingMessage, setLoadingMessage] = useState('Loading Arena...')
+  const [loadingMessage, setLoadingMessage] = useState('Loading District...')
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const [currentUser, setCurrentUser] = useCurrentUser()
@@ -119,6 +119,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   // OTP Verification State (used for registration otp step)
   const [showOtpModal, setShowOtpModal] = useState(false)
   const [otpExpiry, setOtpExpiry] = useState(null)
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
   const [otpSent, setOtpSent] = useState(false)
 
   const triggerToast = (msg) => {
@@ -177,7 +178,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       setAuthMode('reset-password')
       
       // Validate reset token on mount
-      setLoadingMessage('Loading Arena...')
+      setLoadingMessage('Loading District...')
       setIsLoading(true)
       fetch(`/api/auth/validate-reset-token?token=${token}`)
         .then(res => res.json())
@@ -379,7 +380,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     e.preventDefault()
     if (!isLoginFormValid) return
 
-    setLoadingMessage('Loading Arena...')
+    setLoadingMessage('Loading District...')
     setIsLoading(true)
     try {
       const res = await fetch('/api/auth/login', {
@@ -516,7 +517,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         email: regForm.email,
         password: regForm.password,
         gamerTag: autoGamerTag,
-        role: 'player'
+        role: 'player',
+        agreeTerms: regForm.agreeTerms
       }
 
       const res = await fetch('/api/auth/register-temp', {
@@ -549,7 +551,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         triggerToast(data.error || data.message || 'Registration failed. Please try again.')
       }
     } catch (err) {
-      triggerToast('Registration failed. Check connection.')
+      console.error('REGISTER_ERROR', err)
+      triggerToast(err?.message ? `Registration failed: ${err.message}` : 'Registration failed. Check connection.')
     } finally {
       setIsLoading(false)
     }
@@ -666,7 +669,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     e.preventDefault()
     if (!isForgotEmailValid) return
 
-    setLoadingMessage('Loading Arena...')
+    setLoadingMessage('Loading District...')
     setIsLoading(true)
     try {
       const res = await fetch('/api/auth/forgot-password-link', {
@@ -693,7 +696,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     e.preventDefault()
     if (!isForgotResetValid) return
 
-    setLoadingMessage('Loading Arena...')
+    setLoadingMessage('Loading District...')
     setIsLoading(true)
     try {
       const res = await fetch('/api/auth/reset-password-token', {

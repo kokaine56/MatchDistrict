@@ -269,7 +269,7 @@ function getRoomSlots(allSlots, roomNumber, rooms) {
 function getOccupiedRoomSlots(allSlots, roomNumber, rooms) {
   const roomSlots = getRoomSlots(allSlots, roomNumber, rooms);
   return roomSlots
-    .filter((s) => s.status === 'occupied' || s.status === 'pending')
+    .filter((s) => s.status === 'occupied' || s.status === 'confirmed')
     .map((s) => ({
       slotNumber: s.number,
       teamName: s.teamName || '—',

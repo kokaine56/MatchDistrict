@@ -585,6 +585,28 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create extension tables:', extErr.message);
     }
 
+    // CREATE terms_acceptance_log table for legal proof of consent
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS terms_acceptance_log (
+          id VARCHAR(50) PRIMARY KEY,
+          user_id VARCHAR(50),
+          email VARCHAR(255) NOT NULL,
+          action VARCHAR(20) NOT NULL,
+          terms_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+          privacy_version VARCHAR(20) NOT NULL DEFAULT '1.0',
+          ip_address VARCHAR(45),
+          user_agent TEXT,
+          accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_terms_log_email ON terms_acceptance_log(email)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_terms_log_user ON terms_acceptance_log(user_id)`);
+      console.log('📜 [MATCH DISTRICT DB] terms_acceptance_log table ensured.');
+    } catch (talErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create terms_acceptance_log:', talErr.message);
+    }
+
     // CREATE slot_grid table for admin tournament slot occupancy mapping
     try {
       await client.query(`
@@ -718,6 +740,54 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not seed organizer fee:', orgFeeErr.message);
     }
 
+    // Seed default terms & privacy versions
+    try {
+      await client.query(`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('terms_version', '1.0', CURRENT_TIMESTAMP)
+        ON CONFLICT (key) DO NOTHING
+      `);
+      await client.query(`
+        INSERT INTO site_settings (key, value, updated_at)
+        VALUES ('privacy_version', '1.0', CURRENT_TIMESTAMP)
+        ON CONFLICT (key) DO NOTHING
+      `);
+      console.log('📜 [MATCH DISTRICT DB] Default terms v1.0 & privacy v1.0 seeded.');
+    } catch (verErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not seed terms versions:', verErr.message);
+    }
+
+    // ── HANDLE UNIFICATION MIGRATION: Sync orgHandle to gamerTag ──────────
+    try {
+      const migrateRes = await client.query(
+        `UPDATE users SET "orgHandle" = "gamerTag"
+         WHERE ("orgHandle" IS DISTINCT FROM "gamerTag" OR "orgHandle" IS NULL)
+           AND ('organiser' = ANY(roles) OR 'admin' = ANY(roles))
+           AND "gamerTag" IS NOT NULL`
+      );
+      if (migrateRes.rowCount > 0) {
+        console.log(`🔄 [MIGRATION] Synced ${migrateRes.rowCount} existing organizer orgHandle → gamerTag.`);
+        // Notify affected users via alerts
+        const affectedRes = await client.query(
+          `SELECT id FROM users
+           WHERE ("orgHandle" IS DISTINCT FROM "gamerTag" OR "orgHandle" IS NULL)
+             AND ('organiser' = ANY(roles) OR 'admin' = ANY(roles))
+             AND "gamerTag" IS NOT NULL`
+        );
+        for (const row of affectedRes.rows) {
+          await client.query(
+            `INSERT INTO alerts (id, user_id, type, title, message, created_at)
+             VALUES ($1, $2, 'info', 'Handle Unified',
+                     'Your organization handle has been synced to match your gamerTag. You can now use your personal username as your org identity.',
+                     CURRENT_TIMESTAMP)`,
+            ['ALERT-' + crypto.randomBytes(4).toString('hex').toUpperCase(), row.id]
+          );
+        }
+      }
+    } catch (migErr) {
+      console.warn('⚠️ [MIGRATION] Handle sync skipped:', migErr.message);
+    }
+
     client.release();
     console.log('📦 [MATCH DISTRICT DB] Supabase Tables Initialized Successfully.\n');
   } catch (err) {
@@ -750,6 +820,34 @@ function verifyJwt(token) {
     return { valid: false, error: 'Invalid signature' };
   } catch (err) {
     return { valid: false, error: 'Malformed token' };
+  }
+}
+
+// Helper to log terms/privacy acceptance to the audit table
+async function logTermsAcceptance(pool, email, userId, action, req) {
+  try {
+    const tvRes = await pool.query(`SELECT value FROM site_settings WHERE key = 'terms_version'`).catch(() => ({ rows: [] }));
+    const pvRes = await pool.query(`SELECT value FROM site_settings WHERE key = 'privacy_version'`).catch(() => ({ rows: [] }));
+    const termsVersion = tvRes.rows[0]?.value || '1.0';
+    const privacyVersion = pvRes.rows[0]?.value || '1.0';
+    const ipAddress = req && req.headers
+      ? ((req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket ? req.socket.remoteAddress : '') || 'unknown')
+      : 'unknown';
+    const userAgent = (req && req.headers && req.headers['user-agent']) || '';
+
+    const id = 'TAL-' + crypto.randomBytes(8).toString('hex');
+    await pool.query(
+      `INSERT INTO terms_acceptance_log (id, user_id, email, action, terms_version, privacy_version, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, userId || null, email, action, termsVersion, privacyVersion, ipAddress, userAgent]
+    ).catch(() => {});
+    console.log(`\n📜 [TERMS ACCEPTANCE] ${action}`);
+    console.log(`    Email: ${email} | User: ${userId || '—'}`);
+    console.log(`    Terms: v${termsVersion} | Privacy: v${privacyVersion}`);
+    console.log(`    IP: ${ipAddress} | UA: ${userAgent.slice(0, 80)}`);
+    console.log(`    Log ID: ${id}\n`);
+  } catch (err) {
+    console.warn(`⚠️ [TERMS ACCEPTANCE] Failed to log ${action} for ${email}:`, err.message);
   }
 }
 
@@ -1298,6 +1396,12 @@ const server = http.createServer(async (req, res) => {
         );
 
         console.log(`📦 [MATCH DISTRICT TEMP REGISTER] Temporary registration details saved for: ${userData.email}`);
+
+        // Log terms acceptance if user agreed (fire-and-forget — don't block the response)
+        if (userData.agreeTerms === true) {
+          logTermsAcceptance(pool, userData.email, null, 'temp_submit', req).catch(() => {});
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -1397,6 +1501,9 @@ const server = http.createServer(async (req, res) => {
           // Delete from temp_users (registration completed)
           await pool.query('DELETE FROM temp_users WHERE email = $1', [tempUser.email]);
           console.log(`\n📦 [MATCH DISTRICT DB] User "${newUser.email}" registered permanently.\n`);
+
+          // Log final terms acceptance (fire-and-forget — don't block JWT response)
+          logTermsAcceptance(pool, newUser.email, newUser.id || newUser.uid, 'final_register', req).catch(() => {});
         } catch (dbErr) {
           const errorMsg = dbErr.message.includes('duplicate key value') ? 'Email is already registered.' : dbErr.message;
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2080,11 +2187,10 @@ const server = http.createServer(async (req, res) => {
               if (match) orgMotto = match[1];
             }
 
-            // Generate unique org handle from applicant name
-            const baseName = updatedApp.applicantName || updatedApp.orgName || 'organizer';
-            const cleanName = baseName.split(' ')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const randomSuffix = Math.random().toString(36).substring(2, 8);
-            const initialOrgHandle = '@' + cleanName + '_' + randomSuffix;
+            // Use the user's existing gamerTag as the orgHandle (handle-only unification)
+            const gamerTagRes = await pool.query('SELECT "gamerTag" FROM users WHERE email = $1', [email]);
+            const existingGamerTag = gamerTagRes.rows[0]?.gamerTag || '';
+            const orgHandle = existingGamerTag || ('@' + (updatedApp.applicantName || 'organizer').split(' ')[0].replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
 
             // Use applicant real name as org name if orgName is empty
             const orgName = updatedApp.orgName || updatedApp.applicantName || 'Organizer';
@@ -2101,7 +2207,7 @@ const server = http.createServer(async (req, res) => {
                 "orgImage" = $7,
                 "orgHandle" = $8
                WHERE email = $9 RETURNING id`,
-              [newRole, newRoles, status, approvedTier, orgName, orgMotto, updatedApp.orgImage, initialOrgHandle, email]
+              [newRole, newRoles, status, approvedTier, orgName, orgMotto, updatedApp.orgImage, orgHandle, email]
             );
 
             if (userRes.rows.length > 0) {
@@ -2203,50 +2309,11 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        // 30 days cooldown and email OTP verification for orgHandle change
-        if (updateData.orgHandle !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgHandle", email, "orghandle_last_changed" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          if (currentUserRecord && currentUserRecord.orgHandle && updateData.orgHandle !== currentUserRecord.orgHandle) {
-            if (currentUserRecord.orghandle_last_changed) {
-              const lastChanged = new Date(currentUserRecord.orghandle_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 30) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your organization username once every 30 days. Remaining: ${Math.ceil(30 - daysDiff)} days.` }));
-                return;
-              }
-            }
-            const otpCode = updateData.otp;
-            if (!otpCode) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Verification code is required to change your organization username.' }));
-              return;
-            }
-            const now = new Date();
-            const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3', [currentUserRecord.email, otpCode, now]);
-            if (otpRes.rows.length === 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is incorrect or has expired.' }));
-              return;
-            }
-            await pool.query('DELETE FROM otps WHERE email = $1', [currentUserRecord.email]);
-          }
-        }
-
         let orgNameLastChangedVal = undefined;
         if (updateData.orgName !== undefined) {
           const userCheckRes = await pool.query('SELECT "orgName" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
           if (userCheckRes.rows[0] && userCheckRes.rows[0].orgName !== updateData.orgName) {
             orgNameLastChangedVal = new Date();
-          }
-        }
-
-        let orgHandleLastChangedVal = undefined;
-        if (updateData.orgHandle !== undefined) {
-          const userCheckRes = await pool.query('SELECT "orgHandle" FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
-          if (userCheckRes.rows[0] && userCheckRes.rows[0].orgHandle !== updateData.orgHandle) {
-            orgHandleLastChangedVal = new Date();
           }
         }
 
@@ -2260,19 +2327,15 @@ const server = http.createServer(async (req, res) => {
             "orgImage" = COALESCE($3, "orgImage"),
             "orgBanner" = COALESCE($4, "orgBanner"),
             "orgBio" = COALESCE($5, "orgBio"),
-            "orgHandle" = COALESCE($6, "orgHandle"),
-            "orgname_last_changed" = COALESCE($7, "orgname_last_changed"),
-            "orghandle_last_changed" = COALESCE($8, "orghandle_last_changed")
-           WHERE (id = $9 OR uid = $9) RETURNING *`,
+            "orgname_last_changed" = COALESCE($6, "orgname_last_changed")
+           WHERE (id = $7 OR uid = $7) RETURNING *`,
           [
             updateData.orgName ?? null,
             updateData.orgMotto ?? null,
             orgImageUrl,
             orgBannerUrl,
             updateData.orgBio ?? null,
-            updateData.orgHandle ?? null,
             orgNameLastChangedVal,
-            orgHandleLastChangedVal,
             authUser.id
           ]
         );
@@ -2728,7 +2791,8 @@ const server = http.createServer(async (req, res) => {
             "gamertag_last_changed" = COALESCE($15, "gamertag_last_changed"),
             "email_last_changed" = COALESCE($16, "email_last_changed"),
             role = COALESCE($17, role),
-            roles = COALESCE($18, roles)
+            roles = COALESCE($18, roles),
+            "orgHandle" = COALESCE($20, "orgHandle")
            WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
@@ -2754,7 +2818,8 @@ const server = http.createServer(async (req, res) => {
               updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
-            id
+            id,
+            updateData.gamerTag
           ]
         );
         if (dbRes.rows.length === 0) {
@@ -3772,7 +3837,101 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7j4. GET /api/tournaments/:id/analytics — get analytics for a tournament
+  // 7j4. POST /api/tournaments/:id/status — set tournament status (live/completed)
+  const statusMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/status$/);
+  if (statusMatch && req.method === 'POST') {
+    const id = statusMatch[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+          return;
+        }
+        const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [id]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        const t = tRes.rows[0];
+        // Only the tournament owner or admin can change status
+        if (t.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to update this tournament.' }));
+          return;
+        }
+        const bodyData = JSON.parse(body);
+        const newStatus = (bodyData.status || '').toLowerCase();
+        const currentStatus = (t.status || '').toLowerCase();
+
+        // Validate transitions
+        const LIVE_ALLOWED_FROM = ['upcoming', 'open', 'registration_open', 'closed', 'registration_closed'];
+        if (newStatus === 'live') {
+          if (currentStatus === 'live') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'ALREADY_LIVE', message: 'Tournament is already live.' }));
+            return;
+          }
+          if (currentStatus === 'completed' || currentStatus === 'archived') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'CANNOT_MODIFY', message: 'Cannot modify a completed or archived tournament.' }));
+            return;
+          }
+          if (t.isDraft) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'IS_DRAFT', message: 'Publish the tournament first.' }));
+            return;
+          }
+          if (!LIVE_ALLOWED_FROM.includes(currentStatus)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_TRANSITION', message: 'Tournament must be past registration closed state before going live.' }));
+            return;
+          }
+        } else if (newStatus === 'completed') {
+          if (currentStatus === 'completed') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'ALREADY_COMPLETED', message: 'Tournament is already completed.' }));
+            return;
+          }
+          if (currentStatus === 'archived') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'CANNOT_MODIFY', message: 'Cannot modify an archived tournament.' }));
+            return;
+          }
+          if (t.isDraft) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'IS_DRAFT', message: 'Publish the tournament first.' }));
+            return;
+          }
+          if (currentStatus !== 'live') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'FINISH_LIVE_FIRST', message: 'Tournament must be live before marking completed.' }));
+            return;
+          }
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Invalid status. Use "live" or "completed".' }));
+          return;
+        }
+
+        await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', [newStatus, id]);
+        console.log(`\n🏆 [MATCH DISTRICT TOURNAMENT] Status updated: ${id} → ${newStatus} (by ${authUser.email})\n`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, status: newStatus, message: `Tournament marked as ${newStatus}.` }));
+      } catch (err) {
+        console.warn('⚠️ [MATCH DISTRICT DB] Status update failed:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7j5. GET /api/tournaments/:id/analytics — get analytics for a tournament
   const analyticsMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/analytics$/);
   if (analyticsMatch && req.method === 'GET') {
     const id = analyticsMatch[1];
@@ -4160,13 +4319,14 @@ const server = http.createServer(async (req, res) => {
         const regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
         const membersStr = formData.members ? (typeof formData.members === 'string' ? formData.members : JSON.stringify(formData.members)) : '[]';
 
-        const status = isPaid ? 'pending_payment' : 'pending';
+        const status = isPaid ? (payload.screenshot_url ? 'pending' : 'pending_payment') : 'pending';
 
         const regRes = await client.query(
-          `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1) RETURNING *`,
+          `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING *`,
           [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
-           membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null]
+           membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
+           payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null]
         );
 
         let paymentRecord = null;
@@ -4240,8 +4400,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Check if user is already registered for this tournament
+        // Allow re-registration if previous attempt was rejected, cancelled, or expired
         const dupRes = await pool.query(
-          'SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
+          "SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 AND status NOT IN ('rejected', 'cancelled', 'expired')",
           [id, authUser.id]
         );
         if (dupRes.rows.length > 0) {
@@ -4250,13 +4411,20 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount" FROM tournaments WHERE id = $1', [id]);
+        const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate" FROM tournaments WHERE id = $1', [id]);
         if (tRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
         const t = tRes.rows[0];
+
+        // Check if registration window has closed
+        if (t.registrationCloseDate && new Date(t.registrationCloseDate) < new Date()) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration has ended for this tournament.' }));
+          return;
+        }
 
         const entryFeeAmount = parseInt(t.entry_fee_amount) || 0;
         const isPaid = entryFeeAmount > 0;
@@ -5068,7 +5236,7 @@ const server = http.createServer(async (req, res) => {
         if (booked) {
           slots.push({
             number: i,
-            status: booked.status === 'approved' ? 'occupied' : 'pending',
+            status: booked.status === 'approved' ? 'occupied' : booked.status === 'confirmed' ? 'confirmed' : 'pending',
             teamName: booked.team_name,
             captain: booked.captain,
             registrationId: booked.id
@@ -9719,12 +9887,64 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ── AUTO LIFECYCLE: Auto live/complete based on round timings ─────────────
+async function processTournamentLifecycle(now) {
+  try {
+    // Auto-live: tournaments whose first round starts within 5 min (or already started)
+    const notLive = await pool.query(
+      `SELECT id, timeline FROM tournaments
+       WHERE ("isDraft" = false OR "isDraft" IS NULL)
+         AND status NOT IN ('live','completed','archived')
+         AND timeline IS NOT NULL AND timeline != '' AND timeline != '[]'`
+    );
+    for (const t of notLive.rows) {
+      try {
+        const parsed = typeof t.timeline === 'string' ? JSON.parse(t.timeline) : t.timeline;
+        const rounds = parsed?.roadmap || (Array.isArray(parsed) ? parsed : []);
+        const first = rounds[0];
+        if (!first?.date || !first?.time) continue;
+        const roundStart = new Date(`${first.date}T${first.time}`);
+        if (isNaN(roundStart.getTime())) continue;
+        if (now >= new Date(roundStart.getTime() - 5 * 60 * 1000)) {
+          await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['live', t.id]);
+          console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to live (round 1 at ${first.date}T${first.time})`);
+        }
+      } catch (_) { /* skip malformed timeline */ }
+    }
+
+    // Auto-complete: live tournaments whose last round ended 12+ hours ago
+    const liveOnes = await pool.query(
+      `SELECT id, timeline FROM tournaments
+       WHERE status = 'live'
+         AND timeline IS NOT NULL AND timeline != '' AND timeline != '[]'`
+    );
+    for (const t of liveOnes.rows) {
+      try {
+        const parsed = typeof t.timeline === 'string' ? JSON.parse(t.timeline) : t.timeline;
+        const rounds = parsed?.roadmap || (Array.isArray(parsed) ? parsed : []);
+        if (!rounds.length) continue;
+        const last = rounds[rounds.length - 1];
+        if (!last?.date || !last?.time) continue;
+        const lastEnd = new Date(`${last.date}T${last.time}`);
+        if (isNaN(lastEnd.getTime())) continue;
+        if (now >= new Date(lastEnd.getTime() + 12 * 60 * 60 * 1000)) {
+          await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['completed', t.id]);
+          console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to completed (last round at ${last.date}T${last.time})`);
+        }
+      } catch (_) { /* skip malformed timeline */ }
+    }
+  } catch (err) {
+    console.error('Auto lifecycle error:', err.message);
+  }
+}
+
 // ── AUTOMATION PROCESSOR: In-process timer for tournament automations ─────
 function startAutomationProcessor() {
   console.log('⏰ Automation processor started (interval: 60s)');
   setInterval(async () => {
     try {
       const now = new Date();
+      await processTournamentLifecycle(now);
       const rulesRes = await pool.query(
         'SELECT * FROM automation_rules WHERE is_active = true'
       );

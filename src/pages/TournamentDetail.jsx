@@ -160,7 +160,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const fetchRegistrations = useCallback(async () => {
     if (!tournamentId) return;
     try {
-      const res = await fetch(`/api/tournaments/${tournamentId}/registrations`);
+      const token = await getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`/api/tournaments/${tournamentId}/registrations`, { headers });
       const data = await res.json();
       if (data.success && data.registrations) setRegistrations(data.registrations);
     } catch (_) {}
@@ -408,17 +410,23 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const myRoster = useMemo(() => {
     if (!currentUser || registrations.length === 0) return null;
-    return registrations.find(r => {
-      if (r.user_id === currentUser.id) return true;
-      if (currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase()) return true;
+    // Find the newest registration first by searching from the end of the array
+    for (let i = registrations.length - 1; i >= 0; i--) {
+      const r = registrations[i];
+      const matchUserId = r.user_id === currentUser.id;
+      const matchEmail = currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase();
       const captainLower = (r.captain || '').toLowerCase();
       const gt = (currentUser.gamerTag || '').toLowerCase();
       const nm = (currentUser.name || '').toLowerCase();
-      return captainLower === gt || captainLower === `@${gt}` || captainLower === nm;
-    });
+      const matchCaptain = captainLower === gt || captainLower === `@${gt}` || captainLower === nm;
+      
+      if (matchUserId || matchEmail || matchCaptain) {
+        return r;
+      }
+    }
+    return null;
   }, [currentUser, registrations]);
 
-  const isRegistered = !!myRoster;
 
   // Safe case-insensitive approved check for coordinates access
   const isApprovedRoster = useMemo(() => {
@@ -427,39 +435,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return status === 'approved' || status === 'confirmed';
   }, [myRoster]);
 
-  const rosterStatus = myRoster?.status || '';
-  const canReRegister = ['Cancelled', 'Expired', 'Rejected', 'PAYMENT_REJECTED'].includes(rosterStatus);
-  const isPendingPayment = ['pending_payment', 'PENDING_PAYMENT_VERIFICATION'].includes(rosterStatus);
-  const isPendingApproval = rosterStatus === 'pending';
-
-  const getButtonConfig = () => {
-    if (!myRoster) return { text: 'Join Now', style: 'primary', disabled: false };
-    if (isApprovedRoster) return { text: 'Joined', style: 'approved', disabled: true };
-    if (isPendingPayment || isPendingApproval) return { text: 'Pending Verification', style: 'warning', disabled: true };
-    if (rosterStatus === 'PAYMENT_REJECTED') return { text: 'Re-register', style: 'danger', disabled: false };
-    if (canReRegister) return { text: 'Join Now', style: 'primary', disabled: false };
-    return { text: 'Pending Verification', style: 'warning', disabled: true };
-  };
-
-  const btn = getButtonConfig();
-
-  const btnStyles = {
-    primary: 'bg-primary hover:bg-primary/90 text-white font-bold shadow-lg shadow-primary/25',
-    approved: 'bg-emerald-500 text-white font-bold cursor-not-allowed opacity-80',
-    warning: 'bg-amber-500 text-white font-bold cursor-not-allowed opacity-80',
-    danger: 'bg-red-500 hover:bg-red-600 text-white font-bold shadow-lg shadow-red-500/25'
-  };
-
   const triggerToast = (msg) => { setToastMessage(msg); setShowToast(true); setTimeout(() => setShowToast(false), 4000); };
-
-  const handleRegister = () => {
-    if (!currentUser) { triggerToast('Please sign in to register!'); setTimeout(() => onNavigate && onNavigate('login'), 1200); return; }
-    if (isRegistered && !canReRegister) {
-      triggerToast('Already registered for this tournament!');
-      return;
-    }
-    navigate(`/tournaments/${tournamentId}/register`);
-  };
 
   const handleRateHost = (ratingValue) => {
     setUserRating(ratingValue);
@@ -479,7 +455,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       let screenshot_url = '';
       if (sponsorScreenshot) {
         const uploaded = await uploadImage(sponsorScreenshot);
-        if (uploaded?.secure_url) screenshot_url = uploaded.secure_url;
+        if (uploaded && typeof uploaded === 'string') screenshot_url = uploaded;
       }
       const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -837,22 +813,73 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
 
               {/* Action Area */}
-              <div className="flex items-center justify-between mt-4 sm:mt-5 pt-4 border-t border-slate-100">
-                <button
-                  onClick={handleRegister}
-                  disabled={btn.disabled}
-                  className={`${btnStyles[btn.style]} py-2.5 sm:py-3 px-5 sm:px-6 rounded-xl flex-1 transition-all text-xs sm:text-sm disabled:cursor-not-allowed`}
-                >
-                  {btn.text}
-                </button>
+              <div className="flex items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-slate-100">
+                {(() => {
+                  const regStatus = myRoster ? (myRoster.status || '').toLowerCase() : '';
+                  const showJoin = !regStatus || ['rejected', 'cancelled', 'expired', 'payment_rejected'].includes(regStatus);
+                  const showWaiting = ['pending_payment', 'pending', 'waitlisted'].includes(regStatus);
+                  const showRegistered = ['approved', 'confirmed'].includes(regStatus);
+                  const isRegistrationClosed = tourney.registrationCloseDate && new Date(tourney.registrationCloseDate) < new Date();
+                  if (isRegistrationClosed && showJoin) {
+                    return (
+                      <button
+                        disabled
+                        className="flex-1 bg-slate-400 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed opacity-70"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Registration Ended
+                      </button>
+                    );
+                  }
+                  if (showRegistered) {
+                    return (
+                      <button
+                        disabled
+                        className="flex-1 bg-green-500 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 opacity-90 cursor-not-allowed"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Registered Successfully
+                      </button>
+                    );
+                  }
+                  if (showWaiting) {
+                    return (
+                      <button
+                        disabled
+                        className="flex-1 bg-amber-500 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 opacity-80 cursor-not-allowed"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Waiting for Verification
+                      </button>
+                    );
+                  }
+                  return (
+                    <button
+                      onClick={() => navigate(`/tournaments/${tourney.id}/register`)}
+                      className="flex-1 bg-primary hover:bg-primary/90 text-white font-bold text-sm px-5 py-2.5 rounded-xl transition-all shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_24px_rgba(59,130,246,0.4)] flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                      </svg>
+                      Join Now
+                    </button>
+                  );
+                })()}
                 {getGameLogo(tourney.game) && (
                   <img 
                     src={getGameLogo(tourney.game)} 
                     alt={tourney.game} 
-                    className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ml-2 sm:ml-3" 
+                    className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px]" 
                   />
                 )}
               </div>
+
             </div>
           </section>
 
@@ -1438,6 +1465,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           </div>
         </div>
       )}
+
+
 
     </div>
   );
