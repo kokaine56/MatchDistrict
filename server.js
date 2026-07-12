@@ -9912,7 +9912,7 @@ async function processTournamentLifecycle(now) {
       } catch (_) { /* skip malformed timeline */ }
     }
 
-    // Auto-complete: live tournaments whose last round ended 12+ hours ago
+    // Live-state tournaments: revert if first round hasn't started, complete if last round ended 12+ h ago
     const liveOnes = await pool.query(
       `SELECT id, timeline FROM tournaments
        WHERE status = 'live'
@@ -9923,13 +9923,26 @@ async function processTournamentLifecycle(now) {
         const parsed = typeof t.timeline === 'string' ? JSON.parse(t.timeline) : t.timeline;
         const rounds = parsed?.roadmap || (Array.isArray(parsed) ? parsed : []);
         if (!rounds.length) continue;
+        const first = rounds[0];
         const last = rounds[rounds.length - 1];
-        if (!last?.date || !last?.time) continue;
-        const lastEnd = new Date(`${last.date}T${last.time}`);
-        if (isNaN(lastEnd.getTime())) continue;
-        if (now >= new Date(lastEnd.getTime() + 12 * 60 * 60 * 1000)) {
-          await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['completed', t.id]);
-          console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to completed (last round at ${last.date}T${last.time})`);
+
+        // Revert-live: first round hasn't started yet (now < roundStart - 5min)
+        if (first?.date && first?.time) {
+          const roundStart = new Date(`${first.date}T${first.time}`);
+          if (!isNaN(roundStart.getTime()) && now < new Date(roundStart.getTime() - 5 * 60 * 1000)) {
+            await pool.query('UPDATE tournaments SET status = NULL WHERE id = $1', [t.id]);
+            console.log(`🔄 [AUTO LIFECYCLE] Tournament ${t.id} reverted from live (round 1 at ${first.date}T${first.time}, now is before -5min)`);
+            continue; // skip complete check since status was reverted
+          }
+        }
+
+        // Auto-complete: last round ended 12+ hours ago
+        if (last?.date && last?.time) {
+          const lastEnd = new Date(`${last.date}T${last.time}`);
+          if (!isNaN(lastEnd.getTime()) && now >= new Date(lastEnd.getTime() + 12 * 60 * 60 * 1000)) {
+            await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['completed', t.id]);
+            console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to completed (last round at ${last.date}T${last.time})`);
+          }
         }
       } catch (_) { /* skip malformed timeline */ }
     }

@@ -1,39 +1,21 @@
 export function getTournamentLifecycleStatus(t, now = new Date()) {
   if (!t) return 'upcoming';
 
-  // Manual organizer overrides take priority over date computation
+  // Server-authoritative statuses (set by processTournamentLifecycle from roadmap)
   const stored = (t.status || '').toLowerCase();
-  if (stored === 'completed') return 'completed';
   if (stored === 'live' || stored === 'active') return 'live';
+  if (stored === 'completed') return 'completed';
 
-  // Support both snake_case and camelCase keys from DB/API normalization
+  // Registration-phase states computed from dates
   const regOpenStr = t.registrationOpenDate || t.registration_open_date;
   const regCloseStr = t.registrationCloseDate || t.registration_close_date;
-  const matchStartStr = t.startDate || t.start_date || t.date;
-
   const regOpen = regOpenStr ? new Date(regOpenStr) : null;
   const regClose = regCloseStr ? new Date(regCloseStr) : null;
-  const matchStart = matchStartStr ? new Date(matchStartStr) : null;
 
-  if (regOpen && now < regOpen) {
-    return 'upcoming';
-  }
-  if (regOpen && regClose && now >= regOpen && now <= regClose) {
-    return 'open';
-  }
-  if (regClose && matchStart && now > regClose && now < matchStart) {
-    return 'closed';
-  }
-  if (matchStart && now >= matchStart) {
-    return 'live';
-  }
+  if (regOpen && now < regOpen) return 'upcoming';
+  if (regOpen && regClose && now >= regOpen && now <= regClose) return 'open';
+  if (regClose && now > regClose) return 'closed';
 
-  // Fallback to static status if timestamps are missing
-  const fallbackStatus = (t.status || 'upcoming').toLowerCase();
-  if (fallbackStatus === 'completed') return 'completed';
-  if (fallbackStatus === 'live' || fallbackStatus === 'active') return 'live';
-  if (fallbackStatus === 'open' || fallbackStatus === 'registrations_open') return 'open';
-  if (fallbackStatus === 'closed' || fallbackStatus === 'registration_closed') return 'closed';
   return 'upcoming';
 }
 

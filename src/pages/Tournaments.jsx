@@ -13,7 +13,7 @@ import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
-const STATUS_OPTIONS = ['All', 'Registrations Open', 'Upcoming', 'Live', 'Completed']
+const STATUS_OPTIONS = ['All', 'Upcoming', 'Registrations Open', 'Registration Closed', 'Live', 'Completed']
 const GAME_OPTIONS = ['All Games', 'BGMI']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
@@ -131,7 +131,7 @@ function Tournaments({ onNavigate }) {
   }, [dbTournaments]);
 
   const featuredTournaments = useMemo(() => {
-    return tournaments.filter(t => t.featured && getTournamentLifecycleStatus(t, now) !== 'live');
+    return tournaments.filter(t => t.featured);
   }, [tournaments, now]);
 
   const filteredTournaments = useMemo(() => {
@@ -148,13 +148,15 @@ function Tournaments({ onNavigate }) {
       if (statusFilter === 'Live') {
         matchStatus = status === 'live';
       } else if (statusFilter === 'Upcoming') {
-        matchStatus = status === 'upcoming' || status === 'closed';
+        matchStatus = status === 'upcoming';
       } else if (statusFilter === 'Registrations Open') {
         matchStatus = status === 'open';
+      } else if (statusFilter === 'Registration Closed') {
+        matchStatus = status === 'closed';
       } else if (statusFilter === 'Completed') {
         matchStatus = status === 'completed';
       } else if (statusFilter === 'All') {
-        matchStatus = status !== 'live' && status !== 'completed';
+        matchStatus = status !== 'completed';
       }
 
       const matchGame = gameFilter === 'All Games' || t.game.toLowerCase() === gameFilter.toLowerCase();
@@ -320,7 +322,7 @@ function Tournaments({ onNavigate }) {
                         : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
                     }`}
                   >
-                    {s === 'Registrations Open' ? 'Open' : s}
+                    {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
                   </button>
                 ))}
               </div>
@@ -469,7 +471,7 @@ function Tournaments({ onNavigate }) {
                               : 'bg-background/50 border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
                           }`}
                         >
-                          {s === 'Registrations Open' ? 'Open' : s}
+                    {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
                         </button>
                       ))}
                     </div>

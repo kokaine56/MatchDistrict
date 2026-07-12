@@ -110,10 +110,13 @@ function Homepage({ onNavigate }) {
   }, [tournamentsList, now])
 
   const featuredTournaments = useMemo(() => {
-    return tournamentsList.filter(t => {
-      const s = getTournamentLifecycleStatus(t, now)
-      return s !== 'live' && s !== 'completed'
-    }).slice(0, 10)
+    return tournamentsList
+      .filter(t => {
+        const s = getTournamentLifecycleStatus(t, now)
+        return s === 'upcoming' || s === 'open'
+      })
+      .sort((a, b) => (parseInt(b.totalPrize || b.prize_pool_amount) || 0) - (parseInt(a.totalPrize || a.prize_pool_amount) || 0))
+      .slice(0, 10)
   }, [tournamentsList, now])
 
 

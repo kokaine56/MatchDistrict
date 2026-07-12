@@ -644,29 +644,7 @@ function RegistrationManager({
 }) {
   const [selectedProof, setSelectedProof] = useState(null)
 
-  // Internal mock data for standalone demo; overridden by prop data when available
-  const [mockRegistrations] = useState([
-    {
-      id: 'REG-001',
-      teamName: 'Killer Beasts',
-      teamMembers: [
-        { name: 'JohnDoe', inGameId: '56491348' },
-        { name: 'JaneSmith', inGameId: '56491349' },
-        { name: 'ShadowNinja', inGameId: '56491350' },
-        { name: 'ProSniper', inGameId: '56491351' }
-      ],
-      email: 'matchdistrict.in@gmail.com',
-      phone: '+91 8754619421',
-      whatsapp: '+91 8754619421',
-      paymentPhone: '+91 8754619421',
-      amount: '₹50.00',
-      proofImg: 'https://placehold.co/400x600/EEE/999?text=Payment+Screenshot',
-      status: 'Confirmed'
-    }
-  ])
-
-  // Use prop registrations if non-empty, otherwise fall back to mock data
-  const registrations = propRegistrations && propRegistrations.length > 0 ? propRegistrations : mockRegistrations
+  const registrations = propRegistrations || []
 
   const status = tournament.isDraft ? 'draft' : tournament.status || 'draft'
   const entryFee = parseInt(tournament.entry_fee_amount) || 0
