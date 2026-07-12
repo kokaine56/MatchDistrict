@@ -10013,6 +10013,75 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/v1/plans — Fetch subscription plan catalog
+  if (req.url === '/api/v1/plans' && req.method === 'GET') {
+    try {
+      const deviceAuth = await authenticateDevice(req);
+      if (!deviceAuth) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const result = await pool.query(
+        `SELECT name, monthly_price, yearly_price, max_tournaments, max_slots,
+                has_verified_badge, has_premium_badge, staff_limit,
+                api_access, white_label, custom_subdomain, automation_enabled, priority_support
+         FROM organizer_plans ORDER BY monthly_price ASC`
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, plans: result.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/v1/payments/all — All payment records with their current status
+  if (req.url === '/api/v1/payments/all' && req.method === 'GET') {
+    try {
+      const deviceAuth = await authenticateDevice(req);
+        if (!deviceAuth) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const [subRes, regRes] = await Promise.all([
+          pool.query(
+            `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
+                    pv.transaction_id, pv.status, pv.admin_id, pv.rejection_reason,
+                    pv.utr_ref, pv.created_at,
+                  u.name as user_name, u.email as user_email, u.phone as user_phone
+           FROM payment_verifications pv
+           JOIN users u ON u.id = pv.user_id
+           ORDER BY pv.created_at DESC
+           LIMIT 100`
+        ),
+        pool.query(
+          `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.status,
+                  tr.transaction_id, tr.email, tr.phone, tr.created_at,
+                  t.title as tournament_title, t.game, t.entry_fee_amount as amount
+           FROM tournament_registrations tr
+           JOIN tournaments t ON t.id = tr.tournament_id
+           WHERE tr.status IN ('pending_payment','confirmed','cancelled','expired')
+           ORDER BY tr.created_at DESC
+           LIMIT 100`
+        )
+      ]);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        count: subRes.rows.length + regRes.rows.length,
+        subscriptions: subRes.rows,
+        registrations: regRes.rows
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // POST /api/v1/auth/device — Device authentication (app calls with API key)
   if (req.url === '/api/v1/auth/device' && req.method === 'POST') {
     let body = '';
@@ -10118,7 +10187,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Helper: verify device JWT middleware
-  function authenticateDevice(req) {
+  async function authenticateDevice(req) {
     const authHeader = req.headers['authorization'];
     if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
     const token = authHeader.slice(7);
@@ -10126,6 +10195,12 @@ const server = http.createServer(async (req, res) => {
     if (!result.valid) return null;
     const p = result.payload;
     if (p.type !== 'device' || p.scope !== 'payment_verification') return null;
+    // Verify device is still active in DB (handles revocation)
+    const check = await pool.query(
+      'SELECT is_active FROM paired_devices WHERE device_id = $1 AND is_active = true',
+      [p.device_id]
+    );
+    if (check.rows.length === 0) return null;
     return p;
   }
 
@@ -10135,7 +10210,7 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const deviceAuth = authenticateDevice(req);
+        const deviceAuth = await authenticateDevice(req);
         if (!deviceAuth) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
@@ -10309,7 +10384,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/v1/payments/pending — Fetch all pending payments awaiting SMS verification
   if (req.url === '/api/v1/payments/pending' && req.method === 'GET') {
     try {
-      const deviceAuth = authenticateDevice(req);
+      const deviceAuth = await authenticateDevice(req);
       if (!deviceAuth) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
@@ -10351,7 +10426,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/v1/payments/history — Verification history (recent approved/rejected/unmatched)
   if (req.url === '/api/v1/payments/history' && req.method === 'GET') {
     try {
-      const deviceAuth = authenticateDevice(req);
+      const deviceAuth = await authenticateDevice(req);
       if (!deviceAuth) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
@@ -10402,7 +10477,7 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const deviceAuth = authenticateDevice(req);
+        const deviceAuth = await authenticateDevice(req);
         if (!deviceAuth) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
