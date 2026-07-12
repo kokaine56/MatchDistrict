@@ -11,8 +11,11 @@ const TABS = ['All Tournaments', 'Drafts', 'Published', 'Completed', 'Archived']
 const REG_STATUS_BADGE = {
   pending: 'bg-amber-500/15 text-amber-500 border-amber-500/25',
   pending_payment: 'bg-amber-500/15 text-amber-500 border-amber-500/25',
+  PENDING_PAYMENT_VERIFICATION: 'bg-amber-500/15 text-amber-500 border-amber-500/25',
   approved: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25',
   confirmed: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25',
+  VERIFIED_BY_HOST: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25',
+  verified_by_host: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25',
   rejected: 'bg-rose-500/15 text-rose-500 border-rose-500/25',
   cancelled: 'bg-slate-500/15 text-slate-400 border-slate-500/25',
   waitlisted: 'bg-sky-500/15 text-sky-500 border-sky-500/25',
@@ -846,14 +849,14 @@ function RegistrationManager({
                       </td>
                       <td className="px-4 py-3 align-top">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${REG_STATUS_BADGE[reg.status] || 'bg-slate-500/15 text-slate-400 border-slate-500/25'}`}>
-                          {reg.status === 'pending_payment' ? 'Pending Payment' : reg.status.charAt(0).toUpperCase() + reg.status.slice(1)}
+                          {reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION' ? 'Pending Payment' : reg.status === 'VERIFIED_BY_HOST' || reg.status === 'verified_by_host' ? 'Verified by Host' : reg.status ? reg.status.charAt(0).toUpperCase() + reg.status.slice(1) : '—'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right align-top">
                         {(() => {
                           const statusLower = (reg.status || '').toLowerCase();
-                          const isPendingStatus = statusLower === 'pending' || statusLower === 'pending_payment';
-                          const isConfirmedStatus = statusLower === 'confirmed' || statusLower === 'approved';
+                          const isPendingStatus = statusLower === 'pending' || statusLower === 'pending_payment' || statusLower === 'pending_payment_verification';
+                          const isConfirmedStatus = statusLower === 'confirmed' || statusLower === 'approved' || statusLower === 'verified_by_host';
                           
                           if (isPendingStatus) {
                             return (

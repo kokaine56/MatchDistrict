@@ -48,7 +48,7 @@ export default function AdminPayments() {
       })
       const data = await res.json()
       if (data.success) {
-        const verified = (data.registrations || []).filter(r => r.status === 'VERIFIED_BY_HOST')
+        const verified = (data.registrations || []).filter(r => r.status === 'VERIFIED_BY_HOST' || r.status === 'verified_by_host' || r.status === 'confirmed')
         setVerifiedCount(verified.length)
       }
     } catch {}
@@ -80,7 +80,7 @@ export default function AdminPayments() {
   useEffect(() => { fetchPending(); fetchVerifiedCount() }, [])
 
   const pendingRegs = registrations.filter(r => r.status === 'pending' || r.status === 'pending_payment' || r.status === 'PENDING_PAYMENT_VERIFICATION')
-  const verifiedRegs = registrations.filter(r => r.status === 'confirmed')
+  const verifiedRegs = registrations.filter(r => r.status === 'confirmed' || r.status === 'VERIFIED_BY_HOST' || r.status === 'verified_by_host' || r.pay_status === 'verified_by_host')
 
   const groupedByGame = (tab === 'pending' ? pendingRegs : verifiedRegs).reduce((acc, reg) => {
     const game = reg.tournament_game || 'Unknown Game'
@@ -103,7 +103,6 @@ export default function AdminPayments() {
     try {
       const token = await getAuthToken()
       const reg = registrations.find(r => r.id === regId)
-      // Determine target status based on payment
       const isPaid = currentStatus === 'pending_payment' || currentStatus === 'PENDING_PAYMENT_VERIFICATION'
       const newStatus = isPaid ? 'confirmed' : 'approved'
       const res = await fetch(`/api/tournaments/${reg.tournament_id}/registrations/${regId}`, {
@@ -168,7 +167,6 @@ export default function AdminPayments() {
         </div>
       )}
 
-      {/* Screenshot Modal */}
       <AnimatePresence>
         {screenshotModal && (
           <motion.div
@@ -196,7 +194,6 @@ export default function AdminPayments() {
         )}
       </AnimatePresence>
 
-      {/* Reject Reason Modal */}
       <AnimatePresence>
         {rejectModal && (
           <motion.div
@@ -242,7 +239,6 @@ export default function AdminPayments() {
       </AnimatePresence>
 
       <div className="max-w-6xl mx-auto px-4 py-6 sm:py-10 space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h1 className="font-headline-lg text-lg sm:text-xl font-black text-on-background">Payment Verification</h1>
@@ -273,7 +269,6 @@ export default function AdminPayments() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="flex items-center gap-1 bg-surface-variant/20 p-1 rounded-xl w-fit">
           <button
             onClick={() => setTab('pending')}
@@ -285,24 +280,23 @@ export default function AdminPayments() {
             onClick={() => setTab('verified')}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${tab === 'verified' ? 'bg-emerald-500 text-white shadow-sm' : 'text-on-surface-variant hover:text-on-background'}`}
           >
-            Verified by App ({verifiedRegs.length})
+            Verified ({verifiedRegs.length})
           </button>
         </div>
 
-        {/* Nested Accordion */}
         <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/50 backdrop-blur-md shadow-sm">
           {loading ? (
             <div className="space-y-4 py-8">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-12 bg-surface-variant/30 rounded-lg animate-pulse" />
-              ))}
+               {[1, 2, 3].map((i) => (
+                 <div key={i} className="h-12 bg-surface-variant/30 rounded-lg animate-pulse" />
+               ))}
             </div>
           ) : (tab === 'pending' ? pendingRegs : verifiedRegs).length === 0 ? (
             <div className="text-center py-16">
               <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${tab === 'pending' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
                 <span className="material-symbols-outlined text-2xl">check_circle</span>
               </div>
-              <p className="text-sm font-medium text-on-surface-variant">{tab === 'pending' ? 'No pending registrations.' : 'No verified registrations from the app.'}</p>
+              <p className="text-sm font-medium text-on-surface-variant">{tab === 'pending' ? 'No pending registrations.' : 'No verified registrations.'}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -311,7 +305,6 @@ export default function AdminPayments() {
                 const tournaments = groupedByTournament(gameRegs)
                 return (
                   <div key={game} className="border border-outline-variant/20 rounded-xl overflow-hidden">
-                    {/* Level 1: Game */}
                     <button
                       onClick={() => setExpandedGame(isGameOpen ? null : game)}
                       className="w-full flex items-center justify-between px-4 py-3 bg-surface-variant/20 hover:bg-surface-variant/40 transition-colors"
@@ -336,7 +329,6 @@ export default function AdminPayments() {
                               const isTournamentOpen = expandedTournament === tournamentTitle
                               return (
                                 <div key={tournamentTitle}>
-                                  {/* Level 2: Tournament */}
                                   <button
                                     onClick={() => setExpandedTournament(isTournamentOpen ? null : tournamentTitle)}
                                     className="w-full flex items-center justify-between px-6 py-2.5 bg-surface/40 hover:bg-surface-variant/20 transition-colors"
@@ -345,8 +337,8 @@ export default function AdminPayments() {
                                       <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform ${isTournamentOpen ? 'rotate-90' : ''}`}>chevron_right</span>
                                       <span className="text-[11px] font-semibold text-on-background truncate">{tournamentTitle}</span>
                                     </div>
-                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${tab === 'pending' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>{tRegs.length} {tab === 'pending' ? 'pending' : 'verified'}</span>
-                                    </button>
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${tab === 'pending' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>{tRegs.length} {tab === 'pending' ? 'pending' : 'verified'}</span>
+                                  </button>
 
                                   <AnimatePresence>
                                     {isTournamentOpen && (
@@ -356,7 +348,6 @@ export default function AdminPayments() {
                                         exit={{ height: 0, opacity: 0 }}
                                         className="overflow-hidden"
                                       >
-                                        {/* Level 3: Verification Queue */}
                                         <div className="overflow-x-auto">
                                           <table className="w-full min-w-[600px]">
                                             <thead>

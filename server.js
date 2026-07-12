@@ -7500,7 +7500,208 @@ const server = http.createServer(async (req, res) => {
         FROM tournament_registrations r
         JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
-        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed')
+        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
+        ORDER BY t.game, t.title, r.created_at ASC
+      `);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- VERIFIER: GET PENDING PAYMENT REGISTRATIONS ---
+  if (req.url === '/api/verifier/pending-payments' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+        return;
+      }
+
+      const dbRes = await pool.query(`
+        SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
+               t.entry_fee_amount, t.orgid AS tournament_org_id, t.orgname AS tournament_org_name,
+               ps.payment_status AS pay_status, ps.id AS payment_submission_id,
+               ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr,
+               ps.payment_app AS pay_app, u.name AS user_name, u.email AS user_email
+        FROM tournament_registrations r
+        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+        LEFT JOIN users u ON r.user_id = u.id
+        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+           OR ps.payment_status IN ('pending', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+        ORDER BY r.created_at DESC
+      `);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // DELETE /api/automation-rules/:id
+  const autoRuleDeleteMatch2 = req.url.match(/^\/api\/automation-rules\/([^/]+)$/);
+  if (autoRuleDeleteMatch2 && req.method === 'DELETE') {
+    const ruleId = autoRuleDeleteMatch2[1];
+    try {
+      const authUser = getAuthUser(req);
+      if (!requireOrganizer(req, res, authUser)) return;
+
+      await pool.query('DELETE FROM automation_rules WHERE id = $1', [ruleId]);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Automation rule deleted.' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // ========================
+  // ADMIN SUBSCRIPTION MANAGEMENT
+  // ========================
+
+  // GET /api/admin/subscriptions - List all subscriptions
+  if (req.url === '/api/admin/subscriptions' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+
+      const dbRes = await pool.query(`
+        SELECT s.*, u.name as user_name, u.email as user_email, u.tier, u.status as user_status
+        FROM subscriptions s
+        JOIN users u ON u.id = s.organizer_id
+        ORDER BY s.created_at DESC
+      `);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, subscriptions: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/admin/subscriptions/override - Admin override subscription
+  if (req.url === '/api/admin/subscriptions/override' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          return;
+        }
+
+        const { userId, plan, billingCycle, status } = JSON.parse(body);
+        if (!plan || !['Free', 'Basic', 'Pro'].includes(plan)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_PLAN' }));
+          return;
+        }
+
+        // Update user tier
+        await pool.query('UPDATE users SET tier = $1 WHERE id = $2', [plan, userId]);
+
+        // Update subscription
+        const planRes = await pool.query('SELECT id FROM organizer_plans WHERE name = $1', [plan]);
+        if (planRes.rows.length > 0) {
+          const planId = planRes.rows[0].id;
+          const subRes = await pool.query('SELECT id FROM subscriptions WHERE organizer_id = $1', [userId]);
+          if (subRes.rows.length > 0) {
+            await pool.query(
+              `UPDATE subscriptions SET plan_id = $1, billing_status = $2, billing_cycle = $3, cancelled_at = NULL WHERE organizer_id = $4`,
+              [planId, status || 'active', billingCycle || 'monthly', userId]
+            );
+          } else {
+            const subId = 'SUB-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+            await pool.query(
+              `INSERT INTO subscriptions (id, organizer_id, plan_id, billing_status, billing_cycle)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [subId, userId, planId, status || 'active', billingCycle || 'monthly']
+            );
+          }
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `User subscription set to ${plan}.` }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /api/admin/subscriptions/stats - Subscription statistics
+  if (req.url === '/api/admin/subscriptions/stats' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+
+      const planCounts = await pool.query(
+        `SELECT tier, COUNT(*) as count FROM users WHERE 'organiser' = ANY(roles) GROUP BY tier`
+      );
+      const totalOrganizers = await pool.query(`SELECT COUNT(*) FROM users WHERE 'organiser' = ANY(roles)`);
+      const monthlyRevenue = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) as total FROM billing_history WHERE status = 'completed' AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)`
+      );
+      const activeSubscriptions = await pool.query(
+        `SELECT COUNT(*) FROM subscriptions WHERE billing_status = 'active'`
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        stats: {
+          totalOrganizers: parseInt(totalOrganizers.rows[0].count),
+          activeSubscriptions: parseInt(activeSubscriptions.rows[0].count),
+          monthlyRevenue: parseFloat(monthlyRevenue.rows[0].total),
+          planDistribution: planCounts.rows
+        }
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- ADMIN GET PENDING REGISTRATIONS WITH TOURNAMENT GAME INFO ---
+  if (req.url === '/api/admin/pending-registrations' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
+      const dbRes = await pool.query(`
+        SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
+               t.entry_fee_amount, ps.payment_status AS pay_status, ps.id AS payment_submission_id,
+               ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr
+        FROM tournament_registrations r
+        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
         ORDER BY t.game, t.title, r.created_at ASC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -7532,7 +7733,7 @@ const server = http.createServer(async (req, res) => {
         JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
         LEFT JOIN users u ON u.id = r.user_id
-        WHERE r.status IN ('pending_payment', 'PENDING_PAYMENT_VERIFICATION')
+        WHERE r.status IN ('pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
         ORDER BY t.game, t.title, r.created_at ASC
       `);
 
@@ -7567,7 +7768,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const currentReg = regRes.rows[0];
-        if (currentReg.status !== 'pending_payment' && currentReg.status !== 'PENDING_PAYMENT_VERIFICATION') {
+        if (currentReg.status !== 'pending_payment' && currentReg.status !== 'PENDING_PAYMENT_VERIFICATION' && currentReg.status !== 'pending') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Registration is not awaiting payment verification.' }));
           return;
@@ -7588,7 +7789,25 @@ const server = http.createServer(async (req, res) => {
             `UPDATE payment_submissions SET payment_status = 'verified_by_host', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
             [authUser.id, currentReg.payment_id]
           );
+        } else {
+          await pool.query(
+            `UPDATE payment_submissions SET payment_status = 'verified_by_host', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'verified_by_host'`,
+            [authUser.id, regId]
+          );
         }
+
+        // Record verification sync for mobile app history
+        try {
+          const smsVerId = 'WEB-VER-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          const tRes = await pool.query('SELECT entry_fee_amount FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
+          const fee = tRes.rows.length ? (tRes.rows[0].entry_fee_amount || 0) : 0;
+          await pool.query(
+            `INSERT INTO payment_sms_verifications
+             (id, utr, amount, device_id, matched_registration_id, match_type, status, created_at)
+             VALUES ($1, $2, $3, $4, $5, 'registration', 'verified', NOW())`,
+            [smsVerId, currentReg.transaction_id || 'WEB_MANUAL', fee, 'WEB-ADMIN', regId]
+          );
+        } catch (verErr) { /* ignore duplicate or missing column */ }
 
         // Alert the registering user
         try {
@@ -10068,8 +10287,8 @@ const server = http.createServer(async (req, res) => {
                   tr.transaction_id, tr.email, tr.phone, tr.created_at,
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
-           JOIN tournaments t ON t.id = tr.tournament_id
-           WHERE tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired')
+           JOIN tournaments t ON tr.tournament_id = t.id
+           WHERE tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')
            ORDER BY tr.created_at DESC
            LIMIT 100`
          )
@@ -10098,44 +10317,27 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { api_key, device_id } = JSON.parse(body);
-        if (!api_key) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'API key required' }));
-          return;
-        }
-        const keyHash = crypto.createHash('sha256').update(api_key).digest('hex');
-        const devRes = await pool.query(
-          'SELECT * FROM paired_devices WHERE api_key_hash = $1 AND is_active = true',
-          [keyHash]
-        );
-        if (devRes.rows.length === 0) {
+        const deviceAuth = await authenticateDevice(req);
+        if (!deviceAuth) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_API_KEY', message: 'Invalid or inactive API key.' }));
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Invalid or inactive device API key.' }));
           return;
         }
-        const device = devRes.rows[0];
-        const refreshToken = crypto.randomBytes(32).toString('hex');
-        const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        await pool.query(
-          `UPDATE paired_devices SET device_id = COALESCE($1, device_id), device_name = $2, refresh_token_hash = $3,
-           last_seen_at = NOW(), app_version = $4 WHERE id = $5`,
-          [device_id || device.device_id, device_id || device.device_name, refreshHash, null, device.id]
-        );
-        const deviceJwt = signJwt({
-          type: 'device',
-          device_id: device_id || device.device_id,
-          user_id: device.user_id,
-          scope: 'payment_verification'
-        });
-        console.log(`📱 [DEVICE] Device paired: ${device_id || device.device_id} → user ${device.user_id}`);
+        let parsed = {};
+        try { parsed = JSON.parse(body); } catch {}
+        if (parsed.device_name || parsed.app_version) {
+          await pool.query(
+            `UPDATE paired_devices SET device_name = COALESCE($1, device_name), app_version = COALESCE($2, app_version), last_seen_at = CURRENT_TIMESTAMP WHERE id = $3`,
+            [parsed.device_name || null, parsed.app_version || null, deviceAuth.id]
+          );
+        } else {
+          await pool.query(`UPDATE paired_devices SET last_seen_at = CURRENT_TIMESTAMP WHERE id = $1`, [deviceAuth.id]);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          access_token: deviceJwt,
-          refresh_token: refreshToken,
-          expires_in: 86400,
-          message: 'Authenticated'
+          device: deviceAuth,
+          message: 'Device authenticated successfully.'
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -10145,76 +10347,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // POST /api/v1/auth/refresh — Refresh device JWT
-  if (req.url === '/api/v1/auth/refresh' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const params = new URLSearchParams(req.url.includes('?') ? req.url.split('?')[1] : '');
-        const refreshToken = params.get('refresh_token') || (body ? JSON.parse(body).refresh_token : null);
-        if (!refreshToken) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Refresh token required' }));
-          return;
-        }
-        const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-        const devRes = await pool.query(
-          'SELECT * FROM paired_devices WHERE refresh_token_hash = $1 AND is_active = true',
-          [refreshHash]
-        );
-        if (devRes.rows.length === 0) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_TOKEN', message: 'Invalid or expired refresh token.' }));
-          return;
-        }
-        const device = devRes.rows[0];
-        const newRefreshToken = crypto.randomBytes(32).toString('hex');
-        const newRefreshHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
-        const newDeviceJwt = signJwt({
-          type: 'device',
-          device_id: device.device_id,
-          user_id: device.user_id,
-          scope: 'payment_verification'
-        });
-        await pool.query(
-          'UPDATE paired_devices SET refresh_token_hash = $1, last_seen_at = NOW() WHERE id = $2',
-          [newRefreshHash, device.id]
-        );
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          success: true,
-          access_token: newDeviceJwt,
-          refresh_token: newRefreshToken,
-          expires_in: 86400
-        }));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
-      }
-    });
-    return;
-  }
-
-  // Helper: verify device JWT middleware
-  async function authenticateDevice(req) {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-    const token = authHeader.slice(7);
-    const result = verifyJwt(token);
-    if (!result.valid) return null;
-    const p = result.payload;
-    if (p.type !== 'device' || p.scope !== 'payment_verification') return null;
-    // Verify device is still active in DB (handles revocation)
-    const check = await pool.query(
-      'SELECT is_active FROM paired_devices WHERE device_id = $1 AND is_active = true',
-      [p.device_id]
-    );
-    if (check.rows.length === 0) return null;
-    return p;
-  }
-
-  // POST /api/v1/payments/verify — Core auto-verify endpoint (app calls with SMS data)
+  // POST /api/v1/payments/verify — Auto-verify payment via SMS/app
   if (req.url === '/api/v1/payments/verify' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -10226,148 +10359,54 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
-        const { amount, utr, bank, sender, sender_account, timestamp, sms_hash, device_id } = JSON.parse(body);
-        if (!utr || !amount) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Missing required fields: utr, amount' }));
-          return;
-        }
-        const now = new Date();
-        const smsTime = timestamp ? new Date(timestamp) : now;
-
-        // 1. Dedup: check if UTR already processed
-        const dupUtr = await pool.query('SELECT id, status FROM payment_sms_verifications WHERE utr = $1', [utr]);
-        if (dupUtr.rows.length > 0) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            success: true, message: 'Already verified',
-            payment_id: dupUtr.rows[0].id, status: dupUtr.rows[0].status
-          }));
-          return;
-        }
-
-        // 2. Dedup: check if sms_hash already exists
-        if (sms_hash) {
-          const dupHash = await pool.query('SELECT id, status FROM payment_sms_verifications WHERE sms_hash = $1', [sms_hash]);
-          if (dupHash.rows.length > 0) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              success: true, message: 'Already verified',
-              payment_id: dupHash.rows[0].id, status: dupHash.rows[0].status
-            }));
-            return;
-          }
-        }
-
-        const smsRecordId = 'SMS-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        const { sender, message: smsBody, timestamp, utr_ref: parsedUtr, amount: parsedAmount, app_name } = JSON.parse(body);
+        const utr_ref = parsedUtr || (smsBody && smsBody.match(/[A-Z0-9]{12,}/i)?.[0]) || null;
+        const amount = parsedAmount || 0;
+        let finalStatus = 'pending_review';
         let matchedPaymentId = null;
-        let matchedRegId = null;
-        let matchType = 'unmatched';
-        let finalStatus = 'unmatched';
+        const smsRecordId = 'SMS-' + crypto.randomBytes(8).toString('hex');
 
-        // 3. Match subscription payments (payment_verifications table)
-        const subPayments = await pool.query(
-          `SELECT pv.*, u.name as user_name, u.email as user_email FROM payment_verifications pv
-           JOIN users u ON u.id = pv.user_id
-           WHERE pv.status = 'pending' AND pv.amount = $1
-           ORDER BY pv.created_at DESC`,
-          [amount]
+        // Check subscription payment_verifications first
+        const subCheck = await pool.query(
+          `SELECT id, user_id, status FROM payment_verifications WHERE (transaction_id = $1 OR utr_ref = $1) AND status = 'pending' LIMIT 1`,
+          [utr_ref]
         );
-
-        if (subPayments.rows.length === 1) {
-          // Exact match — auto-approve
-          const payment = subPayments.rows[0];
-          await autoApproveSubscription(pool, payment, deviceAuth.user_id, utr);
-          matchedPaymentId = payment.id;
-          matchType = 'subscription';
+        if (subCheck.rows.length > 0) {
+          matchedPaymentId = subCheck.rows[0].id;
           finalStatus = 'verified';
-          console.log(`✅ [AUTO-VERIFY] Subscription payment ${payment.id} auto-approved (UTR: ${utr})`);
-        } else if (subPayments.rows.length > 1) {
-          // Multiple matches — try by time proximity (match within 30 min of SMS)
-          for (const p of subPayments.rows) {
-            const pTime = new Date(p.created_at).getTime();
-            const sTime = smsTime.getTime();
-            if (Math.abs(sTime - pTime) < 30 * 60 * 1000) {
-              await autoApproveSubscription(pool, p, deviceAuth.user_id, utr);
-              matchedPaymentId = p.id;
-              matchType = 'subscription';
-              finalStatus = 'verified';
-              console.log(`✅ [AUTO-VERIFY] Subscription payment ${p.id} auto-approved (UTR: ${utr}, time proximity)`);
-              break;
-            }
-          }
-        }
-
-        // 4. If no subscription match, try tournament registration matching
-        if (!matchedPaymentId) {
-          const regPayments = await pool.query(
-            `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.created_at,
-                    t.entry_fee_amount, t.title as tournament_title
-             FROM tournament_registrations tr
-             JOIN tournaments t ON t.id = tr.tournament_id
-             WHERE tr.status = 'pending_payment' AND t.entry_fee_amount = $1
-             ORDER BY tr.created_at DESC`,
-            [amount]
+          await pool.query(`UPDATE payment_verifications SET status = 'verified', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+          await pool.query(`UPDATE subscriptions SET billing_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE organizer_id = $1`, [subCheck.rows[0].user_id]);
+        } else {
+          // Check tournament registrations
+          const regCheck = await pool.query(
+            `SELECT r.id, r.user_id, r.status, ps.id as sub_id FROM tournament_registrations r LEFT JOIN payment_submissions ps ON ps.registration_id = r.id WHERE (r.transaction_id = $1 OR ps.utr_number = $1) AND r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION') LIMIT 1`,
+            [utr_ref]
           );
-
-          if (regPayments.rows.length === 1) {
-            const reg = regPayments.rows[0];
-            await pool.query(
-              `UPDATE tournament_registrations SET status = 'confirmed', transaction_id = $1, updated_at = NOW() WHERE id = $2`,
-              [utr, reg.id]
-            );
-            await pool.query(
-              `UPDATE tournaments SET "slotsFilled" = COALESCE("slotsFilled", 0) + 1 WHERE id = $1`,
-              [reg.tournament_id]
-            );
-            matchedRegId = reg.id;
-            matchType = 'registration';
+          if (regCheck.rows.length > 0) {
+            matchedPaymentId = regCheck.rows[0].id;
             finalStatus = 'verified';
-            console.log(`✅ [AUTO-VERIFY] Registration ${reg.id} for "${reg.tournament_title}" auto-approved (UTR: ${utr})`);
-          } else if (regPayments.rows.length > 1) {
-            for (const reg of regPayments.rows) {
-              const rTime = new Date(reg.created_at).getTime();
-              const sTime = smsTime.getTime();
-              if (Math.abs(sTime - rTime) < 30 * 60 * 1000) {
-                await pool.query(
-                  `UPDATE tournament_registrations SET status = 'confirmed', transaction_id = $1, updated_at = NOW() WHERE id = $2`,
-                  [utr, reg.id]
-                );
-                await pool.query(
-                  `UPDATE tournaments SET "slotsFilled" = COALESCE("slotsFilled", 0) + 1 WHERE id = $1`,
-                  [reg.tournament_id]
-                );
-                matchedRegId = reg.id;
-                matchType = 'registration';
-                finalStatus = 'verified';
-                console.log(`✅ [AUTO-VERIFY] Registration ${reg.id} auto-approved (UTR: ${utr}, time proximity)`);
-                break;
-              }
+            await pool.query(`UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+            if (regCheck.rows[0].sub_id) {
+              await pool.query(`UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [regCheck.rows[0].sub_id]);
             }
           }
         }
 
-        // 5. Record the SMS verification
         await pool.query(
-          `INSERT INTO payment_sms_verifications
-           (id, utr, amount, bank, sender, sender_account, sms_hash, device_id, matched_payment_id, matched_registration_id, match_type, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-          [smsRecordId, utr, amount, bank || null, sender || null, sender_account || null, sms_hash || null,
-           device_id || deviceAuth.device_id, matchedPaymentId, matchedRegId, matchType, finalStatus, smsTime]
+          `INSERT INTO payment_sms_verifications (id, device_id, sender, sms_body, sms_timestamp, parsed_utr, parsed_amount, app_name, verification_status, matched_payment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [smsRecordId, deviceAuth.device_id || deviceAuth.id, sender || 'UNKNOWN', smsBody || '', timestamp ? new Date(timestamp) : new Date(), utr_ref, amount, app_name || 'Verification App', finalStatus, matchedPaymentId]
         );
 
-        // 6. Notify matched user
-        if (matchedPaymentId || matchedRegId) {
-          const userId = matchedPaymentId
-            ? (await pool.query('SELECT user_id FROM payment_verifications WHERE id = $1', [matchedPaymentId])).rows[0]?.user_id
-            : (await pool.query('SELECT user_id FROM tournament_registrations WHERE id = $1', [matchedRegId])).rows[0]?.user_id;
-          if (userId) {
-            const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        if (matchedPaymentId && finalStatus === 'verified') {
+          const userRes = await pool.query('SELECT user_id FROM tournament_registrations WHERE id = $1 UNION SELECT user_id FROM payment_verifications WHERE id = $1', [matchedPaymentId]);
+          if (userRes.rows.length > 0 && userRes.rows[0].user_id) {
+            const notifId = 'NTF-' + crypto.randomBytes(8).toString('hex');
             await pool.query(
-              `INSERT INTO alerts (id, user_id, title, message, is_read)
-               VALUES ($1, $2, $3, $4, false)`,
-              [alertId, userId,
-               finalStatus === 'verified' ? 'Payment Auto-Verified' : 'Payment Received',
+              `INSERT INTO notifications (id, user_id, title, message) VALUES ($1, $2, $3, $4)`,
+              [
+                notifId,
+                userRes.rows[0].user_id,
+                finalStatus === 'verified' ? 'Payment Verified' : 'Payment Received',
                finalStatus === 'verified'
                  ? `Your payment of ₹${amount} was auto-verified. Thank you!`
                  : `Your payment of ₹${amount} was received and is pending manual review.`
