@@ -927,6 +927,21 @@ async function authenticateDevice(req) {
   }
 }
 
+// Try JWT auth first, then device API key auth. Returns a user-like object (with id, role, roles)
+// suitable for hasCapability/hasRole checks, or null if neither method succeeds.
+async function resolveAuthUser(req) {
+  const jwtUser = getAuthUser(req);
+  if (jwtUser) return jwtUser;
+  const deviceAuth = await authenticateDevice(req);
+  if (!deviceAuth) return null;
+  try {
+    const userRes = await pool.query('SELECT id, name, email, role, roles FROM users WHERE id = $1', [deviceAuth.user_id]);
+    return userRes.rows.length ? userRes.rows[0] : { id: deviceAuth.user_id, role: 'reg_payment_verifier', roles: ['user', 'reg_payment_verifier'] };
+  } catch {
+    return { id: deviceAuth.user_id, role: 'reg_payment_verifier', roles: ['user', 'reg_payment_verifier'] };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // IAM Role Hierarchy Engine (Multi-Role Array)
 // Role inheritance model:
@@ -7539,7 +7554,7 @@ const server = http.createServer(async (req, res) => {
   // --- VERIFIER: GET PENDING PAYMENT REGISTRATIONS ---
   if (req.url === '/api/verifier/pending-payments' && req.method === 'GET') {
     try {
-      const authUser = getAuthUser(req);
+      const authUser = await resolveAuthUser(req);
       if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
@@ -7737,39 +7752,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- VERIFIER: GET PENDING PAYMENT REGISTRATIONS ---
-  if (req.url === '/api/verifier/pending-payments' && req.method === 'GET') {
-    try {
-      const authUser = getAuthUser(req);
-      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
-        return;
-      }
-
-      const dbRes = await pool.query(`
-        SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
-               t.entry_fee_amount, t.orgid AS tournament_org_id, t.orgname AS tournament_org_name,
-               ps.payment_status AS pay_status, ps.id AS payment_submission_id,
-               ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr,
-               ps.payment_app AS pay_app, u.name AS user_name, u.email AS user_email
-        FROM tournament_registrations r
-        JOIN tournaments t ON r.tournament_id = t.id
-        LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
-        LEFT JOIN users u ON u.id = r.user_id
-        WHERE r.status IN ('pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
-        ORDER BY t.game, t.title, r.created_at ASC
-      `);
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
-    return;
-  }
-
   // --- VERIFIER: VERIFY A SINGLE REGISTRATION PAYMENT ---
   if (req.url.startsWith('/api/verifier/verify/') && req.method === 'POST') {
     const regId = req.url.split('/api/verifier/verify/')[1];
@@ -7777,7 +7759,7 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const authUser = getAuthUser(req);
+        const authUser = await resolveAuthUser(req);
         if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
