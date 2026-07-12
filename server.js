@@ -7787,107 +7787,117 @@ const server = http.createServer(async (req, res) => {
         const data = JSON.parse(body);
         const paymentApp = data.payment_app || currentReg.payment_app || null;
 
-        // Update registration to VERIFIED_BY_HOST
+        // Fetch tournament title for notifications
+        const tRes = await pool.query('SELECT title, entry_fee_amount FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
+        const tourneyTitle = tRes.rows[0]?.title || 'the tournament';
+        const fee = tRes.rows.length ? (tRes.rows[0].entry_fee_amount || 0) : 0;
+
+        // 1. Update registration to confirmed (same as admin panel approval)
         await pool.query(
-          `UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          `UPDATE tournament_registrations SET status = 'confirmed', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
           [paymentApp, regId]
         );
 
-        // Update payment_submissions if linked
+        // 2. Update payment_submissions to verified (same as admin panel)
         if (currentReg.payment_id) {
           await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'verified_by_host', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
             [authUser.id, currentReg.payment_id]
           );
         } else {
           await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'verified_by_host', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'verified_by_host'`,
+            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'verified'`,
             [authUser.id, regId]
           );
         }
 
-        // Record verification sync for mobile app history
+        // 3. Record verification sync for mobile app history
         try {
           const smsVerId = 'WEB-VER-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          const tRes = await pool.query('SELECT entry_fee_amount FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
-          const fee = tRes.rows.length ? (tRes.rows[0].entry_fee_amount || 0) : 0;
           await pool.query(
             `INSERT INTO payment_sms_verifications
              (id, utr, amount, device_id, matched_registration_id, match_type, status, created_at)
              VALUES ($1, $2, $3, $4, $5, 'registration', 'verified', NOW())`,
-            [smsVerId, currentReg.transaction_id || 'WEB_MANUAL', fee, 'WEB-ADMIN', regId]
+            [smsVerId, currentReg.transaction_id || 'APP_MANUAL', fee, 'APP-VERIFIER', regId]
           );
         } catch (verErr) { /* ignore duplicate or missing column */ }
 
-        // Alert the registering user
-        try {
-          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO alerts (id, user_id, title, message, is_read)
-             VALUES ($1, $2, $3, $4, false)`,
-            [alertId, currentReg.user_id, 'Payment Verified',
-             `Your payment for team "${currentReg.team_name}" has been verified. Pending final approval from the tournament organizer.`]
-          );
-        } catch (alertErr) { /* non-critical */ }
-
-        // Audit log
-        try {
-          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [logId, authUser.id, 'payment_verified_by_host', 'registration', regId,
-             JSON.stringify({ teamName: currentReg.team_name, tournamentId: currentReg.tournament_id, paymentApp })]
-          );
-        } catch (logErr) { /* non-critical */ }
-
-        // Reconcile tournament slots (counts VERIFIED_BY_HOST toward slotsFilled)
+        // 4. Allocate slot and update slotsFilled (same as admin panel)
         try {
           await reconcileTournamentSlots(pool, currentReg.tournament_id);
         } catch (slotErr) {
           console.error('❌ [VERIFIER] Slot reconciliation failed:', slotErr.message);
         }
 
-        // Send email notification to the user
+        // 5. In-app alert (same as admin panel)
+        try {
+          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read)
+             VALUES ($1, $2, $3, $4, $5, false)`,
+            [alertId, currentReg.user_id, 'Registration Confirmed',
+             `Your team "${currentReg.team_name}" has been confirmed for ${tourneyTitle}!`, currentReg.tournament_id]
+          );
+        } catch (alertErr) { /* non-critical */ }
+
+        // 6. Email notification (same as admin panel)
         try {
           const uRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
           if (uRes.rows.length > 0 && uRes.rows[0].email) {
             const userEmail = uRes.rows[0].email;
             const userName = uRes.rows[0].name || currentReg.captain;
-            const tRes = await pool.query('SELECT title FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
-            const tourneyTitle = tRes.rows[0]?.title || 'the tournament';
             await resend.emails.send({
               from: RESEND_FROM_EMAIL,
               to: [userEmail],
-              subject: `Payment Verified — ${tourneyTitle}`,
+              subject: `Registration Confirmed ✅ — ${tourneyTitle}`,
               html: `
                 <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
-                  <h2 style="color:#16a34a;margin:0 0 16px 0;">Payment Verified</h2>
+                  <h2 style="color:#16a34a;margin:0 0 16px 0;">Registration Confirmed!</h2>
                   <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
                   <p style="color:#333;font-size:15px;line-height:1.5;">
-                    Your payment for <strong>${tourneyTitle}</strong> has been verified successfully.
+                    Your team <strong>${currentReg.team_name}</strong> has been confirmed for <strong>${tourneyTitle}</strong>.
                   </p>
                   <div style="background:#f0fdf4;padding:16px;border-radius:6px;margin:16px 0;">
-                    <p style="margin:0 0 4px 0;font-weight:bold;color:#16a34a;">Status: Verified</p>
-                    <p style="margin:0;color:#333;font-size:14px;">Team: ${currentReg.team_name}</p>
-                    <p style="margin:0;color:#333;font-size:14px;">Transaction ID: ${currentReg.transaction_id || '—'}</p>
+                    <p style="margin:0;font-weight:bold;color:#16a34a;">Status: Confirmed</p>
+                    <p style="margin:0;color:#333;font-size:14px;margin-top:4px;">Transaction: ${currentReg.transaction_id || '—'}</p>
                   </div>
-                  <p style="color:#666;font-size:13px;">You're all set! The organizer will confirm your slot shortly.</p>
+                  <p style="color:#666;font-size:13px;">Stay tuned for room credentials and further instructions.</p>
                   <hr style="border:0;border-top:1px solid #eee;margin:20px 0;" />
                   <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
                 </div>
               `
             });
-            console.log('[VERIFIER] Payment verified email sent to', userEmail);
+            console.log('✅ [VERIFIER] Confirmation email sent to', userEmail);
           }
         } catch (emailErr) {
-          console.error('[VERIFIER] Failed to send verification email:', emailErr.message);
+          console.error('❌ [VERIFIER] Failed to send confirmation email:', emailErr.message);
         }
 
-        console.log(`\n📦 [VERIFIER] Registration "${regId}" verified by ${authUser.id}. Status → VERIFIED_BY_HOST\n`);
+        // 7. Audit log (same as admin panel)
+        try {
+          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [logId, authUser.id, 'registration_confirmed_by_app', 'registration', regId,
+             JSON.stringify({ teamName: currentReg.team_name, tournamentId: currentReg.tournament_id, paymentApp })]
+          );
+        } catch (logErr) { /* non-critical */ }
+
+        // 8. Analytics event (same as admin panel)
+        try {
+          await pool.query(
+            `INSERT INTO analytics_events (id, organizer_id, event_type, event_data, tournament_id)
+             VALUES ($1, $2, $3, $4, $5)`,
+            ['AE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), currentReg.user_id, 'registration_confirmed_by_app',
+             JSON.stringify({ teamName: currentReg.team_name, captain: currentReg.captain }), currentReg.tournament_id]
+          );
+        } catch (aeErr) { /* analytics non-critical */ }
+
+        console.log(`\n📦 [VERIFIER] Registration "${regId}" confirmed by ${authUser.id}. Status → confirmed. Slot allocated.\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Payment verified successfully. Status set to VERIFIED_BY_HOST.' }));
+        res.end(JSON.stringify({ success: true, message: 'Payment verified, registration confirmed, and slot allocated.' }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
