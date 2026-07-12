@@ -15,6 +15,7 @@ export default function AdminPayments() {
   const [rejectReason, setRejectReason] = useState('')
   const [bulkApproving, setBulkApproving] = useState(false)
   const [verifiedCount, setVerifiedCount] = useState(0)
+  const [tab, setTab] = useState('pending')
 
   const triggerToast = (msg) => {
     setToastMessage(msg)
@@ -78,7 +79,10 @@ export default function AdminPayments() {
 
   useEffect(() => { fetchPending(); fetchVerifiedCount() }, [])
 
-  const groupedByGame = registrations.reduce((acc, reg) => {
+  const pendingRegs = registrations.filter(r => r.status === 'pending' || r.status === 'pending_payment' || r.status === 'PENDING_PAYMENT_VERIFICATION')
+  const verifiedRegs = registrations.filter(r => r.status === 'confirmed')
+
+  const groupedByGame = (tab === 'pending' ? pendingRegs : verifiedRegs).reduce((acc, reg) => {
     const game = reg.tournament_game || 'Unknown Game'
     if (!acc[game]) acc[game] = []
     acc[game].push(reg)
@@ -242,10 +246,10 @@ export default function AdminPayments() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h1 className="font-headline-lg text-lg sm:text-xl font-black text-on-background">Payment Verification</h1>
-            <p className="font-body-sm text-[11px] text-on-surface-variant">Approve or reject pending squad registrations</p>
+            <p className="font-body-sm text-[11px] text-on-surface-variant">Review pending payments and auto-verified registrations</p>
           </div>
           <div className="flex items-center gap-2">
-            {verifiedCount > 0 && (
+            {tab === 'pending' && verifiedCount > 0 && (
               <button
                 onClick={handleBulkApproveAll}
                 disabled={bulkApproving}
@@ -269,16 +273,20 @@ export default function AdminPayments() {
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs">
-            <span className="text-amber-400">Pending: </span>
-            <span className="font-bold text-amber-300">{registrations.length}</span>
-          </div>
-          <div className="px-3.5 py-2 rounded-xl bg-surface border border-outline-variant/20 text-xs">
-            <span className="text-on-surface-variant">Games: </span>
-            <span className="font-bold text-on-background">{Object.keys(groupedByGame).length}</span>
-          </div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 bg-surface-variant/20 p-1 rounded-xl w-fit">
+          <button
+            onClick={() => setTab('pending')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${tab === 'pending' ? 'bg-primary text-white shadow-sm' : 'text-on-surface-variant hover:text-on-background'}`}
+          >
+            Pending ({pendingRegs.length})
+          </button>
+          <button
+            onClick={() => setTab('verified')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${tab === 'verified' ? 'bg-emerald-500 text-white shadow-sm' : 'text-on-surface-variant hover:text-on-background'}`}
+          >
+            Verified by App ({verifiedRegs.length})
+          </button>
         </div>
 
         {/* Nested Accordion */}
@@ -289,12 +297,12 @@ export default function AdminPayments() {
                 <div key={i} className="h-12 bg-surface-variant/30 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : registrations.length === 0 ? (
+          ) : (tab === 'pending' ? pendingRegs : verifiedRegs).length === 0 ? (
             <div className="text-center py-16">
-              <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto text-emerald-400 mb-3">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${tab === 'pending' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
                 <span className="material-symbols-outlined text-2xl">check_circle</span>
               </div>
-              <p className="text-sm font-medium text-on-surface-variant">No pending registrations.</p>
+              <p className="text-sm font-medium text-on-surface-variant">{tab === 'pending' ? 'No pending registrations.' : 'No verified registrations from the app.'}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -312,7 +320,7 @@ export default function AdminPayments() {
                         <span className={`material-symbols-outlined text-sm text-on-surface-variant transition-transform ${isGameOpen ? 'rotate-90' : ''}`}>chevron_right</span>
                         <span className="text-xs font-bold text-on-background uppercase">{game}</span>
                       </div>
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400">{gameRegs.length} pending</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${tab === 'pending' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>{gameRegs.length} {tab === 'pending' ? 'pending' : 'verified'}</span>
                     </button>
 
                     <AnimatePresence>
@@ -337,8 +345,8 @@ export default function AdminPayments() {
                                       <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform ${isTournamentOpen ? 'rotate-90' : ''}`}>chevron_right</span>
                                       <span className="text-[11px] font-semibold text-on-background truncate">{tournamentTitle}</span>
                                     </div>
-                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400">{tRegs.length} pending</span>
-                                  </button>
+                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${tab === 'pending' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>{tRegs.length} {tab === 'pending' ? 'pending' : 'verified'}</span>
+                                    </button>
 
                                   <AnimatePresence>
                                     {isTournamentOpen && (
@@ -358,7 +366,7 @@ export default function AdminPayments() {
                                                 <th className="text-left px-4 py-2 font-label-caps text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">UTR</th>
                                                 <th className="text-left px-4 py-2 font-label-caps text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">App</th>
                                                 <th className="text-left px-4 py-2 font-label-caps text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">Screenshot</th>
-                                                <th className="text-right px-4 py-2 font-label-caps text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">Actions</th>
+                                                <th className="text-right px-4 py-2 font-label-caps text-[8px] font-bold uppercase tracking-wider text-on-surface-variant">{tab === 'verified' ? 'Verified At' : 'Actions'}</th>
                                               </tr>
                                             </thead>
                                             <tbody>
@@ -371,13 +379,19 @@ export default function AdminPayments() {
                                                     </div>
                                                   </td>
                                                   <td className="px-4 py-2.5">
-                                                    <span className={`inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
-                                                      reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION'
-                                                        ? 'bg-amber-500/15 text-amber-400'
-                                                        : 'bg-blue-500/15 text-blue-400'
-                                                    }`}>
-                                                      {reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION' ? 'Payment' : 'Free'}
-                                                    </span>
+                                                    {tab === 'verified' ? (
+                                                      <span className="inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-emerald-500/15 text-emerald-400">
+                                                        Verified
+                                                      </span>
+                                                    ) : (
+                                                      <span className={`inline-block px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${
+                                                        reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION'
+                                                          ? 'bg-amber-500/15 text-amber-400'
+                                                          : 'bg-blue-500/15 text-blue-400'
+                                                      }`}>
+                                                        {reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION' ? 'Payment' : 'Free'}
+                                                      </span>
+                                                    )}
                                                   </td>
                                                   <td className="px-4 py-2.5 text-[10px] font-mono text-on-surface-variant">{
                                                     reg.payment_utr || reg.transaction_id || '—'
@@ -393,22 +407,28 @@ export default function AdminPayments() {
                                                     )}
                                                   </td>
                                                   <td className="px-4 py-2.5 text-right">
-                                                    <div className="flex items-center justify-end gap-1.5">
-                                                      <button
-                                                        onClick={() => handleApprove(reg.id, reg.status)}
-                                                        disabled={actionLoading === reg.id}
-                                                        className="px-3 py-1.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                                                      >
-                                                        {actionLoading === reg.id ? '...' : reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION' ? 'CONFIRM' : 'APPROVE'}
-                                                      </button>
-                                                      <button
-                                                        onClick={() => handleReject(reg.id)}
-                                                        disabled={actionLoading === reg.id}
-                                                        className="px-3 py-1.5 rounded-md text-[10px] font-bold bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                                                      >
-                                                        REJECT
-                                                      </button>
-                                                    </div>
+                                                    {tab === 'verified' ? (
+                                                      <span className="text-[9px] text-on-surface-variant">
+                                                        {reg.updated_at ? new Date(reg.updated_at).toLocaleString() : '—'}
+                                                      </span>
+                                                    ) : (
+                                                      <div className="flex items-center justify-end gap-1.5">
+                                                        <button
+                                                          onClick={() => handleApprove(reg.id, reg.status)}
+                                                          disabled={actionLoading === reg.id}
+                                                          className="px-3 py-1.5 rounded-md text-[10px] font-bold bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                                        >
+                                                          {actionLoading === reg.id ? '...' : reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION' ? 'CONFIRM' : 'APPROVE'}
+                                                        </button>
+                                                        <button
+                                                          onClick={() => handleReject(reg.id)}
+                                                          disabled={actionLoading === reg.id}
+                                                          className="px-3 py-1.5 rounded-md text-[10px] font-bold bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                                        >
+                                                          REJECT
+                                                        </button>
+                                                      </div>
+                                                    )}
                                                   </td>
                                                 </tr>
                                               ))}

@@ -7500,7 +7500,7 @@ const server = http.createServer(async (req, res) => {
         FROM tournament_registrations r
         JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
-        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION')
+        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed')
         ORDER BY t.game, t.title, r.created_at ASC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
