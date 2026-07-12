@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
+import { formatTime12hIST } from '../../../utils/timeFormat'
 
 function DetailRow({ label, value }) {
   return (
@@ -158,7 +159,7 @@ export default function Step8Preview({ data, orgName, orgTier }) {
                     <span className="w-2 h-2 rounded-full bg-primary/60" />
                     <span className="text-on-background font-medium">{r.name || `Round ${idx + 1}`}</span>
                     {r.date && <span className="text-on-surface-variant text-xs">{r.date}</span>}
-                    {r.time && <span className="text-on-surface-variant text-xs">{r.time}</span>}
+                    {r.time && <span className="text-on-surface-variant text-xs">{formatTime12hIST(r.time)}</span>}
                     {r.qualified && <span className="text-on-surface-variant text-xs">• {r.qualified} teams</span>}
                     {idx < rounds.length - 1 && <span className="text-on-surface-variant ml-auto">↓</span>}
                   </div>

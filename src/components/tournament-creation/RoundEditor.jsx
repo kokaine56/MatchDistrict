@@ -1,7 +1,11 @@
 import { motion } from 'framer-motion'
 import { OptimizedInput } from '../OptimizedInput'
+import { splitTime24, parseTime12h } from '../../utils/timeFormat'
 
 const BGMI_MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Karakin', 'Nusa', 'Rondo']
+
+const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1))
+const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
 
 export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp, onMoveDown, isFirst, isLast, error, minDate, minTime }) {
   return (
@@ -72,15 +76,53 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
           </div>
           <div className="flex-1 min-w-0">
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">
-              <span className="text-error mr-1">*</span>Time
+              <span className="text-error mr-1">*</span>Time <span className="text-[10px] font-normal text-on-surface-variant/50">IST</span>
             </label>
-            <OptimizedInput
-              type="time"
-              value={round.time || ''}
-              onChange={(v) => onChange({ ...round, time: v })}
-              min={minDate && round.date === minDate ? minTime || '' : ''}
-              className="w-full p-3 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all"
-            />
+            <div className="flex gap-1.5 items-center">
+              <select
+                value={String(splitTime24(round.time || '').h12)}
+                onChange={(e) => {
+                  const s = splitTime24(round.time || '')
+                  const time24 = parseTime12h(e.target.value, s.m, s.period)
+                  onChange({ ...round, time: time24 })
+                }}
+                className="w-[72px] p-3 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all appearance-none cursor-pointer text-center"
+              >
+                {HOURS.map((h) => (
+                  <option key={h} value={h}>{h}</option>
+                ))}
+              </select>
+              <span className="text-on-surface-variant font-bold text-lg">:</span>
+              <select
+                value={splitTime24(round.time || '').m}
+                onChange={(e) => {
+                  const s = splitTime24(round.time || '')
+                  const time24 = parseTime12h(s.h12, e.target.value, s.period)
+                  onChange({ ...round, time: time24 })
+                }}
+                className="w-[72px] p-3 rounded-lg bg-surface/50 border border-outline-variant/20 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all appearance-none cursor-pointer text-center"
+              >
+                {MINUTES.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const s = splitTime24(round.time || '')
+                  const newPeriod = s.period === 'AM' ? 'PM' : 'AM'
+                  const time24 = parseTime12h(s.h12, s.m, newPeriod)
+                  onChange({ ...round, time: time24 })
+                }}
+                className={`px-3 py-3 rounded-lg text-sm font-bold border transition-all min-w-[56px] ${
+                  splitTime24(round.time || '').period === 'AM'
+                    ? 'bg-primary/15 border-primary/30 text-primary'
+                    : 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+                }`}
+              >
+                {splitTime24(round.time || '').period}
+              </button>
+            </div>
           </div>
           <div className="flex-1 min-w-0">
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">

@@ -220,7 +220,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
         <div className="grid md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">
-              <span className="text-error mr-1">*</span>Registration Opens
+              <span className="text-error mr-1">*</span>Registration Opens <span className="text-[10px] font-normal text-on-surface-variant/50">IST</span>
             </label>
             <div className="relative">
               <input
@@ -242,7 +242,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
 
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">
-              <span className="text-error mr-1">*</span>Registration Closes
+              <span className="text-error mr-1">*</span>Registration Closes <span className="text-[10px] font-normal text-on-surface-variant/50">IST</span>
             </label>
             <div className="relative">
               <input

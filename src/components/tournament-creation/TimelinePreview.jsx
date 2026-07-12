@@ -44,14 +44,25 @@ function getNodeState(date) {
   return 'future'
 }
 
+function formatDateIST(dateStr) {
+  if (!dateStr) return ''
+  try {
+    const hasTz = /[Z+-]\d{2}:\d{2}$/.test(dateStr) || dateStr.endsWith('Z')
+    const d = new Date(hasTz ? dateStr : dateStr + '+05:30')
+    if (isNaN(d.getTime())) return dateStr
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST'
+  } catch { return dateStr }
+}
+
 function formatRoundDateTime(dateStr, timeStr) {
   if (!dateStr) return 'TBD'
   try {
     const combined = timeStr ? `${dateStr}T${timeStr}` : dateStr
-    const d = new Date(combined)
+    const hasTz = /[Z+-]\d{2}:\d{2}$/.test(combined) || combined.endsWith('Z')
+    const d = new Date(hasTz ? combined : combined + '+05:30')
     if (isNaN(d.getTime())) return `${dateStr} ${timeStr || ''}`.trim()
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + 
-           (timeStr ? ', ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '')
+           (timeStr ? ', ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST' : '')
   } catch (e) {
     return `${dateStr} ${timeStr || ''}`.trim()
   }
@@ -100,7 +111,7 @@ function TimelineNode({ label, date, icon: Icon, isLast, index }) {
           <span className={`text-xs font-semibold transition-colors ${labelColor}`}>{label}</span>
           {date && (
             <span className="text-[11px] text-on-surface-variant ml-auto text-right shrink-0 tabular-nums w-full sm:w-auto">
-              {new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              {formatDateIST(date)}
             </span>
           )}
         </div>

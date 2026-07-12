@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { id: 'upgrades', label: 'Plan Upgrades', icon: 'upgrade', badgeKey: 'upgrades' },
   { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
+  { id: 'devices', label: 'Payment Verifier', icon: 'qr_code_scanner' },
 ]
 
 export default function AdminLayout({

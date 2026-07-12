@@ -209,6 +209,37 @@ async function initDb() {
         cooldown_until TIMESTAMP NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS paired_devices (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        device_id VARCHAR(255) UNIQUE,
+        device_name VARCHAR(255),
+        api_key_hash VARCHAR(255) NOT NULL,
+        refresh_token_hash VARCHAR(255),
+        is_active BOOLEAN DEFAULT true,
+        app_version VARCHAR(50),
+        last_seen_at TIMESTAMPTZ,
+        paired_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS payment_sms_verifications (
+        id VARCHAR(50) PRIMARY KEY,
+        utr VARCHAR(255) UNIQUE NOT NULL,
+        amount INTEGER NOT NULL,
+        bank VARCHAR(50),
+        sender VARCHAR(255),
+        sender_account VARCHAR(255),
+        sms_hash VARCHAR(64) UNIQUE,
+        device_id VARCHAR(255),
+        matched_payment_id VARCHAR(50),
+        matched_registration_id VARCHAR(50),
+        match_type VARCHAR(20) DEFAULT 'unmatched',
+        status VARCHAR(20) DEFAULT 'unmatched',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
     `);
 
     // Ensure all columns exist in case the table was created previously with an older schema
@@ -9861,6 +9892,438 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── PAIRING & AUTO-VERIFY ENDPOINTS ──────────────────────────────────
+
+  // POST /api/pair/generate-key — Generate a device pairing API key (admin/org)
+  if (req.url === '/api/pair/generate-key' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          return;
+        }
+        const rawKey = 'MDK-' + crypto.randomBytes(20).toString('hex');
+        const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+        const deviceId = 'PAD-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(
+          `INSERT INTO paired_devices (id, user_id, device_id, api_key_hash, is_active)
+           VALUES ($1, $2, $3, $4, true)`,
+          [deviceId, authUser.id, deviceId, keyHash]
+        );
+        console.log(`🔑 [PAIRING] Device key generated for user ${authUser.id} (device: ${deviceId})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          api_key: rawKey,
+          device_id: deviceId,
+          server_url: `http://localhost:${PORT}`,
+          message: 'Scan the QR with your Payment Verification App to pair.'
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /api/pair/devices — List paired devices for current user
+  if (req.url === '/api/pair/devices' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+      const devRes = await pool.query(
+        `SELECT id, device_id, device_name, is_active, app_version, last_seen_at, paired_at
+         FROM paired_devices WHERE user_id = $1 ORDER BY paired_at DESC`,
+        [authUser.id]
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, devices: devRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // DELETE /api/pair/devices/:id — Unpair a device
+  const unpairMatch = req.url.match(/^\/api\/pair\/devices\/([^/]+)$/);
+  if (unpairMatch && req.method === 'DELETE') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const deviceId = unpairMatch[1];
+      const devRes = await pool.query('SELECT * FROM paired_devices WHERE id = $1', [deviceId]);
+      if (devRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+        return;
+      }
+      if (devRes.rows[0].user_id !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+      await pool.query('DELETE FROM paired_devices WHERE id = $1', [deviceId]);
+      console.log(`🔌 [PAIRING] Device ${deviceId} unpaired by ${authUser.id}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Device unpaired.' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // ── MOBILE APP API v1 ENDPOINTS ──────────────────────────────────────
+
+  // GET /api/v1/health — Public health check
+  if (req.url === '/api/v1/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      version: '1.0.0',
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  // POST /api/v1/auth/device — Device authentication (app calls with API key)
+  if (req.url === '/api/v1/auth/device' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { api_key, device_id } = JSON.parse(body);
+        if (!api_key) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'API key required' }));
+          return;
+        }
+        const keyHash = crypto.createHash('sha256').update(api_key).digest('hex');
+        const devRes = await pool.query(
+          'SELECT * FROM paired_devices WHERE api_key_hash = $1 AND is_active = true',
+          [keyHash]
+        );
+        if (devRes.rows.length === 0) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_API_KEY', message: 'Invalid or inactive API key.' }));
+          return;
+        }
+        const device = devRes.rows[0];
+        const refreshToken = crypto.randomBytes(32).toString('hex');
+        const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        await pool.query(
+          `UPDATE paired_devices SET device_id = COALESCE($1, device_id), device_name = $2, refresh_token_hash = $3,
+           last_seen_at = NOW(), app_version = $4 WHERE id = $5`,
+          [device_id || device.device_id, device_id || device.device_name, refreshHash, null, device.id]
+        );
+        const deviceJwt = signJwt({
+          type: 'device',
+          device_id: device_id || device.device_id,
+          user_id: device.user_id,
+          scope: 'payment_verification'
+        });
+        console.log(`📱 [DEVICE] Device paired: ${device_id || device.device_id} → user ${device.user_id}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          access_token: deviceJwt,
+          refresh_token: refreshToken,
+          expires_in: 86400,
+          message: 'Authenticated'
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/v1/auth/refresh — Refresh device JWT
+  if (req.url === '/api/v1/auth/refresh' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const params = new URLSearchParams(req.url.includes('?') ? req.url.split('?')[1] : '');
+        const refreshToken = params.get('refresh_token') || (body ? JSON.parse(body).refresh_token : null);
+        if (!refreshToken) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Refresh token required' }));
+          return;
+        }
+        const refreshHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
+        const devRes = await pool.query(
+          'SELECT * FROM paired_devices WHERE refresh_token_hash = $1 AND is_active = true',
+          [refreshHash]
+        );
+        if (devRes.rows.length === 0) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_TOKEN', message: 'Invalid or expired refresh token.' }));
+          return;
+        }
+        const device = devRes.rows[0];
+        const newRefreshToken = crypto.randomBytes(32).toString('hex');
+        const newRefreshHash = crypto.createHash('sha256').update(newRefreshToken).digest('hex');
+        const newDeviceJwt = signJwt({
+          type: 'device',
+          device_id: device.device_id,
+          user_id: device.user_id,
+          scope: 'payment_verification'
+        });
+        await pool.query(
+          'UPDATE paired_devices SET refresh_token_hash = $1, last_seen_at = NOW() WHERE id = $2',
+          [newRefreshHash, device.id]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          access_token: newDeviceJwt,
+          refresh_token: newRefreshToken,
+          expires_in: 86400
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // Helper: verify device JWT middleware
+  function authenticateDevice(req) {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+    const token = authHeader.slice(7);
+    const result = verifyJwt(token);
+    if (!result.valid) return null;
+    const p = result.payload;
+    if (p.type !== 'device' || p.scope !== 'payment_verification') return null;
+    return p;
+  }
+
+  // POST /api/v1/payments/verify — Core auto-verify endpoint (app calls with SMS data)
+  if (req.url === '/api/v1/payments/verify' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const deviceAuth = authenticateDevice(req);
+        if (!deviceAuth) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const { amount, utr, bank, sender, sender_account, timestamp, sms_hash, device_id } = JSON.parse(body);
+        if (!utr || !amount) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Missing required fields: utr, amount' }));
+          return;
+        }
+        const now = new Date();
+        const smsTime = timestamp ? new Date(timestamp) : now;
+
+        // 1. Dedup: check if UTR already processed
+        const dupUtr = await pool.query('SELECT id, status FROM payment_sms_verifications WHERE utr = $1', [utr]);
+        if (dupUtr.rows.length > 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true, message: 'Already verified',
+            payment_id: dupUtr.rows[0].id, status: dupUtr.rows[0].status
+          }));
+          return;
+        }
+
+        // 2. Dedup: check if sms_hash already exists
+        if (sms_hash) {
+          const dupHash = await pool.query('SELECT id, status FROM payment_sms_verifications WHERE sms_hash = $1', [sms_hash]);
+          if (dupHash.rows.length > 0) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true, message: 'Already verified',
+              payment_id: dupHash.rows[0].id, status: dupHash.rows[0].status
+            }));
+            return;
+          }
+        }
+
+        const smsRecordId = 'SMS-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        let matchedPaymentId = null;
+        let matchedRegId = null;
+        let matchType = 'unmatched';
+        let finalStatus = 'unmatched';
+
+        // 3. Match subscription payments (payment_verifications table)
+        const subPayments = await pool.query(
+          `SELECT pv.*, u.name as user_name, u.email as user_email FROM payment_verifications pv
+           JOIN users u ON u.id = pv.user_id
+           WHERE pv.status = 'pending' AND pv.amount = $1
+           ORDER BY pv.created_at DESC`,
+          [amount]
+        );
+
+        if (subPayments.rows.length === 1) {
+          // Exact match — auto-approve
+          const payment = subPayments.rows[0];
+          await autoApproveSubscription(pool, payment, deviceAuth.user_id, utr);
+          matchedPaymentId = payment.id;
+          matchType = 'subscription';
+          finalStatus = 'verified';
+          console.log(`✅ [AUTO-VERIFY] Subscription payment ${payment.id} auto-approved (UTR: ${utr})`);
+        } else if (subPayments.rows.length > 1) {
+          // Multiple matches — try by time proximity (match within 30 min of SMS)
+          for (const p of subPayments.rows) {
+            const pTime = new Date(p.created_at).getTime();
+            const sTime = smsTime.getTime();
+            if (Math.abs(sTime - pTime) < 30 * 60 * 1000) {
+              await autoApproveSubscription(pool, p, deviceAuth.user_id, utr);
+              matchedPaymentId = p.id;
+              matchType = 'subscription';
+              finalStatus = 'verified';
+              console.log(`✅ [AUTO-VERIFY] Subscription payment ${p.id} auto-approved (UTR: ${utr}, time proximity)`);
+              break;
+            }
+          }
+        }
+
+        // 4. If no subscription match, try tournament registration matching
+        if (!matchedPaymentId) {
+          const regPayments = await pool.query(
+            `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.created_at,
+                    t.entry_fee_amount, t.title as tournament_title
+             FROM tournament_registrations tr
+             JOIN tournaments t ON t.id = tr.tournament_id
+             WHERE tr.status = 'pending_payment' AND t.entry_fee_amount = $1
+             ORDER BY tr.created_at DESC`,
+            [amount]
+          );
+
+          if (regPayments.rows.length === 1) {
+            const reg = regPayments.rows[0];
+            await pool.query(
+              `UPDATE tournament_registrations SET status = 'confirmed', transaction_id = $1, updated_at = NOW() WHERE id = $2`,
+              [utr, reg.id]
+            );
+            await pool.query(
+              `UPDATE tournaments SET "slotsFilled" = COALESCE("slotsFilled", 0) + 1 WHERE id = $1`,
+              [reg.tournament_id]
+            );
+            matchedRegId = reg.id;
+            matchType = 'registration';
+            finalStatus = 'verified';
+            console.log(`✅ [AUTO-VERIFY] Registration ${reg.id} for "${reg.tournament_title}" auto-approved (UTR: ${utr})`);
+          } else if (regPayments.rows.length > 1) {
+            for (const reg of regPayments.rows) {
+              const rTime = new Date(reg.created_at).getTime();
+              const sTime = smsTime.getTime();
+              if (Math.abs(sTime - rTime) < 30 * 60 * 1000) {
+                await pool.query(
+                  `UPDATE tournament_registrations SET status = 'confirmed', transaction_id = $1, updated_at = NOW() WHERE id = $2`,
+                  [utr, reg.id]
+                );
+                await pool.query(
+                  `UPDATE tournaments SET "slotsFilled" = COALESCE("slotsFilled", 0) + 1 WHERE id = $1`,
+                  [reg.tournament_id]
+                );
+                matchedRegId = reg.id;
+                matchType = 'registration';
+                finalStatus = 'verified';
+                console.log(`✅ [AUTO-VERIFY] Registration ${reg.id} auto-approved (UTR: ${utr}, time proximity)`);
+                break;
+              }
+            }
+          }
+        }
+
+        // 5. Record the SMS verification
+        await pool.query(
+          `INSERT INTO payment_sms_verifications
+           (id, utr, amount, bank, sender, sender_account, sms_hash, device_id, matched_payment_id, matched_registration_id, match_type, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          [smsRecordId, utr, amount, bank || null, sender || null, sender_account || null, sms_hash || null,
+           device_id || deviceAuth.device_id, matchedPaymentId, matchedRegId, matchType, finalStatus, smsTime]
+        );
+
+        // 6. Notify matched user
+        if (matchedPaymentId || matchedRegId) {
+          const userId = matchedPaymentId
+            ? (await pool.query('SELECT user_id FROM payment_verifications WHERE id = $1', [matchedPaymentId])).rows[0]?.user_id
+            : (await pool.query('SELECT user_id FROM tournament_registrations WHERE id = $1', [matchedRegId])).rows[0]?.user_id;
+          if (userId) {
+            const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+            await pool.query(
+              `INSERT INTO alerts (id, user_id, title, message, is_read)
+               VALUES ($1, $2, $3, $4, false)`,
+              [alertId, userId,
+               finalStatus === 'verified' ? 'Payment Auto-Verified' : 'Payment Received',
+               finalStatus === 'verified'
+                 ? `Your payment of ₹${amount} was auto-verified. Thank you!`
+                 : `Your payment of ₹${amount} was received and is pending manual review.`
+              ]
+            );
+          }
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: finalStatus === 'verified' ? 'Payment verified' : 'Logged for review',
+          payment_id: matchedPaymentId || smsRecordId,
+          status: finalStatus
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/v1/device/heartbeat — Device keeps alive (every 30 min)
+  if (req.url === '/api/v1/device/heartbeat' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const deviceAuth = authenticateDevice(req);
+        if (!deviceAuth) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const { device_id, app_version } = JSON.parse(body);
+        await pool.query(
+          `UPDATE paired_devices SET last_seen_at = NOW(), app_version = COALESCE($1, app_version) WHERE device_id = $2 AND is_active = true`,
+          [app_version || null, device_id || deviceAuth.device_id]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          timestamp: new Date().toISOString(),
+          pending_count: 0
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // 8. Serve Static Files from dist/ for all other requests (React SPA fallback)
   let filePath = path.join(__dirname, 'dist', req.url === '/' ? 'index.html' : req.url);
 
@@ -9887,6 +10350,55 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// ── AUTO-VERIFY: Approve subscription and activate plan ─────────────────
+async function autoApproveSubscription(pool, payment, adminId, utrRef) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE payment_verifications SET status = 'approved', admin_id = $1, reviewed_at = CURRENT_TIMESTAMP, utr_ref = $2 WHERE id = $3`,
+      [adminId || 'auto-verify', utrRef || null, payment.id]
+    );
+    const plan = payment.plan_name;
+    const cycle = payment.billing_cycle || 'monthly';
+    const planRes = await client.query('SELECT * FROM organizer_plans WHERE name = $1', [plan]);
+    if (planRes.rows.length > 0) {
+      const planDetails = planRes.rows[0];
+      await client.query('UPDATE users SET tier = $1 WHERE id = $2', [plan, payment.user_id]);
+      const renewalDate = new Date();
+      if (cycle === 'monthly') renewalDate.setMonth(renewalDate.getMonth() + 1);
+      else renewalDate.setFullYear(renewalDate.getFullYear() + 1);
+      const subRes = await client.query('SELECT id FROM subscriptions WHERE organizer_id = $1', [payment.user_id]);
+      if (subRes.rows.length > 0) {
+        await client.query(
+          `UPDATE subscriptions SET plan_id = $1, billing_status = 'active', billing_cycle = $2,
+           plan_start_date = CURRENT_TIMESTAMP, renewal_date = $3, cancelled_at = NULL WHERE organizer_id = $4`,
+          [planDetails.id, cycle, renewalDate, payment.user_id]
+        );
+      } else {
+        const subId = 'SUB-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await client.query(
+          `INSERT INTO subscriptions (id, organizer_id, plan_id, billing_status, billing_cycle, plan_start_date, renewal_date)
+           VALUES ($1, $2, $3, 'active', $4, CURRENT_TIMESTAMP, $5)`,
+          [subId, payment.user_id, planDetails.id, cycle, renewalDate]
+        );
+      }
+      const billId = 'BILL-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO billing_history (id, organizer_id, plan_name, billing_cycle, amount, status)
+         VALUES ($1, $2, $3, $4, $5, 'completed')`,
+        [billId, payment.user_id, plan, cycle, payment.amount]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ── AUTO LIFECYCLE: Auto live/complete based on round timings ─────────────
 async function processTournamentLifecycle(now) {
   try {
@@ -9903,11 +10415,11 @@ async function processTournamentLifecycle(now) {
         const rounds = parsed?.roadmap || (Array.isArray(parsed) ? parsed : []);
         const first = rounds[0];
         if (!first?.date || !first?.time) continue;
-        const roundStart = new Date(`${first.date}T${first.time}`);
+        const roundStart = new Date(`${first.date}T${first.time}+05:30`);
         if (isNaN(roundStart.getTime())) continue;
         if (now >= new Date(roundStart.getTime() - 5 * 60 * 1000)) {
           await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['live', t.id]);
-          console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to live (round 1 at ${first.date}T${first.time})`);
+          console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to live (round 1 at ${first.date}T${first.time} IST)`);
         }
       } catch (_) { /* skip malformed timeline */ }
     }
@@ -9928,20 +10440,20 @@ async function processTournamentLifecycle(now) {
 
         // Revert-live: first round hasn't started yet (now < roundStart - 5min)
         if (first?.date && first?.time) {
-          const roundStart = new Date(`${first.date}T${first.time}`);
+          const roundStart = new Date(`${first.date}T${first.time}+05:30`);
           if (!isNaN(roundStart.getTime()) && now < new Date(roundStart.getTime() - 5 * 60 * 1000)) {
             await pool.query('UPDATE tournaments SET status = NULL WHERE id = $1', [t.id]);
-            console.log(`🔄 [AUTO LIFECYCLE] Tournament ${t.id} reverted from live (round 1 at ${first.date}T${first.time}, now is before -5min)`);
+            console.log(`🔄 [AUTO LIFECYCLE] Tournament ${t.id} reverted from live (round 1 at ${first.date}T${first.time} IST, now is before -5min)`);
             continue; // skip complete check since status was reverted
           }
         }
 
         // Auto-complete: last round ended 12+ hours ago
         if (last?.date && last?.time) {
-          const lastEnd = new Date(`${last.date}T${last.time}`);
+          const lastEnd = new Date(`${last.date}T${last.time}+05:30`);
           if (!isNaN(lastEnd.getTime()) && now >= new Date(lastEnd.getTime() + 12 * 60 * 60 * 1000)) {
             await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['completed', t.id]);
-            console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to completed (last round at ${last.date}T${last.time})`);
+            console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to completed (last round at ${last.date}T${last.time} IST)`);
           }
         }
       } catch (_) { /* skip malformed timeline */ }

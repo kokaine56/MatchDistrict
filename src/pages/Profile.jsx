@@ -1888,7 +1888,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
                                 )}
                                 <h5 className="font-headline-md text-xs font-bold text-white truncate">{n.title}</h5>
                                 <span className="font-body-sm text-[9px] text-on-surface-variant ml-auto shrink-0">
-                                  {n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (n.time || '')}
+                                  {n.created_at ? new Date(n.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : (n.time || '')}
                                 </span>
                               </div>
                               <p className="font-body-sm text-[11px] text-on-surface-variant/90 leading-relaxed break-words">{n.text}</p>

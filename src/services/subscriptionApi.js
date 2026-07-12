@@ -98,6 +98,11 @@ export const subscriptionApi = {
   getMyPayments: () => apiRequest('/payment/my'),
   getPaymentStatus: (id) => apiRequest(`/payment/status/${id}`),
 
+  // Device pairing for auto payment verification
+  generatePairingKey: () => apiRequest('/pair/generate-key', { method: 'POST' }),
+  getPairedDevices: () => apiRequest('/pair/devices'),
+  unpairDevice: (deviceId) => apiRequest(`/pair/devices/${deviceId}`, { method: 'DELETE' }),
+
   // Admin
   getAdminPayments: (status) => apiRequest(`/admin/payments${status ? `?status=${status}` : ''}`),
   approvePayment: (paymentId) => apiRequest('/admin/payments/approve', {

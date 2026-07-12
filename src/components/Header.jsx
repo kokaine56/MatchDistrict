@@ -180,7 +180,7 @@ function Header({ activePage, onNavigate }) {
                                 {alert.message}
                               </p>
                               <span className="text-[8px] text-slate-400 dark:text-white/30 block mt-1 font-mono">
-                                {new Date(alert.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {new Date(alert.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
                               </span>
                             </div>
                           ))
