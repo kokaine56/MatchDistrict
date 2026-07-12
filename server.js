@@ -888,7 +888,6 @@ async function logTermsAcceptance(pool, email, userId, action, req) {
     console.warn(`⚠️ [TERMS ACCEPTANCE] Failed to log ${action} for ${email}:`, err.message);
   }
 }
-
 // Helper to get authenticated user from authorization header
 function getAuthUser(req) {
   const authHeader = req.headers.authorization;
@@ -901,6 +900,31 @@ function getAuthUser(req) {
   const user = res.valid ? res.payload : null;
   req.authUser = user;
   return user;
+}
+
+// Authenticate a paired device by its raw API key (sent as Authorization: Bearer MDK-xxx).
+// Returns the paired_devices row on success, or null if the key is invalid / device inactive.
+async function authenticateDevice(req) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+    const rawKey = authHeader.split(' ')[1];
+    if (!rawKey || !rawKey.startsWith('MDK-')) return null;
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const result = await pool.query(
+      `SELECT * FROM paired_devices WHERE api_key_hash = $1 AND is_active = true LIMIT 1`,
+      [keyHash]
+    );
+    if (result.rows.length === 0) return null;
+    // Fire-and-forget last_seen_at update so it doesn't block auth
+    pool.query(
+      `UPDATE paired_devices SET last_seen_at = NOW() WHERE id = $1`,
+      [result.rows[0].id]
+    ).catch(() => {});
+    return result.rows[0];
+  } catch {
+    return null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -10393,8 +10417,21 @@ const server = http.createServer(async (req, res) => {
         }
 
         await pool.query(
-          `INSERT INTO payment_sms_verifications (id, device_id, sender, sms_body, sms_timestamp, parsed_utr, parsed_amount, app_name, verification_status, matched_payment_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [smsRecordId, deviceAuth.device_id || deviceAuth.id, sender || 'UNKNOWN', smsBody || '', timestamp ? new Date(timestamp) : new Date(), utr_ref, amount, app_name || 'Verification App', finalStatus, matchedPaymentId]
+          `INSERT INTO payment_sms_verifications
+           (id, utr, amount, sender, device_id, matched_payment_id, matched_registration_id, match_type, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+           ON CONFLICT (utr) DO NOTHING`,
+          [
+            smsRecordId,
+            utr_ref || smsRecordId,
+            amount || 0,
+            sender || 'APP',
+            deviceAuth.device_id || deviceAuth.id,
+            matchedPaymentId || null,
+            matchedPaymentId || null,
+            'registration',
+            finalStatus === 'verified' ? 'verified' : 'unmatched'
+          ]
         );
 
         if (matchedPaymentId && finalStatus === 'verified') {
