@@ -10069,11 +10069,11 @@ const server = http.createServer(async (req, res) => {
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
            JOIN tournaments t ON t.id = tr.tournament_id
-           WHERE tr.status IN ('pending_payment','confirmed','cancelled','expired')
+           WHERE tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired')
            ORDER BY tr.created_at DESC
            LIMIT 100`
-        )
-      ]);
+         )
+       ]);
       const payments = [
         ...subRes.rows.map(r => ({ ...r, payment_type: 'subscription' })),
         ...regRes.rows.map(r => ({ ...r, payment_type: 'registration' }))
@@ -10416,7 +10416,7 @@ const server = http.createServer(async (req, res) => {
                   t.game, tr.created_at
            FROM tournament_registrations tr
            JOIN tournaments t ON t.id = tr.tournament_id
-           WHERE tr.status = 'pending_payment'
+           WHERE tr.status IN ('pending_payment','pending')
            ORDER BY tr.created_at DESC`
         )
       ]);
