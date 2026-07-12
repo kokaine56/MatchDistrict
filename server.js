@@ -89,6 +89,13 @@ loadEnv();
 const { Pool } = pg;
 const PORT = process.env.PORT || 10000;
 
+// Derive the public-facing server URL from the incoming request
+function getServerUrl(req) {
+  const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
+  const host = req.headers['x-forwarded-host'] || req.headers['host'] || `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
 // Enforce and validate environment variables for production-grade security
 if (!process.env.DATABASE_URL) {
   console.error('\n❌ [CRITICAL ERROR] DATABASE_URL is not set in the environment or .env file.');
@@ -9925,7 +9932,7 @@ const server = http.createServer(async (req, res) => {
           success: true,
           api_key: rawKey,
           device_id: deviceId,
-          server_url: `http://localhost:${PORT}`,
+          server_url: getServerUrl(req),
           message: 'Scan the QR with your Payment Verification App to pair.'
         }));
       } catch (err) {
