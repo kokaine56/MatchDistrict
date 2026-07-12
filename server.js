@@ -7778,51 +7778,46 @@ const server = http.createServer(async (req, res) => {
         }
 
         const currentReg = regRes.rows[0];
-        if (currentReg.status !== 'pending_payment' && currentReg.status !== 'PENDING_PAYMENT_VERIFICATION' && currentReg.status !== 'pending') {
+        const verifiableStatuses = ['pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'pending', 'VERIFIED_BY_HOST', 'verified_by_host'];
+        if (!verifiableStatuses.includes(currentReg.status)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Registration is not awaiting payment verification.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: `Registration cannot be verified from status "${currentReg.status}".` }));
           return;
         }
 
+
         const data = JSON.parse(body);
         const paymentApp = data.payment_app || currentReg.payment_app || null;
-
-        // Fetch tournament title for notifications
         const tRes = await pool.query('SELECT title, entry_fee_amount FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
         const tourneyTitle = tRes.rows[0]?.title || 'the tournament';
         const fee = tRes.rows.length ? (tRes.rows[0].entry_fee_amount || 0) : 0;
 
-        // 1. Update registration to confirmed (same as admin panel approval)
+        // 1. Mark as VERIFIED_BY_HOST (host confirmed payment; admin bulk-approve promotes to 'approved')
         await pool.query(
-          `UPDATE tournament_registrations SET status = 'confirmed', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+          `UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
           [paymentApp, regId]
         );
 
-        // 2. Update payment_submissions to verified (same as admin panel)
+        // 2. Update payment_submissions to verified
         if (currentReg.payment_id) {
           await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+            `UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
             [authUser.id, currentReg.payment_id]
           );
         } else {
           await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'verified'`,
+            `UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'VERIFIED_BY_HOST'`,
             [authUser.id, regId]
           );
         }
 
         // 3. Record verification sync for mobile app history
         try {
-          const smsVerId = 'WEB-VER-' + crypto.randomBytes(6).toString('hex').toUpperCase();
           await pool.query(
-            `INSERT INTO payment_sms_verifications
-             (id, utr, amount, device_id, matched_registration_id, match_type, status, created_at)
-             VALUES ($1, $2, $3, $4, $5, 'registration', 'verified', NOW())`,
-            [smsVerId, currentReg.transaction_id || 'APP_MANUAL', fee, 'APP-VERIFIER', regId]
+            `INSERT INTO payment_sms_verifications (id, utr, amount, device_id, matched_registration_id, match_type, status, created_at) VALUES ($1, $2, $3, $4, $5, 'registration', 'verified', NOW()) ON CONFLICT (utr) DO NOTHING`,
+            ['WEB-VER-' + crypto.randomBytes(6).toString('hex').toUpperCase(), currentReg.transaction_id || 'WEB_MANUAL', 0, 'WEB-VERIFIER', regId]
           );
-        } catch (verErr) { /* ignore duplicate or missing column */ }
-
-        // 4. Allocate slot and update slotsFilled (same as admin panel)
+        } catch (verErr) { /* ignore */ }
         try {
           await reconcileTournamentSlots(pool, currentReg.tournament_id);
         } catch (slotErr) {
@@ -10491,6 +10486,16 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Reconcile tournament slot count after app-verified payment
+        if (matchedPaymentId && finalStatus === 'verified') {
+          try {
+            const regForSlot = await pool.query('SELECT tournament_id FROM tournament_registrations WHERE id = $1', [matchedPaymentId]);
+            if (regForSlot.rows.length > 0) {
+              await reconcileTournamentSlots(pool, regForSlot.rows[0].tournament_id);
+            }
+          } catch (slotErr) { console.error('? [APP-VERIFY] Slot reconciliation failed:', slotErr.message); }
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -10870,3 +10875,4 @@ function startAutomationProcessor() {
     console.log(`🔑 API Endpoints active (OTP, JWT Auth, Supabase DB)\n`);
   });
 })();
+

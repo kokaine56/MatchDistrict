@@ -22,9 +22,9 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
     const occupiedSlots = new Set();
     const approvedWithoutSlot = [];
 
-    // Map occupied slots for approved or pending registrations
+    // Map occupied slots — only registrations that are truly confirmed/approved count as slot holders
     for (const reg of regs) {
-      if (reg.status === 'approved' || reg.status === 'confirmed' || reg.status === 'pending' || reg.status === 'pending_payment' || reg.status === 'VERIFIED_BY_HOST') {
+      if (reg.status === 'approved' || reg.status === 'confirmed' || reg.status === 'VERIFIED_BY_HOST' || reg.status === 'verified_by_host') {
         const slot = parseInt(reg.slot_number);
         if (slot >= 1 && slot <= slotsTotal && !occupiedSlots.has(slot)) {
           occupiedSlots.add(slot);
@@ -49,7 +49,7 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
       }
     }
 
-    // Auto-allocate slots to approved/pending registrations that don't have one
+    // Auto-allocate slots to approved/confirmed/VERIFIED_BY_HOST registrations that don't have one
     let currentSlot = 1;
     for (const reg of approvedWithoutSlot) {
       while (currentSlot <= slotsTotal && occupiedSlots.has(currentSlot)) {
@@ -58,7 +58,7 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
       if (currentSlot <= slotsTotal) {
         await client.query('UPDATE tournament_registrations SET slot_number = $1 WHERE id = $2', [currentSlot, reg.id]);
         occupiedSlots.add(currentSlot);
-        console.log(`🤖 [SLOT WORKER] Auto-allocated Slot #${currentSlot} to Approved/Pending Registration ${reg.id}`);
+        console.log(`🤖 [SLOT WORKER] Auto-allocated Slot #${currentSlot} to Registration ${reg.id} (status: ${reg.status})`);
       } else {
         // No slots left, downgrade back to waitlisted
         await client.query('UPDATE tournament_registrations SET status = $1, slot_number = NULL WHERE id = $2', ['waitlisted', reg.id]);
@@ -66,9 +66,9 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
       }
     }
 
-    // 3. Update the slotsFilled count in tournaments table to match slot-occupying statuses
+    // 3. Update the slotsFilled count — count only truly confirmed/approved registrations
     const approvedCountRes = await client.query(
-      "SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST')",
+      "SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')",
       [tournamentId]
     );
     const slotsFilled = parseInt(approvedCountRes.rows[0].count) || 0;
