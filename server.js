@@ -10037,25 +10037,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/v1/payments/all — All payment records with their current status
-  if (req.url === '/api/v1/payments/all' && req.method === 'GET') {
+  // GET /api/v1/payments/all — All payment records with their current status (optional ?status= filter)
+  if (req.url.startsWith('/api/v1/payments/all') && req.method === 'GET') {
     try {
       const deviceAuth = await authenticateDevice(req);
-        if (!deviceAuth) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
-          return;
-        }
-        const [subRes, regRes] = await Promise.all([
-          pool.query(
-            `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
-                    pv.transaction_id, pv.status, pv.admin_id, pv.rejection_reason,
-                    pv.utr_ref, pv.created_at,
-                  u.name as user_name, u.email as user_email, u.phone as user_phone
+      if (!deviceAuth) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const statusFilter = urlObj.searchParams.get('status');
+      const subWhere = statusFilter ? 'WHERE pv.status = $1' : '';
+      const subParams = statusFilter ? [statusFilter] : [];
+      const [subRes, regRes] = await Promise.all([
+        pool.query(
+          `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
+                  pv.transaction_id, pv.status, pv.admin_id, pv.rejection_reason,
+                  pv.utr_ref, pv.created_at,
+                u.name as user_name, u.email as user_email, u.phone as user_phone
            FROM payment_verifications pv
            JOIN users u ON u.id = pv.user_id
+           ${subWhere}
            ORDER BY pv.created_at DESC
-           LIMIT 100`
+           LIMIT 100`,
+          subParams
         ),
         pool.query(
           `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.status,
@@ -10068,12 +10074,16 @@ const server = http.createServer(async (req, res) => {
            LIMIT 100`
         )
       ]);
+      const payments = [
+        ...subRes.rows.map(r => ({ ...r, payment_type: 'subscription' })),
+        ...regRes.rows.map(r => ({ ...r, payment_type: 'registration' }))
+      ];
+      payments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
-        count: subRes.rows.length + regRes.rows.length,
-        subscriptions: subRes.rows,
-        registrations: regRes.rows
+        count: payments.length,
+        payments
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
