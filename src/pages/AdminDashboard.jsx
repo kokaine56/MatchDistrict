@@ -1102,79 +1102,56 @@ export default function AdminDashboard({ onNavigate }) {
           <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-5 space-y-4">
             <h3 className="text-sm font-bold text-on-background flex items-center gap-2">
               <span className="material-symbols-outlined text-lg text-primary">devices</span>
-              Paired Devices
+              Active Device
               {deviceLoading && <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin ml-1" />}
             </h3>
 
             {!deviceLoading && pairedDevices.length === 0 && (
               <div className="flex flex-col items-center py-8 text-center gap-2">
                 <span className="material-symbols-outlined text-4xl text-on-surface-variant/30">smartphone</span>
-                <p className="text-sm text-on-surface-variant">No devices paired yet</p>
+                <p className="text-sm text-on-surface-variant">No device paired</p>
                 <button
                   onClick={() => setShowPairingModal(true)}
                   className="text-xs font-bold text-primary hover:underline"
                 >
-                  Link your first device
+                  Link a device
                 </button>
               </div>
             )}
 
-            {pairedDevices.length > 0 && (
-              <div className="space-y-2">
-                {pairedDevices.map((d) => (
-                  <div key={d.id} className="flex items-center justify-between bg-surface/30 border border-outline-variant/20 rounded-lg px-4 py-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className="material-symbols-outlined text-2xl text-primary/60">smartphone</span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-on-background truncate">{d.device_name || d.device_id}</p>
-                        <p className="text-[10px] text-on-surface-variant/60">
-                          {d.last_seen_at
-                            ? 'Last seen: ' + new Date(d.last_seen_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
-                            : 'Not yet connected'}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold ${d.is_active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-500/10 text-slate-400'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${d.is_active ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`} />
-                        {d.is_active ? 'Active' : 'Offline'}
-                      </span>
-                      <button
-                        onClick={() => handleUnpairDevice(d.id)}
-                        className="p-2 rounded-lg hover:bg-error/10 text-on-surface-variant hover:text-error transition-colors"
-                        title="Unlink Device"
-                      >
-                        <span className="material-symbols-outlined text-lg">link_off</span>
-                      </button>
+            {pairedDevices.length > 0 && (() => {
+              const d = pairedDevices[0]
+              const connected = !!d.last_seen_at
+              return (
+                <div className="flex items-center justify-between bg-surface/30 border border-outline-variant/20 rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="material-symbols-outlined text-2xl text-primary/60">smartphone</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-on-background truncate">{d.device_name || d.device_id}</p>
+                      <p className="text-[10px] text-on-surface-variant/60">
+                        {connected
+                          ? 'Last seen: ' + new Date(d.last_seen_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+                          : 'Awaiting connection'}
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
+                  <div className="flex items-center gap-2">
+                    <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold ${connected ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                      {connected ? 'Connected' : 'Pending'}
+                    </span>
+                    <button
+                      onClick={() => handleUnpairDevice(d.id)}
+                      className="p-2 rounded-lg hover:bg-error/10 text-on-surface-variant hover:text-error transition-colors"
+                      title="Unlink Device"
+                    >
+                      <span className="material-symbols-outlined text-lg">link_off</span>
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
-
-          {pairedDevices.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-4">
-                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">Auto-Verified</p>
-                <p className="text-2xl font-bold text-emerald-400">
-                  {pairedDevices.reduce((s, d) => s + (d.total_verified || 0), 0)}
-                </p>
-              </div>
-              <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-4">
-                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">Unmatched</p>
-                <p className="text-2xl font-bold text-amber-400">
-                  {pairedDevices.reduce((s, d) => s + (d.total_unmatched || 0), 0)}
-                </p>
-              </div>
-              <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-4">
-                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">Active Devices</p>
-                <p className="text-2xl font-bold text-primary">
-                  {pairedDevices.filter((d) => d.is_active).length}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       )}
 

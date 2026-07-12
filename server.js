@@ -9906,6 +9906,11 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
           return;
         }
+        // Deactivate any existing devices for this user — only one active device at a time
+        await pool.query(
+          `UPDATE paired_devices SET is_active = false WHERE user_id = $1 AND is_active = true`,
+          [authUser.id]
+        );
         const rawKey = 'MDK-' + crypto.randomBytes(20).toString('hex');
         const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
         const deviceId = 'PAD-' + crypto.randomBytes(6).toString('hex').toUpperCase();
@@ -9942,7 +9947,8 @@ const server = http.createServer(async (req, res) => {
       }
       const devRes = await pool.query(
         `SELECT id, device_id, device_name, is_active, app_version, last_seen_at, paired_at
-         FROM paired_devices WHERE user_id = $1 ORDER BY paired_at DESC`,
+         FROM paired_devices WHERE user_id = $1 AND is_active = true
+         ORDER BY paired_at DESC LIMIT 1`,
         [authUser.id]
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
