@@ -10348,6 +10348,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/v1/payments/history — Verification history (recent approved/rejected/unmatched)
+  if (req.url === '/api/v1/payments/history' && req.method === 'GET') {
+    try {
+      const deviceAuth = authenticateDevice(req);
+      if (!deviceAuth) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const result = await pool.query(
+        `SELECT sv.id, sv.utr, sv.amount, sv.bank, sv.sender, sv.match_type, sv.status,
+                sv.matched_payment_id, sv.matched_registration_id, sv.created_at
+         FROM payment_sms_verifications sv
+         WHERE sv.device_id = $1
+         ORDER BY sv.created_at DESC
+         LIMIT 50`,
+        [deviceAuth.device_id]
+      );
+      // Enrich with display names
+      const rows = [];
+      for (const r of result.rows) {
+        let detail = null;
+        if (r.matched_payment_id) {
+          const pRes = await pool.query(
+            `SELECT pv.plan_name, pv.billing_cycle, u.name as user_name
+             FROM payment_verifications pv JOIN users u ON u.id = pv.user_id WHERE pv.id = $1`,
+            [r.matched_payment_id]
+          );
+          if (pRes.rows.length) detail = { ...pRes.rows[0], type: 'subscription' };
+        } else if (r.matched_registration_id) {
+          const regRes = await pool.query(
+            `SELECT tr.team_name, t.title as tournament_title, t.game
+             FROM tournament_registrations tr JOIN tournaments t ON t.id = tr.tournament_id WHERE tr.id = $1`,
+            [r.matched_registration_id]
+          );
+          if (regRes.rows.length) detail = { ...regRes.rows[0], type: 'registration' };
+        }
+        rows.push({ ...r, detail });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: rows.length, history: rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // POST /api/v1/device/heartbeat — Device keeps alive (every 30 min)
   if (req.url === '/api/v1/device/heartbeat' && req.method === 'POST') {
     let body = '';
