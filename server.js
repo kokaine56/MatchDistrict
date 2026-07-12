@@ -469,6 +469,7 @@ async function initDb() {
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS email VARCHAR(255);
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
+        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
       `);
       console.log('📦 [MATCH DISTRICT DB] tournament_registrations payment columns verified.');
     } catch (alterRegErr) {
@@ -534,6 +535,9 @@ async function initDb() {
         ALTER TABLE payment_submissions 
         ALTER COLUMN created_at TYPE TIMESTAMPTZ 
         USING created_at AT TIME ZONE 'UTC'
+      `).catch(() => {});
+      await client.query(`
+        ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       `).catch(() => {});
       console.log('📦 [MATCH DISTRICT DB] payment_submissions table ensured.');
     } catch (payErr) {
@@ -7836,6 +7840,49 @@ const server = http.createServer(async (req, res) => {
              JSON.stringify({ teamName: currentReg.team_name, tournamentId: currentReg.tournament_id, paymentApp })]
           );
         } catch (logErr) { /* non-critical */ }
+
+        // Reconcile tournament slots (counts VERIFIED_BY_HOST toward slotsFilled)
+        try {
+          await reconcileTournamentSlots(pool, currentReg.tournament_id);
+        } catch (slotErr) {
+          console.error('❌ [VERIFIER] Slot reconciliation failed:', slotErr.message);
+        }
+
+        // Send email notification to the user
+        try {
+          const uRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
+          if (uRes.rows.length > 0 && uRes.rows[0].email) {
+            const userEmail = uRes.rows[0].email;
+            const userName = uRes.rows[0].name || currentReg.captain;
+            const tRes = await pool.query('SELECT title FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
+            const tourneyTitle = tRes.rows[0]?.title || 'the tournament';
+            await resend.emails.send({
+              from: RESEND_FROM_EMAIL,
+              to: [userEmail],
+              subject: `Payment Verified — ${tourneyTitle}`,
+              html: `
+                <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
+                  <h2 style="color:#16a34a;margin:0 0 16px 0;">Payment Verified</h2>
+                  <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
+                  <p style="color:#333;font-size:15px;line-height:1.5;">
+                    Your payment for <strong>${tourneyTitle}</strong> has been verified successfully.
+                  </p>
+                  <div style="background:#f0fdf4;padding:16px;border-radius:6px;margin:16px 0;">
+                    <p style="margin:0 0 4px 0;font-weight:bold;color:#16a34a;">Status: Verified</p>
+                    <p style="margin:0;color:#333;font-size:14px;">Team: ${currentReg.team_name}</p>
+                    <p style="margin:0;color:#333;font-size:14px;">Transaction ID: ${currentReg.transaction_id || '—'}</p>
+                  </div>
+                  <p style="color:#666;font-size:13px;">You're all set! The organizer will confirm your slot shortly.</p>
+                  <hr style="border:0;border-top:1px solid #eee;margin:20px 0;" />
+                  <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
+                </div>
+              `
+            });
+            console.log('[VERIFIER] Payment verified email sent to', userEmail);
+          }
+        } catch (emailErr) {
+          console.error('[VERIFIER] Failed to send verification email:', emailErr.message);
+        }
 
         console.log(`\n📦 [VERIFIER] Registration "${regId}" verified by ${authUser.id}. Status → VERIFIED_BY_HOST\n`);
 

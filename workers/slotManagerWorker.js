@@ -66,9 +66,9 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
       }
     }
 
-    // 3. Update the slotsFilled count in tournaments table to match approved + confirmed count
+    // 3. Update the slotsFilled count in tournaments table to match slot-occupying statuses
     const approvedCountRes = await client.query(
-      "SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed')",
+      "SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST')",
       [tournamentId]
     );
     const slotsFilled = parseInt(approvedCountRes.rows[0].count) || 0;
