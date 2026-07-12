@@ -5317,7 +5317,7 @@ const server = http.createServer(async (req, res) => {
         if (booked) {
           slots.push({
             number: i,
-            status: booked.status === 'approved' ? 'occupied' : booked.status === 'confirmed' ? 'confirmed' : 'pending',
+            status: booked.status === 'approved' ? 'occupied' : (booked.status === 'confirmed' || booked.status === 'VERIFIED_BY_HOST') ? 'confirmed' : 'pending',
             teamName: booked.team_name,
             captain: booked.captain,
             registrationId: booked.id
