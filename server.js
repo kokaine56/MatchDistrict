@@ -10306,6 +10306,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /api/v1/payments/pending — Fetch all pending payments awaiting SMS verification
+  if (req.url === '/api/v1/payments/pending' && req.method === 'GET') {
+    try {
+      const deviceAuth = authenticateDevice(req);
+      if (!deviceAuth) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const [subRes, regRes] = await Promise.all([
+        pool.query(
+          `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
+                  pv.created_at, pv.transaction_id as user_provided_utr,
+                  u.name as user_name, u.email as user_email, u.phone as user_phone
+           FROM payment_verifications pv
+           JOIN users u ON u.id = pv.user_id
+           WHERE pv.status = 'pending'
+           ORDER BY pv.created_at DESC`
+        ),
+        pool.query(
+          `SELECT tr.id as registration_id, tr.tournament_id, tr.user_id, tr.team_name,
+                  tr.email, tr.phone, t.entry_fee_amount as amount, t.title as tournament_title,
+                  t.game, tr.created_at
+           FROM tournament_registrations tr
+           JOIN tournaments t ON t.id = tr.tournament_id
+           WHERE tr.status = 'pending_payment'
+           ORDER BY tr.created_at DESC`
+        )
+      ]);
+      const pending = [
+        ...subRes.rows.map(r => ({ ...r, type: 'subscription', pending_id: r.id })),
+        ...regRes.rows.map(r => ({ ...r, type: 'registration', pending_id: r.registration_id }))
+      ];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: pending.length, pending }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // POST /api/v1/device/heartbeat — Device keeps alive (every 30 min)
   if (req.url === '/api/v1/device/heartbeat' && req.method === 'POST') {
     let body = '';
@@ -10323,11 +10365,16 @@ const server = http.createServer(async (req, res) => {
           `UPDATE paired_devices SET last_seen_at = NOW(), app_version = COALESCE($1, app_version) WHERE device_id = $2 AND is_active = true`,
           [app_version || null, device_id || deviceAuth.device_id]
         );
+        const [subCount, regCount] = await Promise.all([
+          pool.query(`SELECT COUNT(*) as c FROM payment_verifications WHERE status = 'pending'`),
+          pool.query(`SELECT COUNT(*) as c FROM tournament_registrations WHERE status = 'pending_payment'`)
+        ]);
+        const pendingCount = parseInt(subCount.rows[0].c) + parseInt(regCount.rows[0].c);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           timestamp: new Date().toISOString(),
-          pending_count: 0
+          pending_count: pendingCount
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
