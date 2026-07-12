@@ -10446,10 +10446,12 @@ const server = http.createServer(async (req, res) => {
         `SELECT sv.id, sv.utr, sv.amount, sv.bank, sv.sender, sv.match_type, sv.status,
                 sv.matched_payment_id, sv.matched_registration_id, sv.created_at
          FROM payment_sms_verifications sv
-         WHERE sv.device_id = $1
+         WHERE sv.device_id IN (
+           SELECT device_id FROM paired_devices WHERE user_id = $1 AND is_active = true
+         )
          ORDER BY sv.created_at DESC
          LIMIT 50`,
-        [deviceAuth.device_id]
+        [deviceAuth.user_id]
       );
       // Enrich with display names
       const rows = [];
