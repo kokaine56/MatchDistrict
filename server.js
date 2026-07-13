@@ -10352,7 +10352,7 @@ const server = http.createServer(async (req, res) => {
       if (screenshotsOnly) { subWhereParts.push(`pv.payment_screenshot_url IS NOT NULL AND pv.payment_screenshot_url != ''`); }
       const subWhere = subWhereParts.length ? 'WHERE ' + subWhereParts.join(' AND ') : '';
       const regWhereParts = [`tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')`];
-      if (screenshotsOnly) { regWhereParts.push(`tr.screenshot_url IS NOT NULL AND tr.screenshot_url != ''`); }
+      if (screenshotsOnly) { regWhereParts.push(`(tr.screenshot_url IS NOT NULL AND tr.screenshot_url != '') OR (ps.proof_url IS NOT NULL AND ps.proof_url != '')`); }
       const regWhere = 'WHERE ' + regWhereParts.join(' AND ');
       const [subRes, regRes] = await Promise.all([
         pool.query(
@@ -10371,9 +10371,11 @@ const server = http.createServer(async (req, res) => {
           `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.status,
                   tr.transaction_id, tr.email, tr.phone, tr.created_at,
                   tr.screenshot_url,
+                  ps.proof_url AS payment_submission_proof_url,
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
            JOIN tournaments t ON tr.tournament_id = t.id
+           LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            ${regWhere}
            ORDER BY tr.created_at DESC
            LIMIT ${safeLimit} OFFSET ${offsetParam}`
@@ -10565,10 +10567,12 @@ const server = http.createServer(async (req, res) => {
         pool.query(
           `SELECT tr.id as registration_id, tr.tournament_id, tr.user_id, tr.team_name,
                   tr.email, tr.phone, tr.screenshot_url,
+                  ps.proof_url AS payment_submission_proof_url,
                   t.entry_fee_amount as amount, t.title as tournament_title,
                   t.game, tr.created_at
            FROM tournament_registrations tr
            JOIN tournaments t ON t.id = tr.tournament_id
+           LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            WHERE tr.status IN ('pending_payment','pending')
            ORDER BY tr.created_at DESC`
         )
@@ -10669,6 +10673,78 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
+    return;
+  }
+
+  // --- GET /api/v1/payments/screenshot-image — Proxy screenshot image binary for the app ---
+  if (req.url.startsWith('/api/v1/payments/screenshot-image') && req.method === 'GET') {
+    try {
+      const deviceAuth = await authenticateDevice(req);
+      if (!deviceAuth) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return;
+      }
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const regId = urlObj.searchParams.get('reg');
+      if (!regId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Missing reg parameter' }));
+        return;
+      }
+      // Fetch screenshot URL from registration or payment_submissions
+      const shotRes = await pool.query(
+        `SELECT COALESCE(tr.screenshot_url, ps.proof_url) AS image_url
+         FROM tournament_registrations tr
+         LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
+         WHERE tr.id = $1`,
+        [regId]
+      );
+      if (!shotRes.rows.length || !shotRes.rows[0].image_url) {
+        // Fallback: try payment_verifications (subscription payments)
+        const subRes = await pool.query(
+          `SELECT payment_screenshot_url AS image_url FROM payment_verifications WHERE id = $1`,
+          [regId]
+        );
+        if (!subRes.rows.length || !subRes.rows[0].image_url) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'No screenshot found for this record' }));
+          return;
+        }
+        shotRes.rows[0] = subRes.rows[0];
+      }
+      const imageUrl = shotRes.rows[0].image_url;
+      // If it's a data URI, decode and return binary
+      if (imageUrl.startsWith('data:')) {
+        const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const mimeType = matches[1];
+          const buffer = Buffer.from(matches[2], 'base64');
+          res.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': buffer.length });
+          res.end(buffer);
+          return;
+        }
+      }
+      // Otherwise proxy the remote URL
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        const imgResp = await fetch(imageUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!imgResp.ok) { throw new Error(`Remote fetch returned ${imgResp.status}`); }
+        const contentType = imgResp.headers.get('content-type') || 'image/png';
+        const buffer = Buffer.from(await imgResp.arrayBuffer());
+        res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': buffer.length, 'Cache-Control': 'public, max-age=86400' });
+        res.end(buffer);
+      } catch (fetchErr) {
+        // Return the URL as JSON fallback so the app can try directly
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, image_url: imageUrl, note: 'Direct proxy failed; use URL directly' }));
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
     return;
   }
 
