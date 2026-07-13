@@ -7889,10 +7889,26 @@ const server = http.createServer(async (req, res) => {
           );
         } catch (aeErr) { /* analytics non-critical */ }
 
+        // Fetch updated registration with slot info for the response
+        let updatedReg = null;
+        try {
+          const finalRes = await pool.query(
+            `SELECT r.*, t.title AS tournament_title, t.game AS tournament_game
+             FROM tournament_registrations r
+             JOIN tournaments t ON r.tournament_id = t.id
+             WHERE r.id = $1`, [regId]
+          );
+          updatedReg = finalRes.rows[0] || null;
+        } catch (fetchErr) { /* non-critical */ }
+
         console.log(`\n📦 [VERIFIER] Registration "${regId}" confirmed by ${authUser.id}. Status → confirmed. Slot allocated.\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Payment verified, registration confirmed, and slot allocated.' }));
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Payment verified, registration confirmed, and slot allocated.',
+          registration: updatedReg
+        }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -10314,7 +10330,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/v1/payments/all — All payment records with their current status (optional ?status= filter)
+  // GET /api/v1/payments/all — All payment records with their current status (optional ?status= filter, ?limit=, ?offset=, ?screenshots_only=)
   if (req.url.startsWith('/api/v1/payments/all') && req.method === 'GET') {
     try {
       const deviceAuth = await authenticateDevice(req);
@@ -10325,30 +10341,42 @@ const server = http.createServer(async (req, res) => {
       }
       const urlObj = new URL(req.url, `http://${req.headers.host}`);
       const statusFilter = urlObj.searchParams.get('status');
-      const subWhere = statusFilter ? 'WHERE pv.status = $1' : '';
-      const subParams = statusFilter ? [statusFilter] : [];
+      const limitParam = parseInt(urlObj.searchParams.get('limit')) || 100;
+      const offsetParam = parseInt(urlObj.searchParams.get('offset')) || 0;
+      const screenshotsOnly = urlObj.searchParams.get('screenshots_only') === 'true';
+      const safeLimit = Math.min(limitParam, 500);
+      const subWhereParts = [];
+      const subParams = [];
+      let paramIdx = 1;
+      if (statusFilter) { subWhereParts.push(`pv.status = $${paramIdx}`); subParams.push(statusFilter); paramIdx++; }
+      if (screenshotsOnly) { subWhereParts.push(`pv.payment_screenshot_url IS NOT NULL AND pv.payment_screenshot_url != ''`); }
+      const subWhere = subWhereParts.length ? 'WHERE ' + subWhereParts.join(' AND ') : '';
+      const regWhereParts = [`tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')`];
+      if (screenshotsOnly) { regWhereParts.push(`tr.screenshot_url IS NOT NULL AND tr.screenshot_url != ''`); }
+      const regWhere = 'WHERE ' + regWhereParts.join(' AND ');
       const [subRes, regRes] = await Promise.all([
         pool.query(
           `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
                   pv.transaction_id, pv.status, pv.admin_id, pv.rejection_reason,
-                  pv.utr_ref, pv.created_at,
+                  pv.utr_ref, pv.created_at, pv.payment_screenshot_url,
                 u.name as user_name, u.email as user_email, u.phone as user_phone
            FROM payment_verifications pv
            JOIN users u ON u.id = pv.user_id
            ${subWhere}
            ORDER BY pv.created_at DESC
-           LIMIT 100`,
+           LIMIT ${safeLimit} OFFSET ${offsetParam}`,
           subParams
         ),
         pool.query(
           `SELECT tr.id, tr.tournament_id, tr.user_id, tr.team_name, tr.status,
                   tr.transaction_id, tr.email, tr.phone, tr.created_at,
+                  tr.screenshot_url,
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
            JOIN tournaments t ON tr.tournament_id = t.id
-           WHERE tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')
+           ${regWhere}
            ORDER BY tr.created_at DESC
-           LIMIT 100`
+           LIMIT ${safeLimit} OFFSET ${offsetParam}`
          )
        ]);
       const payments = [
@@ -10360,6 +10388,9 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         success: true,
         count: payments.length,
+        offset: offsetParam,
+        limit: safeLimit,
+        hasMore: payments.length === safeLimit * 2,
         payments
       }));
     } catch (err) {
@@ -10524,6 +10555,7 @@ const server = http.createServer(async (req, res) => {
         pool.query(
           `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
                   pv.created_at, pv.transaction_id as user_provided_utr,
+                  pv.payment_screenshot_url,
                   u.name as user_name, u.email as user_email, u.phone as user_phone
            FROM payment_verifications pv
            JOIN users u ON u.id = pv.user_id
@@ -10532,7 +10564,8 @@ const server = http.createServer(async (req, res) => {
         ),
         pool.query(
           `SELECT tr.id as registration_id, tr.tournament_id, tr.user_id, tr.team_name,
-                  tr.email, tr.phone, t.entry_fee_amount as amount, t.title as tournament_title,
+                  tr.email, tr.phone, tr.screenshot_url,
+                  t.entry_fee_amount as amount, t.title as tournament_title,
                   t.game, tr.created_at
            FROM tournament_registrations tr
            JOIN tournaments t ON t.id = tr.tournament_id
