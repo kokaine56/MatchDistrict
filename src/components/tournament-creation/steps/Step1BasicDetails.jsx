@@ -30,10 +30,22 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
     setIsGenerating(true)
 
     const organizer = orgName || 'Match District Host'
-    const generatedText = `Welcome to the ${data.title.trim()}! Get ready for intense, high-stakes ${data.game} action hosted by ${organizer}. Prove your skills, dominate the lobby, and claim your victory. Read the rules carefully and prepare for the ultimate battle!`
+    const t = data.title.trim()
+    const g = data.game
+
+    const presets = [
+      `Welcome to ${t}! Get ready for intense, high-stakes ${g} action hosted by ${organizer}. Prove your skills, dominate the lobby, and claim your victory. Read the rules carefully and prepare for the ultimate battle!`,
+      `${t} is here! ${organizer} brings you a premium ${g} tournament with fierce competition and glory on the line. Secure your slot, rally your squad, and show everyone what you're made of. Winners take it all.`,
+      `🏆 ${t} — ${g} tournament by ${organizer}. Compete against the best teams, fight for the top spot, and walk away with bragging rights. Limited slots available. Register now and lock in your squad!`,
+      `The battleground awaits in ${t}. ${organizer} invites all ${g} players to prove their mettle in a no-holds-barred tournament. Teamwork, strategy, and raw skill — only the strongest will survive.`,
+      `Drop in, gear up, and outplay the rest. ${t} is a competitive ${g} tournament hosted by ${organizer} featuring stacked lobbies, fair play, and a shot at glory. Don't miss your chance to compete.`,
+      `${organizer} presents ${t} — a ${g} showdown where legends are made. Bring your A-game, follow the rules, and compete for supremacy. Slots fill fast, so grab yours today!`
+    ]
+
+    const picked = presets[Math.floor(Math.random() * presets.length)]
 
     setTimeout(() => {
-      onChange({ ...data, description: generatedText })
+      onChange({ ...data, description: picked })
       setIsGenerating(false)
     }, 400)
   }
@@ -85,9 +97,9 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
             type="button"
             onClick={handleGenerateDescription}
             disabled={!canGenerate || isGenerating}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
               canGenerate && !isGenerating
-                ? 'bg-primary/10 text-primary hover:bg-primary/20 cursor-pointer'
+                ? 'bg-primary text-white shadow-[0_0_12px_rgba(59,130,246,0.4)] hover:brightness-110 cursor-pointer'
                 : 'bg-surface-container text-on-surface-variant/30 cursor-not-allowed'
             }`}
           >

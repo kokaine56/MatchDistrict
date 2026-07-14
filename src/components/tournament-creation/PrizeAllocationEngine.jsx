@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 
-export default function PrizeAllocationEngine({ data, platformFeePct = 0, organizerFeePct = 0 }) {
+export default function PrizeAllocationEngine({ data, platformFeePct = 0, organizerFeePct = 0, organizerName = 'Organizer', onOrganizerFeeChange }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
 
-  const basePrizePool = useMemo(() => entryFee * totalSlots, [entryFee, totalSlots])
+  const basePrizePool = entryFee * totalSlots
 
   const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
   const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
@@ -30,15 +30,17 @@ export default function PrizeAllocationEngine({ data, platformFeePct = 0, organi
 
       <div className="space-y-2">
         {/* 1. Base Prize Pool */}
-        <div className="flex items-center justify-between py-1.5">
-          <div>
-            <span className="text-sm text-on-surface-variant">Base Prize Pool</span>
-            <p className="text-[10px] text-on-surface-variant/70">
-              {entryFee.toLocaleString('en-IN')} × {totalSlots} slots
-            </p>
+        {basePrizePool > 0 && (
+          <div className="flex items-center justify-between py-1.5">
+            <div>
+              <span className="text-sm text-on-surface-variant">Base Prize Pool</span>
+              <p className="text-[10px] text-on-surface-variant/70">
+                ₹{entryFee.toLocaleString('en-IN')} × {totalSlots} slots
+              </p>
+            </div>
+            <span className="text-sm font-semibold text-on-background">₹{basePrizePool.toLocaleString('en-IN')}</span>
           </div>
-          <span className="text-sm font-semibold text-on-background">₹{basePrizePool.toLocaleString('en-IN')}</span>
-        </div>
+        )}
       </div>
 
       {/* 2. MVP Reward */}
@@ -62,12 +64,40 @@ export default function PrizeAllocationEngine({ data, platformFeePct = 0, organi
         </div>
       )}
 
-      {/* 4. Organizer Fee */}
-      {organizerFeeAmount > 0 && (
+      {/* 4. Organizer Fee — editable */}
+      {basePrizePool > 0 && (
         <div className="flex items-center justify-between py-1.5 border-t border-outline-variant/10">
-          <div className="flex flex-col">
-            <span className="text-sm text-on-surface-variant">Organizer Fee ({organizerFeePct}%)</span>
-            <span className="text-xs text-slate-400 dark:text-gray-500 mt-0.5">Allocated earnings distributed directly to you for hosting and managing this tournament event.</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-sm text-on-surface-variant">
+              Your Fees  <span className="text-xs text-on-surface-variant/60">({organizerName})</span>
+            </span>
+            <span className="text-xs text-on-surface-variant/70">
+              You will receive <strong className="text-emerald-500">₹{organizerFeeAmount.toLocaleString('en-IN')}</strong> for hosting and managing this tournament.
+            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                type="range"
+                min="0"
+                max="5"
+                step="0.5"
+                value={organizerFeePct}
+                onChange={(e) => onOrganizerFeeChange && onOrganizerFeeChange(e.target.value)}
+                className="w-24 h-1.5 accent-primary"
+              />
+              <input
+                type="number"
+                min="0"
+                max="5"
+                step="0.5"
+                value={organizerFeePct}
+                onChange={(e) => {
+                  const clamped = Math.min(parseFloat(e.target.value) || 0, 5)
+                  onOrganizerFeeChange && onOrganizerFeeChange(String(clamped))
+                }}
+                className="w-14 px-1.5 py-0.5 rounded bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-xs text-on-background text-center focus:outline-none focus:border-primary/40"
+              />
+              <span className="text-xs text-on-surface-variant">%</span>
+            </div>
           </div>
           <span className="text-sm font-semibold text-error shrink-0 ml-4">−₹{organizerFeeAmount.toLocaleString('en-IN')}</span>
         </div>

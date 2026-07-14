@@ -462,9 +462,14 @@ export default function CreationWizard() {
 
   const handleNext = useCallback(() => {
     const errs = validateStep(currentStep, formData, planLimits, orgName, userTier, currentUser?.role)
-    console.log('[CreationWizard] handleNext | step:', currentStep, '| errors:', errs, '| isNavigationBlocked:', isNavigationBlocked, '| stepValidationBlocked:', stepValidationBlocked)
     setErrors(errs)
-    if (hasErrors(errs)) return
+    if (hasErrors(errs)) {
+      setTimeout(() => {
+        const firstError = document.querySelector('[data-error]')
+        if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 50)
+      return
+    }
     if (isNavigationBlocked) return
     setCurrentStep((s) => Math.min(s + 1, totalSteps))
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -557,6 +562,7 @@ export default function CreationWizard() {
       onPublish: handlePublish,
       orgName,
       orgTier,
+      onNavigateToSubscription: () => navigate('/subscription/payment'),
     }
     switch (currentStep) {
       case 1: return <Step1BasicDetails {...props} />
@@ -640,19 +646,7 @@ export default function CreationWizard() {
             </motion.div>
           </AnimatePresence>
 
-          {hasErrors(errors) && (
-            <div className="mt-6 p-3 rounded-xl bg-error/10 border border-error/20">
-              <p className="text-xs font-semibold text-error mb-2 flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
-                Please fix the following before continuing:
-              </p>
-              <ul className="space-y-1">
-                {Object.entries(errors).filter(([, v]) => v).map(([field, msg]) => (
-                  <li key={field} className="text-[11px] text-error/90 ml-4 list-disc">{msg}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+
         </div>
       </div>
 

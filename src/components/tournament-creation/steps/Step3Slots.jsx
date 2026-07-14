@@ -3,35 +3,28 @@ import SlotCalculator from '../SlotCalculator'
 import { OptimizedInput } from '../../OptimizedInput'
 
 const PLAN_MAX_SLOTS = { Free: 100, Basic: 300, Pro: 1000 }
-const PLAN_VALIDATION = {
-  Free: 'Free Plan supports up to 100 slots per tournament.',
-  Basic: 'Basic Plan supports up to 300 slots per tournament.',
-  Pro: 'Pro Plan supports up to 1000 slots per tournament.',
-}
+const ROOM_MAX_SLOTS = { solo: 100, duo: 50, squad: 25 }
 
-const ROOM_CEILINGS = { solo: 100, duo: 50, squad: 25 }
-const ROOM_FLOORS = { solo: 50, duo: 25, squad: 13 }
-
-export default function Step3Slots({ data, onChange, errors, planLimits, userTier }) {
+export default function Step3Slots({ data, onChange, errors, planLimits, userTier, onNavigateToSubscription }) {
   const tier = userTier || 'Free'
   const maxSlots = planLimits?.maxSlots || PLAN_MAX_SLOTS[tier] || 100
-  const validationMsg = PLAN_VALIDATION[tier] || PLAN_VALIDATION.Free
 
   const matchType = data.match_type || 'squad'
-  const ceiling = ROOM_CEILINGS[matchType] || 25
-  const floor = ROOM_FLOORS[matchType] || 13
+  const roomMax = ROOM_MAX_SLOTS[matchType] || 25
+
+  const enteredSlots = parseInt(data.slotsTotal) || 0
+  const slotsExceedPlan = enteredSlots > maxSlots
 
   const roomError = (() => {
     const v = data.max_slots_per_room
     if (!v) return ''
     const n = parseInt(v)
-    if (n > ceiling) return `${matchType.charAt(0).toUpperCase() + matchType.slice(1)} tournaments allow at most ${ceiling} slots per room.`
-    if (n < floor) return `Target capacity cannot be less than ${floor} teams for ${matchType.charAt(0).toUpperCase() + matchType.slice(1)} matches.`
+    if (n > roomMax) return `${matchType.charAt(0).toUpperCase() + matchType.slice(1)} tournaments allow at most ${roomMax} slots per room.`
     return ''
   })()
 
   const handleSlotsChange = (v) => {
-    if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= maxSlots)) {
+    if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= 1000)) {
       onChange({ ...data, slotsTotal: v })
     }
   }
@@ -44,7 +37,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
   }
 
   const handleRoomChange = (v) => {
-    if (v === '' || (parseInt(v) > 0 && parseInt(v) <= ceiling)) {
+    if (v === '' || (parseInt(v) > 0 && parseInt(v) <= roomMax)) {
       onChange({ ...data, max_slots_per_room: v })
     }
   }
@@ -60,40 +53,41 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         <p className="text-sm text-on-surface-variant mt-1">Configure tournament capacity.</p>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-3" data-error={slotsExceedPlan || errors?.slotsTotal ? true : undefined}>
         <label className="block text-sm font-medium text-on-surface-variant">
           Total Slots <span className="text-error">*</span>
         </label>
         <OptimizedInput
           type="number"
           min={2}
-          max={maxSlots}
+          max={1000}
+          instant
           value={data.slotsTotal || ''}
           onChange={handleSlotsChange}
           placeholder="Enter total tournament slots"
           className={`w-full px-4 py-3 rounded-xl bg-surface-container border ${
-            errors?.slotsTotal ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
+            errors?.slotsTotal || slotsExceedPlan ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
           } text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors`}
         />
-        <div className="flex items-center justify-between mt-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-on-surface-variant">Plan:</span>
-            <span className={`plan-limit-badge ${tier.toLowerCase()}`}>{tier}</span>
-            <span className="text-xs text-on-surface-variant">Max: <strong>{maxSlots}</strong> slots</span>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-xs text-on-surface-variant">Plan:</span>
+          <span className={`plan-limit-badge ${tier.toLowerCase()}`}>{tier}</span>
+        </div>
+        {slotsExceedPlan && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <p className="text-[11px] text-error">
+              Your {tier} plan supports up to {maxSlots} slots.
+            </p>
+            <button
+              type="button"
+              onClick={() => onNavigateToSubscription && onNavigateToSubscription()}
+              className="text-[11px] font-bold text-primary hover:underline"
+            >
+              Upgrade
+            </button>
           </div>
-          {data.slotsTotal && parseInt(data.slotsTotal) > 0 && (
-            <span className="text-xs text-on-surface-variant">
-              {parseInt(data.slotsTotal)} / {maxSlots} slots used
-            </span>
-          )}
-        </div>
-        {errors?.slotsTotal && <p className="text-xs text-error">{errors.slotsTotal}</p>}
-        <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40">
-          <svg className="w-4 h-4 mt-0.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-xs text-blue-700 dark:text-blue-300">{validationMsg}</p>
-        </div>
+        )}
+        {errors?.slotsTotal && <p className="text-[11px] text-error mt-1">{errors.slotsTotal}</p>}
       </div>
 
       <div className="space-y-3">
@@ -140,8 +134,8 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           </label>
           <OptimizedInput
             type="number"
-            min={floor}
-            max={ceiling}
+            min={1}
+            max={roomMax}
             value={data.max_slots_per_room || ''}
             onChange={handleRoomChange}
             placeholder="e.g. 16"
@@ -152,7 +146,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           <div className="flex items-center justify-between mt-1">
             <span className="text-xs text-on-surface-variant">
               <strong className="text-on-background capitalize">{matchType}</strong>
-              {' '}— floor: <strong>{floor}</strong> &middot; ceiling: <strong>{ceiling}</strong> slots/room
+              {' '}— max <strong>{roomMax}</strong> per room
             </span>
             {data.max_slots_per_room && parseInt(data.max_slots_per_room) > 0 && data.slotsTotal && (
               <span className="text-xs text-on-surface-variant">
@@ -166,7 +160,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
             <p className="text-xs text-indigo-700 dark:text-indigo-300">
-              Rooms cannot drop below <strong>{floor} teams</strong> (50% of {ceiling} ceiling). Overflow rooms are collapsed automatically when balanced re-sharding stays within floor and ceiling bounds.
+              Maximum {roomMax} slots per room for {matchType} format. Additional rooms are created automatically as needed.
             </p>
           </div>
         </div>

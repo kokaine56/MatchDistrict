@@ -4,9 +4,9 @@ import PrizeDistributionEditor from '../PrizeDistributionEditor'
 import PrizeAllocationEngine from '../PrizeAllocationEngine'
 import { OptimizedInput } from '../../OptimizedInput'
 
-export default function Step4PrizePool({ data, onChange, errors, userTier }) {
+export default function Step4PrizePool({ data, onChange, errors, userTier, orgName, onNavigateToSubscription }) {
   const [platformFeePct, setPlatformFeePct] = useState(0)
-  const [organizerFeePct, setOrganizerFeePct] = useState(0)
+  const [orgFeePct, setOrgFeePct] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -17,12 +17,14 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
       .then(([platRes, orgRes]) => {
         if (!cancelled) {
           if (platRes.success) setPlatformFeePct(platRes.percentage)
-          if (orgRes.success) setOrganizerFeePct(orgRes.percentage)
+          if (orgRes.success) setOrgFeePct(orgRes.percentage)
         }
       })
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  const organizerName = orgName || 'Organizer'
 
   const handlePositionsChange = useCallback((positions) => {
     onChange({ ...data, prize_positions: positions })
@@ -30,8 +32,9 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
 
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
+  const orgPct = Math.min(parseInt(data.organizer_fee_pct) || 0, 5)
 
-  const basePrizePool = useMemo(() => entryFee * totalSlots, [entryFee, totalSlots])
+  const basePrizePool = entryFee * totalSlots
   const sponsorContributions = useMemo(() => {
     return (Array.isArray(data.sponsors) ? data.sponsors : [])
       .filter((s) => s.status === 'approved')
@@ -47,12 +50,12 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
     return Math.round(basePrizePool * (platformFeePct / 100))
   }, [platformFeePct, basePrizePool])
   const organizerFeeAmount = useMemo(() => {
-    if (!organizerFeePct || basePrizePool <= 0) return 0
-    return Math.round(basePrizePool * (organizerFeePct / 100))
-  }, [organizerFeePct, basePrizePool])
+    if (!orgPct || basePrizePool <= 0) return 0
+    return Math.round(basePrizePool * (orgPct / 100))
+  }, [orgPct, basePrizePool])
   const availablePlacementPool = Math.max(0, basePrizePool - mvpAmount - killRewardBudget - organizerFeeAmount - platformFeeAmount)
 
-  // Sync the net placement pool into formData so saveToServer uses the correct (post-fee) amount
+  // Sync the net placement pool into formData
   const prevPool = useRef(null)
   useEffect(() => {
     const pool = availablePlacementPool > 0 ? availablePlacementPool : ''
@@ -94,7 +97,13 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         {errors?.entry_fee_amount && <p className="text-xs text-error mt-2">{errors.entry_fee_amount}</p>}
       </div>
 
-      <PrizeAllocationEngine data={data} platformFeePct={platformFeePct} organizerFeePct={organizerFeePct} />
+      <PrizeAllocationEngine
+        data={data}
+        platformFeePct={platformFeePct}
+        organizerFeePct={orgPct}
+        organizerName={organizerName}
+        onOrganizerFeeChange={(v) => onChange({ ...data, organizer_fee_pct: v })}
+      />
 
       <div className="space-y-4">
         {/* MVP Reward */}
@@ -158,19 +167,25 @@ export default function Step4PrizePool({ data, onChange, errors, userTier }) {
         </div>
 
         {/* Sponsor Contributions — plan-locked */}
-        <div className="flex items-start justify-between bg-surface-container/50 border border-slate-200 dark:border-outline-variant/20 p-5 rounded-xl">
-          <div>
-            <h3 className="text-sm font-semibold text-on-background">Sponsor Contributions</h3>
-            <p className="text-xs text-on-surface-variant mt-1">Allow sponsors to contribute additional funds to the prize pool.</p>
-          </div>
-          {userTier !== 'Free' ? (
-            <span className="flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 shrink-0">
-              ✓ Enabled by Plan
-            </span>
-          ) : (
-            <span className="flex items-center px-3 py-1 rounded-full text-xs font-bold bg-slate-100 dark:bg-white/5 text-slate-500 dark:text-white/40 border border-slate-200 dark:border-white/10 shrink-0">
-              Locked (Free Plan)
-            </span>
+        <div className={`bg-surface-container/50 border border-slate-200 dark:border-outline-variant/20 p-5 rounded-xl space-y-3 ${userTier === 'Free' ? 'opacity-50' : ''}`}>
+          <Toggle
+            enabled={userTier !== 'Free' ? (data.sponsors_enabled !== false) : false}
+            onChange={(v) => onChange({ ...data, sponsors_enabled: v })}
+            label="Sponsor Contributions"
+            description="Allow sponsors to contribute additional funds to the prize pool."
+            disabled={userTier === 'Free'}
+          />
+          {userTier === 'Free' && (
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-on-surface-variant">Available on Basic and Pro plans.</p>
+              <button
+                type="button"
+                onClick={() => onNavigateToSubscription && onNavigateToSubscription()}
+                className="text-xs font-bold text-primary hover:underline"
+              >
+                Upgrade
+              </button>
+            </div>
           )}
         </div>
 

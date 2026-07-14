@@ -115,7 +115,7 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <h3 className="text-sm font-semibold text-on-background">Prize Distribution</h3>
         <div className="flex items-center gap-2">
           {positions.length > 1 && (
@@ -124,7 +124,7 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
               onClick={handleSmartRoundup}
               className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm transition-colors"
             >
-              Roundup (Nearest 10)
+              Roundup
             </button>
           )}
           <button
@@ -154,20 +154,20 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
         const amount = Math.round((percentage / 100) * availablePlacementPool)
 
         return (
-          <div key={pos.id} className="flex items-center justify-between w-full gap-2 sm:gap-4">
+          <div key={pos.id} className="flex flex-wrap items-center gap-2 w-full">
             {/* 1. Placement Label */}
-            <span className="w-8 text-sm font-medium sm:w-12 text-on-background">{pos.name}</span>
+            <span className="w-6 text-sm font-medium text-on-background shrink-0">{pos.name}</span>
 
-            {/* 2. Responsive Progress Bar — shrinks on mobile */}
-            <div className="hidden sm:flex flex-1 h-2 bg-surface-container-highest rounded-full overflow-hidden max-w-[200px]">
+            {/* 2. Progress Bar — hidden on mobile */}
+            <div className="hidden sm:flex flex-1 h-2 bg-surface-container-highest rounded-full overflow-hidden max-w-[160px]">
               <div
                 className="h-full bg-primary rounded-full transition-all duration-300"
                 style={{ width: `${Math.min(100, percentage)}%` }}
               />
             </div>
 
-            {/* 3. Wider Percentage Input — no truncation */}
-            <div className="relative flex items-center">
+            {/* 3. Percentage Input */}
+            <div className="relative flex items-center flex-1 sm:flex-none min-w-0 max-w-[100px]">
               <OptimizedInput
                 type="number"
                 min="0"
@@ -175,14 +175,14 @@ export default function PrizeDistributionEditor({ positions = [], onChange, avai
                 step="0.01"
                 value={pos.percentage}
                 onChange={(v) => updatePercentage(pos.id, v)}
-                className="w-20 sm:w-24 px-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background text-center focus:outline-none focus:border-primary/40"
+                className="w-full sm:w-20 px-2 py-1.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background text-center focus:outline-none focus:border-primary/40"
               />
               <span className="absolute text-xs text-on-surface-variant right-2 pointer-events-none">%</span>
             </div>
 
             {/* 4. Currency Amount & Remove */}
-            <div className="flex items-center justify-end gap-2 w-24 sm:w-32">
-              <span className="text-xs sm:text-sm font-medium text-on-surface-variant">₹{amount.toLocaleString('en-IN')}</span>
+            <div className="flex items-center justify-end gap-1.5 ml-auto sm:ml-0">
+              <span className="text-xs sm:text-sm font-medium text-on-surface-variant whitespace-nowrap">₹{amount.toLocaleString('en-IN')}</span>
               <button
                 type="button"
                 onClick={() => removePosition(pos.id)}

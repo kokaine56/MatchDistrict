@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-export function OptimizedInput({ value, onChange, type = 'text', placeholder, className, min, max, step, disabled, maxLength }) {
+export function OptimizedInput({ value, onChange, type = 'text', placeholder, className, min, max, step, disabled, maxLength, instant }) {
   const [localValue, setLocalValue] = useState(value ?? '')
 
   useEffect(() => {
@@ -8,7 +8,11 @@ export function OptimizedInput({ value, onChange, type = 'text', placeholder, cl
   }, [value])
 
   const handleChange = (e) => {
-    setLocalValue(e.target.value)
+    const v = e.target.value
+    setLocalValue(v)
+    if (instant) {
+      onChange(v)
+    }
   }
 
   const handleSync = () => {
@@ -28,7 +32,7 @@ export function OptimizedInput({ value, onChange, type = 'text', placeholder, cl
       type={type}
       value={localValue}
       onChange={handleChange}
-      onBlur={handleSync}
+      onBlur={!instant ? handleSync : undefined}
       onKeyDown={handleKeyDown}
       placeholder={placeholder}
       className={className}
