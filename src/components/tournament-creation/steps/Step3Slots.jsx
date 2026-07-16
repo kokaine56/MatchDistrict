@@ -55,7 +55,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
 
       <div className="space-y-3" data-error={slotsExceedPlan || errors?.slotsTotal ? true : undefined}>
         <label className="block text-sm font-medium text-on-surface-variant">
-          Total Slots <span className="text-error">*</span>
+          Total Slots <span style={{ color: '#ef4444' }}>*</span>
         </label>
         <OptimizedInput
           type="number"
@@ -75,19 +75,20 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         </div>
         {slotsExceedPlan && (
           <div className="mt-1.5 flex items-center gap-1.5">
-            <p className="text-[11px] text-error">
+            <p className="text-xs" style={{ color: '#ef4444' }}>
               Your {tier} plan supports up to {maxSlots} slots.
             </p>
             <button
               type="button"
               onClick={() => onNavigateToSubscription && onNavigateToSubscription()}
-              className="text-[11px] font-bold text-primary hover:underline"
+              className="text-xs font-bold bg-primary px-2 py-0.5 rounded-md hover:bg-primary/90 transition-colors"
+              style={{ color: '#ef4444' }}
             >
               Upgrade
             </button>
           </div>
         )}
-        {errors?.slotsTotal && <p className="text-[11px] text-error mt-1">{errors.slotsTotal}</p>}
+        {!slotsExceedPlan && errors?.slotsTotal && <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{errors.slotsTotal}</p>}
       </div>
 
       <div className="space-y-3">
@@ -154,7 +155,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
               </span>
             )}
           </div>
-          {roomError && <p className="text-xs text-error">{roomError}</p>}
+          {roomError && <p className="text-xs" style={{ color: '#ef4444' }}>{roomError}</p>}
           <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
             <svg className="w-4 h-4 mt-0.5 shrink-0 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />

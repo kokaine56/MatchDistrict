@@ -231,7 +231,8 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-on-background">Card Preview</h3>
         <p className="text-[10px] text-on-surface-variant">This is how your tournament will appear on the homepage &amp; discover page.</p>
-        <div className="flex justify-center">
+        <div className="flex justify-center overflow-hidden sm:overflow-visible">
+          <div className="origin-center scale-[0.78] sm:scale-100 -my-6 sm:my-0">
           {isImgUploading ? (
             <div className="w-[300px] h-[400px] rounded-2xl bg-surface-container-high flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
@@ -266,6 +267,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
               onNavigate={() => {}}
             />
           )}
+          </div>
         </div>
       </div>
     </motion.div>

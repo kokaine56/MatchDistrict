@@ -86,6 +86,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier, orgNa
             <OptimizedInput
               type="number"
               min="0"
+              instant
               value={data.entry_fee_amount || ''}
               onChange={(v) => onChange({ ...data, entry_fee_amount: v })}
               placeholder="Enter Entry Fee"
