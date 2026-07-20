@@ -249,10 +249,20 @@ async function initDb() {
       );
 
       ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
       ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS admin_id VARCHAR(50);
       ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
       ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sender_account VARCHAR(255);
       ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sms_hash VARCHAR(64);
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        message TEXT,
+        is_read BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
 
     // Ensure all columns exist in case the table was created previously with an older schema
@@ -10457,13 +10467,13 @@ const server = http.createServer(async (req, res) => {
         let cursorDate; try { cursorDate = Buffer.from(cursorParam, 'base64').toString('utf-8'); } catch { cursorDate = null; }
         if (cursorDate) { subWhereParts.push(`pv.created_at < $${subParamIdx}`); subParams.push(cursorDate); subParamIdx++; }
       }
-      const subWhere = subWhereParts.length ? 'WHERE ' + subWhereParts.join(' AND ') : '';
+       const subWhere = subWhereParts.length ? 'WHERE ' + subWhereParts.join(' AND ') : '';
 
       // Build registration query
       const regWhereParts = [`tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')`];
       const regParams = [];
       let regParamIdx = 1;
-      if (screenshotsOnly) { regWhereParts.push(`(tr.screenshot_url IS NOT NULL AND tr.screenshot_url != '') OR (ps.proof_url IS NOT NULL AND ps.proof_url != '')`); }
+      if (screenshotsOnly) { regWhereParts.push(`((tr.screenshot_url IS NOT NULL AND tr.screenshot_url != '') OR (ps.proof_url IS NOT NULL AND ps.proof_url != ''))`); }
       if (sinceParam) { regWhereParts.push(`tr.created_at >= $${regParamIdx}`); regParams.push(sinceParam); regParamIdx++; }
       if (cursorParam) {
         let cursorDate; try { cursorDate = Buffer.from(cursorParam, 'base64').toString('utf-8'); } catch { cursorDate = null; }
@@ -10496,7 +10506,8 @@ const server = http.createServer(async (req, res) => {
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            ${regWhere}
            ORDER BY tr.created_at DESC
-           LIMIT ${limitParam + 1}`
+           LIMIT ${limitParam + 1}`,
+          regParams
          )
        ]);
 
@@ -10509,8 +10520,9 @@ const server = http.createServer(async (req, res) => {
       payments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       const hasMore = subRes.rows.length > limitParam || regRes.rows.length > limitParam;
-      const nextCursor = hasMore && payments.length > 0
-        ? Buffer.from(payments[payments.length - 1].created_at.toISOString()).toString('base64')
+      const lastCreated = payments.length > 0 ? payments[payments.length - 1].created_at : null;
+      const nextCursor = hasMore && lastCreated
+        ? Buffer.from((lastCreated instanceof Date ? lastCreated : new Date(lastCreated)).toISOString()).toString('base64')
         : null;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -10591,7 +10603,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const { sender, sender_account, message: smsBody, timestamp, utr_ref: parsedUtr, amount: parsedAmount, app_name } = JSON.parse(body);
+        const { sender, sender_account, bank: parsedBank, message: smsBody, timestamp, utr_ref: parsedUtr, amount: parsedAmount, app_name } = JSON.parse(body);
         const utr_ref = parsedUtr || (smsBody && smsBody.match(/[A-Z0-9]{12,}/i)?.[0]) || null;
         const amount = parsedAmount || 0;
         let finalStatus = 'pending_review';
@@ -10771,13 +10783,14 @@ const server = http.createServer(async (req, res) => {
 
         await pool.query(
           `INSERT INTO payment_sms_verifications
-           (id, utr, amount, sender, sender_account, device_id, matched_payment_id, matched_registration_id, match_type, status, sms_hash, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-           ON CONFLICT (utr) DO NOTHING`,
+           (id, utr, amount, bank, sender, sender_account, device_id, matched_payment_id, matched_registration_id, match_type, status, sms_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+           ON CONFLICT DO NOTHING`,
           [
             smsRecordId,
             utr_ref || smsRecordId,
             amount || 0,
+            parsedBank || null,
             sender || 'APP',
             sender_account || null,
             deviceAuth.device_id || deviceAuth.id,
@@ -11088,8 +11101,9 @@ const server = http.createServer(async (req, res) => {
 
       const hasMore = result.rows.length > limitParam;
       const rows = hasMore ? result.rows.slice(0, limitParam) : result.rows;
-      const nextCursor = hasMore
-        ? Buffer.from(rows[rows.length - 1].created_at.toISOString()).toString('base64')
+      const lastRowCreated = rows.length > 0 ? rows[rows.length - 1].created_at : null;
+      const nextCursor = hasMore && lastRowCreated
+        ? Buffer.from((lastRowCreated instanceof Date ? lastRowCreated : new Date(lastRowCreated)).toISOString()).toString('base64')
         : null;
 
       // Enrich with display names
