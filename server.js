@@ -243,10 +243,16 @@ async function initDb() {
         matched_registration_id VARCHAR(50),
         match_type VARCHAR(20) DEFAULT 'unmatched',
         status VARCHAR(20) DEFAULT 'unmatched',
+        admin_id VARCHAR(50),
+        rejection_reason TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
       ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
+      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS admin_id VARCHAR(50);
+      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sender_account VARCHAR(255);
+      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sms_hash VARCHAR(64);
     `);
 
     // Ensure all columns exist in case the table was created previously with an older schema
@@ -427,6 +433,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
@@ -1179,6 +1186,76 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon',
   '.webp': 'image/webp'
 };
+
+// ── v1.1 CONFIGURATION ─────────────────────────────────────────────────────
+const MIN_SUPPORTED_APP_VERSION = '1.1.0';
+const PAYMENT_VERIFY_RATE_LIMIT = 60;          // requests per minute per device
+const PAYMENT_VERIFY_RATE_WINDOW_MS = 60_000;  // 1 minute window
+const UNIQUE_AMOUNT_SUFFIX_RANGE = 99;         // max paisa suffix (0.01–0.99)
+
+// ── v1.1 IN-MEMORY RATE LIMITER ────────────────────────────────────────────
+// Keyed by device_id. Each entry = { count, windowStart }.
+const rateLimitMap = new Map();
+
+function checkRateLimit(deviceKey) {
+  const now = Date.now();
+  const entry = rateLimitMap.get(deviceKey);
+  if (!entry || now - entry.windowStart > PAYMENT_VERIFY_RATE_WINDOW_MS) {
+    rateLimitMap.set(deviceKey, { count: 1, windowStart: now });
+    return { allowed: true, remaining: PAYMENT_VERIFY_RATE_LIMIT - 1, retryAfter: 0 };
+  }
+  entry.count++;
+  if (entry.count > PAYMENT_VERIFY_RATE_LIMIT) {
+    const retryAfter = Math.ceil((entry.windowStart + PAYMENT_VERIFY_RATE_WINDOW_MS - now) / 1000);
+    return { allowed: false, remaining: 0, retryAfter };
+  }
+  return { allowed: true, remaining: PAYMENT_VERIFY_RATE_LIMIT - entry.count, retryAfter: 0 };
+}
+
+// Periodic cleanup of stale rate-limit entries (every 5 min)
+setInterval(() => {
+  const cutoff = Date.now() - PAYMENT_VERIFY_RATE_WINDOW_MS * 2;
+  for (const [key, entry] of rateLimitMap) {
+    if (entry.windowStart < cutoff) rateLimitMap.delete(key);
+  }
+}, 300_000);
+
+// ── v1.1 HELPER: fuzzy name/UTR match ─────────────────────────────────────
+function normalizeForFuzzy(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function fuzzyNameMatch(sender, targetName) {
+  const a = normalizeForFuzzy(sender);
+  const b = normalizeForFuzzy(targetName);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // substring match
+  if (b.includes(a) || a.includes(b)) return true;
+  // Levenshtein distance ≤ 2 for short names
+  if (a.length <= 15 && b.length <= 15) {
+    const dist = levenshtein(a, b);
+    if (dist <= 2) return true;
+  }
+  return false;
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return dp[m][n];
+}
 
 const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || '').split('?')[0];
@@ -3216,9 +3293,10 @@ const server = http.createServer(async (req, res) => {
             rules, chat, notices, teams, region, format, "slotsTotal", "slotsFilled", "roomID", "roomPassword", timeline, "bannerUrl", "logoUrl", "isDraft", version, "orgId",
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
-            mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room
+            mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room,
+            unique_amount_suffix_enabled
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -3236,7 +3314,8 @@ const server = http.createServer(async (req, res) => {
             perspective = COALESCE(EXCLUDED.perspective, tournaments.perspective),
             entry_fee_amount = COALESCE(EXCLUDED.entry_fee_amount, tournaments.entry_fee_amount),
             description = COALESCE(EXCLUDED.description, tournaments.description),
-            max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room)
+            max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room),
+            unique_amount_suffix_enabled = COALESCE(EXCLUDED.unique_amount_suffix_enabled, tournaments.unique_amount_suffix_enabled)
           RETURNING *`,
           [
             t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -3292,7 +3371,8 @@ const server = http.createServer(async (req, res) => {
             t.kill_reward_per_kill !== undefined ? parseInt(t.kill_reward_per_kill) : 0,
             t.prize_positions || '[]',
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : false,
-            t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null
+            t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
+            t.unique_amount_suffix_enabled || false
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${t.id}" created in Supabase PostgreSQL.\n`);
@@ -3414,8 +3494,9 @@ const server = http.createServer(async (req, res) => {
               kill_reward_per_kill = COALESCE($45, kill_reward_per_kill),
               prize_positions = COALESCE($46, prize_positions),
               sponsors_enabled = COALESCE($47, sponsors_enabled),
-              max_slots_per_room = COALESCE($48, max_slots_per_room)
-            WHERE id = $49 RETURNING *`,
+              max_slots_per_room = COALESCE($48, max_slots_per_room),
+              unique_amount_suffix_enabled = COALESCE($49, unique_amount_suffix_enabled)
+            WHERE id = $50 RETURNING *`,
             [
               t.title || null,
               t.game || null,
@@ -3465,6 +3546,7 @@ const server = http.createServer(async (req, res) => {
               t.prize_positions || null,
               t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
               t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
+              t.unique_amount_suffix_enabled || false,
               id
             ]
           );
@@ -3641,8 +3723,9 @@ const server = http.createServer(async (req, res) => {
             kill_reward_per_kill = COALESCE($49, kill_reward_per_kill),
             prize_positions = COALESCE($50, prize_positions),
             sponsors_enabled = COALESCE($51, sponsors_enabled),
-            max_slots_per_room = COALESCE($52, max_slots_per_room)
-           WHERE id = $53 RETURNING *`,
+            max_slots_per_room = COALESCE($52, max_slots_per_room),
+            unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled)
+           WHERE id = $54 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
             t.game !== undefined ? t.game : null,
@@ -3696,6 +3779,7 @@ const server = http.createServer(async (req, res) => {
             t.prize_positions !== undefined ? t.prize_positions : null,
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
+            t.unique_amount_suffix_enabled || false,
             id
           ]
         );
@@ -4378,6 +4462,13 @@ const server = http.createServer(async (req, res) => {
         const entryFeeAmount = parseInt(tournament.entry_fee_amount) || 0;
         const isPaid = entryFeeAmount > 0;
 
+        // v1.1: Unique amount suffix for high-volume tournaments
+        let amountToPay = entryFeeAmount;
+        if (isPaid && tournament.unique_amount_suffix_enabled) {
+          const suffix = Math.floor(Math.random() * UNIQUE_AMOUNT_SUFFIX_RANGE) + 1; // 1–99 paisa
+          amountToPay = entryFeeAmount + suffix / 100;
+        }
+
         await client.query('BEGIN');
 
         // Duplicate registration guard (within transaction)
@@ -4420,7 +4511,7 @@ const server = http.createServer(async (req, res) => {
           await client.query(
             `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status, idempotency_key)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_admin_review', $9)`,
-            [payId, regId, session.tournament_id, authUser.id, entryFeeAmount,
+            [payId, regId, session.tournament_id, authUser.id, amountToPay,
              payload.screenshot_url, payload.utr_number || null, payload.payment_app || null, payIdempKey]
           );
 
@@ -4430,7 +4521,7 @@ const server = http.createServer(async (req, res) => {
             [payId, regId]
           );
 
-          paymentRecord = { id: payId, amount: entryFeeAmount, status: 'pending_admin_review' };
+          paymentRecord = { id: payId, amount: amountToPay, status: 'pending_admin_review' };
         }
 
         // Mark session as used
@@ -4446,7 +4537,8 @@ const server = http.createServer(async (req, res) => {
           success: true,
           registration: regRes.rows[0],
           payment: paymentRecord,
-          requiresPayment: isPaid
+          requiresPayment: isPaid,
+          amount_to_pay: isPaid ? amountToPay : null
         }));
       } catch (err) {
         await client.query('ROLLBACK');
@@ -4509,6 +4601,13 @@ const server = http.createServer(async (req, res) => {
 
         const entryFeeAmount = parseInt(t.entry_fee_amount) || 0;
         const isPaid = entryFeeAmount > 0;
+
+        // v1.1: Unique amount suffix for high-volume tournaments
+        let amountToPay = entryFeeAmount;
+        if (isPaid && t.unique_amount_suffix_enabled) {
+          const suffix = Math.floor(Math.random() * UNIQUE_AMOUNT_SUFFIX_RANGE) + 1;
+          amountToPay = entryFeeAmount + suffix / 100;
+        }
         const isWaitlisted = t.slotsFilled >= t.slotsTotal;
 
         // Status: paid tournaments use pending_payment, free use pending
@@ -4561,7 +4660,7 @@ const server = http.createServer(async (req, res) => {
 
         console.log(`\n📦 [MATCH DISTRICT DB] Team "${data.team_name}" registered for "${id}" with status "${status}" and entry fee ${entryFeeAmount} in Supabase.\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, registration: dbRes.rows[0], requiresPayment: isPaid }));
+        res.end(JSON.stringify({ success: true, registration: dbRes.rows[0], requiresPayment: isPaid, amount_to_pay: isPaid ? amountToPay : null }));
       } catch (err) {
         const isSchemaError = err.message && err.message.includes('does not exist');
         const message = isSchemaError
@@ -10330,7 +10429,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/v1/payments/all — All payment records with their current status (optional ?status= filter, ?limit=, ?offset=, ?screenshots_only=)
+  // GET /api/v1/payments/all — All payment records with their current status
+  // v1.1: Supports ?status=&since=ISO8601&limit=50&cursor=<opaque>&screenshots_only=true
   if (req.url.startsWith('/api/v1/payments/all') && req.method === 'GET') {
     try {
       const deviceAuth = await authenticateDevice(req);
@@ -10341,19 +10441,36 @@ const server = http.createServer(async (req, res) => {
       }
       const urlObj = new URL(req.url, `http://${req.headers.host}`);
       const statusFilter = urlObj.searchParams.get('status');
-      const limitParam = parseInt(urlObj.searchParams.get('limit')) || 100;
-      const offsetParam = parseInt(urlObj.searchParams.get('offset')) || 0;
+      const sinceParam = urlObj.searchParams.get('since');
+      const limitParam = Math.min(parseInt(urlObj.searchParams.get('limit')) || 50, 200);
+      const cursorParam = urlObj.searchParams.get('cursor');
       const screenshotsOnly = urlObj.searchParams.get('screenshots_only') === 'true';
-      const safeLimit = Math.min(limitParam, 500);
+
+      // Build subscription query
       const subWhereParts = [];
       const subParams = [];
-      let paramIdx = 1;
-      if (statusFilter) { subWhereParts.push(`pv.status = $${paramIdx}`); subParams.push(statusFilter); paramIdx++; }
+      let subParamIdx = 1;
+      if (statusFilter) { subWhereParts.push(`pv.status = $${subParamIdx}`); subParams.push(statusFilter); subParamIdx++; }
       if (screenshotsOnly) { subWhereParts.push(`pv.payment_screenshot_url IS NOT NULL AND pv.payment_screenshot_url != ''`); }
+      if (sinceParam) { subWhereParts.push(`pv.created_at >= $${subParamIdx}`); subParams.push(sinceParam); subParamIdx++; }
+      if (cursorParam) {
+        let cursorDate; try { cursorDate = Buffer.from(cursorParam, 'base64').toString('utf-8'); } catch { cursorDate = null; }
+        if (cursorDate) { subWhereParts.push(`pv.created_at < $${subParamIdx}`); subParams.push(cursorDate); subParamIdx++; }
+      }
       const subWhere = subWhereParts.length ? 'WHERE ' + subWhereParts.join(' AND ') : '';
+
+      // Build registration query
       const regWhereParts = [`tr.status IN ('pending_payment','pending','confirmed','approved','rejected','cancelled','expired','VERIFIED_BY_HOST','verified_by_host')`];
+      const regParams = [];
+      let regParamIdx = 1;
       if (screenshotsOnly) { regWhereParts.push(`(tr.screenshot_url IS NOT NULL AND tr.screenshot_url != '') OR (ps.proof_url IS NOT NULL AND ps.proof_url != '')`); }
+      if (sinceParam) { regWhereParts.push(`tr.created_at >= $${regParamIdx}`); regParams.push(sinceParam); regParamIdx++; }
+      if (cursorParam) {
+        let cursorDate; try { cursorDate = Buffer.from(cursorParam, 'base64').toString('utf-8'); } catch { cursorDate = null; }
+        if (cursorDate) { regWhereParts.push(`tr.created_at < $${regParamIdx}`); regParams.push(cursorDate); regParamIdx++; }
+      }
       const regWhere = 'WHERE ' + regWhereParts.join(' AND ');
+
       const [subRes, regRes] = await Promise.all([
         pool.query(
           `SELECT pv.id, pv.user_id, pv.plan_name, pv.billing_cycle, pv.amount,
@@ -10364,7 +10481,7 @@ const server = http.createServer(async (req, res) => {
            JOIN users u ON u.id = pv.user_id
            ${subWhere}
            ORDER BY pv.created_at DESC
-           LIMIT ${safeLimit} OFFSET ${offsetParam}`,
+           LIMIT ${limitParam + 1}`,
           subParams
         ),
         pool.query(
@@ -10372,27 +10489,36 @@ const server = http.createServer(async (req, res) => {
                   tr.transaction_id, tr.email, tr.phone, tr.created_at,
                   tr.screenshot_url,
                   ps.proof_url AS payment_submission_proof_url,
+                  ps.utr_number AS user_provided_utr,
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
            JOIN tournaments t ON tr.tournament_id = t.id
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            ${regWhere}
            ORDER BY tr.created_at DESC
-           LIMIT ${safeLimit} OFFSET ${offsetParam}`
+           LIMIT ${limitParam + 1}`
          )
        ]);
+
+      const subRows = subRes.rows.length > limitParam ? subRes.rows.slice(0, limitParam) : subRes.rows;
+      const regRows = regRes.rows.length > limitParam ? regRes.rows.slice(0, limitParam) : regRes.rows;
       const payments = [
-        ...subRes.rows.map(r => ({ ...r, payment_type: 'subscription' })),
-        ...regRes.rows.map(r => ({ ...r, payment_type: 'registration' }))
+        ...subRows.map(r => ({ ...r, payment_type: 'subscription' })),
+        ...regRows.map(r => ({ ...r, payment_type: 'registration' }))
       ];
       payments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      const hasMore = subRes.rows.length > limitParam || regRes.rows.length > limitParam;
+      const nextCursor = hasMore && payments.length > 0
+        ? Buffer.from(payments[payments.length - 1].created_at.toISOString()).toString('base64')
+        : null;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
         count: payments.length,
-        offset: offsetParam,
-        limit: safeLimit,
-        hasMore: payments.length === safeLimit * 2,
+        limit: limitParam,
+        next_cursor: nextCursor,
         payments
       }));
     } catch (err) {
@@ -10450,14 +10576,69 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
-        const { sender, message: smsBody, timestamp, utr_ref: parsedUtr, amount: parsedAmount, app_name } = JSON.parse(body);
+
+        // ── v1.1 RATE LIMIT ────────────────────────────────────────────────
+        const deviceKey = deviceAuth.device_id || deviceAuth.id;
+        const rl = checkRateLimit(deviceKey);
+        if (!rl.allowed) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'RATE_LIMITED',
+            message: `Too many requests. Retry after ${rl.retryAfter}s.`,
+            retry_after_seconds: rl.retryAfter
+          }));
+          return;
+        }
+
+        const { sender, sender_account, message: smsBody, timestamp, utr_ref: parsedUtr, amount: parsedAmount, app_name } = JSON.parse(body);
         const utr_ref = parsedUtr || (smsBody && smsBody.match(/[A-Z0-9]{12,}/i)?.[0]) || null;
         const amount = parsedAmount || 0;
         let finalStatus = 'pending_review';
         let matchedPaymentId = null;
+        let matchType = 'unmatched';
         const smsRecordId = 'SMS-' + crypto.randomBytes(8).toString('hex');
 
-        // Check subscription payment_verifications first
+        // 1. DEDUP: UTR already processed?
+        if (utr_ref) {
+          const utrDedup = await pool.query(
+            `SELECT id, status, matched_payment_id, matched_registration_id FROM payment_sms_verifications WHERE utr = $1 LIMIT 1`,
+            [utr_ref]
+          );
+          if (utrDedup.rows.length > 0) {
+            const existing = utrDedup.rows[0];
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              message: 'Already verified',
+              payment_id: existing.matched_payment_id || existing.matched_registration_id || existing.id,
+              status: existing.status
+            }));
+            return;
+          }
+        }
+
+        // 2. DEDUP: sms_hash already processed?
+        const smsHash = (smsBody && !parsedUtr) ? crypto.createHash('sha256').update(smsBody.trim()).digest('hex') : null;
+        if (smsHash) {
+          const hashDedup = await pool.query(
+            `SELECT id, status, matched_payment_id, matched_registration_id FROM payment_sms_verifications WHERE sms_hash = $1 LIMIT 1`,
+            [smsHash]
+          );
+          if (hashDedup.rows.length > 0) {
+            const existing = hashDedup.rows[0];
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              message: 'Already verified',
+              payment_id: existing.matched_payment_id || existing.matched_registration_id || existing.id,
+              status: existing.status
+            }));
+            return;
+          }
+        }
+
+        // 3. MATCH: subscription payment_verifications by UTR/transaction_id
         const subCheck = await pool.query(
           `SELECT id, user_id, status FROM payment_verifications WHERE (transaction_id = $1 OR utr_ref = $1) AND status = 'pending' LIMIT 1`,
           [utr_ref]
@@ -10465,10 +10646,11 @@ const server = http.createServer(async (req, res) => {
         if (subCheck.rows.length > 0) {
           matchedPaymentId = subCheck.rows[0].id;
           finalStatus = 'verified';
+          matchType = 'subscription';
           await pool.query(`UPDATE payment_verifications SET status = 'verified', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
           await pool.query(`UPDATE subscriptions SET billing_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE organizer_id = $1`, [subCheck.rows[0].user_id]);
         } else {
-          // Check tournament registrations
+          // 4. MATCH: tournament_registrations by UTR/transaction_id
           const regCheck = await pool.query(
             `SELECT r.id, r.user_id, r.status, ps.id as sub_id FROM tournament_registrations r LEFT JOIN payment_submissions ps ON ps.registration_id = r.id WHERE (r.transaction_id = $1 OR ps.utr_number = $1) AND r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION') LIMIT 1`,
             [utr_ref]
@@ -10476,28 +10658,134 @@ const server = http.createServer(async (req, res) => {
           if (regCheck.rows.length > 0) {
             matchedPaymentId = regCheck.rows[0].id;
             finalStatus = 'verified';
+            matchType = 'registration';
             await pool.query(`UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
             if (regCheck.rows[0].sub_id) {
               await pool.query(`UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [regCheck.rows[0].sub_id]);
+            }
+          } else {
+            // ── v1.1 TERTIARY MATCHING: sender_account / sender fuzzy ──────
+            if (amount > 0) {
+              // Try subscriptions by amount + sender fuzzy
+              const subAmountMatch = await pool.query(
+                `SELECT pv.id, pv.user_id, pv.status, u.name as user_name
+                 FROM payment_verifications pv JOIN users u ON u.id = pv.user_id
+                 WHERE pv.amount = $1 AND pv.status = 'pending' LIMIT 5`,
+                [amount]
+              );
+              if (subAmountMatch.rows.length === 1) {
+                matchedPaymentId = subAmountMatch.rows[0].id;
+                finalStatus = 'verified';
+                matchType = 'subscription';
+                await pool.query(`UPDATE payment_verifications SET status = 'verified', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+                await pool.query(`UPDATE subscriptions SET billing_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE organizer_id = $1`, [subAmountMatch.rows[0].user_id]);
+              } else if (subAmountMatch.rows.length > 1) {
+                // Multiple matches — try time proximity (30 min), then sender fuzzy
+                let bestMatch = null;
+                if (timestamp) {
+                  const smsTime = new Date(timestamp).getTime();
+                  for (const row of subAmountMatch.rows) {
+                    const created = new Date(row.created_at || Date.now()).getTime();
+                    if (Math.abs(smsTime - created) <= 30 * 60 * 1000) {
+                      bestMatch = row;
+                      break;
+                    }
+                  }
+                }
+                if (!bestMatch && sender) {
+                  for (const row of subAmountMatch.rows) {
+                    if (fuzzyNameMatch(sender, row.user_name)) {
+                      bestMatch = row;
+                      break;
+                    }
+                  }
+                }
+                if (!bestMatch && sender_account) {
+                  // Check if sender_account matches user's UTR or transaction_id patterns
+                  for (const row of subAmountMatch.rows) {
+                    const utrCheck = await pool.query(
+                      `SELECT id FROM payment_verifications WHERE id = $1 AND (transaction_id ILIKE $2 OR utr_ref ILIKE $2)`,
+                      [row.id, `%${sender_account}%`]
+                    );
+                    if (utrCheck.rows.length > 0) { bestMatch = row; break; }
+                  }
+                }
+                if (bestMatch) {
+                  matchedPaymentId = bestMatch.id;
+                  finalStatus = 'verified';
+                  matchType = 'subscription';
+                  await pool.query(`UPDATE payment_verifications SET status = 'verified', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+                  await pool.query(`UPDATE subscriptions SET billing_status = 'active', updated_at = CURRENT_TIMESTAMP WHERE organizer_id = $1`, [bestMatch.user_id]);
+                }
+              }
+
+              // If still unmatched, try registrations by amount + sender fuzzy
+              // v1.1: Match against both base entry_fee_amount AND suffixed payment_submissions.amount
+              if (!matchedPaymentId) {
+                const regAmountMatch = await pool.query(
+                  `SELECT r.id, r.user_id, r.status, t.entry_fee_amount, u.name as user_name, ps.utr_number, ps.amount as submission_amount
+                   FROM tournament_registrations r
+                   JOIN tournaments t ON r.tournament_id = t.id
+                   JOIN users u ON u.id = r.user_id
+                   LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+                   WHERE (t.entry_fee_amount = $1 OR ps.amount = $1)
+                     AND r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION') LIMIT 5`,
+                  [amount]
+                );
+                if (regAmountMatch.rows.length === 1) {
+                  matchedPaymentId = regAmountMatch.rows[0].id;
+                  finalStatus = 'verified';
+                  matchType = 'registration';
+                  await pool.query(`UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+                } else if (regAmountMatch.rows.length > 1) {
+                  let bestReg = null;
+                  if (timestamp) {
+                    const smsTime = new Date(timestamp).getTime();
+                    for (const row of regAmountMatch.rows) {
+                      const created = new Date(row.created_at || Date.now()).getTime();
+                      if (Math.abs(smsTime - created) <= 30 * 60 * 1000) { bestReg = row; break; }
+                    }
+                  }
+                  if (!bestReg && sender) {
+                    for (const row of regAmountMatch.rows) {
+                      if (fuzzyNameMatch(sender, row.user_name)) { bestReg = row; break; }
+                    }
+                  }
+                  if (!bestReg && sender_account) {
+                    for (const row of regAmountMatch.rows) {
+                      if (row.utr_number && row.utr_number.includes(sender_account)) { bestReg = row; break; }
+                      if (fuzzyNameMatch(sender_account, row.user_name)) { bestReg = row; break; }
+                    }
+                  }
+                  if (bestReg) {
+                    matchedPaymentId = bestReg.id;
+                    finalStatus = 'verified';
+                    matchType = 'registration';
+                    await pool.query(`UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [matchedPaymentId]);
+                  }
+                }
+              }
             }
           }
         }
 
         await pool.query(
           `INSERT INTO payment_sms_verifications
-           (id, utr, amount, sender, device_id, matched_payment_id, matched_registration_id, match_type, status, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+           (id, utr, amount, sender, sender_account, device_id, matched_payment_id, matched_registration_id, match_type, status, sms_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
            ON CONFLICT (utr) DO NOTHING`,
           [
             smsRecordId,
             utr_ref || smsRecordId,
             amount || 0,
             sender || 'APP',
+            sender_account || null,
             deviceAuth.device_id || deviceAuth.id,
             matchedPaymentId || null,
-            matchedPaymentId || null,
-            'registration',
-            finalStatus === 'verified' ? 'verified' : 'unmatched'
+            matchType === 'registration' ? matchedPaymentId : null,
+            matchType,
+            finalStatus === 'verified' ? 'verified' : 'unmatched',
+            smsHash
           ]
         );
 
@@ -10544,6 +10832,168 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // POST /api/v1/payments/resolve — Manual resolution of unmatched payments (v1.1)
+  if (req.url === '/api/v1/payments/resolve' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const deviceAuth = await authenticateDevice(req);
+        if (!deviceAuth) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const { unmatched_id, registration_id, payment_type, decision, reason } = JSON.parse(body);
+
+        if (!unmatched_id || !decision || !payment_type) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'unmatched_id, decision, and payment_type are required.' }));
+          return;
+        }
+        if (!['confirm', 'reject'].includes(decision)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'decision must be "confirm" or "reject".' }));
+          return;
+        }
+        if (!['subscription', 'registration'].includes(payment_type)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'payment_type must be "subscription" or "registration".' }));
+          return;
+        }
+        if (decision === 'reject' && !reason) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'reason is required when rejecting.' }));
+          return;
+        }
+
+        // Verify the unmatched record exists
+        const smsRes = await pool.query(
+          `SELECT * FROM payment_sms_verifications WHERE id = $1 AND status = 'unmatched'`,
+          [unmatched_id]
+        );
+        if (smsRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Unmatched record not found or already resolved.' }));
+          return;
+        }
+        const smsRecord = smsRes.rows[0];
+        const adminId = deviceAuth.user_id || deviceAuth.id;
+
+        if (decision === 'confirm') {
+          if (payment_type === 'subscription') {
+            // Confirm subscription payment
+            const targetId = registration_id || smsRecord.matched_payment_id;
+            if (!targetId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'registration_id (payment_id) is required for subscription confirm.' }));
+              return;
+            }
+            const payRes = await pool.query(
+              `SELECT * FROM payment_verifications WHERE id = $1 AND status = 'pending'`,
+              [targetId]
+            );
+            if (payRes.rows.length === 0) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Target subscription payment not found or already processed.' }));
+              return;
+            }
+            const payment = payRes.rows[0];
+            await autoApproveSubscription(pool, payment, adminId, smsRecord.utr);
+            await pool.query(
+              `UPDATE payment_sms_verifications SET status = 'verified', match_type = 'subscription',
+               matched_payment_id = $1, admin_id = $2 WHERE id = $3`,
+              [targetId, adminId, unmatched_id]
+            );
+            // Notify user
+            const notifId = 'NTF-' + crypto.randomBytes(8).toString('hex');
+            await pool.query(
+              `INSERT INTO notifications (id, user_id, title, message) VALUES ($1, $2, $3, $4)`,
+              [notifId, payment.user_id, 'Payment Verified', `Your ${payment.plan_name} subscription payment of ₹${payment.amount} has been verified.`]
+            );
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              message: 'Payment verified',
+              payment_id: targetId,
+              status: 'verified'
+            }));
+          } else {
+            // Confirm registration
+            const targetId = registration_id || smsRecord.matched_registration_id;
+            if (!targetId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'registration_id is required for registration confirm.' }));
+              return;
+            }
+            const regRes = await pool.query(
+              `SELECT r.*, t.title as tournament_title, t.game FROM tournament_registrations r JOIN tournaments t ON r.tournament_id = t.id WHERE r.id = $1 AND r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION')`,
+              [targetId]
+            );
+            if (regRes.rows.length === 0) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Target registration not found or already processed.' }));
+              return;
+            }
+            const reg = regRes.rows[0];
+            await pool.query(
+              `UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+              [targetId]
+            );
+            // Update payment_submissions if linked
+            const psRes = await pool.query(
+              `SELECT id FROM payment_submissions WHERE registration_id = $1 LIMIT 1`,
+              [targetId]
+            );
+            if (psRes.rows.length > 0) {
+              await pool.query(
+                `UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
+                [adminId, psRes.rows[0].id]
+              );
+            }
+            await pool.query(
+              `UPDATE payment_sms_verifications SET status = 'verified', match_type = 'registration',
+               matched_registration_id = $1, admin_id = $2 WHERE id = $3`,
+              [targetId, adminId, unmatched_id]
+            );
+            // Reconcile slots
+            try { await reconcileTournamentSlots(pool, reg.tournament_id); } catch (e) { /* non-critical */ }
+            // Notify user
+            const notifId = 'NTF-' + crypto.randomBytes(8).toString('hex');
+            await pool.query(
+              `INSERT INTO notifications (id, user_id, title, message) VALUES ($1, $2, $3, $4)`,
+              [notifId, reg.user_id, 'Registration Confirmed', `Your team "${reg.team_name}" for ${reg.tournament_title} has been confirmed!`]
+            );
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              message: 'Registration confirmed',
+              payment_id: targetId,
+              status: 'verified'
+            }));
+          }
+        } else {
+          // Reject
+          await pool.query(
+            `UPDATE payment_sms_verifications SET status = 'rejected', admin_id = $1, rejection_reason = $2 WHERE id = $3`,
+            [adminId, reason || null, unmatched_id]
+          );
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Payment rejected',
+            payment_id: unmatched_id,
+            status: 'rejected'
+          }));
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // GET /api/v1/payments/pending — Fetch all pending payments awaiting SMS verification
   if (req.url === '/api/v1/payments/pending' && req.method === 'GET') {
     try {
@@ -10568,6 +11018,7 @@ const server = http.createServer(async (req, res) => {
           `SELECT tr.id as registration_id, tr.tournament_id, tr.user_id, tr.team_name,
                   tr.email, tr.phone, tr.screenshot_url,
                   ps.proof_url AS payment_submission_proof_url,
+                  ps.utr_number AS user_provided_utr,
                   t.entry_fee_amount as amount, t.title as tournament_title,
                   t.game, tr.created_at
            FROM tournament_registrations tr
@@ -10591,7 +11042,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /api/v1/payments/history — Verification history (recent approved/rejected/unmatched)
-  if (req.url === '/api/v1/payments/history' && req.method === 'GET') {
+  // v1.1: Supports ?since=ISO8601&limit=50&cursor=<opaque>
+  if (req.url.startsWith('/api/v1/payments/history') && req.method === 'GET') {
     try {
       const deviceAuth = await authenticateDevice(req);
       if (!deviceAuth) {
@@ -10599,20 +11051,50 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
+      const urlObj = new URL(req.url, `http://${req.headers.host}`);
+      const sinceParam = urlObj.searchParams.get('since');
+      const limitParam = Math.min(parseInt(urlObj.searchParams.get('limit')) || 50, 200);
+      const cursorParam = urlObj.searchParams.get('cursor');
+
+      let whereClause = `sv.device_id IN (SELECT device_id FROM paired_devices WHERE user_id = $1 AND is_active = true)`;
+      const params = [deviceAuth.user_id];
+      let paramIdx = 2;
+
+      if (sinceParam) {
+        whereClause += ` AND sv.created_at >= $${paramIdx}`;
+        params.push(sinceParam);
+        paramIdx++;
+      }
+      if (cursorParam) {
+        // Cursor is the created_at of the last item from previous page (decoded from base64)
+        let cursorDate;
+        try { cursorDate = Buffer.from(cursorParam, 'base64').toString('utf-8'); } catch { cursorDate = null; }
+        if (cursorDate) {
+          whereClause += ` AND sv.created_at < $${paramIdx}`;
+          params.push(cursorDate);
+          paramIdx++;
+        }
+      }
+
       const result = await pool.query(
         `SELECT sv.id, sv.utr, sv.amount, sv.bank, sv.sender, sv.match_type, sv.status,
-                sv.matched_payment_id, sv.matched_registration_id, sv.created_at
+                sv.matched_payment_id, sv.matched_registration_id, sv.admin_id, sv.rejection_reason, sv.created_at
          FROM payment_sms_verifications sv
-         WHERE sv.device_id IN (
-           SELECT device_id FROM paired_devices WHERE user_id = $1 AND is_active = true
-         )
+         WHERE ${whereClause}
          ORDER BY sv.created_at DESC
-         LIMIT 50`,
-        [deviceAuth.user_id]
+         LIMIT $${paramIdx}`,
+        [...params, limitParam + 1]
       );
+
+      const hasMore = result.rows.length > limitParam;
+      const rows = hasMore ? result.rows.slice(0, limitParam) : result.rows;
+      const nextCursor = hasMore
+        ? Buffer.from(rows[rows.length - 1].created_at.toISOString()).toString('base64')
+        : null;
+
       // Enrich with display names
-      const rows = [];
-      for (const r of result.rows) {
+      const enriched = [];
+      for (const r of rows) {
         let detail = null;
         if (r.matched_payment_id) {
           const pRes = await pool.query(
@@ -10629,10 +11111,10 @@ const server = http.createServer(async (req, res) => {
           );
           if (regRes.rows.length) detail = { ...regRes.rows[0], type: 'registration' };
         }
-        rows.push({ ...r, detail });
+        enriched.push({ ...r, detail });
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, count: rows.length, history: rows }));
+      res.end(JSON.stringify({ success: true, count: enriched.length, next_cursor: nextCursor, history: enriched }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -10666,7 +11148,8 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
           success: true,
           timestamp: new Date().toISOString(),
-          pending_count: pendingCount
+          pending_count: pendingCount,
+          min_supported_app_version: MIN_SUPPORTED_APP_VERSION
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

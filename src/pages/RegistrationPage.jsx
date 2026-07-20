@@ -34,6 +34,7 @@ function RegistrationPage({ onNavigate }) {
   const [serverError, setServerError] = useState('')
   const [registeredTeam, setRegisteredTeam] = useState(null)
   const [sessionId, setSessionId] = useState(null)
+  const [amountToPay, setAmountToPay] = useState(null)
 
   const [payment, setPayment] = useState({
     app: '',
@@ -207,6 +208,7 @@ function RegistrationPage({ onNavigate }) {
         const completeData = await completeRes.json()
         if (completeData.success) {
           setRegisteredTeam(completeData.registration)
+          setAmountToPay(completeData.amount_to_pay || null)
           setStep('success')
         } else {
           setServerError(completeData.message || 'Registration failed. Please try again.')
@@ -291,6 +293,12 @@ function RegistrationPage({ onNavigate }) {
               <p><span className="text-white/40">Team:</span> <span className="font-bold">{form.teamName}</span></p>
               <p><span className="text-white/40">Status:</span> <span className="text-amber-400 font-semibold">{registeredTeam.status}</span></p>
               <p><span className="text-white/40">Registration ID:</span> <span className="font-mono text-xs">{registeredTeam.id}</span></p>
+              {amountToPay && (
+                <p className="pt-1 border-t border-white/10 mt-2">
+                  <span className="text-white/40">Amount to Pay:</span>{' '}
+                  <span className="text-green-400 font-bold text-base">₹{Number(amountToPay).toFixed(2)}</span>
+                </p>
+              )}
             </div>
           )}
           <button
@@ -649,6 +657,7 @@ function RegistrationPage({ onNavigate }) {
                         const data = await res.json()
                         if (data.success) {
                           setRegisteredTeam(data.registration)
+                          setAmountToPay(data.amount_to_pay || null)
                           setStep('success')
                         } else {
                           setServerError(data.message || 'Payment submission failed. Please try again.')

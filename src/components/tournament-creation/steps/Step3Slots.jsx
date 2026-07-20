@@ -166,6 +166,38 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           </div>
         </div>
       </div>
+
+      {/* Unique Amount Suffix */}
+      {parseInt(data.entry_fee_amount) > 0 && (
+        <div className="pt-4 border-t border-slate-100 dark:border-outline-variant/20">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+            </svg>
+            <h3 className="text-sm font-bold text-on-background">Unique Payment Amount</h3>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-on-background">Random paisa suffix</p>
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Adds a small random amount (e.g. ₹{data.entry_fee_amount}.07) to guarantee unique payment amounts during high-volume registration.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange({ ...data, unique_amount_suffix_enabled: !data.unique_amount_suffix_enabled })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                data.unique_amount_suffix_enabled ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                data.unique_amount_suffix_enabled ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }
