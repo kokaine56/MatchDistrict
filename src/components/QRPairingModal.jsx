@@ -91,7 +91,7 @@ export default function QRPairingModal({ isOpen, onClose, onGenerateKey, devices
                     </p>
                     <div className="inline-flex flex-col items-center bg-white rounded-xl p-2 shadow-lg">
                       <img
-                        src={QR_BASE + encodeURIComponent(JSON.stringify({ url: pairingData.server_url, api_key: pairingData.api_key }))}
+                        src={QR_BASE + encodeURIComponent(JSON.stringify({ server_url: pairingData.server_url, api_key: pairingData.api_key }))}
                         alt="Pairing QR Code"
                         className="w-56 h-56 rounded-lg"
                       />
@@ -100,6 +100,13 @@ export default function QRPairingModal({ isOpen, onClose, onGenerateKey, devices
                       <div className="flex items-center justify-center gap-2 bg-surface-container-low/60 rounded-lg px-3 py-2 border border-outline-variant/20">
                         <span className="text-[10px] text-on-surface-variant">Server:</span>
                         <span className="text-xs font-bold text-primary">{pairingData.server_url}</span>
+                        <button
+                          onClick={() => { navigator.clipboard?.writeText(pairingData.server_url) }}
+                          className="p-1 rounded hover:bg-surface/50 text-on-surface-variant transition-colors shrink-0"
+                          title="Copy Server URL"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                        </button>
                       </div>
                       <div className="flex items-center justify-center gap-2 bg-surface-container-low/60 rounded-lg px-3 py-2 border border-outline-variant/20">
                         <span className="text-[10px] text-on-surface-variant">Key:</span>
@@ -112,6 +119,16 @@ export default function QRPairingModal({ isOpen, onClose, onGenerateKey, devices
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                         </button>
                       </div>
+                      <button
+                        onClick={() => {
+                          const payload = JSON.stringify({ server_url: pairingData.server_url, api_key: pairingData.api_key })
+                          navigator.clipboard?.writeText(payload)
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold text-primary hover:bg-primary/10 transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                        Copy Full QR Payload
+                      </button>
                     </div>
                   </div>
 
