@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTheme } from '../../ThemeContext.jsx'
 import Logo from '../Logo.jsx'
 
@@ -22,6 +23,7 @@ export default function AdminLayout({
   children,
 }) {
   const { theme } = useTheme()
+  const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
   const sidebarRef = useRef(null)
@@ -130,7 +132,7 @@ export default function AdminLayout({
           {(sidebarOpen || mobileOpen) && (
             <div className="space-y-2">
               <button
-                onClick={() => onNavigateTo ? onNavigateTo('/admin/security/authenticator') : (window.location.href = '/admin/security/authenticator')}
+                onClick={() => navigate('/admin/security/authenticator')}
                 className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-white/60 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400 transition-all"
               >
                 <span className="material-symbols-outlined text-xl shrink-0">security</span>
