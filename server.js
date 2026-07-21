@@ -11256,7 +11256,7 @@ const server = http.createServer(async (req, res) => {
   // Helper: Get admin user (the single admin account)
   async function getAdminUser() {
     const adminEmail = process.env.ADMIN_EMAIL || ROOT_ADMIN_EMAIL;
-    const res = await pool.query('SELECT * FROM users WHERE email = $1 AND role = $1', [adminEmail]);
+    const res = await pool.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
     return res.rows[0] || null;
   }
 
