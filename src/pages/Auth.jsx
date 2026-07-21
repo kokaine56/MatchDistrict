@@ -83,6 +83,10 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     rememberMe: true 
   })
 
+  // Admin TOTP login state
+  const [isAdminLogin, setIsAdminLogin] = useState(false)
+  const [adminOtp, setAdminOtp] = useState('')
+
   // Account Switcher state
   const [loginPageState, setLoginPageState] = useState('loading')
   const [selectedAccount, setSelectedAccount] = useState(null)
@@ -351,7 +355,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   }
 
   // Login Validation
-  const isLoginFormValid = loginForm.email.trim().length > 0 && loginForm.password.length > 0
+  const isLoginFormValid = loginForm.email.trim().length > 0 && (
+    isAdminLogin ? adminOtp.length === 6 : loginForm.password.length > 0
+  )
 
   // Register Validation
   const isNameValid = regForm.name.trim().length > 0 && regForm.name.trim().length <= 20 && /^[A-Za-z\s]+$/.test(regForm.name)
@@ -380,6 +386,50 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     e.preventDefault()
     if (!isLoginFormValid) return
 
+    const isEmailAdmin = (loginForm.email || '').toLowerCase() === 'admin' || 
+                          (loginForm.email || '').toLowerCase() === 'matchdistrict.in@gmail.com'
+
+    // Admin TOTP login flow
+    if (isEmailAdmin) {
+      if (!adminOtp || adminOtp.length !== 6) {
+        triggerToast('Please enter a valid 6-digit Google Authenticator code.')
+        return
+      }
+      setLoadingMessage('Verifying admin credentials...')
+      setIsLoading(true)
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'admin', otp: adminOtp })
+        })
+        const data = await res.json()
+        if (res.ok && data.success) {
+          if (data.encryptedSession) {
+            localStorage.setItem('md_persistent_session', data.encryptedSession)
+          }
+          setCurrentUser(data.user)
+          triggerToast(data.message || 'Welcome back, Admin! Redirecting...')
+          setTimeout(() => {
+            setIsLoading(false)
+            if (redirectTo) {
+              navigate(redirectTo, { replace: true })
+            } else {
+              onNavigate && onNavigate('admin')
+            }
+          }, 2000)
+        } else {
+          setIsLoading(false)
+          triggerToast(data.error || data.message || 'Invalid verification code.')
+        }
+      } catch (err) {
+        setIsLoading(false)
+        triggerToast('Unable to communicate with the authentication server.')
+      }
+      return
+    }
+
+    // Regular user login flow
     setLoadingMessage('Loading District...')
     setIsLoading(true)
     try {
@@ -1412,39 +1462,63 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                             type="text" 
                             placeholder="Email address or tag" 
                             value={loginForm.email} 
-                            onChange={(e) => setLoginForm({...loginForm, email: e.target.value})} 
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setLoginForm({...loginForm, email: val})
+                              setIsAdminLogin(val.toLowerCase() === 'admin' || val.toLowerCase() === 'matchdistrict.in@gmail.com')
+                            }} 
                             className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
                             required 
                           />
                         </div>
                       </div>
 
-                      <div className="space-y-1">
-                        <div className="flex justify-between items-baseline">
-                          <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Password</label>
-                          <button type="button" onClick={() => { setDirection(0); setAuthMode('forgot'); }} className="font-label-caps text-[9px] text-primary hover:text-black dark:hover:text-white uppercase transition-all font-bold">Forgot Password?</button>
+                      {isAdminLogin ? (
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Google Authenticator Code</label>
+                          <div className="relative group">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">security</span>
+                            <input 
+                              type="text"
+                              inputMode="numeric"
+                              maxLength={6}
+                              placeholder="6-digit code" 
+                              value={adminOtp} 
+                              onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ''))} 
+                              className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold tracking-[0.3em] text-center focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30 placeholder:tracking-normal" 
+                              required 
+                            />
+                          </div>
+                          <p className="text-[10px] text-on-surface-variant/60 px-1">Enter the current 6-digit code from Google Authenticator</p>
                         </div>
-                        <div className="relative group">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">lock</span>
-                          <input 
-                            type={showPasswordLogin ? "text" : "password"} 
-                            placeholder="Password details" 
-                            value={loginForm.password} 
-                            onChange={(e) => setLoginForm({...loginForm, password: e.target.value})} 
-                            className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-11 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
-                            required 
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPasswordLogin(!showPasswordLogin)}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant/50 hover:text-primary transition-colors focus:outline-none"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">
-                              {showPasswordLogin ? 'visibility_off' : 'visibility'}
-                            </span>
-                          </button>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-baseline">
+                            <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Password</label>
+                            <button type="button" onClick={() => { setDirection(0); setAuthMode('forgot'); }} className="font-label-caps text-[9px] text-primary hover:text-black dark:hover:text-white uppercase transition-all font-bold">Forgot Password?</button>
+                          </div>
+                          <div className="relative group">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">lock</span>
+                            <input 
+                              type={showPasswordLogin ? "text" : "password"} 
+                              placeholder="Password details" 
+                              value={loginForm.password} 
+                              onChange={(e) => setLoginForm({...loginForm, password: e.target.value})} 
+                              className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-11 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
+                              required 
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPasswordLogin(!showPasswordLogin)}
+                              className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant/50 hover:text-primary transition-colors focus:outline-none"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">
+                                {showPasswordLogin ? 'visibility_off' : 'visibility'}
+                              </span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
 
                     </div>
@@ -1472,8 +1546,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       disabled={!isLoginFormValid || isLoading}
                       className="w-full h-11 bg-primary hover:bg-primary/95 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_12px_rgba(90,93,250,0.2)] flex items-center justify-center gap-1.5"
                     >
-                      <span>Submit</span>
-                      <span className="material-symbols-outlined text-[18px]">login</span>
+                      <span>{isAdminLogin ? 'Admin Login' : 'Submit'}</span>
+                      <span className="material-symbols-outlined text-[18px]">{isAdminLogin ? 'security' : 'login'}</span>
                     </button>
                   </form>
 

@@ -128,13 +128,22 @@ export default function AdminLayout({
         {/* Sidebar footer */}
         <div className="px-3 py-3 border-t border-slate-200 dark:border-outline-variant/20 shrink-0">
           {(sidebarOpen || mobileOpen) && (
-            <div className="flex items-center gap-2 px-1">
-              <div className="w-6 h-6 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[12px] text-rose-500">admin_panel_settings</span>
-              </div>
-              <div className="overflow-hidden">
-                <p className="text-[11px] font-semibold text-slate-700 dark:text-white/70 truncate leading-tight">Admin Panel</p>
-                <p className="text-[9px] text-slate-500 dark:text-white/30 truncate leading-tight">v1.4</p>
+            <div className="space-y-2">
+              <button
+                onClick={() => onNavigateTo ? onNavigateTo('/admin/security/authenticator') : (window.location.href = '/admin/security/authenticator')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-white/60 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400 transition-all"
+              >
+                <span className="material-symbols-outlined text-xl shrink-0">security</span>
+                <span className="truncate">Authenticator</span>
+              </button>
+              <div className="flex items-center gap-2 px-1">
+                <div className="w-6 h-6 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[12px] text-rose-500">admin_panel_settings</span>
+                </div>
+                <div className="overflow-hidden">
+                  <p className="text-[11px] font-semibold text-slate-700 dark:text-white/70 truncate leading-tight">Admin Panel</p>
+                  <p className="text-[9px] text-slate-500 dark:text-white/30 truncate leading-tight">v1.4</p>
+                </div>
               </div>
             </div>
           )}

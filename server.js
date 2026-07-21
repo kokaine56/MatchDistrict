@@ -7,6 +7,8 @@ import { Resend } from 'resend';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { startSlotManagerWorker, reconcileTournamentSlots } from './workers/slotManagerWorker.js';
+import * as OTPAuth from 'otpauth';
+import QRCode from 'qrcode';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
 
@@ -302,6 +304,8 @@ async function initDb() {
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT[] DEFAULT '{user}';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_secret VARCHAR(255);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_activated BOOLEAN DEFAULT false;
       `);
       // Backfill roles array from legacy `role` column for existing rows where roles IS NULL
       await client.query(`UPDATE users SET roles = ARRAY[role] WHERE roles IS NULL AND role IS NOT NULL`);
@@ -11242,6 +11246,355 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ADMIN TOTP AUTHENTICATION SYSTEM
+  // ─────────────────────────────────────────────────────────────
+
+  // Helper: Get admin user (the single admin account)
+  async function getAdminUser() {
+    const adminEmail = process.env.ADMIN_EMAIL || ROOT_ADMIN_EMAIL;
+    const res = await pool.query('SELECT * FROM users WHERE email = $1 AND role = $1', [adminEmail]);
+    return res.rows[0] || null;
+  }
+
+  // Helper: Verify TOTP code against a secret
+  function verifyTOTP(secret, token) {
+    const totp = new OTPAuth.TOTP({
+      issuer: 'Match District',
+      label: 'admin',
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(secret)
+    });
+    const delta = totp.validate({ token, window: 1 });
+    return delta !== null;
+  }
+
+  // POST /api/admin/login — Admin TOTP login
+  if (req.url === '/api/admin/login' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { username, otp } = JSON.parse(body);
+
+        if (!username || !otp) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Username and OTP code are required.' }));
+          return;
+        }
+
+        const adminUser = await getAdminUser();
+        if (!adminUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ADMIN_NOT_FOUND', message: 'Admin account not found.' }));
+          return;
+        }
+
+        if (username.toLowerCase() !== 'admin' && username.toLowerCase() !== adminUser.email.toLowerCase()) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_CREDENTIALS', message: 'Invalid admin credentials.' }));
+          return;
+        }
+
+        if (!adminUser.admin_totp_secret || !adminUser.admin_totp_activated) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TOTP_NOT_CONFIGURED', message: 'Google Authenticator is not configured. Please set it up first at /admin/security/authenticator' }));
+          return;
+        }
+
+        const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
+        if (!isValid) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
+          return;
+        }
+
+        const token = signJwt({
+          email: adminUser.email,
+          role: adminUser.role,
+          roles: adminUser.roles || [adminUser.role],
+          id: adminUser.uid || adminUser.id
+        });
+        const encryptedSession = encryptSessionData(JSON.stringify({
+          token,
+          userId: adminUser.uid || adminUser.id,
+          email: adminUser.email
+        }));
+
+        console.log(`\n🛡️ [MATCH DISTRICT ADMIN TOTP] Admin "${adminUser.name || adminUser.email}" logged in via TOTP.\n`);
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Set-Cookie': `token=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=1800`
+        });
+        res.end(JSON.stringify({
+          success: true,
+          token,
+          encryptedSession,
+          user: publicUserRow(adminUser),
+          message: 'Admin credentials verified! Accessing Platform Command Center...'
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/logout — Admin logout
+  if (req.url === '/api/admin/logout' && req.method === 'POST') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': 'token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
+    });
+    res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
+    return;
+  }
+
+  // GET /api/admin/session — Validate admin session
+  if (req.url === '/api/admin/session' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Not authenticated.' }));
+        return;
+      }
+      const adminUser = await getAdminUser();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        authenticated: true,
+        totpActivated: adminUser?.admin_totp_activated || false,
+        user: adminUser ? { id: adminUser.id, name: adminUser.name, email: adminUser.email } : null
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/admin/authenticator/setup — Get TOTP setup data (QR + secret)
+  if (req.url === '/api/admin/authenticator/setup' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
+      const adminUser = await getAdminUser();
+      if (!adminUser) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'ADMIN_NOT_FOUND' }));
+        return;
+      }
+
+      if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          activated: true,
+          message: 'Google Authenticator is already active. Reset to generate a new secret.'
+        }));
+        return;
+      }
+
+      let secret = adminUser.admin_totp_secret;
+      if (!secret) {
+        const totp = new OTPAuth.TOTP({
+          issuer: 'Match District',
+          label: 'admin',
+          algorithm: 'SHA1',
+          digits: 6,
+          period: 30
+        });
+        secret = totp.secret.base32;
+
+        await pool.query(
+          'UPDATE users SET admin_totp_secret = $1 WHERE id = $2',
+          [secret, adminUser.id]
+        );
+      }
+
+      const totp = new OTPAuth.TOTP({
+        issuer: 'Match District',
+        label: 'admin',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32(secret)
+      });
+
+      const otpauthUri = totp.toString();
+      const qrDataUrl = await QRCode.toDataURL(otpauthUri, {
+        width: 300,
+        margin: 2,
+        color: { dark: '#0B1020', light: '#FFFFFF' }
+      });
+
+      const formattedSecret = secret.match(/.{1,4}/g).join(' ');
+
+      console.log(`\n🔐 [ADMIN TOTP SETUP] Setup page accessed by admin ${adminUser.email}`);
+      console.log(`   Secret generated (not activated yet)\n`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        activated: false,
+        qrCode: qrDataUrl,
+        secret: formattedSecret,
+        rawSecret: secret,
+        otpauthUri
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/admin/authenticator/verify — Verify OTP and activate TOTP
+  if (req.url === '/api/admin/authenticator/verify' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        const { otp } = JSON.parse(body);
+        if (!otp || otp.length !== 6) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Please enter a valid 6-digit code.' }));
+          return;
+        }
+
+        const adminUser = await getAdminUser();
+        if (!adminUser) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ADMIN_NOT_FOUND' }));
+          return;
+        }
+
+        if (adminUser.admin_totp_activated) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ALREADY_ACTIVATED', message: 'Google Authenticator is already active. Reset to reconfigure.' }));
+          return;
+        }
+
+        if (!adminUser.admin_totp_secret) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NO_SECRET', message: 'No TOTP secret found. Please refresh the setup page.' }));
+          return;
+        }
+
+        const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
+        if (!isValid) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
+          return;
+        }
+
+        await pool.query(
+          'UPDATE users SET admin_totp_activated = true WHERE id = $1',
+          [adminUser.id]
+        );
+
+        console.log(`\n🔐 [ADMIN TOTP] Google Authenticator successfully activated for admin ${adminUser.email}\n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Google Authenticator successfully linked. Admin login now requires TOTP verification.'
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/authenticator/reset — Reset TOTP (generate new secret)
+  if (req.url === '/api/admin/authenticator/reset' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        const { confirm } = JSON.parse(body);
+        if (!confirm) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIRMATION_REQUIRED', message: 'Please confirm the reset.' }));
+          return;
+        }
+
+        const adminUser = await getAdminUser();
+        if (!adminUser) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ADMIN_NOT_FOUND' }));
+          return;
+        }
+
+        const totp = new OTPAuth.TOTP({
+          issuer: 'Match District',
+          label: 'admin',
+          algorithm: 'SHA1',
+          digits: 6,
+          period: 30
+        });
+        const newSecret = totp.secret.base32;
+
+        await pool.query(
+          'UPDATE users SET admin_totp_secret = $1, admin_totp_activated = false WHERE id = $2',
+          [newSecret, adminUser.id]
+        );
+
+        const otpauthUri = totp.toString();
+        const qrDataUrl = await QRCode.toDataURL(otpauthUri, {
+          width: 300,
+          margin: 2,
+          color: { dark: '#0B1020', light: '#FFFFFF' }
+        });
+
+        const formattedSecret = newSecret.match(/.{1,4}/g).join(' ');
+
+        console.log(`\n🔐 [ADMIN TOTP RESET] TOTP reset for admin ${adminUser.email}. New secret generated.\n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Google Authenticator has been reset. Please scan the new QR code.',
+          qrCode: qrDataUrl,
+          secret: formattedSecret,
+          rawSecret: newSecret,
+          otpauthUri,
+          activated: false
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
