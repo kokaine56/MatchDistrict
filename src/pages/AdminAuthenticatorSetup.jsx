@@ -112,12 +112,10 @@ export default function AdminAuthenticatorSetup() {
   }, [])
 
   useEffect(() => {
-    if (!userLoading && currentUser) {
+    if (!userLoading) {
       fetchSetup()
-    } else if (!userLoading && !currentUser) {
-      navigate('/login?redirect=/admin/security/authenticator')
     }
-  }, [currentUser, userLoading, navigate, fetchSetup])
+  }, [userLoading, fetchSetup])
 
   const handleVerify = async () => {
     if (!otpInput || otpInput.length !== 6) {
@@ -216,8 +214,6 @@ export default function AdminAuthenticatorSetup() {
       </div>
     )
   }
-
-  if (!currentUser) return null
 
   return (
     <div className="min-h-screen bg-background">

@@ -86,6 +86,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   // Admin TOTP login state
   const [isAdminLogin, setIsAdminLogin] = useState(false)
   const [adminOtp, setAdminOtp] = useState('')
+  const [adminTotpNotConfigured, setAdminTotpNotConfigured] = useState(false)
 
   // Account Switcher state
   const [loginPageState, setLoginPageState] = useState('loading')
@@ -356,7 +357,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // Login Validation
   const isLoginFormValid = loginForm.email.trim().length > 0 && (
-    isAdminLogin ? adminOtp.length === 6 : loginForm.password.length > 0
+    isAdminLogin
+      ? (adminTotpNotConfigured ? loginForm.password.length > 0 : adminOtp.length === 6)
+      : loginForm.password.length > 0
   )
 
   // Register Validation
@@ -391,17 +394,31 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
     // Admin TOTP login flow
     if (isEmailAdmin) {
-      if (!adminOtp || adminOtp.length !== 6) {
-        triggerToast('Please enter a valid 6-digit Google Authenticator code.')
-        return
+      // If TOTP is not configured, use password
+      const otpValue = adminTotpNotConfigured ? loginForm.password : adminOtp
+      if (adminTotpNotConfigured) {
+        // Password flow
+        if (!loginForm.password || loginForm.password.length < 1) {
+          triggerToast('Please enter your admin password.')
+          return
+        }
+      } else {
+        // TOTP flow
+        if (!adminOtp || adminOtp.length !== 6) {
+          triggerToast('Please enter a valid 6-digit Google Authenticator code.')
+          return
+        }
       }
       setLoadingMessage('Verifying admin credentials...')
       setIsLoading(true)
       try {
+        const body = adminTotpNotConfigured
+          ? { username: 'admin', password: loginForm.password }
+          : { username: 'admin', otp: adminOtp }
         const res = await fetch('/api/admin/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'admin', otp: adminOtp })
+          body: JSON.stringify(body)
         })
         const data = await res.json()
         if (res.ok && data.success) {
@@ -409,18 +426,32 @@ function Auth({ onNavigate, initialMode = 'login' }) {
             localStorage.setItem('md_persistent_session', data.encryptedSession)
           }
           setCurrentUser(data.user)
-          triggerToast(data.message || 'Welcome back, Admin! Redirecting...')
-          setTimeout(() => {
-            setIsLoading(false)
-            if (redirectTo) {
-              navigate(redirectTo, { replace: true })
-            } else {
-              onNavigate && onNavigate('admin')
-            }
-          }, 2000)
+
+          // If TOTP setup is required, redirect to setup page
+          if (data.setupRequired) {
+            triggerToast('Please set up Google Authenticator for secure access.')
+            setTimeout(() => {
+              setIsLoading(false)
+              navigate('/admin/security/authenticator', { replace: true })
+            }, 1500)
+          } else {
+            triggerToast(data.message || 'Welcome back, Admin! Redirecting...')
+            setTimeout(() => {
+              setIsLoading(false)
+              if (redirectTo) {
+                navigate(redirectTo, { replace: true })
+              } else {
+                onNavigate && onNavigate('admin')
+              }
+            }, 2000)
+          }
         } else {
           setIsLoading(false)
-          triggerToast(data.error || data.message || 'Invalid verification code.')
+          // If error indicates TOTP not configured, show password field
+          if (data.error === 'TOTP_NOT_CONFIGURED' || data.error === 'PASSWORD_REQUIRED') {
+            setAdminTotpNotConfigured(true)
+          }
+          triggerToast(data.message || data.error || 'Invalid credentials.')
         }
       } catch (err) {
         setIsLoading(false)
@@ -1473,7 +1504,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         </div>
                       </div>
 
-                      {isAdminLogin ? (
+                      {isAdminLogin && !adminTotpNotConfigured ? (
                         <div className="space-y-1">
                           <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Google Authenticator Code</label>
                           <div className="relative group">
@@ -1494,14 +1525,14 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       ) : (
                         <div className="space-y-1">
                           <div className="flex justify-between items-baseline">
-                            <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Password</label>
-                            <button type="button" onClick={() => { setDirection(0); setAuthMode('forgot'); }} className="font-label-caps text-[9px] text-primary hover:text-black dark:hover:text-white uppercase transition-all font-bold">Forgot Password?</button>
+                            <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">{isAdminLogin ? 'Admin Password' : 'Password'}</label>
+                            {!isAdminLogin && <button type="button" onClick={() => { setDirection(0); setAuthMode('forgot'); }} className="font-label-caps text-[9px] text-primary hover:text-black dark:hover:text-white uppercase transition-all font-bold">Forgot Password?</button>}
                           </div>
                           <div className="relative group">
                             <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">lock</span>
                             <input 
                               type={showPasswordLogin ? "text" : "password"} 
-                              placeholder="Password details" 
+                              placeholder={isAdminLogin ? "Enter admin password" : "Password details"} 
                               value={loginForm.password} 
                               onChange={(e) => setLoginForm({...loginForm, password: e.target.value})} 
                               className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-11 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 

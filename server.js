@@ -11274,17 +11274,17 @@ const server = http.createServer(async (req, res) => {
     return delta !== null;
   }
 
-  // POST /api/admin/login — Admin TOTP login
+  // POST /api/admin/login — Admin TOTP login (with password fallback during initial setup)
   if (req.url === '/api/admin/login' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { username, otp } = JSON.parse(body);
+        const { username, otp, password } = JSON.parse(body);
 
-        if (!username || !otp) {
+        if (!username) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Username and OTP code are required.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Username is required.' }));
           return;
         }
 
@@ -11301,17 +11301,33 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (!adminUser.admin_totp_secret || !adminUser.admin_totp_activated) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'TOTP_NOT_CONFIGURED', message: 'Google Authenticator is not configured. Please set it up first at /admin/security/authenticator' }));
-          return;
-        }
+        // TOTP is activated — require valid TOTP code
+        if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
+          if (!otp || otp.length !== 6) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Google Authenticator code is required.' }));
+            return;
+          }
 
-        const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
-        if (!isValid) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
-          return;
+          const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
+          if (!isValid) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
+            return;
+          }
+        } else {
+          // TOTP NOT activated yet — fall back to password for initial setup
+          if (!password) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'PASSWORD_REQUIRED', message: 'Enter your admin password to continue. Google Authenticator setup is required after login.' }));
+            return;
+          }
+
+          if (!adminUser.password || !verifyPassword(password, adminUser.password)) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_PASSWORD', message: 'Incorrect password.' }));
+            return;
+          }
         }
 
         const token = signJwt({
@@ -11326,7 +11342,8 @@ const server = http.createServer(async (req, res) => {
           email: adminUser.email
         }));
 
-        console.log(`\n🛡️ [MATCH DISTRICT ADMIN TOTP] Admin "${adminUser.name || adminUser.email}" logged in via TOTP.\n`);
+        const totpActive = adminUser.admin_totp_activated && adminUser.admin_totp_secret;
+        console.log(`\n🛡️ [MATCH DISTRICT ADMIN] Admin "${adminUser.name || adminUser.email}" logged in via ${totpActive ? 'TOTP' : 'password (TOTP setup pending)'}.\n`);
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -11337,7 +11354,11 @@ const server = http.createServer(async (req, res) => {
           token,
           encryptedSession,
           user: publicUserRow(adminUser),
-          message: 'Admin credentials verified! Accessing Platform Command Center...'
+          totpActivated: totpActive,
+          message: totpActive
+            ? 'Admin credentials verified! Accessing Platform Command Center...'
+            : 'Admin login successful. Please set up Google Authenticator for secure access.',
+          setupRequired: !totpActive
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -11385,12 +11406,6 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/authenticator/setup' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
-        return;
-      }
-
       const adminUser = await getAdminUser();
       if (!adminUser) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -11398,7 +11413,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // If TOTP is already activated, require auth
       if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required. Google Authenticator is already active.' }));
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -11408,6 +11429,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      // TOTP not activated — allow access for initial setup (no auth required)
       let secret = adminUser.admin_totp_secret;
       if (!secret) {
         const totp = new OTPAuth.TOTP({
@@ -11443,8 +11465,7 @@ const server = http.createServer(async (req, res) => {
 
       const formattedSecret = secret.match(/.{1,4}/g).join(' ');
 
-      console.log(`\n🔐 [ADMIN TOTP SETUP] Setup page accessed by admin ${adminUser.email}`);
-      console.log(`   Secret generated (not activated yet)\n`);
+      console.log(`\n🔐 [ADMIN TOTP SETUP] Setup page accessed (TOTP not yet activated)`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -11469,19 +11490,6 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
-          return;
-        }
-
-        const { otp } = JSON.parse(body);
-        if (!otp || otp.length !== 6) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Please enter a valid 6-digit code.' }));
-          return;
-        }
-
         const adminUser = await getAdminUser();
         if (!adminUser) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -11489,9 +11497,23 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        if (adminUser.admin_totp_activated) {
+        // If TOTP is already activated, require auth to verify
+        if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
+          if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+            return;
+          }
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'ALREADY_ACTIVATED', message: 'Google Authenticator is already active. Reset to reconfigure.' }));
+          return;
+        }
+
+        // TOTP not activated — allow unauthenticated access for initial setup
+        const { otp } = JSON.parse(body);
+        if (!otp || otp.length !== 6) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Please enter a valid 6-digit code.' }));
           return;
         }
 
