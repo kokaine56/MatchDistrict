@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import SafeImage from '../components/SafeImage.jsx'
@@ -87,6 +87,31 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [isAdminLogin, setIsAdminLogin] = useState(false)
   const [adminOtp, setAdminOtp] = useState('')
   const [adminTotpNotConfigured, setAdminTotpNotConfigured] = useState(false)
+  const adminTotpCheckRef = useRef(null)
+
+  // Check TOTP status when admin username is detected
+  const checkAdminTotpStatus = useCallback(async (emailValue) => {
+    const isAdmin = emailValue.toLowerCase() === 'admin' || emailValue.toLowerCase() === 'matchdistrict.in@gmail.com'
+    if (!isAdmin) {
+      setIsAdminLogin(false)
+      setAdminTotpNotConfigured(false)
+      return
+    }
+    setIsAdminLogin(true)
+    // Debounce: clear previous pending check
+    if (adminTotpCheckRef.current) clearTimeout(adminTotpCheckRef.current)
+    adminTotpCheckRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/admin/totp-status')
+        const data = await res.json()
+        if (data.success) {
+          setAdminTotpNotConfigured(!data.totpActivated)
+        }
+      } catch {
+        setAdminTotpNotConfigured(false)
+      }
+    }, 300)
+  }, [])
 
   // Account Switcher state
   const [loginPageState, setLoginPageState] = useState('loading')
@@ -1496,7 +1521,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                             onChange={(e) => {
                               const val = e.target.value
                               setLoginForm({...loginForm, email: val})
-                              setIsAdminLogin(val.toLowerCase() === 'admin' || val.toLowerCase() === 'matchdistrict.in@gmail.com')
+                              checkAdminTotpStatus(val)
                             }} 
                             className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
                             required 

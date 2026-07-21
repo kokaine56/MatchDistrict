@@ -11274,6 +11274,22 @@ const server = http.createServer(async (req, res) => {
     return delta !== null;
   }
 
+  // GET /api/admin/totp-status — Public: check if TOTP is activated (no auth needed)
+  if (req.url === '/api/admin/totp-status' && req.method === 'GET') {
+    try {
+      const adminUser = await getAdminUser();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        totpActivated: !!(adminUser && adminUser.admin_totp_activated && adminUser.admin_totp_secret)
+      }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, totpActivated: false }));
+    }
+    return;
+  }
+
   // POST /api/admin/login — Admin TOTP login (with password fallback during initial setup)
   if (req.url === '/api/admin/login' && req.method === 'POST') {
     let body = '';
