@@ -11363,7 +11363,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=1800`
+          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; Max-Age=1800`
         });
         res.end(JSON.stringify({
           success: true,
@@ -11388,7 +11388,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/logout' && req.method === 'POST') {
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Set-Cookie': 'token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'
+      'Set-Cookie': 'token=; Path=/; SameSite=Lax; Max-Age=0'
     });
     res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
     return;
@@ -11627,6 +11627,53 @@ const server = http.createServer(async (req, res) => {
           rawSecret: newSecret,
           otpauthUri,
           activated: false
+        }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/authenticator/revoke — Fully disable TOTP (clear secret, back to password login)
+  if (req.url === '/api/admin/authenticator/revoke' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        const { confirm } = JSON.parse(body || '{}');
+        if (!confirm) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIRMATION_REQUIRED', message: 'Please confirm the revocation.' }));
+          return;
+        }
+
+        const adminUser = await getAdminUser();
+        if (!adminUser) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ADMIN_NOT_FOUND' }));
+          return;
+        }
+
+        await pool.query(
+          'UPDATE users SET admin_totp_secret = NULL, admin_totp_activated = false WHERE id = $1',
+          [adminUser.id]
+        );
+
+        console.log(`\n🔐 [ADMIN TOTP REVOKE] TOTP fully revoked for admin ${adminUser.email}. Account reverts to password-only login.\n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Google Authenticator has been removed. Admin login now uses password only.'
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
