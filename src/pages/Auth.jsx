@@ -24,6 +24,42 @@ const baseContentTransition = { type: "tween", ease: "easeOut", duration: 0.3 }
 
 const cardLayoutTransition = { type: "tween", ease: "easeOut", duration: 0.3 }
 
+const OTP_DIGITS_COUNT = 6
+
+function OtpDigitBox({ value, onChange, onPaste, onKeyDown, autoFocus, inputRef, error }) {
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="numeric"
+      autoComplete="one-time-code"
+      maxLength={1}
+      aria-label={`Digit`}
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value.replace(/\D/g, '')
+        onChange(v.slice(-1))
+      }}
+      onKeyDown={onKeyDown}
+      onPaste={onPaste}
+      autoFocus={autoFocus}
+      className={`w-[44px] h-[52px] sm:w-[48px] sm:h-[56px] text-center text-xl sm:text-[22px] font-mono font-semibold text-on-background bg-surface-container-lowest border rounded-xl outline-none transition-all duration-150 ${
+        error
+          ? 'border-error/60 focus:border-error focus:ring-[4px] focus:ring-error/15'
+          : 'border-outline-variant/25 focus:border-primary focus:ring-[4px] focus:ring-primary/15'
+      }`}
+    />
+  )
+}
+
+const otpShakeKeyframes = `
+@keyframes otp-shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+  20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+`
+
 function Auth({ onNavigate, initialMode = 'login' }) {
   const { theme } = useTheme()
   const navigate = useNavigate()
@@ -88,6 +124,48 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [adminOtp, setAdminOtp] = useState('')
   const [adminTotpNotConfigured, setAdminTotpNotConfigured] = useState(false)
   const adminTotpCheckRef = useRef(null)
+  const otpBoxRefs = useRef([])
+  const [otpShake, setOtpShake] = useState(false)
+
+  const handleOtpBoxChange = (index, digit) => {
+    if (digit.length > 1) return
+    const next = adminOtp.split('')
+    while (next.length < OTP_DIGITS_COUNT) next.push('')
+    next[index] = digit
+    const joined = next.join('')
+    setAdminOtp(joined.replace(/ /g, ''))
+    if (digit && index < OTP_DIGITS_COUNT - 1) {
+      otpBoxRefs.current[index + 1]?.focus()
+    }
+  }
+
+  const handleOtpBoxKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !adminOtp[index] && index > 0) {
+      otpBoxRefs.current[index - 1]?.focus()
+    }
+    if (e.key === 'ArrowLeft' && index > 0) {
+      e.preventDefault()
+      otpBoxRefs.current[index - 1]?.focus()
+    }
+    if (e.key === 'ArrowRight' && index < OTP_DIGITS_COUNT - 1) {
+      e.preventDefault()
+      otpBoxRefs.current[index + 1]?.focus()
+    }
+  }
+
+  const handleOtpBoxPaste = (e) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_DIGITS_COUNT)
+    if (!pasted) return
+    setAdminOtp(pasted)
+    const focusIdx = Math.min(pasted.length, OTP_DIGITS_COUNT - 1)
+    otpBoxRefs.current[focusIdx]?.focus()
+  }
+
+  const triggerOtpShake = () => {
+    setOtpShake(true)
+    setTimeout(() => setOtpShake(false), 600)
+  }
 
   // Check TOTP status when admin username is detected
   const checkAdminTotpStatus = useCallback(async (emailValue) => {
@@ -475,6 +553,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           // If error indicates TOTP not configured, show password field
           if (data.error === 'TOTP_NOT_CONFIGURED' || data.error === 'PASSWORD_REQUIRED') {
             setAdminTotpNotConfigured(true)
+          }
+          if (data.error === 'INVALID_OTP') {
+            setAdminOtp('')
+            triggerOtpShake()
+            otpBoxRefs.current[0]?.focus()
           }
           triggerToast(data.message || data.error || 'Invalid credentials.')
         }
@@ -980,6 +1063,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   return (
     <div className="min-h-screen bg-background text-on-background font-body-md overflow-x-hidden selection:bg-primary/30 selection:text-primary transition-colors duration-300 flex flex-col justify-between">
+      <style dangerouslySetInnerHTML={{ __html: otpShakeKeyframes }} />
       {/* Global Site Header */}
       <Header activePage="auth" onNavigate={onNavigate} />
 
@@ -1530,22 +1614,26 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       </div>
 
                       {isAdminLogin && !adminTotpNotConfigured ? (
-                        <div className="space-y-1">
+                        <div className="space-y-3">
                           <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Google Authenticator Code</label>
-                          <div className="relative group">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">security</span>
-                            <input 
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={6}
-                              placeholder="6-digit code" 
-                              value={adminOtp} 
-                              onChange={(e) => setAdminOtp(e.target.value.replace(/\D/g, ''))} 
-                              className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold tracking-[0.3em] text-center focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30 placeholder:tracking-normal" 
-                              required 
-                            />
+                          <div
+                            className={`flex items-center justify-center gap-2.5 sm:gap-3 ${otpShake ? 'animate-[otp-shake_0.4s_ease-in-out]' : ''}`}
+                            style={otpShake ? { animation: 'otp-shake 0.4s ease-in-out' } : undefined}
+                          >
+                            {Array.from({ length: OTP_DIGITS_COUNT }).map((_, i) => (
+                              <OtpDigitBox
+                                key={i}
+                                inputRef={(el) => { otpBoxRefs.current[i] = el }}
+                                value={adminOtp[i] || ''}
+                                onChange={(v) => handleOtpBoxChange(i, v)}
+                                onKeyDown={(e) => handleOtpBoxKeyDown(i, e)}
+                                onPaste={handleOtpBoxPaste}
+                                autoFocus={i === 0}
+                                error={otpShake}
+                              />
+                            ))}
                           </div>
-                          <p className="text-[10px] text-on-surface-variant/60 px-1">Enter the current 6-digit code from Google Authenticator</p>
+                          <p className="text-[10px] text-on-surface-variant/60 px-1 text-center">Enter the current 6-digit code from Google Authenticator</p>
                         </div>
                       ) : (
                         <div className="space-y-1">
