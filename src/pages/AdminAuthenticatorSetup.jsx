@@ -27,7 +27,7 @@ function OtpBox({ value, onChange, onPaste, onKeyDown, autoFocus, inputRef }) {
       onKeyDown={onKeyDown}
       onPaste={onPaste}
       autoFocus={autoFocus}
-      className="w-[42px] h-[52px] sm:w-[48px] sm:h-[58px] text-center text-xl sm:text-2xl font-mono font-bold text-on-background bg-surface-container-lowest border border-outline-variant/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-150"
+      className="w-[40px] h-[48px] sm:w-[50px] sm:h-[58px] text-center text-lg sm:text-[22px] font-mono font-semibold text-on-background bg-white border border-[#EAEAEA] rounded-[10px] sm:rounded-[12px] outline-none transition-all duration-150 focus:border-primary focus:ring-[3px] focus:ring-primary/15"
     />
   )
 }
@@ -53,7 +53,7 @@ export default function AdminAuthenticatorSetup() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [copied, setCopied] = useState(false)
-  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
+  const [showDisableConfirm, setShowDisableConfirm] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
   const [accessDenied, setAccessDenied] = useState(false)
   const otpRefs = React.useRef([])
@@ -125,7 +125,7 @@ export default function AdminAuthenticatorSetup() {
     }
   }
 
-  const handleRevoke = async () => {
+  const handleDisable = async () => {
     setActionLoading(true)
     setError('')
     setSuccess('')
@@ -139,11 +139,11 @@ export default function AdminAuthenticatorSetup() {
       const data = await res.json()
       if (data.success) {
         setActivated(false)
-        setShowRevokeConfirm(false)
+        setShowDisableConfirm(false)
         setSuccess(data.message)
         fetchSetup()
       } else {
-        setError(data.message || 'Failed to revoke authenticator.')
+        setError(data.message || 'Failed to disable authenticator.')
       }
     } catch {
       setError('Unable to communicate with the authentication server.')
@@ -233,11 +233,10 @@ export default function AdminAuthenticatorSetup() {
 
   if (userLoading || loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
-        <div className="relative z-10 flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-          <p className="text-sm text-on-surface-variant">Loading...</p>
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-[#E2E8F0] border-t-[#3B82F6] rounded-full animate-spin" />
+          <p className="text-sm text-[#64748B] font-medium">Loading security settings...</p>
         </div>
       </div>
     )
@@ -245,22 +244,19 @@ export default function AdminAuthenticatorSetup() {
 
   if (accessDenied) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
-        <div className="relative z-10 max-w-sm mx-auto px-4 text-center">
-          <div className="w-14 h-14 rounded-full bg-error/10 border border-error/20 flex items-center justify-center mx-auto mb-5">
-            <svg className="w-7 h-7 text-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
+        <div className="max-w-sm mx-auto px-4 text-center">
+          <div className="w-14 h-14 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-5">
+            <svg className="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
           </div>
-          <h2 className="text-lg font-bold text-on-background mb-2">Access Denied</h2>
-          <p className="text-sm text-on-surface-variant mb-6">
-            You need admin privileges to access this page.
-          </p>
+          <h2 className="text-lg font-bold text-[#0F172A] mb-2">Access Denied</h2>
+          <p className="text-sm text-[#64748B] mb-6">You need admin privileges to access this page.</p>
           <button
             onClick={() => navigate('/admin')}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-primary hover:bg-primary/90 transition-all duration-200"
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] transition-all duration-200 shadow-sm"
           >
             Back to Dashboard
           </button>
@@ -270,35 +266,46 @@ export default function AdminAuthenticatorSetup() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
+    <div className="min-h-screen bg-[#F8FAFC]">
+      <div className="max-w-[760px] mx-auto px-4 sm:px-6 py-5 sm:py-10">
 
-      <div className="relative z-10 max-w-lg mx-auto px-4 sm:px-6 py-6 sm:py-10">
-        {/* Back */}
-        <button
+        {/* Back navigation */}
+        <motion.button
+          initial={{ opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2 }}
           onClick={() => navigate('/admin')}
-          className="flex items-center gap-2 text-sm text-on-surface-variant hover:text-primary transition-colors mb-8 group"
+          className="flex items-center gap-2 text-sm text-[#64748B] hover:text-[#3B82F6] transition-colors mb-5 sm:mb-8 group"
         >
           <svg className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
           Back to Dashboard
-        </button>
+        </motion.button>
 
-        {/* Header */}
-        <div className="mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
-            <svg className="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
+        {/* Page Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.05 }}
+          className="mb-6 sm:mb-10"
+        >
+          <div className="flex items-start gap-3 sm:gap-4 mb-2 sm:mb-3">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center shrink-0 mt-0.5">
+              <svg className="w-4.5 h-4.5 sm:w-5.5 sm:h-5.5 text-[#3B82F6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-[22px] sm:text-[34px] font-bold text-[#0F172A] tracking-tight leading-tight">
+                Google Authenticator
+              </h1>
+              <p className="text-[13px] sm:text-[17px] text-[#64748B] mt-0.5 sm:mt-1 leading-snug sm:leading-relaxed">
+                Protect your administrator account using Time-based One-Time Password (TOTP).
+              </p>
+            </div>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-on-background tracking-tight" style={{ fontFamily: 'var(--font-headline, inherit)' }}>
-            Google Authenticator
-          </h1>
-          <p className="text-sm text-on-surface-variant mt-1">
-            Two-factor authentication for your admin account
-          </p>
-        </div>
+        </motion.div>
 
         {/* Error / Success */}
         <AnimatePresence mode="wait">
@@ -308,7 +315,7 @@ export default function AdminAuthenticatorSetup() {
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="mb-5 p-3.5 rounded-xl bg-error/10 border border-error/20 text-error text-sm flex items-start gap-3"
+              className="mb-5 p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm flex items-start gap-3"
             >
               <svg className="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="10" />
@@ -324,7 +331,7 @@ export default function AdminAuthenticatorSetup() {
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="mb-5 p-3.5 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm flex items-start gap-3"
+              className="mb-5 p-4 rounded-xl bg-[#ECFDF5] border border-[#BBF7D0] text-[#166534] text-sm flex items-start gap-3"
             >
               <svg className="w-4 h-4 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
@@ -335,232 +342,278 @@ export default function AdminAuthenticatorSetup() {
           )}
         </AnimatePresence>
 
-        {/* ========================================= */}
+        {/* ============================================ */}
         {/* CONNECTED STATE */}
-        {/* ========================================= */}
-        {activated && !showRevokeConfirm && (
+        {/* ============================================ */}
+        {activated && !showDisableConfirm && (
           <motion.div
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
-            className="rounded-2xl bg-surface-container-low border border-outline-variant/20 overflow-hidden"
+            transition={{ duration: 0.3, delay: 0.1 }}
+            className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+            style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
           >
-            <div className="h-1 bg-gradient-to-r from-green-500 via-emerald-400 to-green-500" />
-            <div className="p-5 sm:p-6">
-              {/* Status */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-green-500/15 border border-green-500/25 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                    <polyline points="22 4 12 14.01 9 11.01" />
-                  </svg>
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-on-background">Connected</h2>
-                  <p className="text-xs text-green-400 font-medium">Authenticator is active</p>
-                </div>
-              </div>
+            {/* Status Badge */}
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#ECFDF5] border border-[#BBF7D0] mb-4 sm:mb-6">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+              <span className="text-[10px] sm:text-xs font-semibold text-[#166534] tracking-wide uppercase">Connected</span>
+            </div>
 
-              <p className="text-sm text-on-surface-variant leading-relaxed mb-5">
-                Your admin account is protected by two-factor authentication. Every login requires the current 6-digit code from Google Authenticator.
+            {/* Status Icon + Heading */}
+            <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-5">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#ECFDF5] border border-[#BBF7D0] flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-[#22C55E]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-[17px] sm:text-[22px] font-semibold text-[#0F172A]">Authenticator Active</h2>
+                <p className="text-xs sm:text-sm text-[#64748B] mt-0.5">Google Authenticator Enabled</p>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="space-y-1.5 sm:space-y-2.5 mb-4 sm:mb-6">
+              <p className="text-[13px] sm:text-[15px] text-[#475569] leading-relaxed sm:leading-[1.7]">
+                Your administrator account is protected using Google Authenticator.
               </p>
+              <p className="text-[13px] sm:text-[15px] text-[#475569] leading-relaxed sm:leading-[1.7]">
+                Every administrator login now requires a valid six-digit verification code.
+              </p>
+              <p className="text-[13px] sm:text-[15px] text-[#475569] leading-relaxed sm:leading-[1.7]">
+                This greatly improves security against password theft and unauthorized access.
+              </p>
+            </div>
 
-              {/* Revoke */}
-              <div className="border-t border-outline-variant/15 pt-4">
-                <p className="text-xs text-on-surface-variant mb-3">Need to disable or change your authenticator device?</p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleReconnect}
-                    disabled={actionLoading}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-on-surface-variant bg-surface-container-lowest border border-outline-variant/20 hover:bg-surface transition-all duration-200"
-                  >
-                    {actionLoading ? <Spinner className="w-3.5 h-3.5" /> : (
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="23 4 23 10 17 10" />
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                      </svg>
-                    )}
-                    Reconnect
-                  </button>
-                  <button
-                    onClick={() => setShowRevokeConfirm(true)}
-                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-error bg-error/10 border border-error/20 hover:bg-error/15 transition-all duration-200"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-3 3a5 5 0 0 0-.54 7.07" />
-                      <path d="M5.16 11.75l-1.72 1.71a5 5 0 0 0 7.07 7.07l3-3a5 5 0 0 0 .54-7.07" />
-                      <line x1="2" y1="2" x2="22" y2="22" />
-                    </svg>
-                    Revoke
-                  </button>
-                </div>
+            {/* Security Tips */}
+            <div className="bg-[#F0F9FF] border border-[#BAE6FD] rounded-xl sm:rounded-2xl p-3.5 sm:p-5 mb-5 sm:mb-7">
+              <div className="flex items-center gap-2 mb-2 sm:mb-3">
+                <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#0EA5E9] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 16v-4" />
+                  <path d="M12 8h.01" />
+                </svg>
+                <span className="text-xs sm:text-sm font-semibold text-[#0C4A6E]">Security Tips</span>
               </div>
+              <ul className="space-y-1 sm:space-y-1.5 text-xs sm:text-sm text-[#0369A1] leading-relaxed">
+                <li className="flex items-start gap-2">
+                  <span className="text-[#0EA5E9] mt-0.5 text-[10px] sm:text-xs">&#8226;</span>
+                  Never share your authentication code with anyone.
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-[#0EA5E9] mt-0.5 text-[10px] sm:text-xs">&#8226;</span>
+                  Keep a backup of your recovery codes in a safe place.
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-[#0EA5E9] mt-0.5 text-[10px] sm:text-xs">&#8226;</span>
+                  Only disable 2FA if you have access to another secure device.
+                </li>
+              </ul>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-[#EAEAEA] mb-4 sm:mb-6" />
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
+              <button
+                onClick={handleReconnect}
+                disabled={actionLoading}
+                className="flex-1 inline-flex items-center justify-center gap-2 h-10 sm:h-12 px-4 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {actionLoading ? (
+                  <Spinner className="w-4 h-4" />
+                ) : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                )}
+                Reconnect
+              </button>
+              <button
+                onClick={() => setShowDisableConfirm(true)}
+                className="flex-1 inline-flex items-center justify-center gap-2 h-10 sm:h-12 px-4 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-red-600 bg-white border border-red-200 hover:bg-red-50 hover:border-red-300 transition-all duration-200 active:scale-[0.98]"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-3 3a5 5 0 0 0-.54 7.07" />
+                  <path d="M5.16 11.75l-1.72 1.71a5 5 0 0 0 7.07 7.07l3-3a5 5 0 0 0 .54-7.07" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
+                </svg>
+                Disable Authentication
+              </button>
             </div>
           </motion.div>
         )}
 
-        {/* ========================================= */}
-        {/* REVOKE CONFIRM */}
-        {/* ========================================= */}
-        {activated && showRevokeConfirm && (
+        {/* ============================================ */}
+        {/* DISABLE CONFIRM */}
+        {/* ============================================ */}
+        {activated && showDisableConfirm && (
           <motion.div
             initial={{ opacity: 0, scale: 0.97 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="rounded-2xl bg-surface-container-low border border-error/20 overflow-hidden"
+            transition={{ duration: 0.25 }}
+            className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+            style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
           >
-            <div className="h-1 bg-gradient-to-r from-error via-red-400 to-error" />
-            <div className="p-5 sm:p-6">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full bg-error/15 border border-error/25 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="15" y1="9" x2="9" y2="15" />
-                    <line x1="9" y1="9" x2="15" y2="15" />
-                  </svg>
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-on-background">Revoke Access</h2>
-                  <p className="text-xs text-error font-medium">This action cannot be undone</p>
-                </div>
+            <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="15" y1="9" x2="9" y2="15" />
+                  <line x1="9" y1="9" x2="15" y2="15" />
+                </svg>
               </div>
-
-              <p className="text-sm text-on-surface-variant leading-relaxed mb-5">
-                This will <strong className="text-error">completely disable</strong> two-factor authentication on your account. You will be able to log in using only your password until you set it up again.
-              </p>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowRevokeConfirm(false)}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-on-surface-variant bg-surface-container-lowest border border-outline-variant/20 hover:bg-surface transition-all duration-200"
-                >
-                  Keep Active
-                </button>
-                <button
-                  onClick={handleRevoke}
-                  disabled={actionLoading}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white bg-error hover:bg-error/90 disabled:opacity-50 transition-all duration-200 flex items-center justify-center gap-2"
-                >
-                  {actionLoading ? (
-                    <>
-                      <Spinner className="w-3.5 h-3.5" />
-                      Revoking...
-                    </>
-                  ) : 'Yes, Revoke'}
-                </button>
+              <div>
+                <h2 className="text-[17px] sm:text-[20px] font-semibold text-[#0F172A]">Disable Authentication</h2>
+                <p className="text-xs sm:text-sm text-red-500 font-medium mt-0.5">This action removes 2FA from your account</p>
               </div>
+            </div>
+
+            <p className="text-[13px] sm:text-[15px] text-[#475569] leading-relaxed sm:leading-[1.7] mb-4 sm:mb-6">
+              Disabling Google Authenticator will <strong className="text-red-600">remove two-factor protection</strong> from your admin account. You will be able to log in using only your password until you set it up again.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
+              <button
+                onClick={() => setShowDisableConfirm(false)}
+                className="flex-1 h-10 sm:h-12 px-4 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-[#475569] bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-all duration-200 active:scale-[0.98]"
+              >
+                Keep Active
+              </button>
+              <button
+                onClick={handleDisable}
+                disabled={actionLoading}
+                className="flex-1 h-10 sm:h-12 px-4 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                {actionLoading ? (
+                  <>
+                    <Spinner className="w-4 h-4" />
+                    Disabling...
+                  </>
+                ) : 'Yes, Disable'}
+              </button>
             </div>
           </motion.div>
         )}
 
-        {/* ========================================= */}
-        {/* NOT CONNECTED STATE — Setup */}
-        {/* ========================================= */}
+        {/* ============================================ */}
+        {/* NOT CONNECTED STATE */}
+        {/* ============================================ */}
         {!activated && (
           <motion.div
-            initial={{ opacity: 0, y: 12 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
+            transition={{ duration: 0.3, delay: 0.1 }}
           >
-            {/* Status Card — collapsed when setup is closed */}
+            {/* Collapsed — Not Connected Card */}
             {!showSetup && (
-              <div className="rounded-2xl bg-surface-container-low border border-outline-variant/20 overflow-hidden">
-                <div className="h-1 bg-gradient-to-r from-primary via-blue-400 to-primary" />
-                <div className="p-5 sm:p-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-full bg-primary/15 border border-primary/25 flex items-center justify-center shrink-0">
-                      <svg className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                      </svg>
-                    </div>
-                    <div>
-                      <h2 className="text-base font-bold text-on-background">Not Connected</h2>
-                      <p className="text-xs text-primary font-medium">Setup recommended</p>
-                    </div>
-                  </div>
+              <div
+                className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+                style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
+              >
+                {/* Status Badge */}
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FFF7ED] border border-[#FED7AA] mb-4 sm:mb-6">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#F97316]" />
+                  <span className="text-[10px] sm:text-xs font-semibold text-[#9A3412] tracking-wide uppercase">Not Connected</span>
+                </div>
 
-                  <p className="text-sm text-on-surface-variant leading-relaxed mb-5">
-                    Secure your admin account with two-factor authentication. Once enabled, every login will require a code from Google Authenticator.
-                  </p>
-
-                  <button
-                    onClick={() => setShowSetup(true)}
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold text-white bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
-                  >
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {/* Icon + Heading */}
+                <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-5">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-[#FFF7ED] border border-[#FED7AA] flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 sm:w-6 sm:h-6 text-[#F97316]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                       <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                     </svg>
-                    Connect Authenticator
-                  </button>
+                  </div>
+                  <div>
+                    <h2 className="text-[17px] sm:text-[22px] font-semibold text-[#0F172A]">Authenticator Not Active</h2>
+                    <p className="text-xs sm:text-sm text-[#9A3412] font-medium mt-0.5">Setup recommended</p>
+                  </div>
                 </div>
+
+                <p className="text-[13px] sm:text-[15px] text-[#475569] leading-relaxed sm:leading-[1.7] mb-5 sm:mb-7">
+                  Secure your administrator account with two-factor authentication. Once enabled, every login will require a verification code from Google Authenticator.
+                </p>
+
+                <button
+                  onClick={() => setShowSetup(true)}
+                  className="w-full inline-flex items-center justify-center gap-2 h-10 sm:h-12 px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98]"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  Connect Authenticator
+                </button>
               </div>
             )}
 
             {/* Expanded Setup */}
             {showSetup && (
-              <div className="space-y-4">
+              <div className="space-y-3 sm:space-y-5">
                 {/* Steps */}
-                <div className="rounded-2xl bg-surface-container-low border border-outline-variant/20 p-5 sm:p-6">
-                  <h3 className="text-sm font-semibold text-on-background mb-3 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-primary shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <div
+                  className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+                  style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
+                >
+                  <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#0F172A] mb-3 sm:mb-4 flex items-center gap-2.5">
+                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-[#3B82F6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <circle cx="12" cy="12" r="10" />
                       <path d="M12 16v-4" />
                       <path d="M12 8h.01" />
                     </svg>
                     How to connect
                   </h3>
-                  <ol className="text-sm text-on-surface-variant space-y-2.5 list-none">
+                  <ol className="text-[13px] sm:text-[15px] text-[#475569] space-y-2 sm:space-y-3 list-none">
                     {[
                       'Install Google Authenticator on your phone.',
                       'Scan the QR code below.',
-                      'Enter the 6-digit code to verify.'
+                      'Enter the 6-digit code to verify and activate.'
                     ].map((step, i) => (
-                      <li key={i} className="flex items-start gap-3">
-                        <span className="w-5 h-5 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-[10px] font-bold text-primary shrink-0 mt-0.5">{i + 1}</span>
-                        <span className="leading-relaxed">{step}</span>
+                      <li key={i} className="flex items-start gap-2.5 sm:gap-3">
+                        <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center text-[10px] sm:text-[11px] font-bold text-[#3B82F6] shrink-0 mt-0.5">{i + 1}</span>
+                        <span className="leading-relaxed sm:leading-[1.7]">{step}</span>
                       </li>
                     ))}
                   </ol>
                 </div>
 
                 {/* QR Code */}
-                <div className="rounded-2xl bg-surface-container-low border border-outline-variant/20 p-5 sm:p-6">
-                  <h3 className="text-sm font-semibold text-on-background mb-4 text-center">Scan QR Code</h3>
+                <div
+                  className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+                  style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
+                >
+                  <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#0F172A] mb-3 sm:mb-5 text-center">Scan QR Code</h3>
 
                   {qrCode ? (
                     <div className="flex flex-col items-center">
-                      <div className="relative">
-                        <div className="bg-white rounded-2xl p-3 sm:p-4 shadow-lg shadow-black/10">
-                          <img
-                            src={qrCode}
-                            alt="Google Authenticator QR Code"
-                            className="w-[200px] h-[200px] sm:w-[240px] sm:h-[240px] object-contain"
-                            draggable={false}
-                          />
-                        </div>
-                        <div className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 border-t-2 border-l-2 border-primary/40 rounded-tl-lg" />
-                        <div className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 border-t-2 border-r-2 border-primary/40 rounded-tr-lg" />
-                        <div className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 border-b-2 border-l-2 border-primary/40 rounded-bl-lg" />
-                        <div className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 border-b-2 border-r-2 border-primary/40 rounded-br-lg" />
+                      <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 shadow-[0_8px_30px_rgba(0,0,0,0.08)] border border-[#F1F5F9]">
+                        <img
+                          src={qrCode}
+                          alt="Google Authenticator QR Code"
+                          className="w-[160px] h-[160px] sm:w-[240px] sm:h-[240px] object-contain"
+                          draggable={false}
+                        />
                       </div>
 
                       {/* Secret */}
-                      <div className="w-full max-w-sm mt-5">
-                        <p className="text-[10px] text-on-surface-variant text-center mb-2 uppercase tracking-wider font-bold">Manual Entry Key</p>
-                        <div className="flex items-center justify-center bg-surface-container-lowest rounded-xl border border-outline-variant/20 px-3 py-2.5">
-                          <code className="text-xs sm:text-sm font-mono text-on-background tracking-[0.1em] select-all break-all">{secret}</code>
+                      <div className="w-full max-w-sm mt-4 sm:mt-6">
+                        <p className="text-[10px] sm:text-[11px] text-[#94A3B8] text-center mb-1.5 sm:mb-2 uppercase tracking-wider font-bold">Manual Entry Key</p>
+                        <div className="flex items-center justify-center bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] px-3 sm:px-4 py-2.5 sm:py-3">
+                          <code className="text-[12px] sm:text-sm font-mono text-[#334155] tracking-[0.08em] select-all break-all">{secret}</code>
                         </div>
                         <button
                           onClick={handleCopySecret}
-                          className="mt-2.5 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-on-surface-variant bg-surface-container-lowest border border-outline-variant/20 hover:text-primary hover:border-primary/20 transition-all duration-200"
+                          className="mt-2.5 sm:mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 sm:py-2.5 rounded-xl text-[12px] sm:text-[13px] font-medium text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] hover:text-[#3B82F6] hover:border-[#BFDBFE] hover:bg-[#EFF6FF] transition-all duration-200"
                         >
                           {copied ? (
                             <>
-                              <svg className="w-3.5 h-3.5 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <svg className="w-3.5 h-3.5 text-[#22C55E]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
-                              <span className="text-green-400">Copied!</span>
+                              <span className="text-[#22C55E]">Copied!</span>
                             </>
                           ) : (
                             <>
@@ -575,19 +628,22 @@ export default function AdminAuthenticatorSetup() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center py-10">
-                      <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin mb-3" />
-                      <p className="text-xs text-on-surface-variant">Generating...</p>
+                    <div className="flex flex-col items-center py-8 sm:py-12">
+                      <div className="w-7 h-7 sm:w-9 sm:h-9 border-2 border-[#E2E8F0] border-t-[#3B82F6] rounded-full animate-spin mb-2.5 sm:mb-3" />
+                      <p className="text-xs sm:text-sm text-[#94A3B8]">Generating QR code...</p>
                     </div>
                   )}
                 </div>
 
                 {/* Verify */}
-                <div className="rounded-2xl bg-surface-container-low border border-outline-variant/20 p-5 sm:p-6">
-                  <h3 className="text-sm font-semibold text-on-background mb-1 text-center">Verify</h3>
-                  <p className="text-xs text-on-surface-variant text-center mb-5">Enter the 6-digit code from Google Authenticator</p>
+                <div
+                  className="bg-white rounded-[14px] sm:rounded-[18px] border border-[#EAEAEA] p-4 sm:p-8"
+                  style={{ boxShadow: '0 12px 40px rgba(0,0,0,.05)' }}
+                >
+                  <h3 className="text-[15px] sm:text-[16px] font-semibold text-[#0F172A] mb-0.5 sm:mb-1 text-center">Verify</h3>
+                  <p className="text-xs sm:text-sm text-[#64748B] text-center mb-4 sm:mb-6">Enter the 6-digit code from Google Authenticator</p>
 
-                  <div className="flex items-center justify-center gap-2.5 sm:gap-3 mb-5">
+                  <div className="flex items-center justify-center gap-2 sm:gap-3 mb-4 sm:mb-6">
                     {Array.from({ length: OTP_LENGTH }).map((_, i) => (
                       <OtpBox
                         key={i}
@@ -604,7 +660,7 @@ export default function AdminAuthenticatorSetup() {
                   <button
                     onClick={handleVerify}
                     disabled={verifying || otpDigits.some(d => !d)}
-                    className="w-full px-4 py-3 rounded-xl font-bold text-white text-sm bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] flex items-center justify-center gap-2"
+                    className="w-full h-10 sm:h-12 px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-sm hover:shadow-md active:scale-[0.98] flex items-center justify-center gap-2"
                   >
                     {verifying ? (
                       <>
@@ -615,14 +671,14 @@ export default function AdminAuthenticatorSetup() {
                   </button>
                 </div>
 
-                {/* Collapse button */}
+                {/* Collapse */}
                 <button
                   onClick={() => {
                     setShowSetup(false)
                     setOtpDigits(Array(OTP_LENGTH).fill(''))
                     setError('')
                   }}
-                  className="w-full text-center text-xs text-on-surface-variant hover:text-primary transition-colors py-2"
+                  className="w-full text-center text-sm text-[#94A3B8] hover:text-[#3B82F6] transition-colors py-2"
                 >
                   Collapse setup
                 </button>
