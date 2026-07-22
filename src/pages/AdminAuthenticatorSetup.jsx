@@ -187,6 +187,32 @@ export default function AdminAuthenticatorSetup() {
     )
   }
 
+  if (accessDenied) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
+        <div className="relative z-10 max-w-sm mx-auto px-4 text-center">
+          <div className="w-14 h-14 rounded-full bg-error/10 border border-error/20 flex items-center justify-center mx-auto mb-5">
+            <svg className="w-7 h-7 text-error" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-bold text-on-background mb-2">Access Denied</h2>
+          <p className="text-sm text-on-surface-variant mb-6">
+            You need admin privileges to access this page.
+          </p>
+          <button
+            onClick={() => navigate('/admin')}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-primary hover:bg-primary/90 transition-all duration-200"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />

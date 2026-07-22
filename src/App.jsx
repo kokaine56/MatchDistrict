@@ -6,7 +6,7 @@ import LoadingScreen from './components/LoadingScreen.jsx'
 import RouteErrorBoundary from './components/RouteErrorBoundary.jsx'
 import { fetchJsonWithRetry } from './utils/api.js'
 import { useUser } from './UserContext.jsx'
-import { hasOrganizerRights, hasRole, getUserRoles } from './utils/iamRoles.js'
+import { hasOrganizerRights, hasRole, getUserRoles, ROLES } from './utils/iamRoles.js'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { useLockdown } from './hooks/useLockdown.js'
 import './App.css'
@@ -284,6 +284,29 @@ function AppInner() {
     )
   }
 
+  // AdminAuthenticator adapter with frontend route guard
+  const AdminAuthenticatorRoute = () => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login" replace />
+    }
+
+    if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
+      return <Navigate to="/admin" replace />
+    }
+
+    return (
+      <PageTransition>
+        <AdminAuthenticatorSetup />
+      </PageTransition>
+    )
+  }
+
 
 
   // Shared persistent header — shown on public-facing pages
@@ -399,9 +422,7 @@ function AppInner() {
                 } />
 
                 <Route path="/admin/security/authenticator" element={
-                  <PageTransition>
-                    <AdminAuthenticatorSetup />
-                  </PageTransition>
+                  <AdminAuthenticatorRoute />
                 } />
 
                 <Route path="/become-organizer" element={
