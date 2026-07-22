@@ -11422,6 +11422,12 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/authenticator/setup' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
+      if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
       const adminUser = await getAdminUser();
       if (!adminUser) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -11429,23 +11435,18 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // If TOTP is already activated, require auth
+      // If TOTP is already activated, just return activated status
       if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
-        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required. Google Authenticator is already active.' }));
-          return;
-        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           activated: true,
-          message: 'Google Authenticator is already active. Reset to generate a new secret.'
+          message: 'Google Authenticator is already active.'
         }));
         return;
       }
 
-      // TOTP not activated — allow access for initial setup (no auth required)
+      // TOTP not activated — generate or reuse secret for initial setup
       let secret = adminUser.admin_totp_secret;
       if (!secret) {
         const totp = new OTPAuth.TOTP({
@@ -11481,7 +11482,7 @@ const server = http.createServer(async (req, res) => {
 
       const formattedSecret = secret.match(/.{1,4}/g).join(' ');
 
-      console.log(`\n🔐 [ADMIN TOTP SETUP] Setup page accessed (TOTP not yet activated)`);
+      console.log(`\n🔐 [ADMIN TOTP SETUP] Setup page accessed by admin ${adminUser.email}`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -11506,6 +11507,12 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
+        if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
         const adminUser = await getAdminUser();
         if (!adminUser) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -11513,19 +11520,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // If TOTP is already activated, require auth to verify
+        // If TOTP is already activated, block re-verification
         if (adminUser.admin_totp_activated && adminUser.admin_totp_secret) {
-          if (!authUser || !hasCapability(authUser, 'MANAGE_ROLES')) {
-            res.writeHead(403, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
-            return;
-          }
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'ALREADY_ACTIVATED', message: 'Google Authenticator is already active. Reset to reconfigure.' }));
           return;
         }
 
-        // TOTP not activated — allow unauthenticated access for initial setup
         const { otp } = JSON.parse(body);
         if (!otp || otp.length !== 6) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
