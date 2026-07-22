@@ -415,16 +415,16 @@ export default function AdminAuthenticatorSetup() {
             <div className="border-t border-[#EAEAEA] mb-4 sm:mb-6" />
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-3">
+            <div className="flex flex-col items-center gap-4">
               <button
                 onClick={handleReconnect}
                 disabled={actionLoading}
-                className="flex-1 inline-flex items-center justify-center gap-2.5 h-12 sm:h-12 px-5 sm:px-5 rounded-xl text-[14px] sm:text-[14px] font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-2.5 h-11 px-6 rounded-xl text-[14px] font-semibold text-white bg-[#3B82F6] hover:bg-[#2563EB] transition-all duration-200 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {actionLoading ? (
-                  <Spinner className="w-4.5 h-4.5" />
+                  <Spinner className="w-4 h-4" />
                 ) : (
-                  <svg className="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="23 4 23 10 17 10" />
                     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                   </svg>
@@ -433,9 +433,9 @@ export default function AdminAuthenticatorSetup() {
               </button>
               <button
                 onClick={() => setShowDisableConfirm(true)}
-                className="flex-1 inline-flex items-center justify-center gap-2.5 h-12 sm:h-12 px-5 sm:px-5 rounded-xl text-[14px] sm:text-[14px] font-semibold text-red-600 bg-white border border-red-200 hover:bg-red-50 hover:border-red-300 transition-all duration-200 active:scale-[0.98]"
+                className="inline-flex items-center gap-1.5 text-[13px] font-medium text-red-500 hover:text-red-600 transition-colors"
               >
-                <svg className="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-3 3a5 5 0 0 0-.54 7.07" />
                   <path d="M5.16 11.75l-1.72 1.71a5 5 0 0 0 7.07 7.07l3-3a5 5 0 0 0 .54-7.07" />
                   <line x1="2" y1="2" x2="22" y2="22" />
@@ -475,21 +475,21 @@ export default function AdminAuthenticatorSetup() {
               Disabling Google Authenticator will <strong className="text-red-600">remove two-factor protection</strong> from your admin account. You will be able to log in using only your password until you set it up again.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-3">
+            <div className="flex flex-row gap-2.5 sm:gap-3">
               <button
                 onClick={() => setShowDisableConfirm(false)}
-                className="flex-1 h-12 sm:h-12 px-5 sm:px-5 rounded-xl text-[14px] sm:text-[14px] font-semibold text-[#475569] bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-all duration-200 active:scale-[0.98]"
+                className="flex-1 h-11 sm:h-12 px-3 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-[#475569] bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] hover:border-[#CBD5E1] transition-all duration-200 active:scale-[0.98]"
               >
                 Keep Active
               </button>
               <button
                 onClick={handleDisable}
                 disabled={actionLoading}
-                className="flex-1 h-12 sm:h-12 px-5 sm:px-5 rounded-xl text-[14px] sm:text-[14px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 active:scale-[0.98]"
+                className="flex-1 h-11 sm:h-12 px-3 sm:px-5 rounded-xl text-[13px] sm:text-[14px] font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-all duration-200 shadow-sm flex items-center justify-center gap-2 active:scale-[0.98]"
               >
                 {actionLoading ? (
                   <>
-                    <Spinner className="w-4.5 h-4.5" />
+                    <Spinner className="w-4 h-4" />
                     Disabling...
                   </>
                 ) : 'Yes, Disable'}
