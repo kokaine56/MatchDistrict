@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
 import { getAuthTokenSync } from '../utils/getAuthToken.js'
+import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
@@ -13,6 +14,12 @@ function Spinner({ className = 'w-4 h-4' }) {
 export default function AdminAuthenticatorSetup() {
   const navigate = useNavigate()
   const { currentUser, loading: userLoading } = useUser()
+
+  useEffect(() => {
+    if (!userLoading && (!currentUser || !hasRole(getUserRoles(currentUser), ROLES.ADMIN))) {
+      navigate('/admin', { replace: true })
+    }
+  }, [currentUser, userLoading, navigate])
 
   const [loading, setLoading] = useState(true)
   const [activated, setActivated] = useState(false)
@@ -27,15 +34,21 @@ export default function AdminAuthenticatorSetup() {
   const [copied, setCopied] = useState(false)
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
+  const [accessDenied, setAccessDenied] = useState(false)
 
   const fetchSetup = useCallback(async () => {
     setLoading(true)
     setError('')
+    setAccessDenied(false)
     try {
       const token = getAuthTokenSync()
       const res = await fetch(`${API_BASE}/api/admin/authenticator/setup`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
+      if (res.status === 403) {
+        setAccessDenied(true)
+        return
+      }
       const data = await res.json()
       if (data.success) {
         setActivated(data.activated)
