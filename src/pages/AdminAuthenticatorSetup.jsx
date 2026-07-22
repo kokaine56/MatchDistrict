@@ -6,9 +6,30 @@ import { getAuthTokenSync } from '../utils/getAuthToken.js'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
+const OTP_LENGTH = 6
 
 function Spinner({ className = 'w-4 h-4' }) {
   return <div className={`${className} border-2 border-white/20 border-t-white rounded-full animate-spin`} />
+}
+
+function OtpBox({ value, onChange, onPaste, onKeyDown, autoFocus, inputRef }) {
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="numeric"
+      maxLength={1}
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value.replace(/\D/g, '')
+        onChange(v.slice(-1))
+      }}
+      onKeyDown={onKeyDown}
+      onPaste={onPaste}
+      autoFocus={autoFocus}
+      className="w-[42px] h-[52px] sm:w-[48px] sm:h-[58px] text-center text-xl sm:text-2xl font-mono font-bold text-on-background bg-surface-container-lowest border border-outline-variant/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-150"
+    />
+  )
 }
 
 export default function AdminAuthenticatorSetup() {
@@ -26,7 +47,7 @@ export default function AdminAuthenticatorSetup() {
   const [qrCode, setQrCode] = useState('')
   const [secret, setSecret] = useState('')
   const [rawSecret, setRawSecret] = useState('')
-  const [otpInput, setOtpInput] = useState('')
+  const [otpDigits, setOtpDigits] = useState(Array(OTP_LENGTH).fill(''))
   const [verifying, setVerifying] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
@@ -35,6 +56,7 @@ export default function AdminAuthenticatorSetup() {
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
   const [showSetup, setShowSetup] = useState(false)
   const [accessDenied, setAccessDenied] = useState(false)
+  const otpRefs = React.useRef([])
 
   const fetchSetup = useCallback(async () => {
     setLoading(true)
@@ -72,8 +94,9 @@ export default function AdminAuthenticatorSetup() {
   }, [userLoading, fetchSetup])
 
   const handleVerify = async () => {
-    if (!otpInput || otpInput.length !== 6) {
-      setError('Please enter a valid 6-digit code.')
+    const otp = otpDigits.join('')
+    if (otp.length !== OTP_LENGTH) {
+      setError('Please enter all 6 digits.')
       return
     }
     setVerifying(true)
@@ -84,14 +107,14 @@ export default function AdminAuthenticatorSetup() {
       const res = await fetch(`${API_BASE}/api/admin/authenticator/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ otp: otpInput })
+        body: JSON.stringify({ otp })
       })
       const data = await res.json()
       if (data.success) {
         setActivated(true)
         setShowSetup(false)
         setSuccess(data.message)
-        setOtpInput('')
+        setOtpDigits(Array(OTP_LENGTH).fill(''))
       } else {
         setError(data.message || 'Invalid verification code.')
       }
@@ -147,6 +170,7 @@ export default function AdminAuthenticatorSetup() {
         setRawSecret(data.rawSecret)
         setActivated(false)
         setShowSetup(true)
+        setOtpDigits(Array(OTP_LENGTH).fill(''))
         setSuccess(data.message)
       } else {
         setError(data.message || 'Failed to reconnect device.')
@@ -173,6 +197,38 @@ export default function AdminAuthenticatorSetup() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
+  }
+
+  const handleOtpChange = (index, value) => {
+    if (value.length > 1) return
+    const next = [...otpDigits]
+    next[index] = value
+    setOtpDigits(next)
+    setError('')
+    if (value && index < OTP_LENGTH - 1) {
+      otpRefs.current[index + 1]?.focus()
+    }
+  }
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus()
+    }
+    if (e.key === 'Enter' && otpDigits.every(d => d !== '')) {
+      handleVerify()
+    }
+  }
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault()
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_LENGTH)
+    if (!pasted) return
+    const next = Array(OTP_LENGTH).fill('')
+    for (let i = 0; i < pasted.length; i++) next[i] = pasted[i]
+    setOtpDigits(next)
+    setError('')
+    const focusIdx = Math.min(pasted.length, OTP_LENGTH - 1)
+    otpRefs.current[focusIdx]?.focus()
   }
 
   if (userLoading || loading) {
@@ -529,46 +585,41 @@ export default function AdminAuthenticatorSetup() {
                 {/* Verify */}
                 <div className="rounded-2xl bg-surface-container-low border border-outline-variant/20 p-5 sm:p-6">
                   <h3 className="text-sm font-semibold text-on-background mb-1 text-center">Verify</h3>
-                  <p className="text-xs text-on-surface-variant text-center mb-4">Enter the 6-digit code from Google Authenticator</p>
+                  <p className="text-xs text-on-surface-variant text-center mb-5">Enter the 6-digit code from Google Authenticator</p>
 
-                  <div className="max-w-[240px] mx-auto">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={otpInput}
-                      onChange={(e) => {
-                        setOtpInput(e.target.value.replace(/\D/g, ''))
-                        setError('')
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && otpInput.length === 6) handleVerify()
-                      }}
-                      placeholder="000000"
-                      className="w-full text-center text-xl font-mono tracking-[0.3em] px-4 py-3 rounded-xl bg-surface-container-lowest border border-outline-variant/20 text-on-background placeholder:text-on-surface-variant/30 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-all"
-                      autoFocus
-                    />
-
-                    <button
-                      onClick={handleVerify}
-                      disabled={verifying || otpInput.length !== 6}
-                      className="mt-3 w-full px-4 py-3 rounded-xl font-bold text-white text-sm bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] flex items-center justify-center gap-2"
-                    >
-                      {verifying ? (
-                        <>
-                          <Spinner className="w-4 h-4" />
-                          Verifying...
-                        </>
-                      ) : 'Verify & Activate'}
-                    </button>
+                  <div className="flex items-center justify-center gap-2.5 sm:gap-3 mb-5">
+                    {Array.from({ length: OTP_LENGTH }).map((_, i) => (
+                      <OtpBox
+                        key={i}
+                        inputRef={(el) => { otpRefs.current[i] = el }}
+                        value={otpDigits[i]}
+                        onChange={(v) => handleOtpChange(i, v)}
+                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                        onPaste={handleOtpPaste}
+                        autoFocus={i === 0}
+                      />
+                    ))}
                   </div>
+
+                  <button
+                    onClick={handleVerify}
+                    disabled={verifying || otpDigits.some(d => !d)}
+                    className="w-full px-4 py-3 rounded-xl font-bold text-white text-sm bg-primary hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    {verifying ? (
+                      <>
+                        <Spinner className="w-4 h-4" />
+                        Verifying...
+                      </>
+                    ) : 'Verify & Activate'}
+                  </button>
                 </div>
 
                 {/* Collapse button */}
                 <button
                   onClick={() => {
                     setShowSetup(false)
-                    setOtpInput('')
+                    setOtpDigits(Array(OTP_LENGTH).fill(''))
                     setError('')
                   }}
                   className="w-full text-center text-xs text-on-surface-variant hover:text-primary transition-colors py-2"
