@@ -284,22 +284,21 @@ export default function AdminPayments() {
           </button>
         </div>
 
-        <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/50 backdrop-blur-md shadow-sm">
-          {loading ? (
-            <div className="space-y-4 py-8">
-               {[1, 2, 3].map((i) => (
-                 <div key={i} className="h-12 bg-surface-variant/30 rounded-lg animate-pulse" />
-               ))}
+        {loading ? (
+          <div className="space-y-3 py-8">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-12 bg-surface-variant/30 rounded-lg animate-pulse" />
+            ))}
+          </div>
+        ) : (tab === 'pending' ? pendingRegs : verifiedRegs).length === 0 ? (
+          <div className="text-center py-16">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${tab === 'pending' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
+              <span className="material-symbols-outlined text-2xl">check_circle</span>
             </div>
-          ) : (tab === 'pending' ? pendingRegs : verifiedRegs).length === 0 ? (
-            <div className="text-center py-16">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${tab === 'pending' ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-blue-500/10 border border-blue-500/20 text-blue-400'}`}>
-                <span className="material-symbols-outlined text-2xl">check_circle</span>
-              </div>
-              <p className="text-sm font-medium text-on-surface-variant">{tab === 'pending' ? 'No pending registrations.' : 'No verified registrations.'}</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
+            <p className="text-sm font-medium text-on-surface-variant">{tab === 'pending' ? 'No pending registrations.' : 'No verified registrations.'}</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
               {Object.entries(groupedByGame).map(([game, gameRegs]) => {
                 const isGameOpen = expandedGame === game
                 const tournaments = groupedByTournament(gameRegs)
@@ -440,8 +439,7 @@ export default function AdminPayments() {
                 )
               })}
             </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   )

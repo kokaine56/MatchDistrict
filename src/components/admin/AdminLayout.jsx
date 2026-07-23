@@ -6,6 +6,7 @@ import Logo from '../Logo.jsx'
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'monitoring' },
   { id: 'kyc', label: 'Organizer KYC', icon: 'how_to_reg', badgeKey: 'kyc' },
+  { id: 'organizers', label: 'Organizers', icon: 'group', route: '/admin/organizers' },
   { id: 'upgrades', label: 'Plan Upgrades', icon: 'upgrade', badgeKey: 'upgrades' },
   { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
@@ -102,7 +103,14 @@ export default function AdminLayout({
             return (
               <button
                 key={item.id}
-                onClick={() => { onTabChange(item.id); setMobileOpen(false) }}
+                onClick={() => {
+                  if (item.route) {
+                    navigate(item.route)
+                  } else {
+                    onTabChange(item.id)
+                  }
+                  setMobileOpen(false)
+                }}
                 className={`
                   w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
                   ${isActive
@@ -137,6 +145,13 @@ export default function AdminLayout({
               >
                 <span className="material-symbols-outlined text-xl shrink-0">security</span>
                 <span className="truncate">Authenticator</span>
+              </button>
+              <button
+                onClick={() => navigate('/admin/profile')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-white/60 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400 transition-all"
+              >
+                <span className="material-symbols-outlined text-xl shrink-0">person</span>
+                <span className="truncate">Profile</span>
               </button>
               <div className="flex items-center gap-2 px-1">
                 <div className="w-6 h-6 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center">
@@ -199,7 +214,7 @@ export default function AdminLayout({
               <span className="hidden sm:inline">Host Event</span>
             </button>
             <button
-              onClick={() => onNavigate && onNavigate('profile')}
+              onClick={() => navigate('/admin/profile')}
               className="flex items-center justify-center h-10 px-3 sm:px-4 text-sm font-semibold transition-colors bg-white border rounded-lg shadow-sm text-slate-700 dark:text-white/70 border-slate-200 dark:border-outline-variant/20 hover:bg-slate-50 dark:hover:bg-white/10"
             >
               <span className="material-symbols-outlined text-lg leading-none sm:mr-2 text-slate-500 dark:text-white/40">account_circle</span>

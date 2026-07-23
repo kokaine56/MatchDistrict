@@ -775,7 +775,6 @@ function RegistrationManager({
                   const teamMembers = getTeamMembers(reg)
                   const amountDisplay = reg.amount || (entryFee > 0 ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free')
                   const proofUrl = reg.proofImg || reg.screenshot_url
-                  const paymentPhone = reg.paymentPhone || reg.phone || '—'
                   return (
                     <tr key={reg.id} className="hover:bg-slate-50/50 transition-colors">
                       {/* Player / Team Column — teamName + full member roster */}
@@ -826,18 +825,20 @@ function RegistrationManager({
                           <span className="text-sm text-slate-700 select-all">{reg.phone || '—'}</span>
                         </div>
                       </td>
-                      {/* Payment Details Column — amount, paymentPhone, View Screenshot */}
+                       {/* Payment Details Column — amount, UTR, View Screenshot */}
                       <td className="px-4 py-3 align-top min-w-[210px]">
                         <div className="flex items-center gap-2">
                           <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           <span className="text-[9px] uppercase tracking-wider text-slate-400 w-[68px] shrink-0 whitespace-nowrap">Amount</span>
                           <span className="text-sm font-semibold text-green-600 select-all">{amountDisplay}</span>
                         </div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                          <span className="text-[9px] uppercase tracking-wider text-slate-400 w-[68px] shrink-0 whitespace-nowrap">Phone</span>
-                          <span className="text-sm text-slate-700 select-all">{paymentPhone}</span>
-                        </div>
+                        {reg.transaction_id && (
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                            <span className="text-[9px] uppercase tracking-wider text-slate-400 w-[68px] shrink-0 whitespace-nowrap">UTR</span>
+                            <span className="text-xs font-mono text-slate-700 select-all">{reg.transaction_id}</span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 mt-1.5">
                           <svg className="w-3.5 h-3.5 shrink-0 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           <span className="text-[9px] uppercase tracking-wider text-blue-600 w-[68px] shrink-0 whitespace-nowrap font-semibold">Proof</span>

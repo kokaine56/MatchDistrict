@@ -36,6 +36,8 @@ const MyTournaments        = lazy(() => import('./pages/MyTournaments.jsx'))
 const OrganizerForm        = lazy(() => import('./pages/OrganizerForm.jsx'))
 const RegistrationPage     = lazy(() => import('./pages/RegistrationPage.jsx'))
 const AdminAuthenticatorSetup = lazy(() => import('./pages/AdminAuthenticatorSetup.jsx'))
+const AdminProfile            = lazy(() => import('./pages/AdminProfile.jsx'))
+const AdminOrganizers         = lazy(() => import('./pages/AdminOrganizers.jsx'))
 
 // -------------------------------------------------------------------
 // URL map: page-key => path (used by the handleNavigate shim)
@@ -423,6 +425,18 @@ function AppInner() {
 
                 <Route path="/admin/security/authenticator" element={
                   <AdminAuthenticatorRoute />
+                } />
+
+                <Route path="/admin/profile" element={
+                  <PageTransition>
+                    <AdminProfile />
+                  </PageTransition>
+                } />
+
+                <Route path="/admin/organizers" element={
+                  <PageTransition>
+                    <AdminOrganizers />
+                  </PageTransition>
                 } />
 
                 <Route path="/become-organizer" element={
