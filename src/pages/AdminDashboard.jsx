@@ -3,6 +3,7 @@ import { useTheme } from '../ThemeContext.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
+import { usePolling } from '../hooks/usePolling.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { subscriptionApi } from '../services/subscriptionApi.js'
@@ -322,6 +323,7 @@ export default function AdminDashboard({ onNavigate }) {
   }, [isAdmin, loadAllAdminData])
 
   useRefetchOnFocus(loadAllAdminData, isAdmin)
+  usePolling(loadAllAdminData, 10000, isAdmin)
 
   // Handle global theme setting toggle
   const handleThemeSettingChange = async (newTheme) => {

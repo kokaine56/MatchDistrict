@@ -6,6 +6,7 @@ import LoadingScreen from '../components/LoadingScreen.jsx';
 import { useCurrentUser } from '../hooks/useCurrentUser.js';
 import { useUser } from '../UserContext.jsx';
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js';
+import { usePolling } from '../hooks/usePolling.js';
 import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
@@ -185,15 +186,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useRefetchOnFocus(fetchRegistrations, !!tournamentId);
   useRefetchOnFocus(fetchSlots, !!tournamentId);
 
-  // Polling fallback: re-fetch registrations & slots every 30s as safety net
-  useEffect(() => {
-    if (!tournamentId) return;
-    const iv = setInterval(() => {
-      fetchRegistrations();
-      fetchSlots();
-    }, 30000);
-    return () => clearInterval(iv);
-  }, [tournamentId, fetchRegistrations, fetchSlots]);
+  // Polling: re-fetch registrations & slots every 10s
+  const pollRegistrations = useCallback(() => { fetchRegistrations(); fetchSlots(); }, [fetchRegistrations, fetchSlots]);
+  usePolling(pollRegistrations, 10000, !!tournamentId);
 
   const [tournamentsList, setTournamentsList] = useState([]);
   const [tournamentRow, setTournamentRow] = useState(null);
@@ -220,6 +215,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   useRefetchOnFocus(loadTournament, !!tournamentId);
   useRefetchOnFocus(loadTournamentsList);
+  usePolling(loadTournament, 10000, !!tournamentId);
 
   useEffect(() => {
     if (!tournamentId) return;

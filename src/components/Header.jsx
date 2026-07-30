@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import SafeImage from './SafeImage.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
+import { usePolling } from '../hooks/usePolling.js'
 import { supabase } from '../utils/supabaseClient'
 import { hasRole, getUserRoles } from '../utils/iamRoles.js'
 
@@ -11,7 +12,7 @@ function Header({ activePage, onNavigate }) {
   const [alerts, setAlerts] = useState([])
   const [isAlertsOpen, setIsAlertsOpen] = useState(false)
 
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
     const token = session?.access_token
     if (!token) {
@@ -28,7 +29,7 @@ function Header({ activePage, onNavigate }) {
         }
       })
       .catch(() => {})
-  }
+  }, [])
 
   const markAlertsAsRead = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -47,11 +48,8 @@ function Header({ activePage, onNavigate }) {
       .catch(() => {})
   }
 
-  useEffect(() => {
-    fetchAlerts()
-    const interval = setInterval(fetchAlerts, 12000)
-    return () => clearInterval(interval)
-  }, [])
+  useEffect(() => { fetchAlerts() }, [fetchAlerts])
+  usePolling(fetchAlerts, 10000)
 
   const unreadCount = alerts.filter(a => !a.is_read).length
 

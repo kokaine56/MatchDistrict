@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import HeroBannerCarousel from '../components/HeroBannerCarousel'
 import { useUser } from '../UserContext.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
+import { usePolling } from '../hooks/usePolling.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
@@ -72,6 +73,7 @@ function Homepage({ onNavigate }) {
   }, [loadTournaments])
 
   useRefetchOnFocus(loadTournaments)
+  usePolling(loadTournaments, 10000)
 
   const handleSignOut = async () => {
     await signOut()
