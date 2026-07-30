@@ -191,9 +191,9 @@ function Homepage({ onNavigate }) {
                 className="space-y-3 sm:space-y-4 overflow-visible"
               >
                 <div className="flex justify-between items-center">
-                  <h2 className="font-headline-lg text-lg sm:text-xl md:text-2xl uppercase flex items-center gap-2 sm:gap-2.5 font-bold text-white tracking-tight">
+                  <h2 className="font-headline-lg text-base sm:text-xl md:text-2xl flex items-center gap-2 sm:gap-2.5 font-bold text-white tracking-tight">
                     <span className="w-1 h-5 sm:h-6 bg-primary rounded-full shadow-[0_0_10px_rgba(192,193,255,0.5)]"></span>
-Upcoming Tournaments
+                    Tournament Plaza
                   </h2>
                   <button onClick={() => onNavigate && onNavigate('tournaments')} className="text-primary font-label-caps text-xs hover:underline flex items-center gap-1 font-bold">View All <span className="material-symbols-outlined text-sm">arrow_forward</span></button>
                 </div>
