@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useUser } from '../UserContext.jsx'
 import heroImg from '../assets/background/hero.png'
 import heroImgMobile from '../assets/background/hero_mobile.png'
 
@@ -69,6 +70,7 @@ const slideVariants = {
 }
 
 function HeroBannerCarousel({ onNavigate }) {
+  const { currentUser } = useUser()
   const [currentIndex, setCurrentIndex] = useState(0)
   const [direction, setDirection] = useState(1)
   const intervalRef = useRef(null)
@@ -167,7 +169,7 @@ function HeroBannerCarousel({ onNavigate }) {
         {/* Top static greeting area */}
         <div className="text-left sm:text-center pb-3 md:pb-5 pt-3 sm:pt-4">
           <h1 className="font-display-lg text-xl sm:text-2xl md:text-3xl lg:text-4xl font-semibold text-white tracking-wide leading-tight">
-            Welcome to the District.
+            Welcome to the District{currentUser ? `, ${currentUser.name || currentUser.gamerTag || ''}` : '.'}
           </h1>
         </div>
 
