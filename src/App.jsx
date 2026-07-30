@@ -38,6 +38,7 @@ const RegistrationPage     = lazy(() => import('./pages/RegistrationPage.jsx'))
 const AdminAuthenticatorSetup = lazy(() => import('./pages/AdminAuthenticatorSetup.jsx'))
 const AdminProfile            = lazy(() => import('./pages/AdminProfile.jsx'))
 const AdminOrganizers         = lazy(() => import('./pages/AdminOrganizers.jsx'))
+const Archive                 = lazy(() => import('./pages/Archive.jsx'))
 
 // -------------------------------------------------------------------
 // URL map: page-key => path (used by the handleNavigate shim)
@@ -64,10 +65,11 @@ const PAGE_URL_MAP = {
   'org-management':    '/org-management',
   'subscription':      '/subscription/payment',
   'register-for-tournament': '/tournaments/', // + id + '/register'
+  'archive':           '/archive',
 }
 
 // Pages that share the persistent top Header
-const HEADER_PAGES = new Set(['/', '/tournaments', '/about', '/help', '/privacypolicy', '/terms'])
+const HEADER_PAGES = new Set(['/', '/tournaments', '/about', '/help', '/privacypolicy', '/terms', '/archive'])
 
 const LoadingArena = () => <LoadingScreen message="Loading District..." />
 
@@ -161,6 +163,7 @@ function AppInner() {
     if (pathname.startsWith('/tournaments/')) return 'tournament-detail'
     if (pathname === '/tournaments') return 'tournaments'
     if (pathname === '/about') return 'about'
+    if (pathname === '/archive') return 'archive'
     if (pathname === '/help') return 'help-support'
     if (pathname === '/privacypolicy') return 'privacy-policy'
     if (pathname === '/terms') return 'terms-service'
@@ -520,6 +523,15 @@ function AppInner() {
                   <PageTransition>
                     <OrgPage onNavigate={handleNavigate} />
                   </PageTransition>
+                } />
+
+                <Route path="/archive" element={
+                  <>
+                    <Header activePage="archive" onNavigate={handleNavigate} />
+                    <PageTransition>
+                      <Archive onNavigate={handleNavigate} />
+                    </PageTransition>
+                  </>
                 } />
 
 

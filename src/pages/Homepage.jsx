@@ -9,7 +9,7 @@ import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
 import SponsoredStar from '../components/SponsoredStar'
 import VerificationBadge from '../components/VerificationBadge'
-import { hasOrganizerRights } from '../utils/iamRoles.js'
+import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
@@ -85,6 +85,11 @@ function Homepage({ onNavigate }) {
       return
     }
 
+    if (isSystemAdmin(currentUser)) {
+      onNavigate && onNavigate('admin')
+      return
+    }
+
     if (hasOrganizerRights(currentUser)) {
       onNavigate && onNavigate('org-management')
       return
@@ -115,7 +120,7 @@ function Homepage({ onNavigate }) {
     return tournamentsList
       .filter(t => {
         const s = getTournamentLifecycleStatus(t, now)
-        return s === 'upcoming' || s === 'open'
+        return s === 'upcoming'
       })
       .sort((a, b) => (parseInt(b.totalPrize || b.prize_pool_amount) || 0) - (parseInt(a.totalPrize || a.prize_pool_amount) || 0))
       .slice(0, 10)
@@ -188,7 +193,7 @@ function Homepage({ onNavigate }) {
                 <div className="flex justify-between items-center">
                   <h2 className="font-headline-lg text-lg sm:text-xl md:text-2xl uppercase flex items-center gap-2 sm:gap-2.5 font-bold text-white tracking-tight">
                     <span className="w-1 h-5 sm:h-6 bg-primary rounded-full shadow-[0_0_10px_rgba(192,193,255,0.5)]"></span>
-Tournaments
+Upcoming Tournaments
                   </h2>
                   <button onClick={() => onNavigate && onNavigate('tournaments')} className="text-primary font-label-caps text-xs hover:underline flex items-center gap-1 font-bold">View All <span className="material-symbols-outlined text-sm">arrow_forward</span></button>
                 </div>
@@ -196,19 +201,30 @@ Tournaments
                   {featuredTournaments.length === 0 ? (
                     <div className="glass-card p-8 sm:p-10 text-center rounded-2xl border border-outline-variant/30 space-y-3 w-full max-w-2xl mx-auto my-4 shadow-xl bg-surface-container-low/40 backdrop-blur-md animate-in fade-in duration-300">
                       <span className="material-symbols-outlined text-4xl text-primary animate-pulse" data-icon="stadium">stadium</span>
-                      <h3 className="font-display-lg text-xl sm:text-2xl font-bold text-white tracking-tight">No Active Tournaments</h3>
+                      <h3 className="font-display-lg text-xl sm:text-2xl font-bold text-white tracking-tight">No Upcoming Tournaments</h3>
                       <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-md mx-auto leading-relaxed">
-                        Tournaments can only be hosted by verified organizers who have registered and been approved. Are you an esports organization?
+                        No tournaments are currently scheduled for registration. Check back later or browse the archive for past events.
                       </p>
-                      {hasOrganizerRights(currentUser) ? (
-                        <button onClick={() => onNavigate && onNavigate('org-management')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-all">
-                          Host Dashboard
-                        </button>
-                      ) : (
-                        <button onClick={() => onNavigate && onNavigate('become-organizer')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(192,193,255,0.4)] transition-all">
-                          Apply to Become an Organizer
-                        </button>
-                      )}
+                      <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                        {currentUser && (
+                          <button onClick={() => onNavigate && onNavigate('archive')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(192,193,255,0.4)] transition-all">
+                            View Archive
+                          </button>
+                        )}
+                        {isSystemAdmin(currentUser) ? (
+                          <button onClick={() => onNavigate && onNavigate('admin')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-all">
+                            Admin Dashboard
+                          </button>
+                        ) : hasOrganizerRights(currentUser) ? (
+                          <button onClick={() => onNavigate && onNavigate('org-management')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-all">
+                            Host Dashboard
+                          </button>
+                        ) : (
+                          <button onClick={() => onNavigate && onNavigate('become-organizer')} className="px-5 py-2.5 sm:px-6 sm:py-3 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs sm:text-sm font-bold shadow-[0_0_20px_rgba(192,193,255,0.4)] transition-all">
+                            Apply to Become an Organizer
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
@@ -647,6 +663,7 @@ Tournaments
           <div className="flex justify-center items-center gap-5 border-b border-outline-variant/20 pb-4">
             <button onClick={() => onNavigate && onNavigate('terms-service')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Terms</button>
             <button onClick={() => onNavigate && onNavigate('privacy-policy')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Privacy</button>
+            <button onClick={() => onNavigate && onNavigate('archive')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Archive</button>
             <button onClick={() => onNavigate && onNavigate('help-support')} className="font-body-sm text-[11px] text-on-surface-variant hover:text-primary transition-colors">Support</button>
           </div>
           <div className="flex flex-col items-center justify-center gap-1.5 text-center">

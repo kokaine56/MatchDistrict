@@ -14,8 +14,8 @@ import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
-const STATUS_OPTIONS = ['All', 'Upcoming', 'Registrations Open', 'Registration Closed', 'Live', 'Completed']
-const GAME_OPTIONS = ['All Games', 'BGMI']
+const STATUS_OPTIONS = ['All', 'Upcoming', 'Registrations Open', 'Registration Closed', 'Live']
+const GAME_OPTIONS = ['All Games', 'BGMI', 'Valorant', 'Free Fire', 'COD Mobile']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
@@ -100,6 +100,11 @@ function Tournaments({ onNavigate }) {
   const tournaments = useMemo(() => {
     const processedDb = dbTournaments
       .filter(t => !t.isDraft)
+      .filter(t => {
+        const stored = (t.status || '').toLowerCase()
+        const s = getTournamentLifecycleStatus(t, now)
+        return s !== 'completed' && stored !== 'completed' && stored !== 'archived'
+      })
       .map(t => ({
         id: t.id,
         title: t.title,
@@ -155,10 +160,8 @@ function Tournaments({ onNavigate }) {
         matchStatus = status === 'open';
       } else if (statusFilter === 'Registration Closed') {
         matchStatus = status === 'closed';
-      } else if (statusFilter === 'Completed') {
-        matchStatus = status === 'completed';
       } else if (statusFilter === 'All') {
-        matchStatus = status !== 'completed';
+        matchStatus = true;
       }
 
       const matchGame = gameFilter === 'All Games' || t.game.toLowerCase() === gameFilter.toLowerCase();
@@ -177,9 +180,9 @@ function Tournaments({ onNavigate }) {
     if (entryTypeFilter !== 'All') parts.push(entryTypeFilter);
     if (gameFilter !== 'All Games') parts.push(gameFilter);
     if (parts.length === 0) {
-      return `${filteredTournaments.length} Tournaments Live Right Now`;
+      return `${filteredTournaments.length} Active Tournaments`;
     }
-    return `Showing: ${parts.join(' ')} (${filteredTournaments.length})`;
+    return `Showing: ${parts.join(' + ')} (${filteredTournaments.length})`;
   }, [statusFilter, entryTypeFilter, gameFilter, filteredTournaments.length]);
 
   const hasActiveFilters = statusFilter !== 'All' || gameFilter !== 'All Games' || entryTypeFilter !== 'All' || searchQuery !== '';
@@ -198,27 +201,34 @@ function Tournaments({ onNavigate }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#07080C] relative text-white pb-16 font-body-lg">
+    <div className="min-h-screen bg-background relative text-white pb-16 font-body-lg">
       
       <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-grid-pattern" />
-        <div className="absolute top-[-10%] left-[20%] w-[450px] h-[450px] bg-primary/10 rounded-full blur-[130px] pointer-events-none" />
+        <div className="absolute top-[-10%] left-[20%] w-[450px] h-[450px] bg-primary/8 rounded-full blur-[130px] pointer-events-none" />
       </div>
 
       <main className="relative z-10 w-full max-w-container-max mx-auto px-4 sm:px-6 lg:px-8 pt-16 sm:pt-24 space-y-8">
         
-        <section className="text-center space-y-4 max-w-2xl mx-auto pt-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-extrabold uppercase tracking-widest font-label-caps shadow-sm">
-            <span className="material-symbols-outlined text-sm">visibility</span>
-            {capsuleLabel}
-          </div>
-
-          <h2 className="font-display-lg text-2xl sm:text-4xl font-black uppercase text-white tracking-tight leading-none">
+        <section className="text-center space-y-3 max-w-2xl mx-auto pt-2">
+          <h2 className="font-display-lg text-2xl sm:text-3xl md:text-4xl font-black uppercase text-white tracking-tight leading-none">
             TOURNAMENTS
           </h2>
           <p className="hidden sm:block text-on-surface-variant text-xs sm:text-sm leading-relaxed max-w-lg mx-auto">
-            Assemble your squad, lock in match coordinates, and showcase your skill inside premium esports prize pools.
+            Discover and register for premium esports tournaments across BGMI, Valorant, Free Fire, and more.
           </p>
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container-low/60 border border-outline-variant/20 text-on-surface-variant text-[10px] font-bold uppercase tracking-widest font-label-caps">
+            <span className="material-symbols-outlined text-primary text-sm">filter_list</span>
+            {capsuleLabel}
+            {hasActiveFilters && (
+              <button
+                onClick={handleClearFilters}
+                className="ml-1 w-4 h-4 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center hover:bg-rose-500/30 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[10px]">close</span>
+              </button>
+            )}
+          </div>
         </section>
 
         {featuredTournaments.length > 0 && (
@@ -286,42 +296,39 @@ function Tournaments({ onNavigate }) {
 
         {/* Desktop: Unified Control Bar */}
         <section className="pt-2 hidden sm:block">
-          <div className="sticky top-[55px] z-30 bg-surface/40 backdrop-blur-md border border-outline-variant/20 p-3 rounded-2xl shadow-lg w-full">
-            <div className="flex items-center gap-4 overflow-x-auto snap-x" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+          <div className="sticky top-[55px] z-30 bg-surface/60 backdrop-blur-xl border border-outline-variant/15 p-2.5 rounded-2xl shadow-lg w-full">
+            <div className="flex items-center gap-3">
 
-              <div className="relative min-w-[200px] sm:w-[220px] shrink-0 snap-start">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm select-none">
-                  search
-                </span>
+              {/* Search */}
+              <div className="relative min-w-[200px] sm:w-[240px] shrink-0">
+                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/60 text-sm select-none">search</span>
                 <input 
                   type="text" 
-                  placeholder="Search tournaments..."
+                  placeholder="Search by title, organizer, or game..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-background/50 border border-outline-variant/10 rounded-xl pl-8 pr-3 py-2 text-[11px] text-white placeholder-on-surface-variant/60 focus:outline-none focus:border-primary/60 transition-all"
+                  className="w-full bg-background/60 border border-outline-variant/15 rounded-xl pl-9 pr-8 py-2.5 text-xs text-white placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 focus:bg-background/80 transition-all"
                 />
                 {searchQuery && (
                   <button 
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-white transition-colors"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant/50 hover:text-white transition-colors"
                   >
-                    <span className="material-symbols-outlined text-sm">close</span>
+                    <span className="material-symbols-outlined text-[14px]">close</span>
                   </button>
                 )}
               </div>
 
-              <div className="border-l border-outline-variant/20 h-6 shrink-0" />
-
-              <div className="flex items-center gap-2 shrink-0 snap-start">
-                <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">STATUS</span>
+              {/* Status */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 {STATUS_OPTIONS.map(s => (
                   <button
                     key={s}
                     onClick={() => setStatusFilter(s)}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 ${
+                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-all shrink-0 ${
                       statusFilter === s
-                        ? 'bg-primary text-white border-primary shadow-md'
-                        : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                        ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                        : 'bg-surface-container-low/60 text-on-surface-variant/70 hover:bg-surface-container hover:text-white border border-transparent hover:border-outline-variant/20'
                     }`}
                   >
                     {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
@@ -329,18 +336,19 @@ function Tournaments({ onNavigate }) {
                 ))}
               </div>
 
-              <div className="border-l border-outline-variant/20 h-6 shrink-0" />
+              {/* Divider */}
+              <div className="w-px h-5 bg-outline-variant/20 shrink-0" />
 
-              <div className="flex items-center gap-2 shrink-0 snap-start">
-                <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">GAME</span>
+              {/* Game */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 {GAME_OPTIONS.map(g => (
                   <button
                     key={g}
                     onClick={() => setGameFilter(g)}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 ${
+                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-all shrink-0 ${
                       gameFilter === g
-                        ? 'bg-primary text-white border-primary shadow-md'
-                        : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                        ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                        : 'bg-surface-container-low/60 text-on-surface-variant/70 hover:bg-surface-container hover:text-white border border-transparent hover:border-outline-variant/20'
                     }`}
                   >
                     {g === 'All Games' ? 'All' : g}
@@ -348,18 +356,19 @@ function Tournaments({ onNavigate }) {
                 ))}
               </div>
 
-              <div className="border-l border-outline-variant/20 h-6 shrink-0" />
+              {/* Divider */}
+              <div className="w-px h-5 bg-outline-variant/20 shrink-0" />
 
-              <div className="flex items-center gap-2 shrink-0 snap-start">
-                <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">ENTRY FEE</span>
+              {/* Entry Fee */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 {ENTRY_OPTIONS.map(e => (
                   <button
                     key={e}
                     onClick={() => setEntryTypeFilter(e)}
-                    className={`px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 ${
+                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-all shrink-0 ${
                       entryTypeFilter === e
-                        ? 'bg-primary text-white border-primary shadow-md'
-                        : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                        ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                        : 'bg-surface-container-low/60 text-on-surface-variant/70 hover:bg-surface-container hover:text-white border border-transparent hover:border-outline-variant/20'
                     }`}
                   >
                     {e}
@@ -367,14 +376,15 @@ function Tournaments({ onNavigate }) {
                 ))}
               </div>
 
+              {/* Clear */}
               {hasActiveFilters && (
                 <>
-                  <div className="border-l border-outline-variant/20 h-6 shrink-0" />
+                  <div className="w-px h-5 bg-outline-variant/20 shrink-0" />
                   <button
                     onClick={handleClearFilters}
-                    className="px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20 hover:border-rose-500/50"
+                    className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-all shrink-0 text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20"
                   >
-                    Clear Filters
+                    Clear
                   </button>
                 </>
               )}
@@ -385,40 +395,38 @@ function Tournaments({ onNavigate }) {
 
         {/* Mobile: Compact control row */}
         <section className="pt-2 sm:hidden">
-          <div className="sticky top-[43px] z-30 bg-surface/40 backdrop-blur-md border border-outline-variant/20 p-2 rounded-2xl shadow-lg w-full">
+          <div className="sticky top-[43px] z-30 bg-surface/60 backdrop-blur-xl border border-outline-variant/15 p-2 rounded-2xl shadow-lg w-full">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
-                <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm select-none">
-                  search
-                </span>
+                <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant/50 text-sm select-none">search</span>
                 <input 
                   type="text" 
                   placeholder="Search tournaments..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-background/50 border border-outline-variant/10 rounded-xl pl-8 pr-2 py-2 text-[11px] text-white placeholder-on-surface-variant/60 focus:outline-none focus:border-primary/60 transition-all"
+                  className="w-full bg-background/60 border border-outline-variant/15 rounded-xl pl-8 pr-2 py-2.5 text-xs text-white placeholder-on-surface-variant/50 focus:outline-none focus:border-primary/50 transition-all"
                 />
                 {searchQuery && (
                   <button 
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-white transition-colors"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant/50 hover:text-white transition-colors"
                   >
-                    <span className="material-symbols-outlined text-sm">close</span>
+                    <span className="material-symbols-outlined text-[14px]">close</span>
                   </button>
                 )}
               </div>
               <button
                 onClick={() => setIsMobileFilterOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-surface border border-outline-variant/20 text-on-surface-variant hover:text-white hover:border-primary/40 transition-all shrink-0"
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-surface-container-low/60 border border-outline-variant/15 text-on-surface-variant hover:text-white hover:border-primary/30 transition-all shrink-0"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="4" y1="6" x2="20" y2="6"/>
                   <line x1="8" y1="12" x2="20" y2="12"/>
                   <line x1="12" y1="18" x2="20" y2="18"/>
                 </svg>
-                <span className="text-[11px] font-bold uppercase tracking-wider">Filters</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">Filters</span>
                 {activeFilterCount > 0 && (
-                  <span className="ml-0.5 w-5 h-5 rounded-full bg-primary text-white text-[9px] font-bold flex items-center justify-center">
+                  <span className="ml-0.5 w-4 h-4 rounded-full bg-primary text-white text-[8px] font-bold flex items-center justify-center">
                     {activeFilterCount}
                   </span>
                 )}
@@ -436,7 +444,7 @@ function Tournaments({ onNavigate }) {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
-                className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm sm:hidden"
+                className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm sm:hidden"
                 onClick={() => setIsMobileFilterOpen(false)}
               />
               <motion.div
@@ -444,33 +452,30 @@ function Tournaments({ onNavigate }) {
                 animate={{ y: 0 }}
                 exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                className="fixed bottom-0 left-0 right-0 z-50 bg-surface border border-outline-variant/20 rounded-t-2xl shadow-2xl sm:hidden max-h-[80vh] flex flex-col"
+                className="fixed bottom-0 left-0 right-0 z-50 bg-surface border-t border-outline-variant/15 rounded-t-2xl shadow-2xl sm:hidden max-h-[80vh] flex flex-col"
               >
-                <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-outline-variant/10">
-                  <h3 className="text-sm font-extrabold text-white uppercase tracking-wider">Filter Tournaments</h3>
+                <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-outline-variant/10">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Filters</h3>
                   <button
                     onClick={() => setIsMobileFilterOpen(false)}
-                    className="w-7 h-7 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-white transition-colors"
+                    className="w-7 h-7 rounded-full bg-surface-container-low/60 flex items-center justify-center text-on-surface-variant hover:text-white transition-colors"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18"/>
-                      <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
+                    <span className="material-symbols-outlined text-[16px]">close</span>
                   </button>
                 </div>
 
-                <div className="overflow-y-auto flex-1 px-5 py-4 space-y-6">
+                <div className="overflow-y-auto flex-1 px-5 py-5 space-y-6">
                   <div className="space-y-3">
-                    <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Status</span>
+                    <span className="text-[10px] font-bold text-on-surface-variant/70 uppercase tracking-widest">Status</span>
                     <div className="flex flex-wrap gap-2">
                       {STATUS_OPTIONS.map(s => (
                         <button
                           key={s}
                           onClick={() => setStatusFilter(s)}
-                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border ${
+                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all ${
                             statusFilter === s
-                              ? 'bg-primary text-white border-primary shadow-md'
-                              : 'bg-background/50 border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                              ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                              : 'bg-surface-container-low/60 border border-outline-variant/15 text-on-surface-variant/70 hover:bg-surface-container hover:text-white'
                           }`}
                         >
                     {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
@@ -480,16 +485,16 @@ function Tournaments({ onNavigate }) {
                   </div>
 
                   <div className="space-y-3">
-                    <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Game</span>
+                    <span className="text-[10px] font-bold text-on-surface-variant/70 uppercase tracking-widest">Game</span>
                     <div className="flex flex-wrap gap-2">
                       {GAME_OPTIONS.map(g => (
                         <button
                           key={g}
                           onClick={() => setGameFilter(g)}
-                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border ${
+                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all ${
                             gameFilter === g
-                              ? 'bg-primary text-white border-primary shadow-md'
-                              : 'bg-background/50 border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                              ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                              : 'bg-surface-container-low/60 border border-outline-variant/15 text-on-surface-variant/70 hover:bg-surface-container hover:text-white'
                           }`}
                         >
                           {g === 'All Games' ? 'All' : g}
@@ -499,16 +504,16 @@ function Tournaments({ onNavigate }) {
                   </div>
 
                   <div className="space-y-3">
-                    <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Entry Fee</span>
+                    <span className="text-[10px] font-bold text-on-surface-variant/70 uppercase tracking-widest">Entry Fee</span>
                     <div className="flex flex-wrap gap-2">
                       {ENTRY_OPTIONS.map(e => (
                         <button
                           key={e}
                           onClick={() => setEntryTypeFilter(e)}
-                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all border ${
+                          className={`px-3.5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider whitespace-nowrap transition-all ${
                             entryTypeFilter === e
-                              ? 'bg-primary text-white border-primary shadow-md'
-                              : 'bg-background/50 border border-outline-variant/20 text-on-surface-variant hover:bg-surface-container transition-all'
+                              ? 'bg-primary text-white shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+                              : 'bg-surface-container-low/60 border border-outline-variant/15 text-on-surface-variant/70 hover:bg-surface-container hover:text-white'
                           }`}
                         >
                           {e}
@@ -522,14 +527,14 @@ function Tournaments({ onNavigate }) {
                   {hasActiveFilters && (
                     <button
                       onClick={() => { handleClearFilters(); setIsMobileFilterOpen(false); }}
-                      className="w-full py-2.5 rounded-xl border border-rose-500/30 text-rose-400 text-xs font-extrabold uppercase tracking-wider hover:bg-rose-500/10 transition-all active:scale-[0.98]"
+                      className="w-full py-2.5 rounded-xl border border-rose-500/20 text-rose-400 text-xs font-bold uppercase tracking-wider hover:bg-rose-500/10 transition-all active:scale-[0.98]"
                     >
                       Clear Filters
                     </button>
                   )}
                   <button
                     onClick={() => setIsMobileFilterOpen(false)}
-                    className="w-full py-3 rounded-xl bg-primary text-white text-xs font-extrabold uppercase tracking-wider shadow-[0_0_16px_rgba(99,102,241,0.3)] hover:bg-primary/90 transition-all active:scale-[0.98]"
+                    className="w-full py-3 rounded-xl bg-primary text-white text-xs font-bold uppercase tracking-wider shadow-[0_0_16px_rgba(99,102,241,0.25)] hover:bg-primary/90 transition-all active:scale-[0.98]"
                   >
                     Show {filteredTournaments.length} Results
                   </button>
@@ -541,11 +546,12 @@ function Tournaments({ onNavigate }) {
 
         {/* Tournament Grid */}
         <section className="space-y-4 pt-2 overflow-visible">
-          <div className="flex justify-between items-center text-xs text-on-surface-variant font-semibold">
-            <span>Showing {filteredTournaments.length} esports matches</span>
+          <div className="flex justify-between items-center text-xs text-on-surface-variant/60 font-semibold">
+            <span>Showing {filteredTournaments.length} tournaments</span>
             {hasActiveFilters && (
-              <button onClick={handleClearFilters} className="text-primary hover:underline flex items-center gap-1 font-bold">
-                Reset Filters
+              <button onClick={handleClearFilters} className="text-primary/80 hover:text-primary hover:underline flex items-center gap-1 font-bold transition-colors">
+                <span className="material-symbols-outlined text-[12px]">filter_alt_off</span>
+                Reset
               </button>
             )}
           </div>
@@ -666,21 +672,21 @@ function Tournaments({ onNavigate }) {
               )
             ) : (
               <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
+                initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="glass-card bg-[#0C0E13]/60 border border-outline-variant/30 p-10 rounded-3xl text-center space-y-4 max-w-sm mx-auto shadow-xl"
+                className="bg-surface-container-low/40 p-10 sm:p-12 rounded-2xl text-center space-y-4 max-w-sm mx-auto"
               >
-                <div className="w-12 h-12 mx-auto rounded-full bg-primary/10 flex items-center justify-center border border-primary/30 text-primary animate-pulse">
+                <div className="w-12 h-12 mx-auto rounded-full bg-primary/10 flex items-center justify-center text-primary">
                   <span className="material-symbols-outlined text-2xl">sports_esports</span>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <h4 className="text-sm font-bold text-white uppercase tracking-wider">No Matches Found</h4>
-                  <p className="text-[10px] text-on-surface-variant leading-relaxed px-2">
-                    No active tournaments match your current filters. Try resetting search parameters or selecting other filters.
+                  <p className="text-[11px] text-on-surface-variant/70 leading-relaxed px-2">
+                    No tournaments match your current filters. Try adjusting your search or filter criteria.
                   </p>
                 </div>
-                <button onClick={handleClearFilters} className="px-4 py-2 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 rounded-xl font-headline-md text-xs font-bold transition-all active:scale-95">
-                  Clear All Filters
+                <button onClick={handleClearFilters} className="px-5 py-2 bg-primary/15 hover:bg-primary/25 text-primary rounded-xl font-headline-md text-xs font-bold transition-all active:scale-95">
+                  Reset Filters
                 </button>
               </motion.div>
             )}

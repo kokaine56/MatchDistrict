@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import CountUp from '../components/CountUp';
 import { useUser } from '../UserContext.jsx';
-import { hasOrganizerRights } from '../utils/iamRoles.js';
+import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js';
 
 function About({ onNavigate }) {
   const { currentUser } = useUser();
@@ -84,7 +84,15 @@ function About({ onNavigate }) {
               <span className="material-symbols-outlined text-base">stadium</span>
               Tournaments
             </button>
-            {hasOrganizerRights(currentUser) ? (
+            {isSystemAdmin(currentUser) ? (
+              <button
+                onClick={() => onNavigate && onNavigate('admin')}
+                className="w-full sm:w-48 px-6 py-3 bg-green-600 text-white font-headline-md text-xs font-bold rounded-xl hover:bg-green-700 transition-all shadow-[0_0_15px_rgba(34,197,94,0.25)] flex items-center justify-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-base">admin_panel_settings</span>
+                Admin Dashboard
+              </button>
+            ) : hasOrganizerRights(currentUser) ? (
               <button
                 onClick={() => onNavigate && onNavigate('org-management')}
                 className="w-full sm:w-48 px-6 py-3 bg-green-600 text-white font-headline-md text-xs font-bold rounded-xl hover:bg-green-700 transition-all shadow-[0_0_15px_rgba(34,197,94,0.25)] flex items-center justify-center gap-1.5"
@@ -281,7 +289,14 @@ function About({ onNavigate }) {
             >
               Sign Up Now
             </button>
-            {hasOrganizerRights(currentUser) ? (
+            {isSystemAdmin(currentUser) ? (
+              <button
+                onClick={() => onNavigate && onNavigate('admin')}
+                className="w-full py-3 bg-green-600 text-white rounded-xl font-headline-md text-xs font-bold shadow-md hover:scale-[1.01] transition-transform"
+              >
+                Admin Dashboard
+              </button>
+            ) : hasOrganizerRights(currentUser) ? (
               <button
                 onClick={() => onNavigate && onNavigate('org-management')}
                 className="w-full py-3 bg-green-600 text-white rounded-xl font-headline-md text-xs font-bold shadow-md hover:scale-[1.01] transition-transform"

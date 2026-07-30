@@ -59,6 +59,7 @@ function Header({ activePage, onNavigate }) {
 
   const navLinks = [
     { id: 'home', label: 'Home' },
+    { id: 'archive', label: 'Archive' },
     { id: 'my-tournaments', label: 'My Tournaments' },
     { id: 'about', label: 'About' },
     { id: 'help-support', label: 'Help & Support' },
