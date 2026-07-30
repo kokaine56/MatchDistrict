@@ -309,6 +309,50 @@ function AppInner() {
     )
   }
 
+  const AdminProfileRoute = () => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login" replace />
+    }
+
+    if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
+      return <Navigate to="/admin" replace />
+    }
+
+    return (
+      <PageTransition>
+        <AdminProfile />
+      </PageTransition>
+    )
+  }
+
+  const AdminOrganizersRoute = () => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login" replace />
+    }
+
+    if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
+      return <Navigate to="/admin" replace />
+    }
+
+    return (
+      <PageTransition>
+        <AdminOrganizers />
+      </PageTransition>
+    )
+  }
+
 
 
   // Shared persistent header — shown on public-facing pages
@@ -428,15 +472,11 @@ function AppInner() {
                 } />
 
                 <Route path="/admin/profile" element={
-                  <PageTransition>
-                    <AdminProfile />
-                  </PageTransition>
+                  <AdminProfileRoute />
                 } />
 
                 <Route path="/admin/organizers" element={
-                  <PageTransition>
-                    <AdminOrganizers />
-                  </PageTransition>
+                  <AdminOrganizersRoute />
                 } />
 
                 <Route path="/become-organizer" element={

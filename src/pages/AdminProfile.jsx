@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 
 export default function AdminProfile() {
   const navigate = useNavigate()
+  const [currentUser] = useCurrentUser()
   const avatarInputRef = useRef(null)
   const bannerInputRef = useRef(null)
   const [saving, setSaving] = useState(false)
@@ -102,7 +104,7 @@ export default function AdminProfile() {
     setSaving(true)
     try {
       const token = await getAuthToken()
-      const res = await fetch('/api/auth/me', {
+      const res = await fetch(`/api/users/${currentUser.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
