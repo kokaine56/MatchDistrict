@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import SafeImage from './SafeImage.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
@@ -11,6 +11,18 @@ function Header({ activePage, onNavigate }) {
   const { currentUser, signOut } = useUser()
   const [alerts, setAlerts] = useState([])
   const [isAlertsOpen, setIsAlertsOpen] = useState(false)
+  const alertsRef = useRef(null)
+
+  useEffect(() => {
+    if (!isAlertsOpen) return
+    const handleClickOutside = (e) => {
+      if (alertsRef.current && !alertsRef.current.contains(e.target)) {
+        setIsAlertsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isAlertsOpen])
 
   const fetchAlerts = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -122,7 +134,7 @@ function Header({ activePage, onNavigate }) {
           {/* Right side controls */}
           <div className="flex items-center gap-2 sm:gap-sm shrink-0">
             {/* Notifications Bell with Dropdown */}
-            <div className="relative">
+            <div className="relative" ref={alertsRef}>
               <button 
                 onClick={() => {
                   setIsAlertsOpen(!isAlertsOpen);
@@ -141,8 +153,6 @@ function Header({ activePage, onNavigate }) {
 
               <AnimatePresence>
                 {isAlertsOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40 bg-transparent" onClick={() => setIsAlertsOpen(false)} />
                     <motion.div 
                       initial={{ opacity: 0, y: 10, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -191,7 +201,6 @@ function Header({ activePage, onNavigate }) {
                         )}
                       </div>
                     </motion.div>
-                  </>
                 )}
               </AnimatePresence>
             </div>
