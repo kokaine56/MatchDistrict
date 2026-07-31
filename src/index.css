@@ -1,3 +1,15 @@
+/* ── TAILWIND RING VARIABLE RESET ────────────────────────────────────────
+   The Tailwind CDN (with forms plugin) defaults --tw-ring-color to black.
+   Overriding it here at :root ensures no element ever shows a black ring
+   unless explicitly styled otherwise.
+   ──────────────────────────────────────────────────────────────────────── */
+:root {
+  --tw-ring-color: transparent;
+  --tw-ring-shadow: 0 0 transparent;
+  --tw-ring-offset-shadow: 0 0 transparent;
+  --tw-ring-offset-color: transparent;
+}
+
 html {
   scrollbar-gutter: stable;
 }
@@ -188,6 +200,7 @@ body,
   background-image: none !important;
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
+  outline: none !important;
   box-shadow: 
     0 4px 24px rgba(0, 0, 0, 0.45), 
     0 0 45px rgb(var(--primary) / 0.18), 
@@ -204,6 +217,7 @@ body,
 .bg-\[\#101219\]:hover,
 .bg-\[\#12141C\]:hover {
   background-color: rgba(var(--surface-container), 0.65) !important;
+  outline: none !important;
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.55), 
     0 0 55px rgb(var(--primary) / 0.28), 
@@ -216,6 +230,7 @@ body,
   background-color: rgb(var(--surface-container-low)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  outline: none !important;
   box-shadow: 
     0 4px 24px rgba(0, 0, 0, 0.45), 
     0 0 45px rgb(var(--primary) / 0.18), 
@@ -225,6 +240,7 @@ body,
 
 .solid-card:hover {
   background-color: rgb(var(--surface-container)) !important;
+  outline: none !important;
   box-shadow: 
     0 8px 32px rgba(0, 0, 0, 0.55), 
     0 0 55px rgb(var(--primary) / 0.28), 
@@ -2039,6 +2055,59 @@ html:not(.light) textarea:focus-visible,
 html:not(.light) select:focus-visible {
   border-color: #3B82F6 !important;
   box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+}
+
+/* ── FOCUS OUTLINE REMOVAL ─────────────────────────────────────────────────
+   Tailwind CDN preflight (incl. @tailwindcss/forms plugin) injects focus
+   ring / outline styles that can leak a hard black outline onto clickable
+   divs and cards. We suppress ALL of them globally here and replace with
+   an accessible, on-brand focus indicator only for keyboard-operable
+   elements (buttons & links).
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Nuclear suppression: covers plain :focus, :focus-visible, and the
+   Tailwind `ring` utility default (--tw-ring-color defaults to black) */
+*,
+*:focus,
+*:focus-visible,
+*:focus:not(:focus-visible) {
+  outline: none !important;
+  /* Reset Tailwind ring utilities to transparent so no black ring shows */
+  --tw-ring-color: transparent !important;
+  --tw-ring-shadow: 0 0 transparent !important;
+  --tw-ring-offset-shadow: 0 0 transparent !important;
+}
+
+/* Specific element suppression for belt-and-suspenders coverage */
+button:focus,
+button:focus-visible,
+a:focus,
+a:focus-visible,
+div[role="button"]:focus,
+div[role="button"]:focus-visible,
+[tabindex]:focus,
+[tabindex]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* ── ACCESSIBLE KEYBOARD FOCUS (brand-colored, keyboard-only) ────────────
+   Only appears for keyboard navigation (not mouse clicks) thanks to
+   :focus-visible. Uses a soft indigo ring matching the MD3 primary token.
+   ──────────────────────────────────────────────────────────────────────── */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgb(var(--primary) / 0.5) !important;
+}
+
+/* Remove mobile tap highlight on all elements */
+* {
+  -webkit-tap-highlight-color: transparent !important;
 }
 
 /* Improve light mode contrast for buttons and controls */

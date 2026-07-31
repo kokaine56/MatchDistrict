@@ -66,7 +66,7 @@ export default function SponsorCardItem({
       }}
       className={`relative rounded-2xl overflow-hidden card-shimmer cursor-pointer transition-all duration-300 flex flex-col justify-between p-6 shadow-2xl select-none sponsored-card ${
         styles.wrapper
-      } ${isSelected ? styles.accentBorder : 'hover:shadow-xl hover:border-neutral-700/60'}`}
+      } ${isSelected ? styles.accentBorder : 'hover:shadow-xl'}`}
       id={`sponsored-card-${card.id}`}
     >
       {/* Background concentric ripples for Diamond Preferred */}
