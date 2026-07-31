@@ -258,8 +258,8 @@ const OrganizerShowcase = ({ onNavigate }) => {
           className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 mb-12 lg:mb-24"
         >
           {features.map((feat, idx) => (
-            <div key={idx} className="glass-card bg-surface-container-low/20 backdrop-blur-sm border border-outline-variant/20 p-3 sm:p-4 rounded-xl flex items-start sm:items-center gap-2 sm:gap-3 hover:bg-surface-container-low/50 hover:border-primary/30 transition-all duration-300">
-              <span className="material-symbols-outlined text-primary text-base sm:text-xl shrink-0 mt-0.5 sm:mt-0">check_circle</span>
+            <div key={idx} className="glass-card bg-surface-container-low/20 backdrop-blur-sm border border-outline-variant/20 p-3 sm:p-4 rounded-xl flex items-center gap-2 sm:gap-3 hover:bg-surface-container-low/50 hover:border-primary/30 transition-all duration-300">
+              <span className="material-symbols-outlined text-primary text-base sm:text-xl shrink-0">check_circle</span>
               <span className="font-body-md text-[11px] sm:text-sm text-white font-medium leading-tight">{feat}</span>
             </div>
           ))}
