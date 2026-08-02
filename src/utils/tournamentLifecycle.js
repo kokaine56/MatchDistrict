@@ -1,19 +1,17 @@
 export function getTournamentLifecycleStatus(t, now = new Date()) {
   if (!t) return 'upcoming';
 
-  // Server-authoritative statuses (set by processTournamentLifecycle from roadmap)
   const stored = (t.status || '').toLowerCase();
   if (stored === 'live' || stored === 'active') return 'live';
   if (stored === 'completed') return 'completed';
 
-  // Registration-phase states computed from dates
   const regOpenStr = t.registrationOpenDate || t.registration_open_date;
   const regCloseStr = t.registrationCloseDate || t.registration_close_date;
   const regOpen = regOpenStr ? new Date(regOpenStr) : null;
   const regClose = regCloseStr ? new Date(regCloseStr) : null;
 
   if (regOpen && now < regOpen) return 'upcoming';
-  if (regOpen && regClose && now >= regOpen && now <= regClose) return 'open';
+  if (regOpen && now >= regOpen && (!regClose || now <= regClose)) return 'open';
   if (regClose && now > regClose) return 'closed';
 
   return 'upcoming';
