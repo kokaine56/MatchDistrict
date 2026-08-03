@@ -17,6 +17,7 @@ import { subscriptionApi } from '../services/subscriptionApi'
 import { getUpgradeMessage, getNextPlan } from '../utils/featureGates'
 import VerificationBadge from './VerificationBadge'
 import AutomationPanel from './AutomationPanel'
+import { formatDate } from '../utils/timeFormat'
 import FormBuilder from './FormBuilder'
 
 function OrganizerDashboard({
@@ -1135,7 +1136,7 @@ function OrganizerDashboard({
                         {t.isDraft ? 'DRAFT' : (t.status || 'UPCOMING').toUpperCase()}
                       </span>
                       <span className="font-body-sm text-[10px] text-on-surface-variant">
-                        {t.startDate ? new Date(t.startDate).toLocaleDateString() : t.date}
+                        {t.startDate ? formatDate(t.startDate) : t.date}
                       </span>
                     </div>
                     
@@ -1325,7 +1326,7 @@ function OrganizerDashboard({
                   <>
                     <div className="bg-surface-container-low/40 rounded-xl p-3 border border-outline-variant/20">
                       <p className="text-[10px] text-on-surface-variant font-medium">Renewal Date</p>
-                      <p className="text-sm font-bold text-on-surface mt-1">{new Date(subscription.renewalDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                      <p className="text-sm font-bold text-on-surface mt-1">{formatDate(subscription.renewalDate)}</p>
                     </div>
                     <div className="bg-surface-container-low/40 rounded-xl p-3 border border-outline-variant/20">
                       <p className="text-[10px] text-on-surface-variant font-medium">
@@ -1404,7 +1405,7 @@ function OrganizerDashboard({
                           <td className="py-2 text-on-surface font-medium">{bill.plan_name}</td>
                           <td className="py-2 text-on-surface-variant">{bill.billing_cycle}</td>
                           <td className="py-2 text-on-surface font-semibold">₹{bill.amount?.toLocaleString('en-IN')}</td>
-                          <td className="py-2 text-on-surface-variant">{new Date(bill.created_at).toLocaleDateString()}</td>
+                          <td className="py-2 text-on-surface-variant">{formatDate(bill.created_at)}</td>
                           <td className="py-2">
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                               bill.status === 'completed' ? 'bg-emerald-500/15 text-emerald-400' : 

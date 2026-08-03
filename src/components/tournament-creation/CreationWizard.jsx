@@ -118,13 +118,27 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       else if (data.registrationOpenDate && new Date(data.registrationCloseDate) <= new Date(data.registrationOpenDate)) {
         errs.registrationCloseDate = 'Must be after registration opens.'
       }
-      const firstRound = (data.roadmap || [])[0]
-      const matchStartDate = (firstRound?.date && firstRound?.time)
-        ? `${firstRound.date}T${firstRound.time}`
-        : data.startDate || ''
-      if (!matchStartDate) errs.startDate = 'Match start date is required.'
-      else if (data.registrationCloseDate && new Date(matchStartDate) <= new Date(data.registrationCloseDate)) {
-        errs.startDate = 'Must be after registration closes.'
+      if (!data.roadmap || data.roadmap.length === 0) {
+        errs.roadmap = 'At least one round is required.'
+      } else {
+        const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
+        data.roadmap.forEach((r, i) => {
+          if (!r.date || !r.time) return
+          const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
+          if (isNaN(rTs)) return
+          if (i === 0 && closeTs && rTs <= closeTs) {
+            errs.startDate = 'Round 1 must start after registration closes.'
+          }
+          if (i > 0) {
+            const prev = data.roadmap[i - 1]
+            if (prev.date && prev.time) {
+              const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
+              if (!isNaN(prevTs) && rTs <= prevTs) {
+                errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
+              }
+            }
+          }
+        })
       }
       break
     }
@@ -133,9 +147,6 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
     case 8:
       break
     case 9: {
-      // Enforce org profile ONLY if the user does NOT have structural admin rights.
-      // isSystemAdmin() uses the hierarchical role engine — any role with admin-level
-      // clearance bypasses the organization profile requirement.
       if (!isSystemAdmin({ role: userRole }) && (!orgName || orgName === 'Match District Organizer')) {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
@@ -145,11 +156,31 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       if (!data.perspective) errs.perspective = 'Perspective mode must be selected.'
       if (!data.registrationOpenDate) errs.registrationOpenDate = 'Registration open date is required.'
       if (!data.registrationCloseDate) errs.registrationCloseDate = 'Registration close date is required.'
-      const firstRound = (data.roadmap || [])[0]
-      const matchStartDate = (firstRound?.date && firstRound?.time)
-        ? `${firstRound.date}T${firstRound.time}`
-        : data.startDate || ''
-      if (!matchStartDate) errs.startDate = 'Match start date is required.'
+      else if (data.registrationOpenDate && new Date(data.registrationCloseDate) <= new Date(data.registrationOpenDate)) {
+        errs.registrationCloseDate = 'Registration close must be after registration opens.'
+      }
+      if (!data.roadmap || data.roadmap.length === 0) {
+        errs.roadmap = 'At least one round is required.'
+      } else {
+        const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
+        data.roadmap.forEach((r, i) => {
+          if (!r.date || !r.time) return
+          const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
+          if (isNaN(rTs)) return
+          if (i === 0 && closeTs && rTs <= closeTs) {
+            errs.startDate = 'Round 1 must start after registration closes.'
+          }
+          if (i > 0) {
+            const prev = data.roadmap[i - 1]
+            if (prev.date && prev.time) {
+              const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
+              if (!isNaN(prevTs) && rTs <= prevTs) {
+                errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
+              }
+            }
+          }
+        })
+      }
       if (!data.cover_image_url) errs.cover_image_url = 'Cover image required. Please upload a banner in the Media step.'
       if (!data.slotsTotal || parseInt(data.slotsTotal) < 2) errs.slotsTotal = 'Minimum 2 slots required.'
       break
@@ -551,8 +582,15 @@ export default function CreationWizard() {
     setErrors({})
     debounceRef.current = setTimeout(() => {
       setFormData(newData)
+      // Auto-save to localStorage for recovery (skip in edit mode)
+      if (!isEditMode) {
+        try {
+          const toSave = { ...newData, _savedStep: currentStep }
+          localStorage.setItem(LS_KEY, JSON.stringify(toSave))
+        } catch {}
+      }
     }, 180)
-  }, [])
+  }, [isEditMode, currentStep])
 
   const stepComponent = useMemo(() => {
     const props = {
@@ -590,7 +628,7 @@ export default function CreationWizard() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="sticky top-0 z-50 bg-surface-container border-b border-slate-200 dark:border-outline-variant/20 px-4 py-4"
+            className="sticky top-0 z-50 bg-surface-container px-4 py-4 shadow-[0_4px_16px_-4px_rgba(0,0,0,0.12)]"
           >
             <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
               <div>
@@ -598,7 +636,7 @@ export default function CreationWizard() {
                 <p className="text-xs text-on-surface-variant mt-0.5">You have an unfinished tournament draft.</p>
               </div>
               <div className="flex gap-2 flex-shrink-0">
-                <button onClick={startNew} className="px-4 py-2 rounded-lg text-xs font-medium border border-outline-variant/30 text-on-surface-variant hover:bg-surface/50 transition-colors">Start New</button>
+                <button onClick={startNew} className="px-4 py-2 rounded-lg text-xs font-medium bg-surface/50 text-on-surface-variant hover:bg-surface transition-colors">Start New</button>
                 <button onClick={recoverDraft} className="px-4 py-2 rounded-lg text-xs font-semibold bg-primary text-white hover:bg-primary/90 transition-colors shadow-[0_0_12px_rgba(99,102,241,0.25)]">Resume Draft</button>
               </div>
             </div>
@@ -636,7 +674,7 @@ export default function CreationWizard() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 pb-32">
-        <div className="bg-surface-container border border-slate-200 dark:border-outline-variant/20 rounded-2xl p-4 sm:p-6">
+        <div className="bg-surface-container rounded-2xl p-4 sm:p-6 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentStep}

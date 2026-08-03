@@ -5,6 +5,7 @@ import { useUser } from '../UserContext'
 import { getAuthToken } from '../utils/getAuthToken'
 import { normalizeTournamentRow } from '../utils/api'
 import { hasOrganizerRights } from '../utils/iamRoles.js'
+import { formatDate } from '../utils/timeFormat'
 
 const TABS = ['All Tournaments', 'Drafts', 'Published', 'Completed', 'Archived']
 
@@ -42,12 +43,6 @@ function getStatus(s, isDraft) {
   if (isDraft) return 'draft'
   if (!s) return 'draft'
   return s
-}
-
-function formatDate(d) {
-  if (!d) return '—'
-  try { return new Date(d).toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }) }
-  catch { return d }
 }
 
 function getGameIcon(game) {

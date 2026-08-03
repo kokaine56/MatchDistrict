@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { formatDate } from '../utils/timeFormat'
 import { motion, AnimatePresence } from 'framer-motion'
 
 export default function SponsorRequestSection({ subscriptionApi, triggerToast, tier, tournaments }) {
@@ -118,7 +119,7 @@ export default function SponsorRequestSection({ subscriptionApi, triggerToast, t
                   {req.tournament_id && ' - ' + (tournaments.find(t => t.id === req.tournament_id)?.title || 'Unknown')}
                 </p>
                 {req.description && <p className="text-[10px] text-on-surface-variant truncate mt-0.5">{req.description}</p>}
-                <p className="text-[9px] text-on-surface-variant/60 mt-0.5">{new Date(req.created_at).toLocaleDateString()}</p>
+                <p className="text-[9px] text-on-surface-variant/60 mt-0.5">{formatDate(req.created_at)}</p>
               </div>
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-medium capitalize shrink-0 ml-2 ${statusColor(req.status)}`}>{req.status}</span>
             </div>

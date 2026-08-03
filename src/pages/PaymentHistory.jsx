@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useUser } from '../UserContext.jsx'
 import { subscriptionApi } from '../services/subscriptionApi.js'
+import { formatDate, formatDateTime } from '../utils/timeFormat'
 
 const STATUS_CONFIG = {
   pending: { label: 'Pending Verification', color: 'text-amber-400', bg: 'bg-amber-400/10', icon: 'hourglass_top' },
@@ -92,7 +93,7 @@ export default function PaymentHistory() {
                       <div>
                         <p className="text-sm font-bold text-on-background">{payment.plan_name} Plan</p>
                         <p className="text-[10px] text-on-surface-variant">
-                          {new Date(payment.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          {formatDate(payment.created_at)}
                           <span className="mx-1">·</span>
                           ₹{Number(payment.amount).toLocaleString('en-IN')}
                           <span className="mx-1">·</span>
@@ -126,12 +127,12 @@ export default function PaymentHistory() {
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-on-surface-variant">Submitted</span>
-                        <span className="text-on-surface">{new Date(payment.created_at).toLocaleString('en-IN')}</span>
+                        <span className="text-on-surface">{formatDateTime(payment.created_at)}</span>
                       </div>
                       {payment.reviewed_at && (
                         <div className="flex justify-between text-xs">
                           <span className="text-on-surface-variant">Reviewed</span>
-                          <span className="text-on-surface">{new Date(payment.reviewed_at).toLocaleString('en-IN')}</span>
+                          <span className="text-on-surface">{formatDateTime(payment.reviewed_at)}</span>
                         </div>
                       )}
                       {payment.rejection_reason && (

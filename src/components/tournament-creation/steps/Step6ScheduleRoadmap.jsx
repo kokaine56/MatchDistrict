@@ -201,10 +201,10 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       className="w-full max-w-2xl mx-auto space-y-8 pb-8"
     >
       {/* Section: Registration Window */}
-      <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-2xl p-5 md:p-6 space-y-5">
+      <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 space-y-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
               <line x1="16" y1="2" x2="16" y2="6" />
               <line x1="8" y1="2" x2="8" y2="6" />
@@ -227,8 +227,8 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
                 type="datetime-local"
                 value={registrationOpenDate}
                 onChange={(e) => handleRegChange('registrationOpenDate', e.target.value)}
-                className={`w-full p-3 rounded-lg bg-surface/50 border text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all ${
-                  showAllErrors && errors?.regOpen ? 'border-error/50' : 'border-outline-variant/20'
+                className={`w-full p-3 rounded-xl bg-surface/80 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner ${
+                  showAllErrors && errors?.regOpen ? 'ring-2 ring-error/50' : ''
                 }`}
               />
             </div>
@@ -250,8 +250,8 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
                 value={registrationCloseDate}
                 min={registrationOpenDate || ''}
                 onChange={(e) => handleRegChange('registrationCloseDate', e.target.value)}
-                className={`w-full p-3 rounded-lg bg-surface/50 border text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all ${
-                  showAllErrors && errors?.regClose ? 'border-error/50' : 'border-outline-variant/20'
+                className={`w-full p-3 rounded-xl bg-surface/80 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner ${
+                  showAllErrors && errors?.regClose ? 'ring-2 ring-error/50' : ''
                 }`}
               />
             </div>
@@ -266,10 +266,10 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       </div>
 
       {/* Section: Round Progression */}
-      <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-2xl p-5 md:p-6 space-y-5">
+      <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 space-y-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
             </svg>
           </div>
@@ -280,7 +280,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
         </div>
 
         {showAllErrors && errors?.roadmap && typeof errors.roadmap === 'string' && (
-          <div className="flex items-start gap-2 p-2.5 rounded-lg border bg-error/10 border-error/20">
+          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-error/10">
             <svg className="w-4 h-4 text-error shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
             <p className="text-[11px] font-medium text-error">{errors.roadmap}</p>
           </div>
@@ -311,7 +311,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
           onClick={addRound}
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.98 }}
-          className="w-full p-4 rounded-xl border-2 border-dashed border-primary/40 bg-primary/[0.04] text-sm font-bold text-primary hover:bg-primary/15 hover:border-primary/70 hover:shadow-[0_0_16px_rgba(59,130,246,0.15)] transition-all flex items-center justify-center gap-2.5"
+          className="w-full py-3.5 rounded-xl bg-primary/15 text-sm font-bold text-primary hover:bg-primary/25 hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] transition-all flex items-center justify-center gap-2.5"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -321,10 +321,10 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       </div>
 
       {/* Timeline Preview — always visible */}
-      <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-2xl p-5 md:p-6">
+      <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0">
-            <svg className="w-4 h-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </div>

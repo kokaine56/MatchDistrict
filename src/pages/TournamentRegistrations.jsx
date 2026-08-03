@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
+import { formatDateTime } from '../utils/timeFormat'
 
 export default function TournamentRegistrations() {
   const { id } = useParams()
@@ -49,17 +50,6 @@ export default function TournamentRegistrations() {
       return Array.isArray(parsed) ? parsed : []
     } catch {
       return []
-    }
-  }
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '—'
-    try {
-      return new Date(dateStr).toLocaleDateString('en-IN', {
-        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-      })
-    } catch {
-      return dateStr
     }
   }
 
@@ -204,7 +194,7 @@ export default function TournamentRegistrations() {
                       {/* Date */}
                       <div className="flex items-center gap-2 sm:gap-0">
                         <span className="sm:hidden text-[9px] font-bold uppercase tracking-wider text-on-surface-variant w-20 shrink-0">Date</span>
-                        <span className="text-[10px] text-on-surface-variant whitespace-nowrap">{formatDate(reg.created_at)}</span>
+                        <span className="text-[10px] text-on-surface-variant whitespace-nowrap">{formatDateTime(reg.created_at)}</span>
                       </div>
 
                       {/* Actions — informational only */}

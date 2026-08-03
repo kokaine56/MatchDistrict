@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import VerificationBadge from './VerificationBadge'
+import { formatDate } from '../utils/timeFormat'
 
 function timeAgo(dateStr) {
   if (!dateStr) return 'Recently'
@@ -10,7 +11,7 @@ function timeAgo(dateStr) {
   if (diffMins < 1) return 'Just now'
   if (diffMins < 60) return `${diffMins}m ago`
   if (diffHours < 24) return `${diffHours}h ago`
-  return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' })
+  return formatDate(dateStr)
 }
 
 export default function ActivityFeed({ onNavigate }) {

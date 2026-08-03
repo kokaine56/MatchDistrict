@@ -8,6 +8,7 @@ import { useUser } from '../UserContext.jsx'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import { sanitizeImageUrl } from '../utils/userStorage.js'
+import { formatDate } from '../utils/timeFormat'
 
 export default function OrgPage({ onNavigate }) {
   const { slug } = useParams()
@@ -627,7 +628,7 @@ export default function OrgPage({ onNavigate }) {
                   <button key={t.id} onClick={() => navigate(`/tournaments/${t.id}`)}
                     className="text-left bg-surface-container-highest/20 hover:bg-surface-container-highest/40 border border-outline-variant/20 rounded-xl p-3 transition-all">
                     <p className="text-xs font-semibold text-on-surface truncate">{t.title}</p>
-                    <p className="text-[10px] text-on-surface-variant mt-1">{t.game} · {new Date(t.startDate).toLocaleDateString()}</p>
+                    <p className="text-[10px] text-on-surface-variant mt-1">{t.game} · {formatDate(t.startDate)}</p>
                   </button>
                 ))}
               </div>

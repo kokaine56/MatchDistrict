@@ -6,13 +6,14 @@ import LoadingScreen from '../components/LoadingScreen.jsx';
 import { useCurrentUser } from '../hooks/useCurrentUser.js';
 import { useUser } from '../UserContext.jsx';
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js';
-import { usePolling } from '../hooks/usePolling.js';
 import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
+import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
 import { uploadImage } from '../utils/cloudinaryUpload.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
+import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
 
@@ -186,10 +187,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useRefetchOnFocus(fetchRegistrations, !!tournamentId);
   useRefetchOnFocus(fetchSlots, !!tournamentId);
 
-  // Polling: re-fetch registrations & slots every 10s
-  const pollRegistrations = useCallback(() => { fetchRegistrations(); fetchSlots(); }, [fetchRegistrations, fetchSlots]);
-  usePolling(pollRegistrations, 10000, !!tournamentId);
-
   const [tournamentsList, setTournamentsList] = useState([]);
   const [tournamentRow, setTournamentRow] = useState(null);
   const [isTournamentsLoading, setIsTournamentsLoading] = useState(true);
@@ -215,7 +212,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   useRefetchOnFocus(loadTournament, !!tournamentId);
   useRefetchOnFocus(loadTournamentsList);
-  usePolling(loadTournament, 10000, !!tournamentId);
 
   useEffect(() => {
     if (!tournamentId) return;
@@ -278,13 +274,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useEffect(() => {
     if (!tourney) { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' }); return; }
     let target = null; let label = ''; let type = '';
-    const s = (tourney.status || '').toLowerCase();
-    if (s === 'completed' || s === 'archived') { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: 'Tournament Ended', active: true, type: 'ended' }); return; }
-    if (s === 'live') { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: 'LIVE NOW', active: true, type: 'live' }); return; }
-    if (tourney.registrationCloseDate && new Date(tourney.registrationCloseDate) > new Date()) {
-      target = new Date(tourney.registrationCloseDate); label = 'Registration Closes In'; type = 'registration';
-    } else if (tourney.startDate && new Date(tourney.startDate) > new Date()) {
-      target = new Date(tourney.startDate); label = 'Tournament Starts In'; type = 'start';
+    const now = new Date();
+    const lifecycle = getTournamentLifecycleStatus(tourney, now);
+    if (lifecycle === 'archived' || lifecycle === 'completed') { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: 'Tournament Ended', active: true, type: 'ended' }); return; }
+    if (lifecycle === 'live') { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: 'LIVE NOW', active: true, type: 'live' }); return; }
+    const regOpen = tourney.registrationOpenDate ? new Date(tourney.registrationOpenDate) : null;
+    const regClose = tourney.registrationCloseDate ? new Date(tourney.registrationCloseDate) : null;
+    const startDate = tourney.startDate ? new Date(tourney.startDate) : null;
+    if (regOpen && now < regOpen) {
+      target = regOpen; label = 'Registration Opens In'; type = 'regOpen';
+    } else if (regClose && now < regClose) {
+      target = regClose; label = 'Registration Closes In'; type = 'registration';
+    } else if (startDate && now < startDate) {
+      target = startDate; label = 'Tournament Starts In'; type = 'start';
     } else { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' }); return; }
     
     const tick = () => {
@@ -358,7 +360,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   }, [tourney]);
 
   const announcements = useMemo(() => {
-    if (notices && notices.length > 0) return notices.map(n => ({ id: n.id, title: n.title, text: n.text, pin: n.pin, time: n.created_at ? new Date(n.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'Today' }));
+    if (notices && notices.length > 0) return notices.map(n => ({ id: n.id, title: n.title, text: n.text, pin: n.pin, time: n.created_at ? formatDate(n.created_at) : 'Today' }));
     return [];
   }, [notices]);
 
@@ -561,8 +563,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
   const startDateStr = tourney?.startDate ? new Date(tourney.startDate) : null;
-  const formattedDate = startDateStr ? startDateStr.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '';
-  const formattedTime = startDateStr ? startDateStr.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST' : '';
+  const formattedDate = startDateStr ? formatDate(startDateStr.toISOString()) : '';
+  const formattedTime = '';
 
   // Generate prize distribution split lists against total prize (base + sponsored)
   const prizeDistributions = useMemo(() => {
@@ -815,8 +817,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   const showJoin = !regStatus || ['rejected', 'cancelled', 'expired', 'payment_rejected'].includes(regStatus);
                   const showWaiting = ['pending_payment', 'pending', 'waitlisted'].includes(regStatus);
                   const showRegistered = ['approved', 'confirmed'].includes(regStatus);
-                  const isRegistrationClosed = tourney.registrationCloseDate && new Date(tourney.registrationCloseDate) < new Date();
-                  if (isRegistrationClosed && showJoin) {
+                  const lifecycle = getTournamentLifecycleStatus(tourney, new Date());
+                  if ((lifecycle === 'closed' || lifecycle === 'live' || lifecycle === 'archived') && showJoin) {
+                    const label = lifecycle === 'live' ? 'Registration Closed' : lifecycle === 'archived' ? 'Tournament Ended' : 'Registration Ended';
                     return (
                       <button
                         disabled
@@ -825,7 +828,20 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        Registration Ended
+                        {label}
+                      </button>
+                    );
+                  }
+                  if (lifecycle === 'upcoming' && showJoin) {
+                    return (
+                      <button
+                        disabled
+                        className="flex-1 bg-slate-400 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed opacity-70"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Registration Opens Later
                       </button>
                     );
                   }
@@ -880,10 +896,22 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           </section>
 
           {/* Registration Countdown Banner */}
-          {countdown.active && (countdown.type === 'registration' || countdown.type === 'start') && (
-            <div className="mt-4 bg-white border border-slate-100 shadow-sm rounded-xl p-3 flex items-center justify-between w-full">
-              <span className="text-xs sm:text-sm font-bold text-slate-500 uppercase tracking-widest">Registration Closes In</span>
-              <div className="text-sm sm:text-base font-black text-blue-700 bg-blue-50/50 border border-blue-100 px-3 py-1.5 rounded-lg whitespace-nowrap">
+          {countdown.active && countdown.type !== 'ended' && countdown.type !== 'live' && (
+            <div className={`mt-4 border shadow-sm rounded-xl p-3 flex items-center justify-between w-full ${
+              countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200' :
+              countdown.type === 'registration' ? 'bg-blue-50 border-blue-200' :
+              'bg-white border-slate-100'
+            }`}>
+              <span className={`text-xs sm:text-sm font-bold uppercase tracking-widest ${
+                countdown.type === 'regOpen' ? 'text-emerald-600' :
+                countdown.type === 'registration' ? 'text-blue-600' :
+                'text-slate-500'
+              }`}>{countdown.label}</span>
+              <div className={`text-sm sm:text-base font-black px-3 py-1.5 rounded-lg whitespace-nowrap border ${
+                countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
+                countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
+                'text-slate-700 bg-slate-100/50 border-slate-200'
+              }`}>
                 {countdown.days > 0 ? `${countdown.days}d ` : ''}
                 {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
               </div>
@@ -1094,13 +1122,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
-                            <span>{round.date ? new Date(round.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'TBD'}</span>
+                            <span>{round.date ? formatDate(round.date) : 'TBD'}</span>
                           </p>
                           <p className="flex items-center gap-1.5 sm:gap-2">
                             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <span>{round.time ? new Date(`2000-01-01T${round.time}+05:30`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST' : 'TBD'}</span>
+                            <span>{round.time || 'TBD'}</span>
                           </p>
                           <p className="flex items-center gap-1.5 sm:gap-2">
                             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1,12 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
+import { formatDateTime } from '../utils/timeFormat'
 
 const QR_BASE = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data='
-
-function formatDate(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
-}
 
 export default function QRPairingModal({ isOpen, onClose, onGenerateKey, devices, onUnpair, generating }) {
   const [pairingData, setPairingData] = useState(null)
@@ -50,7 +46,7 @@ export default function QRPairingModal({ isOpen, onClose, onGenerateKey, devices
                         <div key={d.id} className="flex items-center justify-between bg-surface/30 border border-outline-variant/20 rounded-lg px-3 py-2.5">
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold text-on-background truncate">{d.device_name || d.device_id}</p>
-                            <p className="text-[10px] text-on-surface-variant/60">Last seen: {formatDate(d.last_seen_at)}</p>
+                            <p className="text-[10px] text-on-surface-variant/60">Last seen: {formatDateTime(d.last_seen_at)}</p>
                           </div>
                           <button
                             onClick={() => onUnpair(d.id)}

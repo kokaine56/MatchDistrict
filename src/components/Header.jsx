@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import SafeImage from './SafeImage.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
-import { usePolling } from '../hooks/usePolling.js'
 import { supabase } from '../utils/supabaseClient'
 import { hasRole, getUserRoles } from '../utils/iamRoles.js'
 
@@ -60,8 +59,20 @@ function Header({ activePage, onNavigate }) {
       .catch(() => {})
   }
 
-  useEffect(() => { fetchAlerts() }, [fetchAlerts])
-  usePolling(fetchAlerts, 10000)
+  useEffect(() => {
+    fetchAlerts()
+
+    const channel = supabase
+      .channel('header-alerts')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'alerts' },
+        () => { fetchAlerts() }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchAlerts])
 
   const unreadCount = alerts.filter(a => !a.is_read).length
 
@@ -189,7 +200,7 @@ function Header({ activePage, onNavigate }) {
                                 {alert.message}
                               </p>
                               <span className="text-[8px] text-slate-400 dark:text-white/30 block mt-1 font-mono">
-                                {new Date(alert.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                {new Date(alert.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
                               </span>
                             </div>
                           ))

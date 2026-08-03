@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { formatDate } from '../utils/timeFormat'
 
 export default function OrganizerAnalyticsSection({ subscriptionApi, tier }) {
   const [data, setData] = useState(null)
@@ -195,7 +196,7 @@ export default function OrganizerAnalyticsSection({ subscriptionApi, tier }) {
             {data.recentActivity.slice(0, 5).map((ev, i) => (
               <div key={ev.id || i} className="flex items-center justify-between bg-surface-container-highest/20 rounded-lg px-3 py-1.5">
                 <span className="text-[10px] text-on-surface-variant capitalize">{ev.event_type?.replace(/_/g, ' ')}</span>
-                <span className="text-[8px] text-on-surface-variant/60">{new Date(ev.created_at).toLocaleDateString()}</span>
+                <span className="text-[8px] text-on-surface-variant/60">{formatDate(ev.created_at)}</span>
               </div>
             ))}
           </div>

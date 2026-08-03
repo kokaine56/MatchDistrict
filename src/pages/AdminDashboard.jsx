@@ -8,6 +8,7 @@ import { fetchJsonWithRetry } from '../utils/api.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { subscriptionApi } from '../services/subscriptionApi.js'
 import ActivityFeed from '../components/ActivityFeed'
+import { formatDate, formatDateTime } from '../utils/timeFormat'
 import { injectDummyRegistrations } from '../utils/testInjector'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
@@ -1132,7 +1133,7 @@ export default function AdminDashboard({ onNavigate }) {
                       <p className="text-sm font-semibold text-on-background truncate">{d.device_name || d.device_id}</p>
                       <p className="text-[10px] text-on-surface-variant/60">
                         {connected
-                          ? 'Last seen: ' + new Date(d.last_seen_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })
+                          ? 'Last seen: ' + formatDateTime(d.last_seen_at)
                           : 'Awaiting connection'}
                       </p>
                     </div>
@@ -1374,7 +1375,7 @@ function SubscriptionPaymentsTab({ triggerToast }) {
                         <td className="p-3">
                           <span className="font-mono text-[10px] text-on-surface-variant">{p.transaction_id || '—'}</span>
                         </td>
-                        <td className="p-3 text-on-surface-variant text-[10px]">{new Date(p.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</td>
+                        <td className="p-3 text-on-surface-variant text-[10px]">{formatDate(p.created_at)}</td>
                         <td className="p-3">
                           <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${sc.bg} ${sc.color}`}>{sc.label}</span>
                         </td>
@@ -1395,7 +1396,7 @@ function SubscriptionPaymentsTab({ triggerToast }) {
                             </div>
                           )}
                           {p.status !== 'pending' && (
-                            <span className="text-[10px] text-on-surface-variant">{p.reviewed_at ? new Date(p.reviewed_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}</span>
+                            <span className="text-[10px] text-on-surface-variant">{p.reviewed_at ? formatDate(p.reviewed_at) : '—'}</span>
                           )}
                         </td>
                       </tr>
@@ -1411,8 +1412,8 @@ function SubscriptionPaymentsTab({ triggerToast }) {
                                   <p className="flex justify-between"><span className="text-on-surface-variant">Cycle:</span><span className="text-on-surface capitalize">{p.billing_cycle}</span></p>
                                   <p className="flex justify-between"><span className="text-on-surface-variant">Amount:</span><span className="text-on-surface font-medium">₹{Number(p.amount).toLocaleString('en-IN')}</span></p>
                                   <p className="flex justify-between"><span className="text-on-surface-variant">TXN ID:</span><span className="text-on-surface font-mono text-[10px]">{p.transaction_id}</span></p>
-                                  <p className="flex justify-between"><span className="text-on-surface-variant">Submitted:</span><span className="text-on-surface">{new Date(p.created_at).toLocaleString('en-IN')}</span></p>
-                                  {p.reviewed_at && <p className="flex justify-between"><span className="text-on-surface-variant">Reviewed:</span><span className="text-on-surface">{new Date(p.reviewed_at).toLocaleString('en-IN')}</span></p>}
+                                  <p className="flex justify-between"><span className="text-on-surface-variant">Submitted:</span><span className="text-on-surface">{formatDateTime(p.created_at)}</span></p>
+                                  {p.reviewed_at && <p className="flex justify-between"><span className="text-on-surface-variant">Reviewed:</span><span className="text-on-surface">{formatDateTime(p.reviewed_at)}</span></p>}
                                 </div>
                                 {p.payment_notes && (
                                   <div className="mt-2 p-2 bg-surface-container-low/30 rounded-lg">

@@ -3,8 +3,8 @@ import { motion } from 'framer-motion'
 import HeroBannerCarousel from '../components/HeroBannerCarousel'
 import { useUser } from '../UserContext.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
-import { usePolling } from '../hooks/usePolling.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
+import { supabase } from '../utils/supabaseClient'
 import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
 import SponsoredStar from '../components/SponsoredStar'
@@ -43,11 +43,11 @@ function Homepage({ onNavigate }) {
   const [now, setNow] = useState(new Date())
   const pauseTimeoutRef = useRef(null)
 
-  // Real-time observer tick pipeline
+  // Gentle clock tick — 60s is enough for lifecycle transitions; Realtime handles data changes
   useEffect(() => {
     const interval = setInterval(() => {
       setNow(new Date())
-    }, 1000)
+    }, 60000)
     return () => clearInterval(interval)
   }, [])
 
@@ -73,7 +73,21 @@ function Homepage({ onNavigate }) {
   }, [loadTournaments])
 
   useRefetchOnFocus(loadTournaments)
-  usePolling(loadTournaments, 10000)
+
+  useEffect(() => {
+    loadTournaments()
+
+    const channel = supabase
+      .channel('homepage-tournaments')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tournaments' },
+        () => { loadTournaments() }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [loadTournaments])
 
   const handleSignOut = async () => {
     await signOut()

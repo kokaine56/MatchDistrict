@@ -10,7 +10,6 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
   const [publishErrorMsg, setPublishErrorMsg] = useState(null)
   const [copied, setCopied] = useState(false)
   const [mediaUploading, setMediaUploading] = useState(false)
-  const canDraft = userTier === 'Basic' || userTier === 'Pro'
 
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
@@ -117,7 +116,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
           ))}
         </div>
 
-        <div className="bg-surface-container/60 border border-slate-200 dark:border-outline-variant/25 rounded-2xl p-5 space-y-4">
+        <div className="bg-surface-container/60 rounded-2xl p-5 space-y-4 shadow-[0_4px_16px_-4px_rgba(0,0,0,0.1)]">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-[10px] text-on-surface-variant uppercase tracking-wider font-medium">Tournament URL</p>
@@ -170,7 +169,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.97 }}
               onClick={() => handleCopyLink(tournamentUrl)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container/60 border border-outline-variant/20 text-on-surface-variant text-sm font-medium hover:bg-surface/50 transition-colors"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-surface-container/60 text-on-surface-variant text-sm font-medium hover:bg-surface/80 transition-colors shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
               {copied ? 'Copied!' : 'Copy Link'}
@@ -210,7 +209,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => navigate(`/create-tournament?edit=${published.id}`)}
-            className="px-4 py-3 rounded-xl border border-outline-variant/30 text-sm font-medium text-on-surface-variant hover:bg-surface/50 transition-colors"
+            className="px-4 py-3 rounded-xl bg-surface-container/60 text-sm font-medium text-on-surface-variant hover:bg-surface/80 transition-colors shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
           >
             {isEditMode ? 'Continue Editing' : 'Edit Tournament'}
           </motion.button>
@@ -218,7 +217,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => navigate('/profile')}
-            className="px-4 py-3 rounded-xl border border-outline-variant/30 text-sm font-medium text-on-surface-variant hover:bg-surface/50 transition-colors"
+            className="px-4 py-3 rounded-xl bg-surface-container/60 text-sm font-medium text-on-surface-variant hover:bg-surface/80 transition-colors shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
           >
             Open Dashboard
           </motion.button>
@@ -240,7 +239,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
         </p>
       </div>
 
-      <div className="bg-surface-container/60 border border-slate-200 dark:border-outline-variant/25 rounded-2xl p-5 space-y-3">
+      <div className="bg-surface-container/60 rounded-2xl p-5 space-y-3 shadow-[0_4px_16px_-4px_rgba(0,0,0,0.1)]">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-tertiary/20 flex items-center justify-center flex-shrink-0">
             <svg className="w-5 h-5 text-tertiary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -277,7 +276,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4"
+          className="bg-rose-500/10 rounded-xl p-4"
         >
           <div className="flex items-start gap-3">
             <svg className="w-5 h-5 text-rose-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -294,6 +293,16 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
       <p className="text-xs text-on-surface-variant text-center">
         Publishing will immediately make your tournament visible on the homepage, discover page, and search results.
       </p>
+
+      <motion.button
+        whileTap={{ scale: 0.97 }}
+        onClick={onSaveDraft}
+        disabled={isSubmitting}
+        className="w-full py-3 rounded-xl bg-surface-container/60 text-sm font-semibold text-on-surface-variant hover:bg-surface/80 transition-all flex items-center justify-center gap-2 disabled:opacity-40"
+      >
+        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+        Save as Draft Instead
+      </motion.button>
     </motion.div>
   )
 }

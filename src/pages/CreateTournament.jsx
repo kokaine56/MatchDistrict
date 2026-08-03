@@ -5,6 +5,7 @@ import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { formatDate } from '../utils/timeFormat'
 
 const STEPS = [
   { step: 1, label: 'Basic Details',  icon: 'info',          desc: 'Title & game' },
@@ -509,7 +510,7 @@ export default function CreateTournament({ onNavigate, template }) {
       status: 'draft',
       badgeBg: 'bg-surface-container-highest text-on-surface-variant',
       badgeText: 'DRAFT',
-      date: finalStart ? new Date(finalStart).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'TBD',
+      date: finalStart ? formatDate(finalStart) : 'TBD',
       teamsCount: `${newTourney.slotsFilled || 0}/${newTourney.slotsTotal || 64} Teams`,
       orgName: currentUser ? (currentUser.orgName || currentUser.name) : 'Verified Organizer',
       timeline: serializedTimeline
@@ -555,7 +556,7 @@ export default function CreateTournament({ onNavigate, template }) {
           ...data.tournament,
           roadmap: updatedRoadmap
         })
-        setSaveStatus(`Draft Saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`)
+        setSaveStatus(`Draft Saved at ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}`)
         triggerToast('Draft saved successfully!')
         return true
       } else {
@@ -605,7 +606,7 @@ export default function CreateTournament({ onNavigate, template }) {
       badgeBg: isLive ? 'bg-error' : 'bg-primary',
       badgeText: isLive ? 'LIVE' : 'UPCOMING',
       teamsCount: `${newTourney.slotsFilled || 0}/${newTourney.slotsTotal || 64} Teams`,
-      date: finalStart ? new Date(finalStart).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'TBD',
+      date: finalStart ? formatDate(finalStart) : 'TBD',
       orgName: currentUser ? (currentUser.orgName || currentUser.name) : 'Verified Organizer',
       timeline: serializedTimeline
     }
@@ -1453,7 +1454,7 @@ export default function CreateTournament({ onNavigate, template }) {
                           <div>
                             <p className="text-[10px] text-slate-400 dark:text-white/40">Lobby Dates</p>
                             <p className="font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                              {newTourney.startDate ? new Date(newTourney.startDate).toLocaleDateString('en-IN') : 'TBD'}
+                              {newTourney.startDate ? formatDate(newTourney.startDate) : 'TBD'}
                             </p>
                           </div>
                           <div>

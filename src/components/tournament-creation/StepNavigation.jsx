@@ -14,7 +14,7 @@ export default function StepNavigation({
 }) {
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-50 bg-surface-container/95 backdrop-blur-xl border-t border-gray-200 dark:border-outline-variant/20 px-3 py-2 sm:px-4 sm:py-3"
+      className="fixed bottom-0 left-0 right-0 z-50 bg-surface-container/95 backdrop-blur-xl px-3 py-2 sm:px-4 sm:py-3 shadow-[0_-4px_16px_-4px_rgba(0,0,0,0.12)]"
       style={{ paddingBottom: `calc(0.5rem + env(safe-area-inset-bottom, 0px))` }}
     >
       <div className="max-w-3xl mx-auto flex items-stretch gap-2">
@@ -22,12 +22,26 @@ export default function StepNavigation({
           whileTap={{ scale: 0.97 }}
           onClick={onBack}
           disabled={currentStep === 1 || isSubmitting}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl border-2 border-gray-300 dark:border-outline-variant/40 bg-white dark:bg-white/5 text-xs sm:text-sm font-semibold text-gray-700 dark:text-on-surface hover:bg-gray-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/30"
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl bg-white dark:bg-white/5 text-xs sm:text-sm font-semibold text-gray-700 dark:text-on-surface hover:bg-gray-100 dark:hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
         >
           <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           <span className="hidden sm:inline">Previous</span>
           <span className="sm:hidden">Prev</span>
         </motion.button>
+
+        {!isLastStep && (
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={onSaveDraft}
+            disabled={isSubmitting}
+            className="flex items-center justify-center gap-1.5 px-3 py-2.5 sm:py-3 rounded-xl bg-white dark:bg-white/5 text-xs sm:text-sm font-semibold text-gray-700 dark:text-on-surface hover:bg-gray-100 dark:hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus:outline-none focus:ring-2 focus:ring-primary/30 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)]"
+            title="Save progress as draft"
+          >
+            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+            <span className="hidden sm:inline">Save Draft</span>
+            <span className="sm:hidden">Draft</span>
+          </motion.button>
+        )}
 
         {isLastStep ? (
           <motion.button

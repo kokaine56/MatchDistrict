@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
-import { formatTime12hIST } from '../../../utils/timeFormat'
+import { formatTime12hIST, formatDateTime } from '../../../utils/timeFormat'
 
 function DetailRow({ label, value }) {
   return (
@@ -145,9 +145,9 @@ export default function Step8Preview({ data, orgName, orgTier }) {
 
           <div className="pt-2 border-t border-outline-variant/20">
             <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">Timeline</h4>
-            <DetailRow label="Registration Opens" value={data.registrationOpenDate ? new Date(data.registrationOpenDate).toLocaleString('en-IN') : '—'} />
-            <DetailRow label="Registration Closes" value={data.registrationCloseDate ? new Date(data.registrationCloseDate).toLocaleString('en-IN') : '—'} />
-            <DetailRow label="Match Starts" value={data.startDate ? new Date(data.startDate).toLocaleString('en-IN') : '—'} />
+            <DetailRow label="Registration Opens" value={data.registrationOpenDate ? formatDateTime(data.registrationOpenDate) : '—'} />
+            <DetailRow label="Registration Closes" value={data.registrationCloseDate ? formatDateTime(data.registrationCloseDate) : '—'} />
+            <DetailRow label="Match Starts" value={data.startDate ? formatDateTime(data.startDate) : '—'} />
           </div>
 
           {rounds.length > 0 && (

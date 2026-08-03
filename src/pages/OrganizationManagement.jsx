@@ -118,7 +118,7 @@ function OrganizationManagement({ onNavigate }) {
         const headers = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
-        const res = await fetch('/api/tournaments', { headers });
+        const res = await fetch('/api/organiser/tournaments', { headers });
         const data = await res.json();
         if (res.ok && data.success && Array.isArray(data.tournaments)) {
           // Filter to only this organizer's tournaments

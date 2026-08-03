@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { formatDateIST, formatRoundDateTime } from '../../utils/timeFormat'
 
 const UnlockIcon = ({ className }) => (
   <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -24,16 +25,35 @@ const GamepadIcon = ({ className }) => (
   </svg>
 )
 
-const ArrowRight = () => (
-  <svg className="w-5 h-5 text-on-surface-variant/40 shrink-0 mx-1 self-center" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+const TrophyIcon = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 9H4.5a2.5 2.5 0 010-5H6" />
+    <path d="M18 9h1.5a2.5 2.5 0 000-5H18" />
+    <path d="M4 22h16" />
+    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+    <path d="M18 2H6v7a6 6 0 0012 0V2Z" />
+  </svg>
+)
+
+const ArchiveIcon = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="2" y="3" width="20" height="5" rx="1" />
+    <path d="M4 8v11a2 2 0 002 2h12a2 2 0 002-2V8" />
+    <path d="M10 12h4" />
+  </svg>
+)
+
+const RoundIcon = ({ className }) => (
+  <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
   </svg>
 )
 
 const SUBTEXTS = {
-  'Registration Opens': 'Entry channels unlock \u2014 players can begin registering their teams.',
+  'Registration Opens': 'Entry channels unlock — players can begin registering their teams.',
   'Registration Closes': 'Registrations are sealed shut. No further entries will be accepted.',
-  'Match Starts': 'The battle goes live. Match card moves to the Live Matches section.',
+  'Tournament Goes Live': 'Match card moves to Live Matches — 15 minutes before Round 1 starts.',
 }
 
 function getNodeState(date) {
@@ -44,31 +64,7 @@ function getNodeState(date) {
   return 'future'
 }
 
-function formatDateIST(dateStr) {
-  if (!dateStr) return ''
-  try {
-    const hasTz = /[Z+-]\d{2}:\d{2}$/.test(dateStr) || dateStr.endsWith('Z')
-    const d = new Date(hasTz ? dateStr : dateStr + '+05:30')
-    if (isNaN(d.getTime())) return dateStr
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST'
-  } catch { return dateStr }
-}
-
-function formatRoundDateTime(dateStr, timeStr) {
-  if (!dateStr) return 'TBD'
-  try {
-    const combined = timeStr ? `${dateStr}T${timeStr}` : dateStr
-    const hasTz = /[Z+-]\d{2}:\d{2}$/.test(combined) || combined.endsWith('Z')
-    const d = new Date(hasTz ? combined : combined + '+05:30')
-    if (isNaN(d.getTime())) return `${dateStr} ${timeStr || ''}`.trim()
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + 
-           (timeStr ? ', ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) + ' IST' : '')
-  } catch (e) {
-    return `${dateStr} ${timeStr || ''}`.trim()
-  }
-}
-
-function TimelineNode({ label, date, icon: Icon, isLast, index }) {
+function TimelineNode({ label, date, icon: Icon, isLast, index, subtext, rightSlot }) {
   const state = getNodeState(date)
 
   const dotStyle = state === 'past'
@@ -93,19 +89,19 @@ function TimelineNode({ label, date, icon: Icon, isLast, index }) {
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.1, duration: 0.3, ease: 'easeOut' }}
+      transition={{ delay: index * 0.07, duration: 0.3, ease: 'easeOut' }}
       className="relative flex gap-3"
     >
       <div className="flex flex-col items-center w-5 shrink-0">
         <motion.div
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
-          transition={{ delay: index * 0.1 + 0.1, type: 'spring', stiffness: 200, damping: 15 }}
+          transition={{ delay: index * 0.07 + 0.1, type: 'spring', stiffness: 200, damping: 15 }}
           className={`w-3 h-3 rounded-full shrink-0 z-10 transition-all duration-300 ${dotStyle}`}
         />
         {!isLast && <div className={`w-[2px] flex-1 min-h-[28px] transition-colors duration-300 ${lineStyle}`} />}
       </div>
-      <div className={`pb-3 flex-1 min-w-0 transition-opacity duration-300 ${state === 'past' ? 'opacity-50' : 'opacity-100'}`}>
+      <div className={`pb-4 flex-1 min-w-0 transition-opacity duration-300 ${state === 'past' ? 'opacity-50' : 'opacity-100'}`}>
         <div className="flex items-start gap-x-2 gap-y-0.5 flex-wrap">
           <span className={`text-xs shrink-0 mt-0.5 ${labelColor}`}><Icon className="w-3.5 h-3.5" /></span>
           <span className={`text-xs font-semibold transition-colors ${labelColor}`}>{label}</span>
@@ -115,96 +111,78 @@ function TimelineNode({ label, date, icon: Icon, isLast, index }) {
             </span>
           )}
         </div>
-        <p className="text-[11px] text-on-surface-variant/60 mt-0.5 leading-snug max-w-xs">{SUBTEXTS[label]}</p>
+        {subtext && <p className="text-[11px] text-on-surface-variant/60 mt-0.5 leading-snug max-w-xs">{subtext}</p>}
+        {rightSlot && <div className="mt-1.5">{rightSlot}</div>}
       </div>
     </motion.div>
   )
 }
 
 export default function TimelinePreview({ registrationOpen, registrationClose, matchStart, rounds = [] }) {
-  const items = [
-    { label: 'Registration Opens', date: registrationOpen, icon: UnlockIcon },
-    { label: 'Registration Closes', date: registrationClose, icon: LockIcon },
-    { label: 'Match Starts', date: matchStart, icon: GamepadIcon },
+  const nodes = [
+    { label: 'Registration Opens', date: registrationOpen, icon: UnlockIcon, subtext: SUBTEXTS['Registration Opens'] },
+    { label: 'Registration Closes', date: registrationClose, icon: LockIcon, subtext: SUBTEXTS['Registration Closes'] },
   ]
 
+  const roadmap = Array.isArray(rounds) ? rounds : []
+
+  if (roadmap.length > 0) {
+    roadmap.forEach((r, i) => {
+      const roundDate = r.date && r.time ? `${r.date}T${r.time}` : r.date || ''
+      nodes.push({
+        label: r.name || `Round ${i + 1}`,
+        date: roundDate,
+        icon: RoundIcon,
+        subtext: r.map ? `Map: ${r.map}` : undefined,
+        rightSlot: r.qualified ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/10 text-[9px] font-bold text-primary">
+            Top {r.qualified} advance
+          </span>
+        ) : null,
+      })
+    })
+  } else if (matchStart) {
+    nodes.push({ label: 'Tournament Starts', date: matchStart, icon: GamepadIcon, subtext: SUBTEXTS['Tournament Goes Live'] })
+  }
+
+  const lastRoundTs = roadmap.length > 0
+    ? (() => {
+        const last = roadmap[roadmap.length - 1]
+        const s = last.time ? `${last.date}T${last.time}` : `${last.date}T23:59`
+        const d = new Date(s)
+        return isNaN(d.getTime()) ? null : d.getTime()
+      })()
+    : null
+
+  if (lastRoundTs) {
+    const archivedDate = new Date(lastRoundTs + 24 * 60 * 60 * 1000)
+    nodes.push({
+      label: 'Tournament Archives',
+      date: archivedDate.toISOString().slice(0, 16),
+      icon: ArchiveIcon,
+      subtext: '24 hours after the final round — tournament moves to archive.',
+    })
+  }
+
   return (
-    <div className="space-y-6">
-      {/* Static Timeline Nodes */}
-      <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-4 sm:p-5">
-        {items.map((item, idx) => (
-          <TimelineNode
-            key={item.label}
-            label={item.label}
-            date={item.date}
-            icon={item.icon}
-            isLast={idx === items.length - 1}
-            index={idx}
-          />
-        ))}
-      </div>
-
-      {/* Rounds Progression */}
-      <div>
-        <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-widest mb-3 flex items-center gap-2">
-          <span>Rounds Progression</span>
-          <span className="text-[10px] font-normal text-on-surface-variant/50 normal-case">({rounds.length} round{rounds.length !== 1 ? 's' : ''})</span>
-        </h4>
-        {rounds.length === 0 ? (
-          <div className="bg-surface-container/30 border border-dashed border-outline-variant/20 rounded-xl p-5 text-center">
-            <p className="text-xs text-on-surface-variant/50">No rounds added yet. Click <span className="text-primary font-semibold">+ Add Round</span> above to build your tournament bracket.</p>
-          </div>
-        ) : (
-          <div className="flex items-center overflow-x-auto pb-2 gap-2 scrollbar-hide">
-            {rounds.map((r, idx) => (
-              <div key={r.id || idx} className="flex items-center shrink-0">
-                {/* Node Box */}
-                <div className="bg-surface-container/30 border border-outline-variant/20 rounded-xl p-3.5 min-w-[190px] space-y-2.5 flex flex-col justify-between shadow-sm">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center text-[9px] font-bold text-primary shrink-0">
-                        {idx + 1}
-                      </span>
-                      <h4 className="text-xs font-extrabold text-on-background truncate max-w-[140px]">
-                        {r.name || `Round ${idx + 1}`}
-                      </h4>
-                    </div>
-                    <p className="text-[10px] font-mono text-on-surface-variant/80 pl-7">
-                      <span className="inline-block w-3.5 text-center mr-1">&#128197;</span>
-                      {formatRoundDateTime(r.date, r.time)}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2 pl-7">
-                    {r.map ? (
-                      <span className="inline-block px-2 py-0.5 rounded bg-surface border border-outline-variant/35 text-[9px] font-extrabold text-on-surface-variant uppercase tracking-wider">
-                        {r.map}
-                      </span>
-                    ) : (
-                      <span className="inline-block px-2 py-0.5 rounded bg-surface border border-dashed border-outline-variant/20 text-[9px] text-on-surface-variant/40 italic">
-                        Map TBD
-                      </span>
-                    )}
-
-                    {r.qualified ? (
-                      <span className="text-[9px] font-bold text-primary whitespace-nowrap">
-                        Top {r.qualified}
-                      </span>
-                    ) : (
-                      <span className="text-[9px] text-on-surface-variant/40 italic whitespace-nowrap">
-                        Adv. TBD
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Directional Arrow */}
-                {idx < rounds.length - 1 && <ArrowRight />}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+    <div className="bg-surface-container/30 rounded-xl p-4 sm:p-5 shadow-inner">
+      {nodes.map((item, idx) => (
+        <TimelineNode
+          key={`${item.label}-${idx}`}
+          label={item.label}
+          date={item.date}
+          icon={item.icon}
+          isLast={idx === nodes.length - 1}
+          index={idx}
+          subtext={item.subtext}
+          rightSlot={item.rightSlot}
+        />
+      ))}
+      {nodes.length === 0 && (
+        <p className="text-xs text-on-surface-variant/50 text-center py-4">
+          Set registration dates and add rounds to see the full timeline.
+        </p>
+      )}
     </div>
   )
 }

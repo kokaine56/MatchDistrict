@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { formatDate } from '../utils/timeFormat'
 import { motion, AnimatePresence } from 'framer-motion'
 
 export default function AutomationPanel({ subscriptionApi, triggerToast, tournaments }) {
@@ -144,7 +145,7 @@ export default function AutomationPanel({ subscriptionApi, triggerToast, tournam
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-semibold text-on-surface truncate">{rule.name}</p>
                 <p className="text-[10px] text-on-surface-variant capitalize">{rule.trigger_event?.replace(/_/g, ' ')}</p>
-                {rule.last_run_at && <p className="text-[8px] text-on-surface-variant/60">Last run: {new Date(rule.last_run_at).toLocaleDateString()}</p>}
+                {rule.last_run_at && <p className="text-[8px] text-on-surface-variant/60">Last run: {formatDate(rule.last_run_at)}</p>}
               </div>
               <button onClick={() => handleDelete(rule.id)} className="text-[10px] text-error hover:text-error/80 shrink-0 ml-2">Delete</button>
             </div>

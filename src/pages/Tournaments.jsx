@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
-import { usePolling } from '../hooks/usePolling.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
 import TournamentCard from '../components/TournamentCard'
@@ -61,7 +60,6 @@ function Tournaments({ onNavigate }) {
   }, [])
 
   useRefetchOnFocus(loadTournaments)
-  usePolling(loadTournaments, 10000)
 
   useEffect(() => {
     setIsLoading(true)

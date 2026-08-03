@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
+import { formatDate } from '../utils/timeFormat'
 
 export default function AdminOrganizers() {
   const navigate = useNavigate()
@@ -49,13 +50,6 @@ export default function AdminOrganizers() {
            (org.email || '').toLowerCase().includes(q) ||
            (org.orgName || '').toLowerCase().includes(q)
   })
-
-  const formatDate = (d) => {
-    if (!d) return '—'
-    try {
-      return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-    } catch { return d }
-  }
 
   return (
     <AdminLayout

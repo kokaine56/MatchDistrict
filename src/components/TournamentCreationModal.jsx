@@ -1,4 +1,5 @@
 import React from 'react'
+import { formatDate, formatDateTime } from '../utils/timeFormat'
 
 const STEPS = [
   { step: 1, label: 'Basic Details',  icon: 'info',          desc: 'Title & game' },
@@ -590,7 +591,7 @@ export default function TournamentCreationModal({
                         </div>
                         <div className="flex-1 flex items-center justify-between px-4 py-3 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
                           <span className="text-[11px] font-semibold text-white">{label}</span>
-                          <span className="text-[10px] text-white/40">{date ? new Date(date).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not set'}</span>
+                          <span className="text-[10px] text-white/40">{date ? formatDateTime(date) : 'Not set'}</span>
                         </div>
                       </div>
                     ))}
@@ -628,7 +629,7 @@ export default function TournamentCreationModal({
                         { label: 'Prize Pool', value: newTourney.prize, color: '#c0c1ff' },
                         { label: 'Entry Fee', value: newTourney.entry, color: 'white' },
                         { label: 'Total Slots', value: `${newTourney.slotsTotal} Squads`, color: 'white' },
-                        { label: 'Kick-Off', value: newTourney.startDate ? new Date(newTourney.startDate).toLocaleDateString('en-IN') : 'Pending', color: '#34d399' },
+                        { label: 'Kick-Off', value: newTourney.startDate ? formatDate(newTourney.startDate) : 'Pending', color: '#34d399' },
                       ].map(({ label, value, color }) => (
                         <div key={label}>
                           <div className="text-[9px] text-white/30 uppercase tracking-widest font-bold">{label}</div>

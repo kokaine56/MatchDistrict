@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAuthToken } from '../utils/getAuthToken'
+import { formatDateTime } from '../utils/timeFormat'
 
 export default function AdminPayments() {
   const [registrations, setRegistrations] = useState([])
@@ -399,7 +400,7 @@ export default function AdminPayments() {
                                                   <td className="px-4 py-2.5 text-right">
                                                     {tab === 'verified' ? (
                                                       <span className="text-[9px] text-on-surface-variant">
-                                                        {reg.updated_at ? new Date(reg.updated_at).toLocaleString() : '—'}
+                                                        {reg.updated_at ? formatDateTime(reg.updated_at) : '—'}
                                                       </span>
                                                     ) : (
                                                       <div className="flex items-center justify-end gap-1.5">

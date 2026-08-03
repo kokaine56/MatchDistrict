@@ -18,6 +18,7 @@ import { hasCapability, getUserRoles, ROLES, hasOrganizerRights, isSystemAdmin }
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import VerificationBadge from '../components/VerificationBadge.jsx'
+import { formatDate } from '../utils/timeFormat'
 
 const tabContentVariants = {
   initial: { opacity: 0, y: 15 },
@@ -148,7 +149,7 @@ function PublicOrgMatchesView({ orgData, tournamentsList, onNavigate }) {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-primary/10 text-primary border border-primary/20 font-label-caps">{t.game}</span>
-                    <span className="text-[9px] text-on-surface-variant/60 font-semibold">{t.startDate ? new Date(t.startDate).toLocaleDateString() : t.date}</span>
+                    <span className="text-[9px] text-on-surface-variant/60 font-semibold">{t.startDate ? formatDate(t.startDate) : t.date}</span>
                   </div>
                   <h4 className="font-bold text-xs sm:text-sm text-on-background line-clamp-1 group-hover:text-primary transition-colors">{t.title}</h4>
                 </div>
@@ -1032,7 +1033,9 @@ function Profile({ onNavigate, selectedUserProfile }) {
     async function fetchTournaments() {
       const token = await getAuthToken();
       try {
-        const res = await fetch('/api/tournaments', {
+        const isOrg = currentUserFromContext && (currentUserFromContext.role === 'organiser' || currentUserFromContext.role === 'admin')
+        const endpoint = isOrg ? '/api/organiser/tournaments' : '/api/tournaments'
+        const res = await fetch(endpoint, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -1485,7 +1488,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
         status: t.status || 'upcoming',
         badgeBg: t.status === 'live' ? 'bg-error' : t.status === 'completed' ? 'bg-surface-container-highest text-on-surface-variant' : 'bg-primary',
         badgeText: t.status ? t.status.toUpperCase() : 'UPCOMING',
-        date: t.startDate ? new Date(t.startDate).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'TBD',
+        date: t.startDate ? formatDate(t.startDate) : 'TBD',
         prize: t.prize,
         entry: t.entry,
         result: reg.status === 'approved' ? 'Approved & Registered' : reg.status === 'waitlisted' ? 'Waitlisted' : reg.status === 'rejected' ? 'Rejected' : 'Awaiting Approval'
@@ -1888,7 +1891,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
                                 )}
                                 <h5 className="font-headline-md text-xs font-bold text-white truncate">{n.title}</h5>
                                 <span className="font-body-sm text-[9px] text-on-surface-variant ml-auto shrink-0">
-                                  {n.created_at ? new Date(n.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : (n.time || '')}
+                                  {n.created_at ? new Date(n.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : (n.time || '')}
                                 </span>
                               </div>
                               <p className="font-body-sm text-[11px] text-on-surface-variant/90 leading-relaxed break-words">{n.text}</p>
