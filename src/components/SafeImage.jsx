@@ -1,7 +1,7 @@
 import { sanitizeImageUrl } from '../utils/userStorage.js'
+import { DEFAULT_AVATAR } from '../utils/defaults.js'
 
-const FALLBACK_AVATAR =
-  'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80'
+const FALLBACK_AVATAR = DEFAULT_AVATAR
 
 /** Renders an image only when src is a safe http(s) URL; avoids base64/huge URLs crashing the UI.
  *  Never flashes a fallback when a custom src is provided — shows skeleton shimmer while loading. */

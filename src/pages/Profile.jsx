@@ -5,6 +5,7 @@ import Header from '../components/Header.jsx'
 import OrganizerDashboard from '../components/OrganizerDashboard.jsx'
 import SafeImage from '../components/SafeImage.jsx'
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
+import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
 import {
   parseStoredUser,
   setStoredUser,
@@ -994,7 +995,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     discord: 'https://discord.gg/apexgaming',
     twitter: 'https://twitter.com/apex_syndicate',
     logo: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=500&q=80',
-    banner: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=1600&q=80',
+    banner: DEFAULT_BANNER,
     bio: 'Premier esports tournament organizer in South Asia hosting monthly verified majors with verified prize pools across Valorant, BGMI, and CS2.',
     kycStatus: 'Verified & Active',
     staff: [
@@ -2092,7 +2093,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 {/* Cover Banner */}
                 <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
                   <img
-                    src={viewedUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'}
+                    src={viewedUser.banner || DEFAULT_BANNER}
                     alt="Organizer Banner"
                     className="w-full h-full object-cover object-center"
                   />
@@ -2104,7 +2105,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                     <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
                       {viewedUser.orgImage || viewedUser.avatar
                         ? <img src={viewedUser.orgImage || viewedUser.avatar} alt={viewedUser.orgName || viewedUser.name} className="avatar-img" />
-                        : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-3xl">business</span></div>}
+                        : <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img" />}
                     </div>
                   </div>
                 </div>
@@ -2197,9 +2198,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             />
                           </>
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
-                          </div>
+                          <img src={DEFAULT_BANNER} alt="Profile Banner" className="w-full h-full object-cover object-center absolute inset-0" />
                         )}
                         {activeUploadField === 'banner' && profileUploadProgress !== null && (
                           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -2225,9 +2224,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 />
                               </>
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <span className="material-symbols-outlined text-on-surface-variant text-2xl">account_circle</span>
-                              </div>
+                              <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img relative z-[1]" />
                             )}
                             {activeUploadField === 'avatar' && profileUploadProgress !== null && (
                               <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 rounded-full">

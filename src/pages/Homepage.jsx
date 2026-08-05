@@ -10,6 +10,7 @@ import TournamentCard from '../components/TournamentCard'
 import SponsoredStar from '../components/SponsoredStar'
 import VerificationBadge from '../components/VerificationBadge'
 import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
@@ -18,6 +19,7 @@ import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
+import SupportedGames from '../components/SupportedGames'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const formatINR = (val) => {
@@ -241,7 +243,7 @@ function Homepage({ onNavigate }) {
                               <TournamentCard
                                 id={t.id} title={t.title} game={t.game} status={t.status}
                                 badgeTextColor="text-white"
-                                imgSrc={t.cover_image_url || t.bannerUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=600&q=80"}
+                                imgSrc={t.cover_image_url || t.bannerUrl || DEFAULT_BANNER}
                                 imgAlt={t.title} prizePool={t.prize} entryFee={t.entry}
                                 matchType={t.match_type || t.matchType || 'Squad'} perspective={t.perspective || 'TPP'}
                                 slotsTotal={t.slotsTotal} slotsFilled={t.slotsFilled} entryFeeAmount={t.entry_fee_amount}
@@ -259,51 +261,7 @@ function Homepage({ onNavigate }) {
                 </div>
               </motion.div>
               {/* Supported Games Grid */}
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-80px" }}
-                transition={{ duration: 0.5 }}
-                className="space-y-3 sm:space-y-4"
-              >
-                <h2 className="font-headline-lg text-lg sm:text-xl md:text-2xl flex items-center gap-2 sm:gap-2.5 font-bold text-white tracking-tight">
-                  <span className="w-1 h-5 sm:h-6 bg-primary rounded-full shadow-[0_0_10px_rgba(192,193,255,0.5)]"></span>
-                  Supported Games
-                </h2>
-                 <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
-                    <motion.div whileHover={{ y: -3 }} className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 hover:border-primary/40 transition-colors cursor-pointer group bg-surface-container-low/30 backdrop-blur-sm shadow-md">
-                       <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
-                         <img className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt="BGMI" src={gameBgmi} />
-                       </div>
-                      <div className="font-label-caps text-[10px] sm:text-xs text-white font-bold tracking-wider">BGMI</div>
-                      <div className="font-body-sm text-[9px] sm:text-[10px] text-on-surface-variant/80">8.7K Tourneys</div>
-                    </motion.div>
-                    <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 shadow-md">
-                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
-                          <img className="w-full h-full object-cover opacity-40" alt="Free Fire" src={gameFreeFire} />
-                        </div>
-                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                     </motion.div>
-                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 shadow-md">
-                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
-                          <img className="w-full h-full object-cover opacity-40" alt="COD Mobile" src={gameCodm} />
-                        </div>
-                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                     </motion.div>
-                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 shadow-md">
-                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
-                          <img className="w-full h-full object-cover opacity-40" alt="Valorant" src={gameValorant} />
-                        </div>
-                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                     </motion.div>
-                     <motion.div className="glass-card no-transition p-2 sm:p-2.5 rounded-xl text-center space-y-1 bg-surface-container-low/10 shadow-md">
-                        <div className="max-md:aspect-square max-md:h-auto md:h-40 rounded-lg overflow-hidden mb-3 bg-surface-container-highest">
-                          <img className="w-full h-full object-cover opacity-40" alt="Free Fire" src={gameFreeFire} />
-                        </div>
-                       <div className="font-label-caps text-[10px] sm:text-xs text-on-surface-variant font-bold tracking-wider">COMING SOON</div>
-                     </motion.div>
-                  </div>
-               </motion.div>
+              <SupportedGames />
                {/* Player Feedbacks Marquee (Desktop View) */}
                {renderFeedbacksMarquee("hidden lg:block overflow-hidden pt-1 hardware-clip")}
              </div>
@@ -361,7 +319,7 @@ function Homepage({ onNavigate }) {
                               return gameIcon ? (
                                 <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
                               ) : (
-                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80"} />
+                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || DEFAULT_BANNER} />
                               )
                             })()}
                           </div>

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import Header from '../components/Header.jsx'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import VerificationBadge from '../components/VerificationBadge.jsx'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
 
 // --- Ranking Formula ---
 function computeRank(org) {
@@ -77,7 +78,7 @@ export default function ExploreOrganisers({ onNavigate }) {
             bio: u.experience || '',
             games: u.games || [],
             role: 'organiser',
-            banner: u.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80',
+            banner: u.banner || DEFAULT_BANNER,
             email: u.email,
             phone: u.phone,
             socialLinks: u.socialLinks,
@@ -193,7 +194,7 @@ export default function ExploreOrganisers({ onNavigate }) {
       phone: org.phone || '+91 99999 99999',
       experience: org.bio,
       avatar: org.avatar,
-      banner: org.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80',
+      banner: org.banner || DEFAULT_BANNER,
       tier: org.tier || 'Free',
       kycVerified: org.verified,
       socialLinks: org.socialLinks || JSON.stringify({ website: org.website || '', discord: org.discord || '', twitter: org.twitter || '' })
@@ -390,7 +391,7 @@ export default function ExploreOrganisers({ onNavigate }) {
 
                       {/* Card Banner */}
                       <div className="h-20 w-full relative overflow-hidden bg-surface-container-high border-b border-outline-variant/30">
-                        <img src={activeOrg.banner || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80"} className="w-full h-full object-cover" alt="Organizer Banner" />
+                        <img src={activeOrg.banner || DEFAULT_BANNER} className="w-full h-full object-cover" alt="Organizer Banner" />
                         <div className="absolute inset-0 bg-gradient-to-t from-surface-container-low via-transparent to-transparent opacity-90" />
                       </div>
 

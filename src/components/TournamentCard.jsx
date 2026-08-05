@@ -20,7 +20,9 @@ const formatINR = (val) => {
   return isNaN(n) ? val : `₹${n.toLocaleString('en-IN')}`
 }
 
-const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
+
+const FALLBACK_IMG = DEFAULT_BANNER
 
 const GAME_LOGOS = {
   bgmi: gameBgmi,

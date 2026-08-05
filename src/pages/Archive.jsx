@@ -6,12 +6,13 @@ import { useUser } from '../UserContext.jsx'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle.js'
 import VerificationBadge from '../components/VerificationBadge.jsx'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
 import gameBgmi from '../assets/supported_games/bgmi.png'
 import gameFreeFire from '../assets/supported_games/freefire.png'
 import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 
-const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+const FALLBACK_IMG = DEFAULT_BANNER
 
 const GAME_ICON_MAP = {
   bgmi: gameBgmi,

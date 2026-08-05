@@ -5,6 +5,7 @@ import Header from '../components/Header.jsx';
 import { hasOrganizerRights } from '../utils/iamRoles.js';
 import OrganizerDashboard from '../components/OrganizerDashboard.jsx';
 import SafeImage from '../components/SafeImage.jsx';
+import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js';
 import { useUser } from '../UserContext.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
 import VerificationBadge from '../components/VerificationBadge';
@@ -46,8 +47,8 @@ function OrganizationManagement({ onNavigate }) {
     phone: '',
     bio: '',
     tier: 'Free',
-    logo: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=300&q=80',
-    banner: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80',
+    logo: DEFAULT_AVATAR,
+    banner: DEFAULT_BANNER,
     website: '',
     discord: '',
     twitter: '',
@@ -101,8 +102,8 @@ function OrganizationManagement({ onNavigate }) {
       phone: currentUser.phone || '',
       bio: currentUser.orgBio || currentUser.experience || currentUser.bio || '',
       tier: currentUser.tier || 'Free',
-      logo: currentUser.orgImage || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=300&q=80',
-      banner: currentUser.orgBanner || currentUser.banner || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1600&q=80',
+      logo: currentUser.orgImage || DEFAULT_AVATAR,
+      banner: currentUser.orgBanner || currentUser.banner || DEFAULT_BANNER,
       website: parsedSocial.website || '',
       discord: parsedSocial.discord || '',
       twitter: parsedSocial.twitter || '',

@@ -9,6 +9,7 @@ import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import { sanitizeImageUrl } from '../utils/userStorage.js'
 import { formatDate } from '../utils/timeFormat'
+import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
 
 export default function OrgPage({ onNavigate }) {
   const { slug } = useParams()
@@ -447,8 +448,8 @@ export default function OrgPage({ onNavigate }) {
     )
   }
 
-  const displayBanner = editForm.banner || org.banner || ''
-  const displayAvatar = editForm.avatar || editForm.orgImage || org.avatar || org.orgImage || ''
+  const displayBanner = editForm.banner || org.banner || DEFAULT_BANNER
+  const displayAvatar = editForm.avatar || editForm.orgImage || org.avatar || org.orgImage || DEFAULT_AVATAR
 
   return (
     <>
@@ -486,15 +487,11 @@ export default function OrgPage({ onNavigate }) {
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
-                    </div>
+                    <img src={DEFAULT_BANNER} alt="" className="w-full h-full object-cover" />
                   )}
                 </>
               ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">image</span>
-                </div>
+                <img src={DEFAULT_BANNER} alt="" className="w-full h-full object-cover" />
               )}
               {isOwner && (
                 <div className="absolute inset-0 bg-black/0 hover:bg-black/30 flex items-center justify-center transition-all group">
@@ -529,15 +526,11 @@ export default function OrgPage({ onNavigate }) {
                             onError={() => setImgError(prev => ({ ...prev, avatar: true }))}
                           />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <span className="material-symbols-outlined text-3xl text-on-surface-variant/40">stadia_controller</span>
-                          </div>
+                          <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                         )}
                       </>
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-on-surface-variant/40">stadia_controller</span>
-                      </div>
+                      <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                     )}
                   </div>
                   {isOwner && (
