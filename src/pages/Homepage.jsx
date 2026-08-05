@@ -38,7 +38,6 @@ const GAME_ICON_MAP = {
 function Homepage({ onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isFeedbackPaused, setIsFeedbackPaused] = useState(false)
-  const [activeCardIndex, setActiveCardIndex] = useState(null)
   const { currentUser, signOut } = useUser()
   const [tournamentsList, setTournamentsList] = useState([])
   const [organisersList, setOrganisersList] = useState([])
@@ -114,19 +113,6 @@ function Homepage({ onNavigate }) {
     onNavigate && onNavigate('become-organizer')
   }
 
-  const handleFeedbackTap = (idx) => {
-    setIsFeedbackPaused(true)
-    setActiveCardIndex(idx)
-    if (pauseTimeoutRef.current) {
-      clearTimeout(pauseTimeoutRef.current)
-    }
-    pauseTimeoutRef.current = setTimeout(() => {
-      setIsFeedbackPaused(false)
-      setActiveCardIndex(null)
-      pauseTimeoutRef.current = null
-    }, 5000)
-  }
-
   // Filter lists based on real-time state machine transitions
   const liveMatches = useMemo(() => {
     return tournamentsList.filter(t => getTournamentLifecycleStatus(t, now) === 'live').slice(0, 10)
@@ -152,28 +138,30 @@ function Homepage({ onNavigate }) {
   }, [tournamentsList, now, getPopularityScore])
 
 
-  const renderFeedbacksMarquee = (containerClassName) => (
+  const renderFeedbacksMarquee = (containerClassName) => {
+    const testimonials = [
+      { id: 'USR-rohit-bgmi', name: 'Rohit', role: 'BGMI Squad Leader', text: 'We found our regular scrims squad through Match District. The registration flow is smooth and room credentials always arrive on time.', rating: '4.8' },
+      { id: 'USR-aman-valorant', name: 'Aman Kumar', role: 'Valorant Player', text: 'Clean UI, no hidden fees, and real prize pools. I have been playing here every weekend since the platform launched.', rating: '5.0' },
+      { id: 'USR-hemant-ff', name: 'Hemant Kumar', role: 'Free Fire Organizer', text: 'Running tournaments was a headache before this. Match District handles registrations, slots, and payments — I just focus on the game.', rating: '4.9' },
+      { id: 'USR-ravi-codm', name: 'Ravi Srivastava', role: 'COD Mobile Player', text: 'Finally a platform that actually pays out on time. Won ₹2,500 last month and it was in my account the same day.', rating: '5.0' },
+    ]
+
+    const handleTestimonialClick = (testimonial) => {
+      onNavigate && onNavigate('profile', { id: testimonial.id, name: testimonial.name, role: 'gamer' })
+    }
+
+    return (
     <div className={containerClassName}>
       <div className="relative w-full overflow-hidden py-1 hardware-clip">
         <div
           className="flex w-max animate-marquee gap-4 md:hover:[animation-play-state:paused]"
           style={{ animationPlayState: isFeedbackPaused ? 'paused' : undefined }}
         >
-          {[
-            { name: 'Alex "Viper" M.', role: 'Valorant Pro', text: 'Match District made finding and registering for scrims incredibly seamless. Best platform out against top teams!', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDv0OzxOfUaB2hXNkydMvdpH32DDlEKUu2Pq89__7Qiu1hDQmLZM4aJFJafuh6_tXDRx7vzxEOrZIuvMP2P6pUGiosCeAWuYgmllTAYTILpyJsA4x7xXqhu13_vzbSWkNr2YQKQURVO_nDKwVOMNTEEhQJSzFFjRavQjx-frgdFOzC2Fuh5UZmmprLmdGEYzBwp7EYc3U.9nxezA3uSIdCPJ7UF9FKK22phVmpeY3L5Q1FNLcMdKdRNVihao9JkQLQMnCQZe' },
-            { name: 'Sarah "Blade" K.', role: 'BGMI Challenger', text: 'The automated bracket updates and instant prize payouts are a game changer for our squad.', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCxEta33zD9aumAA6Tfb0yViR_NkghqyXH4gkbA84UG0oUfc_r-2K2DU0hbk3uIOjz-7KOu15nxTFBSwPJgJchDvbfCnHkTz2A9ScGUk01EvpBTlStc9yQECzv4go13-hrNjqtkbKAVUaexkErixmi9HEeHJjLydGIR1rqmgs3vsGv_896zUnS1VZ9csKEsebeWfYJxQqAG7gYc3U.9nxezA3uSIdCPJ7UF9FKK22phVmpeY3L5Q1FNLcMdKdRNVihao9JkQLQMnCQZe' },
-            { name: 'Marcus "NEXUS" T.', role: 'CS2 Team Captain', text: 'Flawless UI and zero lag during live tournament check-ins. Highly recommend to all organizers.', rating: '4.9', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCltRYtZXs0eQQftKxZWFJBxC2xlFdc31iqZEA9jk6XQrofgRuPyVnkDvGtIMHnaxR0yn_7Ye7w2_HalQDD-Wjbbxbq9CrNXdpFiwodqneUlHvHGA9yGUiGaQRlXXjeO0AICKCgmh_hncG9rbUrG2xA_ycy7mRFsN4mBHHRZKxK2MYoEaq6HC4HW07EYtZMdmPmYGFujQsin0AI4Vg6LdskpHk89NmzVdaHEbwPyUz3zkEzhNgRPxceYPuSAGRKHIjsyf64wDLrE8xR' },
-            { name: 'Elena "Valkyrie" R.', role: 'Free Fire Solo', text: 'Real rewards and super active community feed. I play tournaments here every single weekend!', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBxmOU8QDiR3jOTE6CQPLiPaY0eWAFqdNb3Z9AK0ww0J2fXzWhIicLx7wRJ_iG6GzwQ1Eq7GxLoNyZn-vTy21lhY_1KXBSN7xZP1_-TxoQJ1NTrqpYGbCasCcXx7A3whlCs7ejSrdhmnEPs4RsrIubh1zTah01sumg_jqROq3QjmLek2hpakTlIf2Amc14aEYoD0K35FweZh7nLeV-y4446xC4QuuzWfEYyr3Z27gQawtyIJnLADhr_0E9rbSK2zP0cQT8t5Re_YZdU' },
-            // Duplicated set for seamless infinite marquee loop
-            { name: 'Alex "Viper" M.', role: 'Valorant Pro', text: 'Match District made finding and registering for scrims incredibly seamless. Best platform out against top teams!', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuDv0OzxOfUaB2hXNkydMvdpH32DDlEKUu2Pq89__7Qiu1hDQmLZM4aJFJafuh6_tXDRx7vzxEOrZIuvMP2P6pUGiosCeAWuYgmllTAYTILpyJsA4x7xXqhu13_vzbSWkNr2YQKQURVO_nDKwVOMNTEEhQJSzFFjRavQjx-frgdFOzC2Fuh5UZmmprLmdGEYzBwp7EYc3U.9nxezA3uSIdCPJ7UF9FKK22phVmpeY3L5Q1FNLcMdKdRNVihao9JkQLQMnCQZe' },
-            { name: 'Sarah "Blade" K.', role: 'BGMI Challenger', text: 'The automated bracket updates and instant prize payouts are a game changer for our squad.', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCxEta33zD9aumAA6Tfb0yViR_NkghqyXH4gkbA84UG0oUfc_r-2K2DU0hbk3uIOjz-7KOu15nxTFBSwPJgJchDvbfCnHkTz2A9ScGUk01EvpBTlStc9yQECzv4go13-hrNjqtkbKAVUaexkErixmi9HEeHJjLydGIR1rqmgs3vsGv_896zUnS1VZ9csKEsebeWfYJxQqAG7gYc3U.9nxezA3uSIdCPJ7UF9FKK22phVmpeY3L5Q1FNLcMdKdRNVihao9JkQLQMnCQZe' },
-            { name: 'Marcus "NEXUS" T.', role: 'CS2 Team Captain', text: 'Flawless UI and zero lag during live tournament check-ins. Highly recommend to all organizers.', rating: '4.9', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCltRYtZXs0eQQftKxZWFJBxC2xlFdc31iqZEA9jk6XQrofgRuPyVnkDvGtIMHnaxR0yn_7Ye7w2_HalQDD-Wjbbxbq9CrNXdpFiwodqneUlHvHGA9yGUiGaQRlXXjeO0AICKCgmh_hncG9rbUrG2xA_ycy7mRFsN4mBHHRZKxK2MYoEaq6HC4HW07EYtZMdmPmYGFujQsin0AI4Vg6LdskpHk89NmzVdaHEbwPyUz3zkEzhNgRPxceYPuSAGRKHIjsyf64wDLrE8xR' },
-            { name: 'Elena "Valkyrie" R.', role: 'Free Fire Solo', text: 'Real rewards and super active community feed. I play tournaments here every single weekend!', rating: '5.0', img: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBxmOU8QDiR3jOTE6CQPLiPaY0eWAFqdNb3Z9AK0ww0J2fXzWhIicLx7wRJ_iG6GzwQ1Eq7GxLoNyZn-vTy21lhY_1KXBSN7xZP1_-TxoQJ1NTrqpYGbCasCcXx7A3whlCs7ejSrdhmnEPs4RsrIubh1zTah01sumg_jqROq3QjmLek2hpakTlIf2Amc14aEYoD0K35FweZh7nLeV-y4446xC4QuuzWfEYyr3Z27gQawtyIJnLADhr_0E9rbSK2zP0cQT8t5Re_YZdU' },
-          ].map((fb, idx) => (
+          {[...testimonials, ...testimonials].map((fb, idx) => (
             <div
               key={idx}
-              onClick={() => handleFeedbackTap(idx)}
-              className={`testimonial-card p-4 sm:p-5 rounded-2xl w-[280px] sm:w-[320px] flex-shrink-0 flex flex-col justify-between space-y-3 transition-all duration-300 cursor-pointer ${activeCardIndex === idx ? 'bg-primary/10' : 'bg-surface-container-low/60 hover:bg-surface-container-low/80'}`}
+              onClick={() => handleTestimonialClick(fb)}
+              className="testimonial-card p-4 sm:p-5 rounded-2xl w-[280px] sm:w-[320px] flex-shrink-0 flex flex-col justify-between space-y-3 transition-all duration-300 cursor-pointer bg-surface-container-low/60 hover:bg-surface-container-low/80"
             >
               <div className="space-y-2">
                 <div className="flex items-center gap-1 text-amber-400">
@@ -185,7 +173,7 @@ function Homepage({ onNavigate }) {
                 <p className="font-body-md text-xs sm:text-sm text-on-surface-variant italic leading-relaxed">"{fb.text}"</p>
               </div>
               <div className="flex items-center gap-3 pt-2 border-t border-outline-variant/20">
-                <img alt={fb.name} className="w-9 h-9 rounded-full object-cover border border-primary/30" src={fb.img} />
+                <img alt={fb.name} className="w-9 h-9 rounded-full object-cover border border-primary/30" src={DEFAULT_AVATAR} />
                 <div>
                   <h4 className="font-headline-md text-xs sm:text-sm text-white">{fb.name}</h4>
                   <p className="font-label-caps text-[10px] text-primary">{fb.role}</p>
@@ -196,7 +184,8 @@ function Homepage({ onNavigate }) {
         </div>
       </div>
     </div>
-  )
+    )
+  }
 
   return (
     <>

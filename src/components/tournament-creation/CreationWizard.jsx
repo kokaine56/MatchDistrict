@@ -40,7 +40,11 @@ function emptyForm() {
     mvp_amount: '',
     kill_reward_enabled: false,
     kill_reward_per_kill: '',
-    prize_positions: [],
+    prize_positions: [
+      { id: 'pos_1', name: '1st', percentage: '50' },
+      { id: 'pos_2', name: '2nd', percentage: '30' },
+      { id: 'pos_3', name: '3rd', percentage: '20' },
+    ],
     cover_image_url: '',
     registrationOpenDate: '',
     registrationCloseDate: '',
@@ -57,9 +61,10 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
   const errs = {}
   switch (step) {
     case 1:
-      if (!data.title || data.title.length < 5) errs.title = 'Title must be at least 5 characters.'
-      if (data.title && data.title.length > 100) errs.title = 'Title must be under 100 characters.'
+      if (!data.title || data.title.trim().length < 5) errs.title = 'Title must be at least 5 characters.'
+      if (data.title && data.title.length > 20) errs.title = 'Title must be under 20 characters.'
       if (!data.game) errs.game = 'Please select a game.'
+      if (data.description && data.description.length > 100) errs.description = 'Description must be under 100 characters.'
       break
     case 2:
       if (!data.match_type) errs.match_type = 'Please select a match type.'
@@ -207,6 +212,7 @@ export default function CreationWizard() {
   const [userTier, setUserTier] = useState(currentUser?.tier || 'Free')
   const [planLimits, setPlanLimits] = useState({})
   const [showRecovery, setShowRecovery] = useState(false)
+  const [showExitModal, setShowExitModal] = useState(false)
   const initialized = useRef(false)
 
   const orgName = currentUser?.orgName || 'Match District Organizer'
@@ -218,6 +224,14 @@ export default function CreationWizard() {
   const isLastStep = currentStep === totalSteps
   const [stepValidationBlocked, setStepValidationBlocked] = useState({})
   const isNavigationBlocked = stepValidationBlocked[currentStep] === true
+  const [recoveredStep, setRecoveredStep] = useState(1)
+  const [toast, setToast] = useState(null)
+  const [publishError, setPublishError] = useState(null)
+
+  const showToast = useCallback((message, type = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }, [])
 
   // Auth guard
   useEffect(() => {
@@ -515,14 +529,36 @@ export default function CreationWizard() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
-  const [recoveredStep, setRecoveredStep] = useState(1)
-  const [toast, setToast] = useState(null)
-  const [publishError, setPublishError] = useState(null)
+  const hasFormData = useMemo(() => {
+    return !!(formData.title || formData.game || formData.description || formData.cover_image_url || (formData.roadmap && formData.roadmap.length > 0))
+  }, [formData])
 
-  const showToast = useCallback((message, type = 'success') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }, [])
+  const handleWizardBack = useCallback(() => {
+    if (hasFormData) {
+      setShowExitModal(true)
+    } else {
+      navigate('/manage/tournaments')
+    }
+  }, [hasFormData, navigate])
+
+  const handleExitWithoutSaving = useCallback(() => {
+    setShowExitModal(false)
+    localStorage.removeItem(LS_KEY)
+    navigate('/manage/tournaments')
+  }, [navigate])
+
+  const handleSaveDraftAndExit = useCallback(async () => {
+    setShowExitModal(false)
+    const result = await saveToServer('DRAFT')
+    if (result?.error) {
+      showToast(result.message || 'Failed to save draft', 'error')
+    } else {
+      localStorage.removeItem(LS_KEY)
+      navigate('/manage/tournaments')
+    }
+  }, [saveToServer, showToast, navigate])
+
+
 
   const handleSaveDraft = useCallback(async () => {
     const result = await saveToServer('DRAFT')
@@ -589,7 +625,7 @@ export default function CreationWizard() {
           localStorage.setItem(LS_KEY, JSON.stringify(toSave))
         } catch {}
       }
-    }, 180)
+    }, 60)
   }, [isEditMode, currentStep])
 
   const stepComponent = useMemo(() => {
@@ -668,6 +704,60 @@ export default function CreationWizard() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showExitModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowExitModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-container rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-outline-variant/20"
+            >
+              <h3 className="text-lg font-bold text-on-background mb-2">Exit Tournament Creation?</h3>
+              <p className="text-sm text-on-surface-variant mb-6">You have unsaved changes. What would you like to do?</p>
+              <div className="flex flex-col gap-2.5">
+                <button
+                  onClick={handleSaveDraftAndExit}
+                  className="w-full py-3 rounded-xl bg-primary text-white text-sm font-bold shadow-[0_0_16px_rgba(99,102,241,0.3)] hover:bg-primary/90 transition-all"
+                >
+                  Save as Draft & Exit
+                </button>
+                <button
+                  onClick={handleExitWithoutSaving}
+                  className="w-full py-3 rounded-xl bg-white dark:bg-white/5 text-on-surface-variant text-sm font-semibold hover:bg-gray-100 dark:hover:bg-white/10 transition-all border border-outline-variant/30"
+                >
+                  Exit Without Saving
+                </button>
+                <button
+                  onClick={() => setShowExitModal(false)}
+                  className="w-full py-2.5 rounded-xl text-on-surface-variant/60 text-sm font-medium hover:text-on-surface-variant transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="max-w-4xl mx-auto px-4 pt-4 pb-2">
+        <button
+          onClick={handleWizardBack}
+          className="flex items-center gap-2 text-sm font-semibold text-on-surface-variant hover:text-primary transition-colors"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+          <span className="hidden sm:inline">Exit</span>
+        </button>
+      </div>
 
       <div className="max-w-4xl mx-auto px-4 py-6">
         <StepIndicator currentStep={currentStep} />

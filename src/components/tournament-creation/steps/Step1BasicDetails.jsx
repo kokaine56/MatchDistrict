@@ -20,6 +20,9 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
   }, [])
 
   const handleChange = useCallback((field, value) => {
+    if (field === 'description' && value.length > 100) {
+      value = value.slice(0, 100)
+    }
     onChange({ ...data, [field]: value })
   }, [data, onChange])
 
@@ -34,12 +37,12 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
     const g = data.game
 
     const presets = [
-      `Welcome to ${t}! Get ready for intense, high-stakes ${g} action hosted by ${organizer}. Prove your skills, dominate the lobby, and claim your victory. Read the rules carefully and prepare for the ultimate battle!`,
-      `${t} is here! ${organizer} brings you a premium ${g} tournament with fierce competition and glory on the line. Secure your slot, rally your squad, and show everyone what you're made of. Winners take it all.`,
-      `🏆 ${t} — ${g} tournament by ${organizer}. Compete against the best teams, fight for the top spot, and walk away with bragging rights. Limited slots available. Register now and lock in your squad!`,
-      `The battleground awaits in ${t}. ${organizer} invites all ${g} players to prove their mettle in a no-holds-barred tournament. Teamwork, strategy, and raw skill — only the strongest will survive.`,
-      `Drop in, gear up, and outplay the rest. ${t} is a competitive ${g} tournament hosted by ${organizer} featuring stacked lobbies, fair play, and a shot at glory. Don't miss your chance to compete.`,
-      `${organizer} presents ${t} — a ${g} showdown where legends are made. Bring your A-game, follow the rules, and compete for supremacy. Slots fill fast, so grab yours today!`
+      `Welcome to ${t}! Intense ${g} action by ${organizer}. Prove your skills and claim victory.`,
+      `${t} is here! ${organizer} brings you premium ${g} competition. Rally your squad and compete!`,
+      `${t} — ${g} tournament by ${organizer}. Fight for the top spot. Limited slots, register now!`,
+      `The battleground awaits in ${t}. ${organizer} invites all ${g} players to compete.`,
+      `${t} — a competitive ${g} tournament with fair play and stacked lobbies. Don't miss out!`,
+      `${organizer} presents ${t} — a ${g} showdown. Bring your A-game. Slots fill fast!`
     ]
 
     const picked = presets[Math.floor(Math.random() * presets.length)]
@@ -69,14 +72,14 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
           value={data.title || ''}
           onChange={(v) => handleChange('title', v)}
           placeholder="e.g. BGMI Weekend Scrims"
-          maxLength={100}
+          maxLength={20}
           className={`w-full px-4 py-3 rounded-xl bg-surface-container border ${
             errors?.title ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
           } text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors`}
         />
         <div className="flex justify-between mt-1">
           {errors?.title && <span className="text-xs text-error">{errors.title}</span>}
-          <span className="text-xs text-on-surface-variant ml-auto">{data.title?.length || 0}/100</span>
+          <span className="text-xs text-on-surface-variant ml-auto">{data.title?.length || 0}/20</span>
         </div>
       </div>
 
@@ -91,7 +94,7 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <label className="block text-sm font-medium text-on-surface-variant">
-            Description <span className="text-on-surface-variant/50">(optional)</span>
+            Description <span className="text-on-surface-variant/50">(optional, max 100 chars)</span>
           </label>
           <button
             type="button"
@@ -111,9 +114,14 @@ export default function Step1BasicDetails({ data, onChange, errors, orgName }) {
           value={data.description || ''}
           onChange={(v) => handleChange('description', v)}
           placeholder="Rules, tournament info, notes, special instructions..."
-          rows={5}
+          maxLength={100}
+          rows={3}
           className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors resize-none"
         />
+        <div className="flex justify-between mt-1">
+          {errors?.description && <span className="text-xs text-error">{errors.description}</span>}
+          <span className="text-xs text-on-surface-variant ml-auto">{data.description?.length || 0}/100</span>
+        </div>
       </div>
     </motion.div>
   )

@@ -79,7 +79,7 @@ export default function PrizeAllocationEngine({ data, platformFeePct = 0, organi
                 type="range"
                 min="0"
                 max="5"
-                step="0.5"
+                step="1"
                 value={organizerFeePct}
                 onChange={(e) => onOrganizerFeeChange && onOrganizerFeeChange(e.target.value)}
                 className="w-24 h-1.5 accent-primary"
@@ -88,10 +88,10 @@ export default function PrizeAllocationEngine({ data, platformFeePct = 0, organi
                 type="number"
                 min="0"
                 max="5"
-                step="0.5"
+                step="1"
                 value={organizerFeePct}
                 onChange={(e) => {
-                  const clamped = Math.min(parseFloat(e.target.value) || 0, 5)
+                  const clamped = Math.min(parseInt(e.target.value) || 0, 5)
                   onOrganizerFeeChange && onOrganizerFeeChange(String(clamped))
                 }}
                 className="w-14 px-1.5 py-0.5 rounded bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-xs text-on-background text-center focus:outline-none focus:border-primary/40"

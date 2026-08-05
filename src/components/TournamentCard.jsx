@@ -11,6 +11,7 @@ import {
   getStatusBadgeConfig,
   getCTAButtonConfig
 } from '../utils/tournamentLifecycle'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
 
 const MATCH_LABELS = { solo: 'Solo', duo: 'Duo', squad: 'Squad' }
 const PERSPECTIVE_LABELS = { tpp: 'TPP', fpp: 'FPP' }
@@ -19,8 +20,6 @@ const formatINR = (val) => {
   const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
   return isNaN(n) ? val : `₹${n.toLocaleString('en-IN')}`
 }
-
-import { DEFAULT_BANNER } from '../utils/defaults.js'
 
 const FALLBACK_IMG = DEFAULT_BANNER
 

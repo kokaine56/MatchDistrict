@@ -99,6 +99,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           type="number"
           min={0}
           max={parseInt(data.slotsTotal) || 0}
+          instant
           value={data.reserved_slots || ''}
           onChange={handleReservedChange}
           placeholder="e.g. 10"
