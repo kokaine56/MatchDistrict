@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 import { formatDate } from '../utils/timeFormat'
+import { DEFAULT_AVATAR } from '../utils/defaults.js'
 
 export default function AdminOrganizers() {
   const navigate = useNavigate()
@@ -129,7 +130,7 @@ export default function AdminOrganizers() {
                   {org.avatar ? (
                     <img src={org.avatar} alt="" className="w-full h-full object-cover" />
                   ) : (
-                    <span className="material-symbols-outlined text-sm text-primary">person</span>
+                    <img src={DEFAULT_AVATAR} alt="" className="w-full h-full object-cover" />
                   )}
                 </div>
 

@@ -3609,7 +3609,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       {uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar) ? (
                         <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="avatar-img" />
                       ) : (
-                        <span className="material-symbols-outlined text-on-surface-variant text-2xl">account_circle</span>
+                        <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img" />
                       )}
                       {activeUploadField === 'avatar' && profileUploadProgress !== null && (
                         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 rounded-full">
@@ -3635,7 +3635,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       {uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner) ? (
                         <img src={uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner)} alt="Banner" className="w-full h-full object-cover" />
                       ) : (
-                        <span className="material-symbols-outlined text-on-surface-variant text-2xl">image</span>
+                        <img src={DEFAULT_BANNER} alt="Default Banner" className="w-full h-full object-cover" />
                       )}
                       {activeUploadField === 'banner' && profileUploadProgress !== null && (
                         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75">
@@ -3720,7 +3720,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       {uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo) ? (
                             <img src={uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo)} alt="Logo Preview" className="avatar-img" />
                       ) : (
-                        <span className="material-symbols-outlined text-on-surface-variant text-2xl">business</span>
+                        <img src={DEFAULT_AVATAR} alt="Default Logo" className="avatar-img" />
                       )}
                       {activeUploadField === 'orgLogo' && profileUploadProgress !== null && (
                         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75">
@@ -3755,7 +3755,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       {uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner) ? (
                         <img src={uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner)} alt="Banner Preview" className="w-full h-full object-cover" />
                       ) : (
-                        <span className="material-symbols-outlined text-on-surface-variant text-2xl">image</span>
+                        <img src={DEFAULT_BANNER} alt="Default Banner" className="w-full h-full object-cover" />
                       )}
                       {activeUploadField === 'orgBanner' && profileUploadProgress !== null && (
                         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 px-2 text-center">

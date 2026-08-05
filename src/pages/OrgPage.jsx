@@ -687,9 +687,7 @@ export default function OrgPage({ onNavigate }) {
                         onError={() => setImgError(prev => ({ ...prev, modalBanner: true }))}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-on-surface-variant/30">image</span>
-                      </div>
+                      <img src={DEFAULT_BANNER} alt="" className="w-full h-full object-cover" />
                     )}
                     <label className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/30 cursor-pointer transition-all">
                       <div className="opacity-0 hover:opacity-100 w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20">
@@ -712,9 +710,7 @@ export default function OrgPage({ onNavigate }) {
                           onError={() => setImgError(prev => ({ ...prev, modalLogo: true }))}
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">stadia_controller</span>
-                        </div>
+                        <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                       )}
                     </div>
                     <label className="cursor-pointer px-3 py-2 border border-outline-variant/40 hover:bg-surface-variant text-on-background text-xs font-semibold rounded-xl transition-all">

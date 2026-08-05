@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken'
+import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 
@@ -186,9 +187,7 @@ export default function AdminProfile() {
                 className="w-full h-full object-cover"
               />
             ) : (
-              <div className="w-full h-full bg-gradient-to-r from-primary/10 to-primary/5 flex items-center justify-center">
-                <span className="material-symbols-outlined text-4xl text-primary/20">panorama</span>
-              </div>
+              <img src={DEFAULT_BANNER} alt="Default Banner" className="w-full h-full object-cover" />
             )}
           </div>
           <button
@@ -223,9 +222,7 @@ export default function AdminProfile() {
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <div className="w-full h-full flex items-center justify-center bg-primary/10">
-                  <span className="material-symbols-outlined text-3xl text-primary/30">person</span>
-                </div>
+                <img src={DEFAULT_AVATAR} alt="Default Avatar" className="w-full h-full object-cover" />
               )}
             </div>
             <button

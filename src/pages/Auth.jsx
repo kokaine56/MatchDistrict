@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import SafeImage from '../components/SafeImage.jsx'
+import { DEFAULT_AVATAR } from '../utils/defaults.js'
 import { useTheme } from '../ThemeContext.jsx'
 import Header from '../components/Header.jsx'
 import { supabase } from '../utils/supabaseClient'
@@ -723,10 +724,13 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         
         // Auto-request OTP code immediately on registration submit
         try {
-          const { expiry } = await sendOtp(regForm.email)
+          const { expiry, emailSent } = await sendOtp(regForm.email)
           setOtpExpiry(expiry)
           setOtpSent(true)
           startCooldown(180)
+          if (emailSent === false) {
+            triggerToast('Verification code could not be delivered by email. Please check your connection.')
+          }
         } catch (otpErr) {
           if (otpErr.error === 'TOO_MANY_REQUESTS' && otpErr.secondsLeft) {
             startCooldown(otpErr.secondsLeft)
@@ -753,11 +757,14 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setLoadingMessage('Sending the code...')
     setIsLoading(true)
     try {
-      const { expiry } = await sendOtp(regForm.email)
+      const { expiry, emailSent } = await sendOtp(regForm.email)
       setOtpExpiry(expiry)
       setOtpDigits(['', '', '', '', '', ''])
       setOtpSent(true)
       startCooldown(180)
+      if (emailSent === false) {
+        triggerToast('Verification code could not be delivered by email. Please check your connection.')
+      }
     } catch (err) {
       if (err.error === 'TOO_MANY_REQUESTS' && err.secondsLeft) {
         startCooldown(err.secondsLeft)
@@ -839,10 +846,13 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setLoadingMessage('Sending the code...')
     setIsLoading(true)
     try {
-      const { expiry } = await sendOtp(targetEmail)
+      const { expiry, emailSent } = await sendOtp(targetEmail)
       setOtpExpiry(expiry)
       setOtpDigits(['', '', '', '', '', ''])
       startCooldown(180)
+      if (emailSent === false) {
+        triggerToast('Verification code could not be delivered by email. Please check your connection.')
+      }
     } catch (err) {
       if (err.error === 'TOO_MANY_REQUESTS' && err.secondsLeft) {
         startCooldown(err.secondsLeft)
@@ -1442,7 +1452,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         {currentUser?.orgImage || currentUser?.avatar ? (
                           <img src={currentUser.orgImage || currentUser.avatar} alt="" className="avatar-img" />
                         ) : (
-                          <span className="material-symbols-outlined text-primary text-2xl">person</span>
+                          <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -1501,7 +1511,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                             {account.avatar ? (
                               <img src={account.avatar} alt="" className="avatar-img" />
                             ) : (
-                              <span className="material-symbols-outlined text-primary text-2xl">person</span>
+                              <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">

@@ -337,7 +337,7 @@ export default function ExploreOrganisers({ onNavigate }) {
                         <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 border border-outline-variant bg-surface-container-high transition-transform duration-300 group-hover:scale-105">
                           {org.orgImage || org.avatar
                             ? <img src={org.orgImage || org.avatar} alt={org.orgName || org.name} className="avatar-img" />
-                            : <div className="w-full h-full flex items-center justify-center"><span className="material-symbols-outlined text-on-surface-variant text-base">business</span></div>}
+                            : <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />}
                         </div>
 
                         {/* Identity */}
@@ -401,7 +401,7 @@ export default function ExploreOrganisers({ onNavigate }) {
                           <div className="w-14 h-14 rounded-xl overflow-hidden border-2 border-surface-container-low bg-surface-container bg-surface-container-highest shadow-md shrink-0">
                             {activeOrg.orgImage || activeOrg.avatar
                               ? <img src={activeOrg.orgImage || activeOrg.avatar} alt={activeOrg.orgName || activeOrg.name} className="avatar-img" />
-                              : <div className="w-full h-full flex items-center justify-center bg-surface-container"><span className="material-symbols-outlined text-on-surface-variant text-xl">business</span></div>}
+                              : <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />}
                           </div>
                           <div className="min-w-0 flex-1">
                             <h3 className="text-on-background font-bold text-sm sm:text-base truncate flex items-center gap-1.5 leading-none mb-1">

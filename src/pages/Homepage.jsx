@@ -10,7 +10,7 @@ import TournamentCard from '../components/TournamentCard'
 import SponsoredStar from '../components/SponsoredStar'
 import VerificationBadge from '../components/VerificationBadge'
 import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
-import { DEFAULT_BANNER } from '../utils/defaults.js'
+import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
@@ -410,7 +410,7 @@ function Homepage({ onNavigate }) {
                               {org.orgImage || org.avatar ? (
                                 <img alt={org.orgName || org.name} className="avatar-img group-hover:scale-105 transition-transform duration-300" src={org.orgImage || org.avatar} />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center bg-surface-container"><span className="material-symbols-outlined text-on-surface-variant text-base">business</span></div>
+                                <img alt="" className="avatar-img group-hover:scale-105 transition-transform duration-300" src={DEFAULT_AVATAR} />
                               )}
                             </div>
                             <h3 className="font-headline-md text-xs sm:text-sm text-on-background font-bold tracking-tight group-hover:text-primary transition-colors text-center truncate flex items-center justify-center gap-1">
