@@ -422,7 +422,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       }
     }
     
-    return { otp, expiry }
+    return { otp, expiry, emailSent: data.emailSent !== false }
   }
 
   // --- Real-time Validation Rules & Helper ---

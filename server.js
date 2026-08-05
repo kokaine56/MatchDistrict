@@ -150,7 +150,36 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.s
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 // Initialize Resend
+if (!RESEND_API_KEY) {
+  console.warn('⚠️ [RESEND] RESEND_API_KEY is not set. Email sending will be disabled.');
+}
 const resend = new Resend(RESEND_API_KEY);
+
+// Helper: send email via Resend with consistent error handling
+async function sendEmail({ to, subject, html }) {
+  if (!RESEND_API_KEY) {
+    console.warn(`⚠️ [EMAIL] Skipping send to ${to} — RESEND_API_KEY is not configured.`);
+    return { success: false, error: 'Email service not configured' };
+  }
+  try {
+    const recipients = Array.isArray(to) ? to : [to];
+    const { data, error } = await resend.emails.send({
+      from: RESEND_FROM_EMAIL,
+      to: recipients,
+      subject,
+      html,
+    });
+    if (error) {
+      console.error(`❌ [RESEND] Failed to send email to ${recipients.join(', ')}:`, error.message || JSON.stringify(error));
+      return { success: false, error: error.message || 'Resend API error' };
+    }
+    console.log(`✅ [RESEND] Email sent to: ${recipients.join(', ')}`);
+    return { success: true };
+  } catch (err) {
+    console.error(`❌ [RESEND EXCEPTION] Failed to send email to ${to}:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
 
 // Initialize Supabase Client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1157,12 +1186,10 @@ async function notifyFollowersOfTournament(t) {
 
       // 2. Send email via Resend
       if (follower.email) {
-        try {
-          await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: [follower.email],
-            subject: `New Tournament by ${orgName}: ${t.title}`,
-            html: `
+        await sendEmail({
+          to: follower.email,
+          subject: `New Tournament by ${orgName}: ${t.title}`,
+          html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 5px;">
                 <h2 style="color: #333;">New Tournament Hosted!</h2>
                 <p>Hello ${follower.name || 'Gamer'},</p>
@@ -1178,10 +1205,7 @@ async function notifyFollowersOfTournament(t) {
                 <p style="font-size: 12px; color: #888;">You are receiving this email because you follow ${orgName} on Match District.</p>
               </div>
             `
-          });
-        } catch (emailErr) {
-          console.warn(`⚠️ [NOTIFICATION SERVICE] Failed to send email to ${follower.email}:`, emailErr.message);
-        }
+        });
       }
     }
   } catch (err) {
@@ -1345,12 +1369,10 @@ const server = http.createServer(async (req, res) => {
         );
 
         // Send email via Resend
-        try {
-          const { data, error } = await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: [email],
-            subject: 'Your Match District Verification Code',
-            html: `
+        const emailResult = await sendEmail({
+          to: email,
+          subject: 'Your Match District Verification Code',
+          html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 5px;">
                 <h2 style="color: #333; text-align: center;">Verify Your Email</h2>
                 <p>Hello,</p>
@@ -1364,19 +1386,11 @@ const server = http.createServer(async (req, res) => {
                 <p style="font-size: 12px; color: #888; text-align: center;">&copy; 2026 Match District. All rights reserved.</p>
               </div>
             `
-          });
-
-          if (error) {
-            console.error('❌ [RESEND ERROR]', error);
-          } else {
-            console.log('✅ [RESEND SUCCESS] OTP email sent to:', email);
-          }
-        } catch (resendErr) {
-          console.error('❌ [RESEND EXCEPTION]', resendErr.message);
-        }
+        });
+        const emailSent = emailResult.success;
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true }));
+        res.end(JSON.stringify({ success: true, emailSent }));
       } catch (err) {
         const isSchemaError = err.message && err.message.includes('does not exist');
         const message = isSchemaError
@@ -1836,12 +1850,10 @@ const server = http.createServer(async (req, res) => {
 
         // Send reset email via Resend
         const resetLink = `http://${req.headers.host}/reset-password?token=${token}`;
-        try {
-          await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: [email],
-            subject: 'Reset Your Match District Password',
-            html: `
+        await sendEmail({
+          to: email,
+          subject: 'Reset Your Match District Password',
+          html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 5px;">
                 <h2 style="color: #333; text-align: center;">Reset Your Password</h2>
                 <p>Hello,</p>
@@ -1855,11 +1867,7 @@ const server = http.createServer(async (req, res) => {
                 <p style="font-size: 12px; color: #888; text-align: center;">&copy; 2026 Match District. All rights reserved.</p>
               </div>
             `
-          });
-          console.log(`✉️ [PASSWORD RESET] Link sent to: ${email}`);
-        } catch (resendErr) {
-          console.error('❌ [RESEND EXCEPTION]', resendErr.message);
-        }
+        });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Password reset link sent.' }));
@@ -4943,17 +4951,15 @@ const server = http.createServer(async (req, res) => {
 
           // Email notification on rejection (if payment was involved)
           if (currentReg.payment_id) {
-            try {
-              const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-              if (userRes.rows.length > 0 && userRes.rows[0].email) {
-                const userEmail = userRes.rows[0].email;
-                const userName = userRes.rows[0].name || currentReg.captain;
-                const rejectMsg = rejectionReason || 'Payment verification failed';
-                await resend.emails.send({
-                  from: RESEND_FROM_EMAIL,
-                  to: [userEmail],
-                  subject: `Registration Rejected — ${t.title || 'Tournament'}`,
-                  html: `
+            const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
+            if (userRes.rows.length > 0 && userRes.rows[0].email) {
+              const userEmail = userRes.rows[0].email;
+              const userName = userRes.rows[0].name || currentReg.captain;
+              const rejectMsg = rejectionReason || 'Payment verification failed';
+              await sendEmail({
+                to: userEmail,
+                subject: `Registration Rejected — ${t.title || 'Tournament'}`,
+                html: `
                     <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
                       <h2 style="color:#dc2626;margin:0 0 16px 0;">Registration Status Update</h2>
                       <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
@@ -4969,11 +4975,7 @@ const server = http.createServer(async (req, res) => {
                       <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
                     </div>
                   `
-                });
-                console.log('✅ [EMAIL] Rejection notification sent to', userEmail);
-              }
-            } catch (emailErr) {
-              console.error('❌ [EMAIL] Failed to send rejection email:', emailErr.message);
+              });
             }
           }
         } else {
@@ -5032,16 +5034,14 @@ const server = http.createServer(async (req, res) => {
 
           // Email notification on approval (if payment was involved)
           if (currentReg.payment_id) {
-            try {
-              const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-              if (userRes.rows.length > 0 && userRes.rows[0].email) {
-                const userEmail = userRes.rows[0].email;
-                const userName = userRes.rows[0].name || currentReg.captain;
-                await resend.emails.send({
-                  from: RESEND_FROM_EMAIL,
-                  to: [userEmail],
-                  subject: `Registration Confirmed ✅ — ${t.title || 'Tournament'}`,
-                  html: `
+            const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
+            if (userRes.rows.length > 0 && userRes.rows[0].email) {
+              const userEmail = userRes.rows[0].email;
+              const userName = userRes.rows[0].name || currentReg.captain;
+              await sendEmail({
+                to: userEmail,
+                subject: `Registration Confirmed ✅ — ${t.title || 'Tournament'}`,
+                html: `
                     <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
                       <h2 style="color:#16a34a;margin:0 0 16px 0;">Registration Confirmed!</h2>
                       <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
@@ -5056,11 +5056,7 @@ const server = http.createServer(async (req, res) => {
                       <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
                     </div>
                   `
-                });
-                console.log('✅ [EMAIL] Approval notification sent to', userEmail);
-              }
-            } catch (emailErr) {
-              console.error('❌ [EMAIL] Failed to send approval email:', emailErr.message);
+              });
             }
           }
         }
@@ -7949,16 +7945,14 @@ const server = http.createServer(async (req, res) => {
         } catch (alertErr) { /* non-critical */ }
 
         // 6. Email notification (same as admin panel)
-        try {
-          const uRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-          if (uRes.rows.length > 0 && uRes.rows[0].email) {
-            const userEmail = uRes.rows[0].email;
-            const userName = uRes.rows[0].name || currentReg.captain;
-            await resend.emails.send({
-              from: RESEND_FROM_EMAIL,
-              to: [userEmail],
-              subject: `Registration Confirmed ✅ — ${tourneyTitle}`,
-              html: `
+        const uRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
+        if (uRes.rows.length > 0 && uRes.rows[0].email) {
+          const userEmail = uRes.rows[0].email;
+          const userName = uRes.rows[0].name || currentReg.captain;
+          await sendEmail({
+            to: userEmail,
+            subject: `Registration Confirmed ✅ — ${tourneyTitle}`,
+            html: `
                 <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
                   <h2 style="color:#16a34a;margin:0 0 16px 0;">Registration Confirmed!</h2>
                   <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
@@ -7974,11 +7968,7 @@ const server = http.createServer(async (req, res) => {
                   <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
                 </div>
               `
-            });
-            console.log('✅ [VERIFIER] Confirmation email sent to', userEmail);
-          }
-        } catch (emailErr) {
-          console.error('❌ [VERIFIER] Failed to send confirmation email:', emailErr.message);
+          });
         }
 
         // 7. Audit log (same as admin panel)
@@ -11869,16 +11859,11 @@ function startAutomationProcessor() {
                 [tournamentId]
               );
               for (const reg of regs.rows) {
-                try {
-                  if (resend) {
-                    await resend.emails.send({
-                      from: 'Match District <notifications@matchdistrict.in>',
-                      to: reg.email,
-                      subject: `Reminder: ${tTitle} starts soon!`,
-                      html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
-                    });
-                  }
-                } catch (_) { }
+                await sendEmail({
+                  to: reg.email,
+                  subject: `Reminder: ${tTitle} starts soon!`,
+                  html: `<p>Your tournament <strong>${tTitle}</strong> is starting soon. Please check in and join the lobby.</p>`,
+                });
               }
             }
           } else if (rule.trigger_event === 'auto_notification') {
