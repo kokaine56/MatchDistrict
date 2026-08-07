@@ -54,6 +54,7 @@ function emptyForm() {
     rules: '',
     max_slots_per_room: '',
     unique_amount_suffix_enabled: false,
+    card_color: 'white',
   }
 }
 
@@ -331,6 +332,7 @@ export default function CreationWizard() {
           rules: t.rules || '',
           max_slots_per_room: t.max_slots_per_room ? String(t.max_slots_per_room) : '',
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
+          card_color: t.card_color || 'white',
         })
         setDraftId(id)
       }
@@ -425,6 +427,7 @@ export default function CreationWizard() {
         rules: formData.rules || '',
         max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
         unique_amount_suffix_enabled: formData.unique_amount_suffix_enabled || false,
+        card_color: formData.card_color || 'white',
       }
 
       // Use pre-uploaded Cloudinary URL from Step9Publish if provided

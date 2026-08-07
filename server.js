@@ -477,6 +477,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS card_color VARCHAR(50) DEFAULT 'white';
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
@@ -3191,10 +3192,10 @@ const server = http.createServer(async (req, res) => {
               match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
               prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url,
               lobby_start_time, mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions,
-              sponsors_enabled, max_slots_per_room
+              sponsors_enabled, max_slots_per_room, card_color
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
               $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54)
+              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
             RETURNING *`,
             [
               tournamentId, t.title, t.game, 'live', 'bg-primary', 'LIVE', now.toISOString(),
@@ -3211,7 +3212,8 @@ const server = http.createServer(async (req, res) => {
               t.description || '', t.cover_image_url || '', t.lobby_start_time || '',
               t.mvp_enabled || false, t.mvp_amount ? parseInt(t.mvp_amount) : 0,
               t.kill_reward_enabled || false, t.kill_reward_per_kill ? parseInt(t.kill_reward_per_kill) : 0,
-              t.prize_positions || '[]', t.sponsors_enabled || false, maxSlotsPerRoom
+              t.prize_positions || '[]', t.sponsors_enabled || false, maxSlotsPerRoom,
+              t.card_color || 'white'
             ]
           );
           const createdTournament = dbRes.rows[0];
@@ -3316,9 +3318,9 @@ const server = http.createServer(async (req, res) => {
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
             mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room,
-            unique_amount_suffix_enabled
+            unique_amount_suffix_enabled, card_color
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -3337,7 +3339,8 @@ const server = http.createServer(async (req, res) => {
             entry_fee_amount = COALESCE(EXCLUDED.entry_fee_amount, tournaments.entry_fee_amount),
             description = COALESCE(EXCLUDED.description, tournaments.description),
             max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room),
-            unique_amount_suffix_enabled = COALESCE(EXCLUDED.unique_amount_suffix_enabled, tournaments.unique_amount_suffix_enabled)
+            unique_amount_suffix_enabled = COALESCE(EXCLUDED.unique_amount_suffix_enabled, tournaments.unique_amount_suffix_enabled),
+            card_color = COALESCE(EXCLUDED.card_color, tournaments.card_color)
           RETURNING *`,
           [
             t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -3394,7 +3397,8 @@ const server = http.createServer(async (req, res) => {
             t.prize_positions || '[]',
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : false,
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
-            t.unique_amount_suffix_enabled || false
+            t.unique_amount_suffix_enabled || false,
+            t.card_color || 'white'
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${t.id}" created in Supabase PostgreSQL.\n`);
@@ -3517,8 +3521,9 @@ const server = http.createServer(async (req, res) => {
               prize_positions = COALESCE($46, prize_positions),
               sponsors_enabled = COALESCE($47, sponsors_enabled),
               max_slots_per_room = COALESCE($48, max_slots_per_room),
-              unique_amount_suffix_enabled = COALESCE($49, unique_amount_suffix_enabled)
-            WHERE id = $50 RETURNING *`,
+              unique_amount_suffix_enabled = COALESCE($49, unique_amount_suffix_enabled),
+              card_color = COALESCE($50, card_color)
+            WHERE id = $51 RETURNING *`,
             [
               t.title || null,
               t.game || null,
@@ -3746,8 +3751,9 @@ const server = http.createServer(async (req, res) => {
             prize_positions = COALESCE($50, prize_positions),
             sponsors_enabled = COALESCE($51, sponsors_enabled),
             max_slots_per_room = COALESCE($52, max_slots_per_room),
-            unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled)
-           WHERE id = $54 RETURNING *`,
+            unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled),
+            card_color = COALESCE($54, card_color)
+           WHERE id = $55 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
             t.game !== undefined ? t.game : null,
@@ -3802,6 +3808,7 @@ const server = http.createServer(async (req, res) => {
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
             t.unique_amount_suffix_enabled || false,
+            t.card_color || null,
             id
           ]
         );

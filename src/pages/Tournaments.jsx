@@ -283,6 +283,7 @@ function Tournaments({ onNavigate }) {
                         startDate={t.startDate}
                         hasSponsors={t.hasApprovedSponsors}
                         sponsoredAmount={t.totalSponsorContributions}
+                        cardColor={t.card_color || 'white'}
                       />
                     </div>
                   ))}
@@ -476,7 +477,7 @@ function Tournaments({ onNavigate }) {
                               : 'bg-surface-container-low/60 border border-outline-variant/15 text-on-surface-variant/70 hover:bg-surface-container hover:text-white'
                           }`}
                         >
-                    {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
+                          {s === 'Registrations Open' ? 'Open' : s === 'Registration Closed' ? 'Closed' : s}
                         </button>
                       ))}
                     </div>
@@ -661,6 +662,7 @@ function Tournaments({ onNavigate }) {
                             startDate={t.startDate}
                             hasSponsors={t.hasApprovedSponsors}
                             sponsoredAmount={t.totalSponsorContributions}
+                            cardColor={t.card_color || 'white'}
                           />
                         </div>
                       ))}
@@ -670,7 +672,6 @@ function Tournaments({ onNavigate }) {
               )
             ) : (
               <motion.div
-                initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 className="bg-surface-container-low/40 p-10 sm:p-12 rounded-2xl text-center space-y-4 max-w-sm mx-auto"
               >

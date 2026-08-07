@@ -171,9 +171,7 @@ function Homepage({ onNavigate }) {
                   <span className="font-body-sm text-xs text-on-surface-variant ml-1">{fb.rating}</span>
                 </div>
                 <p className="font-body-md text-xs sm:text-sm text-on-surface-variant italic leading-relaxed">"{fb.text}"</p>
-              </div>
-              <div className="flex items-center gap-3 pt-2 border-t border-outline-variant/20">
-                <img alt={fb.name} className="w-9 h-9 rounded-full object-cover border border-primary/30" src={DEFAULT_AVATAR} />
+                              <img alt={fb.name} className="w-9 h-9 rounded-full object-cover border border-primary/30" src={DEFAULT_AVATAR} />
                 <div>
                   <h4 className="font-headline-md text-xs sm:text-sm text-white">{fb.name}</h4>
                   <p className="font-label-caps text-[10px] text-primary">{fb.role}</p>
@@ -240,6 +238,7 @@ function Homepage({ onNavigate }) {
                                 orgTier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'}
                                 onNavigate={onNavigate} hasSponsors={t.hasApprovedSponsors || false}
                                 registrationOpenDate={t.registrationOpenDate} registrationCloseDate={t.registrationCloseDate} startDate={t.startDate}
+                                cardColor={t.card_color || 'white'}
                               />
                             </div>
                           ))}
@@ -249,15 +248,13 @@ function Homepage({ onNavigate }) {
                   )}
                 </div>
               </motion.div>
+
               {/* Supported Games Grid */}
               <SupportedGames />
-               {/* Player Feedbacks Marquee (Desktop View) */}
-               {renderFeedbacksMarquee("hidden lg:block overflow-hidden pt-1 hardware-clip")}
-             </div>
-          </div>
-          {/* Right 4 Columns (Sidebar) */}
-          <div className="col-span-12 lg:col-span-4 flex flex-col justify-between space-y-6 sm:space-y-8 md:space-y-10">
-            <div className="space-y-6 sm:space-y-8 md:space-y-10">
+
+              {/* Player Feedbacks Marquee (Desktop View) */}
+              {renderFeedbacksMarquee("hidden lg:block overflow-hidden pt-1 hardware-clip")}
+
               {/* Live Matches */}
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
@@ -278,7 +275,7 @@ function Homepage({ onNavigate }) {
                   </button>
                 </div>
                 {liveMatches.length === 0 ? (
-                    <div className="glass-card p-6 sm:p-8 text-center rounded-2xl space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
+                  <div className="glass-card p-6 sm:p-8 text-center rounded-2xl space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
                     <span className="material-symbols-outlined text-3xl text-on-surface-variant animate-pulse" data-icon="sensors">sensors</span>
                     <h3 className="font-headline-md text-sm sm:text-base text-on-background font-bold">No Live Matches Currently in Progress</h3>
                     <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">

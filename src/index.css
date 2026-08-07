@@ -18,6 +18,128 @@ body {
   margin: 0;
 }
 
+@keyframes card-gold-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animate-card-gold {
+  background-size: 220% 220% !important;
+  animation: card-gold-shimmer 6s ease infinite !important;
+}
+
+@keyframes lineart-drift {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(-14px, -10px) rotate(1.5deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+.animate-lineart-drift {
+  animation: lineart-drift 14s ease-in-out infinite !important;
+}
+
+@keyframes float-gun-1 {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(7px, -10px) rotate(4deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+@keyframes float-gun-2 {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(-8px, 6px) rotate(-4deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+}
+
+@keyframes float-crosshair {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(5px, 8px) scale(1.05);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+.animate-float-gun-1 {
+  animation: float-gun-1 10s ease-in-out infinite !important;
+}
+
+.animate-float-gun-2 {
+  animation: float-gun-2 13s ease-in-out infinite !important;
+}
+
+.animate-float-crosshair {
+  animation: float-crosshair 11s ease-in-out infinite !important;
+}
+
+/* ── MASTER COLLECTIBLE CARD ANIMATIONS ──────────────────────────────────── */
+@keyframes theme-light-sweep {
+  0% { transform: translateX(-120%) rotate(25deg); opacity: 0; }
+  20% { opacity: 0.8; }
+  50% { transform: translateX(200%) rotate(25deg); opacity: 0.8; }
+  100% { transform: translateX(200%) rotate(25deg); opacity: 0; }
+}
+
+.animate-theme-shine {
+  animation: theme-light-sweep 6s ease-in-out infinite !important;
+}
+
+@keyframes theme-spark-float {
+  0% { transform: translateY(0) scale(0.9); opacity: 0.2; }
+  50% { transform: translateY(-25px) scale(1.1); opacity: 0.8; }
+  100% { transform: translateY(-50px) scale(0.9); opacity: 0; }
+}
+
+.animate-particle-1 { animation: theme-spark-float 9s ease-in-out infinite !important; }
+.animate-particle-2 { animation: theme-spark-float 14s ease-in-out infinite 2s !important; }
+.animate-particle-3 { animation: theme-spark-float 11s ease-in-out infinite 4s !important; }
+
+@keyframes theme-hologram-pulse {
+  0%, 100% { opacity: 0.08; transform: scale(1); }
+  50% { opacity: 0.22; transform: scale(1.04); }
+}
+
+.animate-holo-pulse {
+  animation: theme-hologram-pulse 8s ease-in-out infinite !important;
+}
+
+@keyframes theme-nebula-flow {
+  0% { transform: rotate(0deg) scale(1); }
+  50% { transform: rotate(180deg) scale(1.15); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+
+.animate-nebula-flow {
+  animation: theme-nebula-flow 25s linear infinite !important;
+}
+
 input, textarea {
   user-select: auto;
 }
@@ -1332,6 +1454,8 @@ body::-webkit-scrollbar {
   transform: translateX(-150%) skewX(-15deg);
 }
 
+
+
 .group:hover .card-shine-sweep {
   animation: shine-sweep 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
@@ -2256,5 +2380,21 @@ html:not(.light) .sponsor-form-panel {
 .animate-radar-3 {
   animation: radar-pulse 4s cubic-bezier(0.1, 0.8, 0.3, 1) infinite;
   animation-delay: 2.66s;
+}
+
+/* ── Pro Card Animated Backgrounds ──────────────────────────────────────── */
+@keyframes md-shimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes md-glow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes md-metallic {
+  0%, 100% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
 }
 

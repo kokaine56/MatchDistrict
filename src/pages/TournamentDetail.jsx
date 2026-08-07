@@ -57,6 +57,24 @@ function getGameLogo(game) {
   return GAME_LOGOS[key] || null;
 }
 
+function getDetailPageTheme(themeKey) {
+  const config = getThemeConfig(themeKey)
+  
+  // Use the native glow color but reduce opacity for large auras
+  // Example config.glowColor: "rgba(59, 130, 246, 0.15)"
+  const aura1 = config.glowColor.replace(/0\.\d+\)/, '0.12)')
+  const aura2 = config.glowColor.replace(/0\.\d+\)/, '0.08)')
+  
+  return {
+    bg: config.pageBg || '#07080C',
+    auras: [
+      `radial-gradient(circle at 15% 15%, ${aura1} 0%, transparent 65%)`,
+      `radial-gradient(circle at 85% 65%, ${aura2} 0%, transparent 65%)`
+    ],
+    gridColor: `rgba(255, 255, 255, 0.03)`
+  }
+}
+
 function TournamentDetail({ onNavigate, tournamentId }) {
   const navigate = useNavigate();
   const [showToast, setShowToast] = useState(false);
@@ -718,29 +736,23 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
 
   return (
-    <div 
-      className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-primary/30 selection:text-white"
-      style={{
-        backgroundImage: 'radial-gradient(#1a1c29 1.5px, transparent 1.5px)',
-        backgroundSize: '32px 32px'
-      }}
-    >
+    <div className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-primary/30 selection:text-white">
       <Header activePage="tournament-detail" onNavigate={onNavigate} />
 
       <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw]">
         <div className="w-full max-w-[1280px] space-y-8 pb-32">
           
-          {/* Hero Section - Side-by-side poster + condensed details */}
+          {/* Hero Section */}
           <section className="flex flex-col w-full">
-            <div className="bg-white rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200 p-4 sm:p-6 w-full">
+            <div className="relative rounded-2xl bg-white/5 border border-white/10 p-4 sm:p-6 w-full overflow-hidden backdrop-blur-md">
               
               {/* Side-by-side: Poster + Top Details */}
-              <div className="flex flex-row items-start gap-4 w-full">
+              <div className="relative z-10 flex flex-row items-start gap-4 w-full">
                 
                 {/* Poster Left */}
                 <div className="w-[110px] sm:w-[140px] md:w-[220px] lg:w-[280px] shrink-0">
                   <img 
-                     className="w-full aspect-[3/4] object-cover rounded-xl shadow-lg"
+                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-2xl border border-white/10"
                     src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
                     alt="Tournament Poster"
                   />
@@ -750,13 +762,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <div className="flex-1 flex flex-col items-start justify-start md:justify-center text-left min-w-0">
                   
                   {/* Title */}
-                  <h1 className="text-lg sm:text-xl font-black text-slate-900 leading-tight line-clamp-2 break-words">
+                  <h1 className="text-lg sm:text-2xl font-black text-white leading-tight line-clamp-2 break-words drop-shadow-md">
                     {tourney.title}
                   </h1>
 
                   {/* Organizer */}
-                  <div className="text-xs sm:text-sm font-bold text-slate-500 flex items-center gap-1 mt-1">
-                    <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-slate-500">
+                  <div className="text-xs sm:text-sm font-bold text-slate-300 flex items-center gap-1.5 mt-1.5">
+                    <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-white/10 border border-white/20 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-white">
                       {tourney?.orgLogo || orgProfile?.avatar ? (
                         <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
                       ) : (
@@ -773,7 +785,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Prize</span>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm sm:text-base font-extrabold text-green-600">{prizeDisplay}</span>
+                        <span className="text-sm sm:text-base font-extrabold text-white">{prizeDisplay}</span>
                         {sponsoredAmount > 0 && (
                           <svg className="w-4 h-4 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -784,19 +796,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {/* Entry */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Entry</span>
-                      <span className="text-sm sm:text-base font-extrabold text-amber-600">{entryDisplay}</span>
+                      <span className="text-sm sm:text-base font-extrabold text-white">{entryDisplay}</span>
                     </div>
                     {/* Format */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">FORMAT</span>
-                      <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
+                      <span className="text-xs sm:text-sm font-bold text-white flex items-center gap-1">
                         {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
                       </span>
                     </div>
                     {/* Slots */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SLOTS</span>
-                      <span className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1">
+                      <span className="text-xs sm:text-sm font-bold text-white flex items-center gap-1">
                         <svg className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                           <circle cx="9" cy="7" r="4" />
@@ -811,7 +823,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
 
               {/* Action Area */}
-              <div className="flex items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-white/10">
                 {(() => {
                   const regStatus = myRoster ? (myRoster.status || '').toLowerCase() : '';
                   const showJoin = !regStatus || ['rejected', 'cancelled', 'expired', 'payment_rejected'].includes(regStatus);

@@ -4,7 +4,9 @@ import TournamentCard from '../../../components/TournamentCard'
 import CropModal from '../CropModal'
 import { uploadImage } from '../../../utils/cloudinaryUpload'
 
-export default function Step5Media({ data, onChange, orgName, orgTier }) {
+import { getThemesByTier, isThemeUnlocked } from '../../../utils/themeEngine'
+
+export default function Step5Media({ data, onChange, orgName, orgTier, userTier }) {
   const [uploadStatus, setUploadStatus] = useState('idle')
   const [uploadFile, setUploadFile] = useState(null)
   const [uploadError, setUploadError] = useState('')
@@ -228,6 +230,81 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
         )}
       </div>
 
+      {/* ── Collectible Card Theme Selection ── */}
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-on-background flex items-center gap-2">
+            <span>Collectible Card Theme</span>
+            <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              Living Artwork
+            </span>
+          </h3>
+          <p className="text-[10px] text-on-surface-variant mt-0.5">Select a handcrafted theme for your tournament card & hero banner. Upgrading unlocks living legendary game artwork.</p>
+        </div>
+
+        {/* Tier Sections */}
+        {Object.entries(getThemesByTier()).map(([tierName, themes]) => (
+          <div key={tierName} className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/80">
+                {tierName === 'free' ? 'Standard Free Themes' : tierName === 'basic' ? 'Basic Plan Themes' : 'Pro Legendary Collectibles'}
+              </span>
+              {tierName !== 'free' && (
+                <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {tierName.toUpperCase()}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {themes.map((theme) => {
+                const isSelected = (data.card_color || 'white') === theme.id
+                const isUnlocked = isThemeUnlocked(theme.id, userTier)
+
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => onChange({ ...data, card_color: theme.id })}
+                    className={`group relative flex items-center gap-2.5 p-2 rounded-xl border-2 transition-all duration-300 ${
+                      isSelected
+                        ? 'border-amber-400 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                        : 'border-outline-variant/20 bg-surface-container/30 hover:border-outline-variant/50'
+                    }`}
+                  >
+                    {/* Swatch Circle */}
+                    <div 
+                      className="w-8 h-8 rounded-lg shrink-0 border relative overflow-hidden transition-transform duration-300 group-hover:scale-105"
+                      style={{ backgroundColor: theme.cardBg, borderColor: theme.borderHex }}
+                    >
+                      <div 
+                        className="absolute inset-0 opacity-40"
+                        style={{ background: `radial-gradient(circle at 30% 30%, ${theme.accentColor}, transparent 70%)` }}
+                      />
+                      {!isUnlocked && (
+                        <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
+                          <span className="material-symbols-outlined text-xs text-amber-300">lock</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Label & Tagline */}
+                    <div className="flex flex-col text-left min-w-0">
+                      <span className="text-xs font-bold text-on-background truncate group-hover:text-amber-400 transition-colors">
+                        {theme.name}
+                      </span>
+                      <span className="text-[8px] text-on-surface-variant/70 truncate">
+                        {isUnlocked ? theme.tagline : 'Unlock with subscription'}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-on-background">Card Preview</h3>
         <p className="text-[10px] text-on-surface-variant">This is how your tournament will appear on the homepage &amp; discover page.</p>
@@ -265,6 +342,7 @@ export default function Step5Media({ data, onChange, orgName, orgTier }) {
               isPreview={true}
               buttonText="JOIN NOW"
               onNavigate={() => {}}
+              cardColor={data.card_color || 'white'}
             />
           )}
           </div>

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
     prize_pool NUMERIC(10, 2) NOT NULL CHECK (prize_pool >= 0),
     is_draft BOOLEAN DEFAULT true NOT NULL,
     start_date TIMESTAMP WITH TIME ZONE,
+    card_color VARCHAR(50) DEFAULT 'white' NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

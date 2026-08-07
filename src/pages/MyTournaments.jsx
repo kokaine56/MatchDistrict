@@ -217,6 +217,7 @@ export default function MyTournaments({ onNavigate }) {
                     buttonClassName={t.buttonClassName}
                     onNavigate={onNavigate}
                     forceWalletCard
+                    cardColor={t.card_color || 'white'}
                   />
               </motion.div>
             ))}
