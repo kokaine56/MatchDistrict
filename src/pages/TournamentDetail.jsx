@@ -733,18 +733,86 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
+  const isGoldTheme = (tourney?.card_color || tourney?.cardColor || '').toLowerCase().trim() === 'gold';
+
+  const cardContainerClass = isGoldTheme
+    ? 'bg-[#FAF7F0] border border-[#D4A017]/35 rounded-xl p-4 sm:p-5 shadow-[0_8px_20px_rgba(0,0,0,0.12)]'
+    : 'bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm';
+
+  const cardTitleClass = isGoldTheme
+    ? 'text-xs font-black text-[#1F2937] tracking-widest uppercase mb-2'
+    : 'text-xs font-black text-slate-800 tracking-widest uppercase mb-2';
+
+  const cardBodyClass = isGoldTheme
+    ? 'text-xs sm:text-sm text-[#374151] leading-relaxed whitespace-pre-wrap font-medium'
+    : 'text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap';
+
   if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
 
   return (
-    <div className="min-h-screen bg-[#07080C] text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-primary/30 selection:text-white">
+    <div className={`min-h-screen text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-amber-500/30 selection:text-white transition-colors duration-500 ${
+      isGoldTheme ? 'bg-[#0E0C06]' : 'bg-[#07080C]'
+    }`}>
+      {/* Royal Gold Global Background Layers (Auras, Metallic Overlay, Floating Dust) */}
+      {isGoldTheme && (
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none">
+          {/* Layer 1: Warm Metallic Radial Glow Auras */}
+          <div 
+            className="absolute inset-0 opacity-40 mix-blend-screen"
+            style={{
+              background: 'radial-gradient(circle at 15% 15%, rgba(255, 224, 130, 0.25) 0%, transparent 65%), radial-gradient(circle at 85% 65%, rgba(212, 160, 23, 0.18) 0%, transparent 65%), radial-gradient(circle at 50% 100%, rgba(122, 82, 0, 0.3) 0%, transparent 60%)'
+            }}
+          />
+          {/* Layer 2: Fine Brushed Metallic Gold Texture Lines */}
+          <div 
+            className="absolute inset-0 opacity-15 mix-blend-overlay"
+            style={{
+              backgroundImage: 'repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px, transparent 1px, transparent 4px)'
+            }}
+          />
+          {/* Layer 3: Slow Floating Gold Dust Particles */}
+          <div className="absolute inset-0 overflow-hidden">
+            {Array.from({ length: 16 }).map((_, i) => {
+              const size = 1.5 + (i % 3) * 0.8;
+              const left = (i * 6.5 + 3) % 96;
+              const duration = 6 + (i % 4) * 1.8;
+              const delay = (i * 0.4) % 3;
+              return (
+                <motion.div
+                  key={`gold-dust-${i}`}
+                  className="absolute rounded-full bg-[#FFE082] shadow-[0_0_8px_1px_rgba(255,224,130,0.8)]"
+                  style={{ width: `${size}px`, height: `${size}px`, left: `${left}%`, bottom: '-5%' }}
+                  animate={{ y: ['0px', '-105vh'], x: [0, (i % 2 === 0 ? 20 : -20)], opacity: [0, 0.7, 0.7, 0] }}
+                  transition={{ duration, repeat: Infinity, ease: 'linear', delay }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <Header activePage="tournament-detail" onNavigate={onNavigate} />
 
-      <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw]">
+      <main className="flex-1 flex flex-col items-center w-full px-4 md:px-margin-desktop py-20 md:py-24 touch-scroll max-w-[100vw] relative z-10">
         <div className="w-full max-w-[1280px] space-y-8 pb-32">
           
           {/* Hero Section */}
-          <section className="flex flex-col w-full">
-            <div className="relative rounded-2xl bg-white/5 border border-white/10 p-4 sm:p-6 w-full overflow-hidden backdrop-blur-md">
+          <section className="flex flex-col w-full relative">
+            <div className={`relative rounded-2xl p-4 sm:p-6 w-full overflow-hidden transition-all duration-300 ${
+              isGoldTheme
+                ? 'bg-gradient-to-br from-[#3D2800]/95 via-[#8A5C00]/90 to-[#D4A017]/80 border border-[#FFE082]/40 shadow-[0_16px_50px_rgba(122,82,0,0.4)] backdrop-blur-xl'
+                : 'bg-white/5 border border-white/10 backdrop-blur-md'
+            }`}>
+              
+              {/* Layer 5: Match District "M" Watermark (3% Opacity behind Hero Card) */}
+              {isGoldTheme && (
+                <div className="absolute top-[-15%] right-[-5%] w-[65%] h-[130%] opacity-[0.035] mix-blend-screen pointer-events-none transform -rotate-12 z-0">
+                  <svg viewBox="0 0 200 220" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full text-[#FFE082]">
+                    <path d="M20 180 L70 30 L100 100 L130 30 L180 180 L140 180 L120 100 L100 140 L80 100 L60 180 Z" fill="currentColor" />
+                    <path d="M100 10 L190 60 L190 160 L100 210 L10 160 L10 60 Z" stroke="currentColor" strokeWidth="6" fill="none" />
+                  </svg>
+                </div>
+              )}
               
               {/* Side-by-side: Poster + Top Details */}
               <div className="relative z-10 flex flex-row items-start gap-4 w-full">
@@ -886,7 +954,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   return (
                     <button
                       onClick={() => navigate(`/tournaments/${tourney.id}/register`)}
-                      className="flex-1 bg-primary hover:bg-primary/90 text-white font-bold text-sm px-5 py-2.5 rounded-xl transition-all shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_24px_rgba(59,130,246,0.4)] flex items-center justify-center gap-2"
+                      className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${
+                        isGoldTheme
+                          ? 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-[0_4px_16px_rgba(80,50,0,0.5)] hover:shadow-[0_6px_24px_rgba(255,193,7,0.6)]'
+                          : 'bg-primary hover:bg-primary/90 text-white shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_24px_rgba(59,130,246,0.4)]'
+                      }`}
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
@@ -899,7 +971,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   <img 
                     src={getGameLogo(tourney.game)} 
                     alt={tourney.game} 
-                    className="shrink-0 rounded-xl overflow-hidden border border-slate-200 object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px]" 
+                    className={`shrink-0 rounded-xl overflow-hidden border object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ${
+                      isGoldTheme ? 'border-[#FFC107]/40 shadow-md' : 'border-slate-200'
+                    }`}
                   />
                 )}
               </div>
@@ -910,19 +984,25 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           {/* Registration Countdown Banner */}
           {countdown.active && countdown.type !== 'ended' && countdown.type !== 'live' && (
             <div className={`mt-4 border shadow-sm rounded-xl p-3 flex items-center justify-between w-full ${
-              countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200' :
-              countdown.type === 'registration' ? 'bg-blue-50 border-blue-200' :
-              'bg-white border-slate-100'
+              isGoldTheme
+                ? 'bg-[#18181B] border-[#D4A017]/40 text-amber-100 shadow-[0_4px_16px_rgba(0,0,0,0.3)]'
+                : countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200' :
+                  countdown.type === 'registration' ? 'bg-blue-50 border-blue-200' :
+                  'bg-white border-slate-100'
             }`}>
               <span className={`text-xs sm:text-sm font-bold uppercase tracking-widest ${
-                countdown.type === 'regOpen' ? 'text-emerald-600' :
-                countdown.type === 'registration' ? 'text-blue-600' :
-                'text-slate-500'
+                isGoldTheme
+                  ? 'text-[#D4A017] font-black'
+                  : countdown.type === 'regOpen' ? 'text-emerald-600' :
+                    countdown.type === 'registration' ? 'text-blue-600' :
+                    'text-slate-500'
               }`}>{countdown.label}</span>
               <div className={`text-sm sm:text-base font-black px-3 py-1.5 rounded-lg whitespace-nowrap border ${
-                countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
-                countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
-                'text-slate-700 bg-slate-100/50 border-slate-200'
+                isGoldTheme
+                  ? 'text-white bg-[#27272A] border-[#D4A017]/50 shadow-inner'
+                  : countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
+                    countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
+                    'text-slate-700 bg-slate-100/50 border-slate-200'
               }`}>
                 {countdown.days > 0 ? `${countdown.days}d ` : ''}
                 {String(countdown.hours).padStart(2, '0')}:{String(countdown.minutes).padStart(2, '0')}:{String(countdown.seconds).padStart(2, '0')}
@@ -931,7 +1011,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           )}
 
           {/* Horizontal Scrollable Tabs */}
-          <div className="mt-8 border-b border-slate-200 w-full overflow-hidden">
+          <div className={`mt-8 border-b w-full overflow-hidden ${isGoldTheme ? 'border-[#D4A017]/30' : 'border-slate-200'}`}>
             <div className="flex items-center gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
               {[
                 { id: 'overview', label: 'Overview' },
@@ -946,8 +1026,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   onClick={() => setActiveTab(tab.id)}
                   className={
                     activeTab === tab.id
-                      ? 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap'
-                      : 'text-slate-400 hover:text-slate-600 pb-2 cursor-pointer whitespace-nowrap'
+                      ? isGoldTheme
+                        ? 'text-[#D4A017] font-black border-b-2 border-[#D4A017] pb-2 whitespace-nowrap drop-shadow-[0_0_6px_rgba(212,160,23,0.3)]'
+                        : 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap'
+                      : isGoldTheme
+                        ? 'text-[#9CA3AF] hover:text-[#D4A017] font-medium pb-2 cursor-pointer whitespace-nowrap transition-colors'
+                        : 'text-slate-400 hover:text-slate-600 pb-2 cursor-pointer whitespace-nowrap'
                   }
                 >
                   {tab.label}
@@ -963,21 +1047,23 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                 {/* Left Column: Descriptions */}
                 <div className="flex-1 space-y-4">
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
-                    <h3 className="text-xs font-black text-slate-800 tracking-widest uppercase mb-2">About Tournament</h3>
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{tourney?.description || 'No description provided for this tournament.'}</p>
+                  <div className={cardContainerClass}>
+                    <h3 className={cardTitleClass}>About Tournament</h3>
+                    <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
                   </div>
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm">
-                    <h3 className="text-xs font-black text-slate-800 tracking-widest uppercase mb-2">About Organizer</h3>
-                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
+                  <div className={cardContainerClass}>
+                    <h3 className={cardTitleClass}>About Organizer</h3>
+                    <p className={cardBodyClass}>{orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
                   </div>
                 </div>
 
                 {/* Right Column: Organizer Profile Card */}
                 <div className="w-full lg:w-[320px] shrink-0">
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm flex flex-col gap-4">
+                  <div className={`${cardContainerClass} flex flex-col gap-4`}>
                     <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-500">
+                      <div className={`w-12 h-12 rounded-full overflow-hidden shrink-0 border flex items-center justify-center font-bold text-xs ${
+                        isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#1F2937]' : 'bg-slate-100 border-slate-200 text-slate-500'
+                      }`}>
                         {tourney?.orgLogo || orgProfile?.avatar ? (
                           <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
                         ) : (
@@ -986,7 +1072,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-slate-900 truncate">{orgProfile?.orgName || tourney?.orgName || orgProfile?.name || 'Organizer'}</span>
+                          <span className={`font-bold truncate ${isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-900'}`}>{orgProfile?.orgName || tourney?.orgName || orgProfile?.name || 'Organizer'}</span>
                           <VerificationBadge tier={orgProfile?.tier || tourney?.orgTier} size="xs" />
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
@@ -995,9 +1081,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
                             </svg>
                           ))}
-                          <span className="text-sm font-bold text-slate-700 ml-1">4.8 <span className="text-slate-400 font-medium">(120 reviews)</span></span>
+                          <span className={`text-sm font-bold ml-1 ${isGoldTheme ? 'text-[#374151]' : 'text-slate-700'}`}>4.8 <span className={isGoldTheme ? 'text-slate-500 font-medium' : 'text-slate-400 font-medium'}>(120 reviews)</span></span>
                         </div>
-                        <div className="flex items-center gap-4 mt-2 text-xs font-bold text-slate-500">
+                        <div className={`flex items-center gap-4 mt-2 text-xs font-bold ${isGoldTheme ? 'text-[#4B5563]' : 'text-slate-500'}`}>
                           <span>🎮 {orgProfile?.totalTournaments || tourney?.orgTotalHosted || 12} Tournaments Hosted</span>
                         </div>
                       </div>
@@ -1005,7 +1091,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <button
                       onClick={handleFollow}
                       disabled={followLoading}
-                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-4 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                      className={`w-full font-bold py-2.5 px-4 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60 ${
+                        isGoldTheme
+                          ? 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-md hover:brightness-105'
+                          : 'bg-slate-900 hover:bg-slate-800 text-white'
+                      }`}
                     >
                       {isFollowing ? (
                         <>
@@ -1034,39 +1124,49 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {activeTab === 'prize' && (
               <div className="flex flex-col gap-5 max-w-2xl">
                 {/* Prize Pool Breakdown Summary */}
-                <div className="relative overflow-hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-lg">
+                <div className={`relative overflow-hidden rounded-2xl p-6 ${
+                  isGoldTheme
+                    ? 'bg-[#FAF7F0] border border-[#D4A017]/35 text-[#1F2937] shadow-[0_8px_20px_rgba(0,0,0,0.12)]'
+                    : 'bg-white border border-slate-200 shadow-lg'
+                }`}>
                   {sponsoredAmount > 0 ? (
                     <>
-                      <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-5 relative z-10">Prize Pool Breakdown</h4>
+                      <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] mb-5 relative z-10 ${
+                        isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-400'
+                      }`}>Prize Pool Breakdown</h4>
 
                       <div className="flex items-center justify-between relative z-10">
-                        <span className="text-sm text-slate-600 font-medium">Base Prize</span>
-                        <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
+                        <span className={`text-sm font-medium ${isGoldTheme ? 'text-[#374151]' : 'text-slate-600'}`}>Base Prize</span>
+                        <span className={`text-sm font-bold ${isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-800'}`}>{formatIndianCurrency(basePrize)}</span>
                       </div>
 
                       <div className="flex items-center justify-between mt-4 relative z-10">
-                        <span className="text-sm text-slate-600 font-medium flex items-center gap-1.5">
+                        <span className={`text-sm font-medium flex items-center gap-1.5 ${isGoldTheme ? 'text-[#374151]' : 'text-slate-600'}`}>
                           Sponsored Contributions
                           <svg className="w-4 h-4 shrink-0 aspect-square text-amber-500" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
                           </svg>
                         </span>
-                        <span className="text-sm font-bold text-amber-600">+{formatIndianCurrency(sponsoredAmount)}</span>
+                        <span className={`text-sm font-bold ${isGoldTheme ? 'text-[#B8860B]' : 'text-amber-400'}`}>+{formatIndianCurrency(sponsoredAmount)}</span>
                       </div>
 
-                      <div className="border-t border-slate-100 my-4 relative z-10" />
+                      <div className={`my-4 relative z-10 border-t ${isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-100'}`} />
 
                       <div className="flex items-center justify-between relative z-10">
-                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Prize Pool</span>
-                        <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
+                        <span className={`text-xs font-bold uppercase tracking-wider ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-500'}`}>Total Prize Pool</span>
+                        <span className={`text-xl sm:text-2xl font-black tracking-tight ${
+                          isGoldTheme ? 'text-[#B8860B]' : 'bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm'
+                        }`}>
                           {formatIndianCurrency(totalPrize)}
                         </span>
                       </div>
                     </>
                   ) : (
                     <div className="flex items-center justify-between relative z-10">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Prize Pool</span>
-                      <span className="bg-gradient-to-r from-emerald-600 to-teal-500 bg-clip-text text-transparent text-xl sm:text-2xl font-extrabold tracking-tight">
+                      <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-400'}`}>Prize Pool</span>
+                      <span className={`text-xl sm:text-2xl font-black tracking-tight ${
+                        isGoldTheme ? 'text-[#B8860B]' : 'bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm'
+                      }`}>
                         {formatIndianCurrency(totalPrize)}
                       </span>
                     </div>
@@ -1076,7 +1176,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 {/* Prize Distribution Cards */}
                 {prizeDistributions.length > 0 ? (
                   <div className="flex flex-col gap-2.5">
-                    <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">Prize Distribution</h5>
+                    <h5 className={`text-[10px] font-black uppercase tracking-[0.2em] pl-1 ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-400'}`}>Prize Distribution</h5>
                     {prizeDistributions.slice(0, 15).map((row, i) => {
                       const medalSvgs = [
                         <svg key="g" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.45)]" viewBox="0 0 24 24" fill="none">
@@ -1099,26 +1199,30 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
 
                       return (
-                        <div key={i} className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-3.5 shadow-sm">
+                        <div key={i} className={`flex items-center justify-between rounded-xl px-4 py-3.5 shadow-sm border ${
+                          isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/30 text-[#1F2937]' : 'bg-white border-slate-200'
+                        }`}>
                           <div className="flex items-center gap-3 min-w-0">
                             {i <= 2 ? (
                               medalSvgs[i]
                             ) : (
-                              <span className="w-5 h-5 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
+                              <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#1F2937]' : 'bg-slate-100 border-slate-200 text-slate-500'
+                              }`}>
                                 {i + 1}
                               </span>
                             )}
-                            <span className="font-extrabold text-slate-900 text-sm leading-tight truncate">
+                            <span className={`font-extrabold text-sm leading-tight truncate ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'}`}>
                               {i <= 2 ? displayName : `Rank ${i + 1}`}
                             </span>
                           </div>
-                          <span className="font-black text-green-700 text-sm sm:text-base shrink-0 ml-3">{row.prize}</span>
+                          <span className={`font-black text-sm sm:text-base shrink-0 ml-3 ${isGoldTheme ? 'text-[#B8860B]' : 'text-green-700'}`}>{row.prize}</span>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="p-6 bg-slate-50 border border-slate-100 rounded-xl text-slate-500 text-sm">No prize distribution data available.</div>
+                  <div className={`p-6 rounded-xl text-sm border ${isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#374151]' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>No prize distribution data available.</div>
                 )}
               </div>
             )}
@@ -1127,32 +1231,36 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
                   parsedTimeline.roadmap.map((round, index) => (
                     <React.Fragment key={round.id || index}>
-                      <div className="min-w-[180px] sm:min-w-[220px] bg-white border border-slate-200 rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0">
-                        <h4 className="font-black text-slate-900 text-base sm:text-lg mb-2">{round.title || `Qualifier ${index + 1}`}</h4>
-                        <div className="space-y-1.5 text-xs text-slate-500 font-medium">
+                      <div className={`min-w-[180px] sm:min-w-[220px] rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0 border ${
+                        isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#1F2937]' : 'bg-white border-slate-200'
+                      }`}>
+                        <h4 className={`font-black text-base sm:text-lg mb-2 ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'}`}>{round.title || `Qualifier ${index + 1}`}</h4>
+                        <div className={`space-y-1.5 text-xs font-medium ${isGoldTheme ? 'text-[#374151]' : 'text-slate-500'}`}>
                           <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
                             <span>{round.date ? formatDate(round.date) : 'TBD'}</span>
                           </p>
                           <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span>{round.time || 'TBD'}</span>
                           </p>
                           <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                             </svg>
-                            <span>Map: <span className="font-bold text-slate-700">{round.map || 'TBD'}</span></span>
+                            <span>Map: <span className={`font-bold ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-700'}`}>{round.map || 'TBD'}</span></span>
                           </p>
                         </div>
                         {round.qualified && (
-                          <div className="mt-3 sm:mt-4 bg-green-50/80 text-green-700 text-xs font-bold px-2.5 py-1.5 rounded-md border border-green-100 w-fit flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <div className={`mt-3 sm:mt-4 text-xs font-bold px-2.5 py-1.5 rounded-md border w-fit flex items-center gap-1.5 ${
+                            isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#B8860B]' : 'bg-green-50/80 border-green-100 text-green-700'
+                          }`}>
+                            <svg className="w-3.5 h-3.5 text-[#D4A017] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             <span>Qualifies: {round.qualified}</span>
@@ -1160,7 +1268,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         )}
                       </div>
                       {index < parsedTimeline.roadmap.length - 1 && (
-                        <div className="text-slate-300 shrink-0">
+                        <div className={`shrink-0 ${isGoldTheme ? 'text-[#D4A017]/70' : 'text-slate-300'}`}>
                           <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                           </svg>
@@ -1169,7 +1277,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     </React.Fragment>
                   ))
                 ) : (
-                  <div className="text-slate-500 p-6 bg-slate-50 rounded-xl border border-slate-100 w-full">
+                  <div className={`p-6 rounded-xl border w-full ${isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#374151]' : 'text-slate-500 bg-slate-50 border-slate-100'}`}>
                     No roadmap rounds scheduled yet.
                   </div>
                 )}
@@ -1196,24 +1304,32 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   }
 
                   return categories.map((cat, idx) => (
-                    <div key={idx} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                    <div key={idx} className={`rounded-xl overflow-hidden shadow-sm border ${
+                      isGoldTheme ? 'border-[#D4A017]/35 bg-[#FAF7F0]' : 'border-slate-200 bg-white'
+                    }`}>
                       <button
                         onClick={() => setOpenRule(openRule === idx ? null : idx)}
-                        className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-slate-100 transition-colors font-bold text-slate-800 text-left"
+                        className={`w-full flex items-center justify-between p-4 transition-colors font-bold text-left ${
+                          isGoldTheme
+                            ? 'bg-[#F5F0E1] hover:bg-[#EDE5D0] text-[#1F2937]'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-800'
+                        }`}
                       >
-                        <span className={`text-sm uppercase tracking-wider ${cat.custom ? 'text-blue-600' : 'text-slate-700'}`}>{cat.title}</span>
+                        <span className={`text-sm uppercase tracking-wider ${cat.custom ? (isGoldTheme ? 'text-[#B8860B]' : 'text-blue-600') : (isGoldTheme ? 'text-[#1F2937]' : 'text-slate-700')}`}>{cat.title}</span>
                         <svg
-                          className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${openRule === idx ? 'rotate-180' : ''}`}
+                          className={`w-4 h-4 transition-transform duration-200 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'} ${openRule === idx ? 'rotate-180' : ''}`}
                           viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
                         >
                           <polyline points="6 9 12 15 18 9" />
                         </svg>
                       </button>
                       {openRule === idx && (
-                        <div className="p-4 border-t border-slate-100 text-slate-600 text-sm leading-relaxed whitespace-pre-wrap space-y-1.5">
+                        <div className={`p-4 text-sm leading-relaxed whitespace-pre-wrap space-y-1.5 border-t ${
+                          isGoldTheme ? 'border-[#D4A017]/25 text-[#374151]' : 'border-slate-100 text-slate-600'
+                        }`}>
                           {cat.items.map((item, i) => (
                             <p key={i} className="flex items-start gap-2">
-                              <span className="text-slate-300 mt-0.5">•</span>
+                              <span className={isGoldTheme ? 'text-[#D4A017] mt-0.5' : 'text-slate-300 mt-0.5'}>•</span>
                               <span>{item}</span>
                             </p>
                           ))}
