@@ -14,8 +14,12 @@ export const THEME_TIERS = {
 export const TEXT_STYLES = {
   LIGHT_BG: {
     title: 'text-slate-900',
+    titleText: 'text-slate-900',
     org: 'text-slate-800',
+    orgText: 'text-slate-800',
     status: 'text-slate-700',
+    statusText: 'text-slate-700',
+    targetIcon: 'text-slate-700',
     divider: 'border-slate-300',
     prizeBg: 'bg-emerald-100/50',
     prizeBorder: 'border-emerald-200',
@@ -28,12 +32,19 @@ export const TEXT_STYLES = {
     slotLabel: 'text-slate-600',
     slotIcon: 'text-slate-600',
     slotValue: 'text-slate-900',
-    btnBg: 'bg-primary'
+    btnBg: 'bg-primary',
+    btnText: 'text-white',
+    gameBg: 'bg-slate-200/50',
+    gameBorder: 'border-slate-300'
   },
   DARK_BG: {
     title: 'text-white',
+    titleText: 'text-white',
     org: 'text-slate-200',
+    orgText: 'text-slate-200',
     status: 'text-slate-300',
+    statusText: 'text-slate-300',
+    targetIcon: 'text-slate-300',
     divider: 'border-slate-700',
     prizeBg: 'bg-emerald-950/40',
     prizeBorder: 'border-emerald-800/40',
@@ -46,7 +57,10 @@ export const TEXT_STYLES = {
     slotLabel: 'text-slate-400',
     slotIcon: 'text-slate-400',
     slotValue: 'text-white',
-    btnBg: 'bg-primary'
+    btnBg: 'bg-primary',
+    btnText: 'text-white',
+    gameBg: 'bg-slate-800/50',
+    gameBorder: 'border-slate-700'
   }
 }
 
@@ -97,14 +111,39 @@ export const THEME_REGISTRY = {
     id: 'gold',
     name: 'Royal Gold',
     tier: THEME_TIERS.BASIC,
-    tagline: 'Luxury Brushed Gold Metal',
-    accentColor: '#D97706',
-    borderHex: '#F59E0B',
-    cardBg: '#FAF5E6',
+    tagline: 'Luxury Solid Gold Plate',
+    accentColor: '#FFC107',
+    borderHex: '#FFCA28',
+    cardBg: '#D4A017',
     pageBg: '#0E0C06',
-    textStyle: 'LIGHT_BG',
+    textStyle: 'DARK_BG',
     heroGradient: 'from-amber-950/90 via-slate-950/95 to-[#0E0C06]',
-    glowColor: 'rgba(245, 158, 11, 0.3)'
+    glowColor: 'rgba(255, 193, 7, 0.45)',
+    typographyOverrides: {
+      titleText: 'text-[#FFFFFF] font-black',
+      title: 'text-[#FFFFFF] font-black',
+      orgText: 'text-[#FFFFFF] font-bold',
+      org: 'text-[#FFFFFF] font-bold',
+      statusText: 'text-[#3D2500] font-extrabold',
+      status: 'text-[#3D2500] font-extrabold',
+      targetIcon: 'text-amber-200',
+      divider: 'border-amber-500/25',
+      prizeBg: 'bg-[#2A1B00]/55 backdrop-blur-sm',
+      prizeBorder: 'border-[#FFC107]/40',
+      prizeText: 'text-[#FFFFFF] font-black',
+      entryBg: 'bg-[#2A1B00]/55 backdrop-blur-sm',
+      entryBorder: 'border-[#FFC107]/40',
+      entryText: 'text-[#FFFFFF] font-black',
+      formatLabel: 'text-amber-200/90 font-extrabold tracking-widest',
+      formatValue: 'text-[#FFFFFF] font-black',
+      slotLabel: 'text-amber-200/90 font-extrabold tracking-widest',
+      slotIcon: 'text-amber-200',
+      slotValue: 'text-[#FFFFFF] font-black',
+      btnBg: 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] border border-[#FFF4C2]/70 shadow-[0_4px_12px_rgba(80,50,0,0.5)]',
+      btnText: 'text-[#3D2500] font-black',
+      gameBg: 'bg-[#2A1B00]/55 border border-[#FFC107]/40',
+      gameBorder: 'border-[#FFC107]/40'
+    }
   },
   ember: {
     id: 'ember',
@@ -224,11 +263,15 @@ export function getThemeConfig(themeKey) {
 }
 
 /**
- * Get typography classes based on theme's textStyle
+ * Get typography classes based on theme's textStyle and optional overrides
  */
 export function getThemeTypography(themeKey) {
   const config = getThemeConfig(themeKey)
-  return TEXT_STYLES[config.textStyle] || TEXT_STYLES.LIGHT_BG
+  const base = TEXT_STYLES[config.textStyle] || TEXT_STYLES.LIGHT_BG
+  return {
+    ...base,
+    ...(config.typographyOverrides || {})
+  }
 }
 
 /**
