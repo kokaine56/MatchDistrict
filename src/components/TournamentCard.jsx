@@ -217,11 +217,11 @@ function WalletPassCard({
               </div>
             </div>
 
-            {/* Prize & Entry Rows (Labels Removed, Icon + Prominent Bold White Value) */}
+            {/* Prize & Entry Rows (Adaptive Contrast System: Light vs Dark Theme) */}
             <div className={`grid grid-cols-2 gap-2 py-1.5 border-y ${cc.divider} leading-none`}>
               {/* Prize Value */}
               <div className="flex items-center gap-1 min-w-0">
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={`${cc.prizeIcon || 'text-amber-400'} shrink-0`}>
                   <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
                   <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
                   <path d="M4 22h16" />
@@ -229,7 +229,7 @@ function WalletPassCard({
                   <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
                   <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
                 </svg>
-                <span className={`text-[10px] sm:text-[11px] font-black text-[#FFFFFF] tracking-tight truncate leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] ${cc.prizeText ? '' : 'text-[#FFFFFF]'}`}>
+                <span className={`text-[10px] sm:text-[11px] font-black ${cc.prizeText || 'text-white'} ${cc.prizeShadow || ''} tracking-tight truncate leading-none`}>
                   {prizeDisplay}
                 </span>
                 {hasSponsors && <SponsoredStar size={8} />}
@@ -237,13 +237,13 @@ function WalletPassCard({
 
               {/* Entry Value */}
               <div className="flex items-center gap-1 min-w-0">
-                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400 shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={`${cc.entryIcon || 'text-emerald-400'} shrink-0`}>
                   <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2Z" />
                   <path d="M13 5v2" />
                   <path d="M13 17v2" />
                   <path d="M13 11v2" />
                 </svg>
-                <span className={`text-[10px] sm:text-[11px] font-black text-[#FFFFFF] tracking-tight truncate leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] ${cc.entryText ? '' : 'text-[#FFFFFF]'}`}>
+                <span className={`text-[10px] sm:text-[11px] font-black ${cc.entryText || 'text-white'} ${cc.entryShadow || ''} tracking-tight truncate leading-none`}>
                   {entryDisplay}
                 </span>
               </div>
