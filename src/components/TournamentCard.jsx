@@ -176,7 +176,7 @@ function WalletPassCard({
 
         {/* Layer B: The Pass Card (z-10) */}
         <div
-          className={`border rounded-2xl p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isPassPopped ? 'z-50' : 'z-10'}`}
+          className={`border rounded-2xl overflow-hidden p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isPassPopped ? 'z-50' : 'z-10'}`}
           style={{
             borderColor: activeTheme.borderHex,
             transform: isPassPopped
@@ -217,41 +217,33 @@ function WalletPassCard({
               </div>
             </div>
 
-            {/* Prize & Entry Rows (Containers Removed Globally, Direct on Artwork) */}
+            {/* Prize & Entry Rows (Labels Removed, Icon + Prominent Bold White Value) */}
             <div className={`grid grid-cols-2 gap-2 py-1.5 border-y ${cc.divider} leading-none`}>
-              {/* Prize Pool */}
-              <div className="space-y-0.5 min-w-0">
-                <div className="flex items-center gap-0.5 text-[6px] font-bold text-amber-300 uppercase tracking-widest leading-none">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400 shrink-0">
-                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
-                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
-                    <path d="M4 22h16" />
-                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
-                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
-                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
-                  </svg>
-                  <span className="truncate opacity-85">PRIZE POOL</span>
-                </div>
-                <div className="flex items-center gap-0.5">
-                  <span className={`text-[10px] font-black ${cc.prizeText || 'text-[#FFFFFF]'} tracking-tight truncate leading-none`}>
-                    {prizeDisplay}
-                  </span>
-                  {hasSponsors && <SponsoredStar size={8} />}
-                </div>
+              {/* Prize Value */}
+              <div className="flex items-center gap-1 min-w-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400 shrink-0">
+                  <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+                  <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+                  <path d="M4 22h16" />
+                  <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+                  <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+                  <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+                </svg>
+                <span className={`text-[10px] sm:text-[11px] font-black text-[#FFFFFF] tracking-tight truncate leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] ${cc.prizeText ? '' : 'text-[#FFFFFF]'}`}>
+                  {prizeDisplay}
+                </span>
+                {hasSponsors && <SponsoredStar size={8} />}
               </div>
 
-              {/* Entry Fee */}
-              <div className="space-y-0.5 min-w-0">
-                <div className="flex items-center gap-0.5 text-[6px] font-bold text-emerald-300 uppercase tracking-widest leading-none">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400 shrink-0">
-                    <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2Z" />
-                    <path d="M13 5v2" />
-                    <path d="M13 17v2" />
-                    <path d="M13 11v2" />
-                  </svg>
-                  <span className="truncate opacity-85">ENTRY FEE</span>
-                </div>
-                <span className={`text-[10px] font-black ${cc.entryText || 'text-[#FFFFFF]'} tracking-tight block truncate leading-none`}>
+              {/* Entry Value */}
+              <div className="flex items-center gap-1 min-w-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400 shrink-0">
+                  <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2Z" />
+                  <path d="M13 5v2" />
+                  <path d="M13 17v2" />
+                  <path d="M13 11v2" />
+                </svg>
+                <span className={`text-[10px] sm:text-[11px] font-black text-[#FFFFFF] tracking-tight truncate leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] ${cc.entryText ? '' : 'text-[#FFFFFF]'}`}>
                   {entryDisplay}
                 </span>
               </div>
