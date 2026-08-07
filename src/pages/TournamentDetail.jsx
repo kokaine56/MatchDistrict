@@ -804,7 +804,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 : 'bg-white/5 border border-white/10 backdrop-blur-md'
             }`}>
               
-              {/* Layer 5: Match District "M" Watermark (3% Opacity behind Hero Card) */}
+              {/* Layer 5: Match District "M" Watermark (3.5% Opacity behind Hero Card) */}
               {isGoldTheme && (
                 <div className="absolute top-[-15%] right-[-5%] w-[65%] h-[130%] opacity-[0.035] mix-blend-screen pointer-events-none transform -rotate-12 z-0">
                   <svg viewBox="0 0 200 220" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full text-[#FFE082]">
@@ -813,7 +813,41 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </svg>
                 </div>
               )}
-              
+
+              {/* Layer 6: Hero Section Contained Ambient Floating Gold Particles */}
+              {isGoldTheme && (
+                <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden select-none">
+                  {Array.from({ length: 14 }).map((_, i) => {
+                    const size = 2 + (i % 4) * 1.1;
+                    const left = (i * 7.3 + 4) % 94;
+                    const duration = 5 + (i % 4) * 1.5;
+                    const delay = (i * 0.35) % 2.5;
+                    const colors = ['#FFD54F', '#FBC02D', '#FFF8E1', '#FFFFFF'];
+                    const color = colors[i % colors.length];
+                    return (
+                      <motion.div
+                        key={`hero-gold-dust-${i}`}
+                        className="absolute rounded-full"
+                        style={{ 
+                          width: `${size}px`, 
+                          height: `${size}px`, 
+                          left: `${left}%`, 
+                          bottom: '-10%',
+                          backgroundColor: color,
+                          boxShadow: `0 0 8px 1px ${color}80`
+                        }}
+                        animate={{ 
+                          y: ['0px', '-140px'], 
+                          x: [0, (i % 2 === 0 ? 15 : -15), (i % 2 === 0 ? -8 : 8), 0], 
+                          opacity: [0, 0.45, 0.45, 0] 
+                        }}
+                        transition={{ duration, repeat: Infinity, ease: 'easeInOut', delay }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Side-by-side: Poster + Top Details */}
               <div className="relative z-10 flex flex-row items-start gap-4 w-full">
                 
@@ -983,23 +1017,68 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
           {/* Registration Countdown Banner */}
           {countdown.active && countdown.type !== 'ended' && countdown.type !== 'live' && (
-            <div className={`mt-4 border shadow-sm rounded-xl p-3 flex items-center justify-between w-full ${
+            <div className={`mt-4 border shadow-sm p-3.5 flex items-center justify-between w-full relative overflow-hidden transition-all duration-300 ${
               isGoldTheme
-                ? 'bg-[#18181B] border-[#D4A017]/40 text-amber-100 shadow-[0_4px_16px_rgba(0,0,0,0.3)]'
-                : countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200' :
-                  countdown.type === 'registration' ? 'bg-blue-50 border-blue-200' :
-                  'bg-white border-slate-100'
+                ? 'bg-gradient-to-r from-[#3D2800]/95 via-[#7A5400]/90 to-[#2A1B00]/95 border-[#FFE082]/40 shadow-[0_12px_36px_rgba(80,50,0,0.4)] rounded-2xl backdrop-blur-xl'
+                : countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200 rounded-xl' :
+                  countdown.type === 'registration' ? 'bg-blue-50 border-blue-200 rounded-xl' :
+                  'bg-white border-slate-100 rounded-xl'
             }`}>
-              <span className={`text-xs sm:text-sm font-bold uppercase tracking-widest ${
+              {/* Brushed texture overlay for Royal Gold */}
+              {isGoldTheme && (
+                <div 
+                  className="absolute inset-0 opacity-15 mix-blend-overlay pointer-events-none z-0"
+                  style={{
+                    backgroundImage: 'repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px, transparent 1px, transparent 4px)'
+                  }}
+                />
+              )}
+
+              {/* Contained Ambient Floating Gold Particles for Countdown Section */}
+              {isGoldTheme && (
+                <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden select-none">
+                  {Array.from({ length: 7 }).map((_, i) => {
+                    const size = 2 + (i % 3) * 1.2;
+                    const left = (i * 13 + 6) % 92;
+                    const duration = 4.5 + (i % 3) * 1.2;
+                    const delay = (i * 0.4) % 2;
+                    const colors = ['#FFD54F', '#FBC02D', '#FFF8E1', '#FFFFFF'];
+                    const color = colors[i % colors.length];
+                    return (
+                      <motion.div
+                        key={`countdown-gold-dust-${i}`}
+                        className="absolute rounded-full"
+                        style={{ 
+                          width: `${size}px`, 
+                          height: `${size}px`, 
+                          left: `${left}%`, 
+                          bottom: '-15%',
+                          backgroundColor: color,
+                          boxShadow: `0 0 6px 1px ${color}80`
+                        }}
+                        animate={{ 
+                          y: ['0px', '-75px'], 
+                          x: [0, (i % 2 === 0 ? 10 : -10), 0], 
+                          opacity: [0, 0.4, 0.4, 0] 
+                        }}
+                        transition={{ duration, repeat: Infinity, ease: 'easeInOut', delay }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+
+              <span className={`text-xs sm:text-sm font-black uppercase tracking-widest relative z-10 ${
                 isGoldTheme
-                  ? 'text-[#D4A017] font-black'
+                  ? 'text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]'
                   : countdown.type === 'regOpen' ? 'text-emerald-600' :
                     countdown.type === 'registration' ? 'text-blue-600' :
                     'text-slate-500'
               }`}>{countdown.label}</span>
-              <div className={`text-sm sm:text-base font-black px-3 py-1.5 rounded-lg whitespace-nowrap border ${
+
+              <div className={`text-sm sm:text-base font-black px-3.5 py-1.5 rounded-xl whitespace-nowrap border relative z-10 ${
                 isGoldTheme
-                  ? 'text-white bg-[#27272A] border-[#D4A017]/50 shadow-inner'
+                  ? 'text-[#FFFFFF] bg-[#1F1300]/95 border-[#FFC107]/45 shadow-inner drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]'
                   : countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
                     countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
                     'text-slate-700 bg-slate-100/50 border-slate-200'
