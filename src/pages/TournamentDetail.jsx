@@ -818,9 +818,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <div className="relative z-10 flex flex-row items-start gap-4 w-full">
                 
                 {/* Poster Left */}
-                <div className="w-[110px] sm:w-[140px] md:w-[220px] lg:w-[280px] shrink-0">
+                <div className="w-[110px] sm:w-[140px] md:w-[220px] lg:w-[280px] shrink-0 rounded-2xl sm:rounded-[22px] md:rounded-3xl overflow-hidden shadow-2xl border border-white/10">
                   <img 
-                    className="w-full aspect-[3/4] object-cover rounded-xl shadow-2xl border border-white/10"
+                    className="w-full aspect-[3/4] object-cover rounded-2xl sm:rounded-[22px] md:rounded-3xl"
                     src={tourney.cover_image_url || tourney.bannerUrl || FALLBACK_IMG}
                     alt="Tournament Poster"
                   />
