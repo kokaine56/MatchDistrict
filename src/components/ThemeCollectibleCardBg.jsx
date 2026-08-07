@@ -124,12 +124,10 @@ export default function ThemeCollectibleCardBg({ themeId = 'white', isHovered = 
 
   return (
     <div className={`absolute inset-0 w-full h-full rounded-2xl overflow-hidden pointer-events-none ${isHero ? 'z-0' : 'z-0'}`}>
-      {/* 1. Base Gradient Foundation */}
+      {/* 1. Base Solid Color Foundation */}
       <div 
         className="absolute inset-0 opacity-100"
-        style={{ 
-          background: `linear-gradient(135deg, ${config.cardBg} 0%, ${config.pageBg} 100%)`
-        }} 
+        style={{ backgroundColor: config.cardBg }} 
       />
       
       {/* 2. Premium Depth: Radial Highlight Layer */}
