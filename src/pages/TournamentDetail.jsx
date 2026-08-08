@@ -161,50 +161,75 @@ const DesktopRoadmapView = ({ roadmap }) => {
         preserveAspectRatio="none"
       >
         <defs>
-          <linearGradient id="royalGoldPathGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id="realGoldenRoadGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#8A5A00" />
-            <stop offset="30%" stopColor="#C69214" />
-            <stop offset="70%" stopColor="#E6B93C" />
-            <stop offset="100%" stopColor="#FFD86A" />
+            <stop offset="25%" stopColor="#C69214" />
+            <stop offset="50%" stopColor="#FFE082" />
+            <stop offset="75%" stopColor="#E6B93C" />
+            <stop offset="100%" stopColor="#9E740E" />
           </linearGradient>
           <filter id="royalGoldGlow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feGaussianBlur stdDeviation="6" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
 
         {pathD && (
           <>
-            {/* Outer Deep Glow Path */}
+            {/* Dark Golden Asphalt Road Shoulder / Base */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#3A2800"
+              strokeWidth="34"
+              strokeLinecap="round"
+              opacity="0.8"
+              filter="url(#royalGoldGlow)"
+            />
+            {/* Outer Metallic Golden Curb Edges */}
             <path
               d={pathD}
               fill="none"
               stroke="#8A5A00"
-              strokeWidth="9"
+              strokeWidth="28"
               strokeLinecap="round"
-              opacity="0.5"
-              filter="url(#royalGoldGlow)"
+              opacity="0.9"
             />
-            {/* Base Metallic Path */}
+            {/* Main Solid Golden Highway Surface */}
             <path
               d={pathD}
               fill="none"
-              stroke="#C69214"
-              strokeWidth="5"
+              stroke="url(#realGoldenRoadGrad)"
+              strokeWidth="22"
               strokeLinecap="round"
-              opacity="0.8"
             />
-            {/* Animated Gold Highlight Path */}
+            {/* Animated Golden Surface Glow */}
             <motion.path
               d={pathD}
               fill="none"
-              stroke="url(#royalGoldPathGrad)"
-              strokeWidth="4"
+              stroke="#FFF4C2"
+              strokeWidth="18"
               strokeLinecap="round"
+              opacity="0.25"
               initial={{ pathLength: 0 }}
               whileInView={{ pathLength: 1 }}
               viewport={{ once: true }}
               transition={{ duration: 1.4, ease: "easeInOut" }}
+            />
+            {/* Real Highway Center Divider (Painted Dashed White Lane Lines) */}
+            <motion.path
+              d={pathD}
+              fill="none"
+              stroke="#FFFFFF"
+              strokeWidth="2.5"
+              strokeDasharray="8 16"
+              strokeLinecap="round"
+              opacity="1"
+              initial={{ pathLength: 0 }}
+              whileInView={{ pathLength: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 1.4, ease: "easeInOut" }}
+              className="drop-shadow-[0_0_4px_rgba(255,255,255,0.9)]"
             />
           </>
         )}
@@ -317,49 +342,61 @@ const MobileRoadmapView = ({ roadmap }) => {
         preserveAspectRatio="none"
       >
         <defs>
-          <linearGradient id="mobPathGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id="mobGoldenRoadGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#8A5A00" />
-            <stop offset="50%" stopColor="#E6B93C" />
-            <stop offset="100%" stopColor="#FFD86A" />
+            <stop offset="30%" stopColor="#D4A017" />
+            <stop offset="70%" stopColor="#FFE082" />
+            <stop offset="100%" stopColor="#9E740E" />
           </linearGradient>
           <filter id="mobGlow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feGaussianBlur stdDeviation="5" result="blur" />
             <feComposite in="SourceGraphic" in2="blur" operator="over" />
           </filter>
         </defs>
 
         {pathD && (
           <>
-            {/* Outer Glow Road */}
+            {/* Dark Golden Asphalt Base */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#3A2800"
+              strokeWidth="26"
+              strokeLinecap="round"
+              opacity="0.8"
+              filter="url(#mobGlow)"
+            />
+            {/* Outer Metallic Golden Curbs */}
             <path
               d={pathD}
               fill="none"
               stroke="#8A5A00"
-              strokeWidth="8"
+              strokeWidth="20"
               strokeLinecap="round"
-              opacity="0.5"
-              filter="url(#mobGlow)"
+              opacity="0.9"
             />
-            {/* Base Road */}
+            {/* Main Solid Golden Highway Surface */}
             <path
               d={pathD}
               fill="none"
-              stroke="#C69214"
-              strokeWidth="5"
+              stroke="url(#mobGoldenRoadGrad)"
+              strokeWidth="15"
               strokeLinecap="round"
-              opacity="0.8"
             />
-            {/* Gold Highlight Path */}
+            {/* Real Highway Center Divider (Painted Dashed White Lane Lines) */}
             <motion.path
               d={pathD}
               fill="none"
-              stroke="url(#mobPathGrad)"
-              strokeWidth="4"
+              stroke="#FFFFFF"
+              strokeWidth="2"
+              strokeDasharray="8 14"
               strokeLinecap="round"
+              opacity="1"
               initial={{ pathLength: 0 }}
               whileInView={{ pathLength: 1 }}
               viewport={{ once: true }}
               transition={{ duration: 1.2, ease: "easeInOut" }}
+              className="drop-shadow-[0_0_4px_rgba(255,255,255,0.9)]"
             />
           </>
         )}
@@ -1600,23 +1637,25 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             )}
             {activeTab === 'prize' && (
               isGoldTheme ? (
-                <div className="flex flex-col gap-6 w-full max-w-4xl select-none">
-                  {/* Total Prize Pool Clean Hero Card */}
-                  <div className="relative overflow-hidden rounded-2xl p-6 sm:p-8 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_35px_rgba(212,160,23,0.45)] backdrop-blur-md text-left">
+                <div className="flex flex-col gap-4 w-full max-w-2xl select-none">
+                  {/* Sleek, Compact Total Prize Pool Card */}
+                  <div className="relative overflow-hidden rounded-xl p-4 sm:p-5 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border border-[#FFF4C2]/80 shadow-[0_6px_20px_rgba(212,160,23,0.35)] backdrop-blur-md">
                     <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#FFF4C2_1px,transparent_1px)] [background-size:16px_16px]" />
 
-                    <div className="relative z-10 space-y-3">
-                      <span className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
-                        Total Prize Pool
-                      </span>
-                      <h2 className="text-4xl sm:text-6xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
-                        {formatIndianCurrency(totalPrize)}
-                      </h2>
+                    <div className="relative z-10 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs sm:text-sm font-black uppercase tracking-[0.2em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                          Total Prize Pool
+                        </span>
+                        <h2 className="text-2xl sm:text-3xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight text-right">
+                          {formatIndianCurrency(totalPrize)}
+                        </h2>
+                      </div>
 
                       {sponsoredAmount > 0 && (
-                        <div className="pt-3 border-t border-[#FFF4C2]/30 flex flex-wrap items-center justify-between gap-2 text-xs text-[#FFFFFF]">
-                          <span className="font-bold">Base Prize: {formatIndianCurrency(basePrize)}</span>
-                          <span className="font-bold bg-[#8A5A00]/40 border border-[#FFF4C2]/40 px-2.5 py-1 rounded-lg">
+                        <div className="pt-2 border-t border-[#FFF4C2]/30 flex items-center justify-between gap-2 text-xs text-[#FFFFFF]">
+                          <span className="font-bold text-[#FFFFFF]">Base Prize: {formatIndianCurrency(basePrize)}</span>
+                          <span className="font-bold text-[#FFFFFF] bg-[#8A5A00]/40 border border-[#FFF4C2]/40 px-2 py-0.5 rounded-md text-[11px]">
                             + Sponsored: {formatIndianCurrency(sponsoredAmount)}
                           </span>
                         </div>
@@ -1624,14 +1663,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     </div>
                   </div>
 
-                  {/* Clean Royal Gold Prize Distribution Board */}
+                  {/* Sleek Royal Gold Prize Distribution Board */}
                   {prizeDistributions.length > 0 ? (
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-sm pl-1">
+                    <div className="space-y-2.5">
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#FFFFFF] drop-shadow-sm pl-1">
                         Prize Distribution
                       </h3>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                         {prizeDistributions.map((row, i) => {
                           const isWWCD = i === 0 || /wwcd|1st|champion/i.test(row.position);
                           const isSecond = i === 1 || /2nd/i.test(row.position);
@@ -1659,10 +1698,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             return (
                               <div
                                 key={i}
-                                className="md:col-span-2 relative overflow-hidden rounded-2xl p-5 sm:p-6 bg-gradient-to-br from-[#FFE082] via-[#E6B93C] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_30px_rgba(255,216,106,0.6)] flex items-center justify-between gap-4"
+                                className="md:col-span-2 relative overflow-hidden rounded-xl p-3.5 sm:p-4 bg-gradient-to-br from-[#FFE082] via-[#E6B93C] to-[#B8860B] border border-[#FFF4C2] shadow-[0_6px_20px_rgba(255,216,106,0.5)] flex items-center justify-between gap-3"
                               >
                                 <div>
-                                  <h4 className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
+                                  <h4 className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
                                     {positionTitle}
                                   </h4>
                                   {subtitle && (
@@ -1673,7 +1712,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 </div>
 
                                 <div className="text-right shrink-0">
-                                  <span className="text-2xl sm:text-4xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
+                                  <span className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
                                     {row.prize}
                                   </span>
                                 </div>
@@ -1685,24 +1724,24 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             return (
                               <div
                                 key={i}
-                                className={`relative overflow-hidden rounded-xl p-4 border-2 flex items-center justify-between gap-3 ${
+                                className={`relative overflow-hidden rounded-xl p-3 border flex items-center justify-between gap-2.5 ${
                                   isSecond
-                                    ? 'bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#A67B10] border-[#FFF4C2] shadow-[0_6px_20px_rgba(212,160,23,0.4)]'
-                                    : 'bg-gradient-to-br from-[#D4A017] via-[#C29215] to-[#8A5A00] border-[#FFE082]/80 shadow-[0_4px_16px_rgba(184,134,11,0.35)]'
+                                    ? 'bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#A67B10] border-[#FFF4C2]/80 shadow-[0_4px_14px_rgba(212,160,23,0.35)]'
+                                    : 'bg-gradient-to-br from-[#D4A017] via-[#C29215] to-[#8A5A00] border-[#FFE082]/70 shadow-[0_3px_12px_rgba(184,134,11,0.3)]'
                                 }`}
                               >
                                 <div className="min-w-0">
-                                  <h4 className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
+                                  <h4 className="text-xs sm:text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
                                     {positionTitle}
                                   </h4>
                                   {subtitle && (
-                                    <p className="text-xs font-medium text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate mt-0.5">
+                                    <p className="text-xs font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate mt-0.5">
                                       {subtitle}
                                     </p>
                                   )}
                                 </div>
 
-                                <span className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
+                                <span className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
                                   {row.prize}
                                 </span>
                               </div>
@@ -1713,12 +1752,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                           return (
                             <div
                               key={i}
-                              className="bg-gradient-to-r from-[#C29215] to-[#9E740E] border border-[#FFE082]/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm"
+                              className="bg-gradient-to-r from-[#C29215] to-[#9E740E] border border-[#FFE082]/40 rounded-lg p-2.5 px-3 flex items-center justify-between shadow-sm"
                             >
-                              <span className="font-black text-sm sm:text-base text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
+                              <span className="font-bold text-xs text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
                                 {positionTitle}
                               </span>
-                              <span className="font-black text-sm sm:text-base text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] shrink-0 ml-3">
+                              <span className="font-black text-xs sm:text-sm text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] shrink-0 ml-2">
                                 {row.prize}
                               </span>
                             </div>
@@ -1727,7 +1766,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       </div>
                     </div>
                   ) : (
-                    <div className="p-6 rounded-xl text-sm border bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-[#FFF4C2] text-[#FFFFFF] font-bold">
+                    <div className="p-4 rounded-xl text-xs border bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-[#FFF4C2] text-[#FFFFFF] font-bold">
                       No prize distribution data available.
                     </div>
                   )}

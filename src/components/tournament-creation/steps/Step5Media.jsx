@@ -247,11 +247,11 @@ export default function Step5Media({ data, onChange, orgName, orgTier, userTier 
           <div key={tierName} className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/80">
-                {tierName === 'free' ? 'Standard Free Themes' : tierName === 'basic' ? 'Basic Plan Themes' : 'Pro Legendary Collectibles'}
+                {tierName === 'free' ? 'Free Plan Theme' : 'Pro Theme'}
               </span>
               {tierName !== 'free' && (
                 <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  {tierName.toUpperCase()}
+                  PRO
                 </span>
               )}
             </div>
