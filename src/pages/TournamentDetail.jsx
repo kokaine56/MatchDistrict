@@ -963,7 +963,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     return (
                       <button
                         disabled
-                        className="flex-1 bg-green-500 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 opacity-90 cursor-not-allowed"
+                        className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed ${
+                          isGoldTheme 
+                            ? 'bg-gradient-to-r from-[#D4A017] to-[#B8860B] text-white border border-[#FFE082]/40 shadow-[inset_0_1px_3px_rgba(255,255,255,0.3)] opacity-95'
+                            : 'bg-green-500 text-white opacity-90'
+                        }`}
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -1019,7 +1023,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           {countdown.active && countdown.type !== 'ended' && countdown.type !== 'live' && (
             <div className={`mt-4 border shadow-sm p-3.5 flex items-center justify-between w-full relative overflow-hidden transition-all duration-300 ${
               isGoldTheme
-                ? 'bg-gradient-to-r from-[#3D2800]/95 via-[#7A5400]/90 to-[#2A1B00]/95 border-[#FFE082]/40 shadow-[0_12px_36px_rgba(80,50,0,0.4)] rounded-2xl backdrop-blur-xl'
+                ? 'bg-gradient-to-r from-[#C29215]/95 via-[#D4A017]/95 to-[#A67B10]/95 border-[#FFE082]/50 shadow-[0_8px_24px_rgba(184,134,11,0.3)] rounded-2xl backdrop-blur-xl'
                 : countdown.type === 'regOpen' ? 'bg-emerald-50 border-emerald-200 rounded-xl' :
                   countdown.type === 'registration' ? 'bg-blue-50 border-blue-200 rounded-xl' :
                   'bg-white border-slate-100 rounded-xl'
@@ -1068,17 +1072,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
               )}
 
-              <span className={`text-xs sm:text-sm font-black tracking-widest relative z-10 ${
+              <span className={`text-xs sm:text-sm relative z-10 ${
                 isGoldTheme
-                  ? 'text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]'
-                  : countdown.type === 'regOpen' ? 'text-emerald-600' :
-                    countdown.type === 'registration' ? 'text-blue-600' :
-                    'text-slate-500'
+                  ? 'font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)]'
+                  : countdown.type === 'regOpen' ? 'font-black tracking-widest text-emerald-600' :
+                    countdown.type === 'registration' ? 'font-black tracking-widest text-blue-600' :
+                    'font-black tracking-widest text-slate-500'
               }`}>{countdown.label}</span>
 
               <div className={`text-sm sm:text-base font-black px-3.5 py-1.5 rounded-xl whitespace-nowrap border relative z-10 ${
                 isGoldTheme
-                  ? 'text-[#FFFFFF] bg-[#1F1300]/95 border-[#FFC107]/45 shadow-inner drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]'
+                  ? 'text-white bg-[#8A5C00]/40 border-[#FFE082]/40 shadow-inner drop-shadow-sm'
                   : countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
                     countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
                     'text-slate-700 bg-slate-100/50 border-slate-200'
