@@ -243,6 +243,9 @@ export const THEME_REGISTRY = {
 // Alias mappings for legacy or alternative names
 THEME_REGISTRY.emerald = { ...THEME_REGISTRY.mint, id: 'emerald' } // Emerald Jade removed per request, fallback to Mint
 THEME_REGISTRY.golden_emerald = { ...THEME_REGISTRY.mint, id: 'golden_emerald' }
+THEME_REGISTRY.royal_gold = THEME_REGISTRY.gold
+THEME_REGISTRY['royal gold'] = THEME_REGISTRY.gold
+THEME_REGISTRY['royalgold'] = THEME_REGISTRY.gold
 THEME_REGISTRY.golden_rose = {
   ...THEME_REGISTRY.gold,
   id: 'golden_rose',

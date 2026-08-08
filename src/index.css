@@ -530,6 +530,26 @@ html.light .sponsored-card .text-white,
   color: #ffffff !important;
 }
 
+/* Royal Gold tournament title & cards — always pure white title text regardless of light/dark mode */
+html.light .royal-gold-theme h1,
+html.light .royal-gold-theme h4,
+html.light .royal-gold-card h4,
+html.light .royal-gold-card h3,
+html.light .royal-gold-card .royal-gold-title,
+html.light h1.royal-gold-title,
+html.light h4.royal-gold-title,
+html.light h3.royal-gold-title,
+html.light .royal-gold-title,
+.royal-gold-theme h1,
+.royal-gold-theme h4,
+.royal-gold-card h4,
+.royal-gold-card h3,
+.royal-gold-card .royal-gold-title,
+.royal-gold-title {
+  color: #ffffff !important;
+}
+
+
 html.light p,
 html.light li,
 html.light label {

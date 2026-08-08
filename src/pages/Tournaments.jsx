@@ -129,7 +129,12 @@ function Tournaments({ onNavigate }) {
         match_type: t.match_type || t.matchType || 'squad',
         perspective: t.perspective || 'tpp',
         orgTier: ['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro',
-        coverImage: t.coverImage || ''
+        coverImage: t.coverImage || '',
+        card_color: t.card_color || t.cardColor || t.theme || 'white',
+        cardColor: t.card_color || t.cardColor || t.theme || 'white',
+        theme: t.theme || t.card_color || t.cardColor || 'white',
+        hasApprovedSponsors: t.hasApprovedSponsors || false,
+        totalSponsorContributions: t.totalSponsorContributions || 0
       }));
 
     return processedDb;
@@ -283,7 +288,7 @@ function Tournaments({ onNavigate }) {
                         startDate={t.startDate}
                         hasSponsors={t.hasApprovedSponsors}
                         sponsoredAmount={t.totalSponsorContributions}
-                        cardColor={t.card_color || 'white'}
+                        cardColor={t.card_color || t.cardColor || t.theme || 'white'}
                       />
                     </div>
                   ))}
@@ -662,7 +667,7 @@ function Tournaments({ onNavigate }) {
                             startDate={t.startDate}
                             hasSponsors={t.hasApprovedSponsors}
                             sponsoredAmount={t.totalSponsorContributions}
-                            cardColor={t.card_color || 'white'}
+                            cardColor={t.card_color || t.cardColor || t.theme || 'white'}
                           />
                         </div>
                       ))}

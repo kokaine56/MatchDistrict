@@ -123,6 +123,7 @@ function WalletPassCard({
 }) {
   const activeTheme = getThemeConfig(cardColor)
   const cc = getThemeTypography(cardColor)
+  const isGoldCard = ['gold', 'royal_gold', 'royal gold', 'royalgold'].includes((cardColor || '').toLowerCase().trim())
   const [isPassPopped, setIsPassPopped] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
 
@@ -176,7 +177,7 @@ function WalletPassCard({
 
         {/* Layer B: The Pass Card (z-10) */}
         <div
-          className={`border rounded-2xl overflow-hidden p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isPassPopped ? 'z-50' : 'z-10'}`}
+          className={`border rounded-2xl overflow-hidden p-2.5 pl-4 shadow-[0_12px_30px_rgba(0,0,0,0.3)] absolute top-[4%] bottom-[4%] right-0 w-[94%] flex flex-col justify-between transform ${isGoldCard ? 'royal-gold-card' : ''} ${isPassPopped ? 'z-50' : 'z-10'}`}
           style={{
             borderColor: activeTheme.borderHex,
             transform: isPassPopped
@@ -195,7 +196,7 @@ function WalletPassCard({
           <div className="space-y-1 relative z-10">
             {/* Top row with target SVG decoration */}
             <div className={`flex items-center justify-between border-b ${cc.divider} pb-0.5`}>
-              <span className={`text-[7px] tracking-wider ${cc.statusText} font-extrabold uppercase leading-none`}>
+              <span className={`text-[7px] tracking-wider ${cc.statusText} font-extrabold leading-none`}>
                 {formatStatusHeaderText(displayBadgeText)}
               </span>
               <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className={cc.targetIcon}>
@@ -208,7 +209,7 @@ function WalletPassCard({
 
             {/* Title & Organizer */}
             <div className="min-w-0">
-              <h4 className={`text-[10px] font-black ${cc.titleText} tracking-tight uppercase leading-tight truncate w-full`}>
+              <h4 className={`text-[10px] font-black ${cc.titleText} tracking-tight uppercase leading-tight truncate w-full ${isGoldCard ? 'royal-gold-title !text-white' : ''}`} style={isGoldCard || cc.titleText?.includes('#FFFFFF') ? { color: '#FFFFFF' } : undefined}>
                 {title}
               </h4>
               <div className={`flex items-center gap-0.5 text-[8px] ${cc.orgText} font-bold leading-none mt-0.5`}>
@@ -321,8 +322,8 @@ function InfoContent({
   return (
     <div className="flex flex-col justify-between bg-surface/50 text-on-surface h-full min-w-0">
       <div className="flex flex-col gap-y-0.5 min-w-0">
-        <div className={`w-fit rounded px-2 py-0.5 text-[10px] tracking-wider uppercase font-semibold leading-none ${displayBadgeBg}`}>
-          {displayBadgeText}
+        <div className={`w-fit rounded px-2 py-0.5 text-[10px] tracking-wider font-semibold leading-none ${displayBadgeBg}`}>
+          {formatStatusHeaderText(displayBadgeText)}
         </div>
         <h3 className="text-xs sm:text-sm font-extrabold leading-tight truncate w-full text-on-surface mt-0.5">
           {title || "Untitled Tournament"}

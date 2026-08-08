@@ -238,7 +238,7 @@ function Homepage({ onNavigate }) {
                                 orgTier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'}
                                 onNavigate={onNavigate} hasSponsors={t.hasApprovedSponsors || false}
                                 registrationOpenDate={t.registrationOpenDate} registrationCloseDate={t.registrationCloseDate} startDate={t.startDate}
-                                cardColor={t.card_color || 'white'}
+                                cardColor={t.card_color || t.cardColor || t.theme || 'white'}
                               />
                             </div>
                           ))}

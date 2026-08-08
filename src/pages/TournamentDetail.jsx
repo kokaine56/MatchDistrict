@@ -300,9 +300,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     const regClose = tourney.registrationCloseDate ? new Date(tourney.registrationCloseDate) : null;
     const startDate = tourney.startDate ? new Date(tourney.startDate) : null;
     if (regOpen && now < regOpen) {
-      target = regOpen; label = 'Registration Opens In'; type = 'regOpen';
+      target = regOpen; label = 'Registration opens in'; type = 'regOpen';
     } else if (regClose && now < regClose) {
-      target = regClose; label = 'Registration Closes In'; type = 'registration';
+      target = regClose; label = 'Registration closes in'; type = 'registration';
     } else if (startDate && now < startDate) {
       target = startDate; label = 'Tournament Starts In'; type = 'start';
     } else { setCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' }); return; }
@@ -733,14 +733,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     );
   };
 
-  const isGoldTheme = (tourney?.card_color || tourney?.cardColor || '').toLowerCase().trim() === 'gold';
+  const isGoldTheme = ['gold', 'royal_gold', 'royal gold', 'royalgold'].includes((tourney?.card_color || tourney?.cardColor || tourney?.theme || '').toLowerCase().trim());
 
   const cardContainerClass = isGoldTheme
     ? 'bg-[#FAF7F0] border border-[#D4A017]/35 rounded-xl p-4 sm:p-5 shadow-[0_8px_20px_rgba(0,0,0,0.12)]'
     : 'bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-sm';
 
   const cardTitleClass = isGoldTheme
-    ? 'text-xs font-black text-[#1F2937] tracking-widest uppercase mb-2'
+    ? 'text-xs font-black text-[#FFFFFF] tracking-widest uppercase mb-2'
     : 'text-xs font-black text-slate-800 tracking-widest uppercase mb-2';
 
   const cardBodyClass = isGoldTheme
@@ -751,7 +751,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   return (
     <div className={`min-h-screen text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-amber-500/30 selection:text-white transition-colors duration-500 ${
-      isGoldTheme ? 'bg-[#0E0C06]' : 'bg-[#07080C]'
+      isGoldTheme ? 'bg-[#0E0C06] royal-gold-theme' : 'bg-[#07080C]'
     }`}>
       {/* Royal Gold Global Background Layers (Auras, Metallic Overlay, Floating Dust) */}
       {isGoldTheme && (
@@ -864,7 +864,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <div className="flex-1 flex flex-col items-start justify-start md:justify-center text-left min-w-0">
                   
                   {/* Title */}
-                  <h1 className="text-lg sm:text-2xl font-black text-[#FFFFFF] leading-tight line-clamp-2 break-words drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
+                  <h1 className={`text-lg sm:text-2xl font-black text-[#FFFFFF] !text-white leading-tight line-clamp-2 break-words drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] ${isGoldTheme ? 'royal-gold-title' : ''}`} style={{ color: '#FFFFFF' }}>
                     {tourney.title}
                   </h1>
 
@@ -1068,7 +1068,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
               )}
 
-              <span className={`text-xs sm:text-sm font-black uppercase tracking-widest relative z-10 ${
+              <span className={`text-xs sm:text-sm font-black tracking-widest relative z-10 ${
                 isGoldTheme
                   ? 'text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]'
                   : countdown.type === 'regOpen' ? 'text-emerald-600' :
