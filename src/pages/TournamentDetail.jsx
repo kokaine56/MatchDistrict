@@ -1601,63 +1601,22 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {activeTab === 'prize' && (
               isGoldTheme ? (
                 <div className="flex flex-col gap-6 w-full max-w-4xl select-none">
-                  {/* Royal Gold Header Card: Total Prize Pool */}
-                  <div className="relative overflow-hidden rounded-2xl p-6 sm:p-8 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_35px_rgba(212,160,23,0.45)] backdrop-blur-md">
-                    {/* Subtle Brushed Texture */}
+                  {/* Total Prize Pool Clean Hero Card */}
+                  <div className="relative overflow-hidden rounded-2xl p-6 sm:p-8 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_35px_rgba(212,160,23,0.45)] backdrop-blur-md text-left">
                     <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#FFF4C2_1px,transparent_1px)] [background-size:16px_16px]" />
 
-                    <div className="relative z-10 space-y-4">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                          <span className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
-                            Total Prize Pool
-                          </span>
-                          <h2 className="text-3xl sm:text-5xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] mt-1 tracking-tight">
-                            {formatIndianCurrency(totalPrize)}
-                          </h2>
-                        </div>
+                    <div className="relative z-10 space-y-3">
+                      <span className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                        Total Prize Pool
+                      </span>
+                      <h2 className="text-4xl sm:text-6xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
+                        {formatIndianCurrency(totalPrize)}
+                      </h2>
 
-                        {/* Quick Metadata Stats Grid */}
-                        <div className="grid grid-cols-2 gap-2 text-xs text-[#FFFFFF]">
-                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
-                            <span className="text-base">🏆</span>
-                            <div>
-                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Qualifying Teams</p>
-                              <p className="font-black text-[#FFFFFF] mt-0.5">{tourney?.qualifying_teams || tourney?.qualifyingTeams || tourney?.slotsTotal || slotsData?.slotsTotal || 64} Teams</p>
-                            </div>
-                          </div>
-
-                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
-                            <span className="text-base">🎮</span>
-                            <div>
-                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Format</p>
-                              <p className="font-black text-[#FFFFFF] mt-0.5">{(tourney?.match_type || 'squad').toUpperCase()} • {(tourney?.perspective || 'tpp').toUpperCase()}</p>
-                            </div>
-                          </div>
-
-                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
-                            <span className="text-base">💰</span>
-                            <div>
-                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Entry Fee</p>
-                              <p className="font-black text-[#FFFFFF] mt-0.5">{entryDisplay}</p>
-                            </div>
-                          </div>
-
-                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
-                            <span className="text-base">⚡</span>
-                            <div>
-                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Available Slots</p>
-                              <p className="font-black text-[#FFFFFF] mt-0.5">{slotAvailable} / {slotTotal}</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Sponsored breakdown if any */}
                       {sponsoredAmount > 0 && (
                         <div className="pt-3 border-t border-[#FFF4C2]/30 flex flex-wrap items-center justify-between gap-2 text-xs text-[#FFFFFF]">
                           <span className="font-bold">Base Prize: {formatIndianCurrency(basePrize)}</span>
-                          <span className="font-bold bg-[#8A5A00]/50 border border-[#FFF4C2]/50 px-2.5 py-1 rounded-lg">
+                          <span className="font-bold bg-[#8A5A00]/40 border border-[#FFF4C2]/40 px-2.5 py-1 rounded-lg">
                             + Sponsored: {formatIndianCurrency(sponsoredAmount)}
                           </span>
                         </div>
@@ -1665,7 +1624,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     </div>
                   </div>
 
-                  {/* Esports Championship Prize Board */}
+                  {/* Clean Royal Gold Prize Distribution Board */}
                   {prizeDistributions.length > 0 ? (
                     <div className="space-y-3">
                       <h3 className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-sm pl-1">
@@ -1678,7 +1637,22 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                           const isSecond = i === 1 || /2nd/i.test(row.position);
                           const isThird = i === 2 || /3rd/i.test(row.position);
 
-                          const positionTitle = isWWCD ? 'WWCD / CHAMPION' : isSecond ? '2ND PLACE' : isThird ? '3RD PLACE' : row.position;
+                          const getCleanRankTitle = (idx, rawPos) => {
+                            if (idx === 0 || /wwcd|1st|champion/i.test(rawPos)) return 'WWCD / CHAMPION';
+                            if (idx === 1 || /2nd/i.test(rawPos)) return '2nd Place';
+                            if (idx === 2 || /3rd/i.test(rawPos)) return '3rd Place';
+                            if (idx === 3 || /4th/i.test(rawPos)) return '4th Place';
+                            if (idx === 4 || /5th/i.test(rawPos)) return '5th Place';
+                            if (idx === 5 || /6th/i.test(rawPos)) return '6th Place';
+                            if (idx === 6 || /7th/i.test(rawPos)) return '7th Place';
+                            if (idx === 7 || /8th/i.test(rawPos)) return '8th Place';
+                            if (idx === 8 || /9th/i.test(rawPos)) return '9th Place';
+                            if (idx === 9 || /10th/i.test(rawPos)) return '10th Place';
+                            if (/place|rank|mvp|fragger|kill/i.test(rawPos)) return rawPos;
+                            return `${idx + 1}th Place`;
+                          };
+
+                          const positionTitle = getCleanRankTitle(i, row.position);
                           const subtitle = isWWCD ? 'Winning Team' : isSecond ? 'Runner-up' : isThird ? 'Third-place finish' : '';
 
                           if (isWWCD) {
@@ -1687,27 +1661,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 key={i}
                                 className="md:col-span-2 relative overflow-hidden rounded-2xl p-5 sm:p-6 bg-gradient-to-br from-[#FFE082] via-[#E6B93C] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_30px_rgba(255,216,106,0.6)] flex items-center justify-between gap-4"
                               >
-                                <div className="flex items-center gap-4">
-                                  <div className="w-14 h-14 rounded-full bg-gradient-to-b from-[#FFF4C2] to-[#D4A017] p-0.5 shadow-[0_0_20px_rgba(255,244,194,0.8)] shrink-0 flex items-center justify-center">
-                                    <div className="w-full h-full rounded-full bg-gradient-to-b from-[#B8860B] to-[#8A5A00] flex items-center justify-center text-2xl">
-                                      🏆
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center gap-2">
-                                      <h4 className="text-lg sm:text-xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
-                                        {positionTitle}
-                                      </h4>
-                                      <span className="text-[10px] font-black uppercase tracking-wider bg-[#FFFFFF]/25 text-[#FFFFFF] px-2 py-0.5 rounded-full border border-[#FFFFFF]/40">
-                                        1st Place
-                                      </span>
-                                    </div>
-                                    {subtitle && (
-                                      <p className="text-xs font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] mt-0.5">
-                                        {subtitle}
-                                      </p>
-                                    )}
-                                  </div>
+                                <div>
+                                  <h4 className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
+                                    {positionTitle}
+                                  </h4>
+                                  {subtitle && (
+                                    <p className="text-xs sm:text-sm font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] mt-0.5">
+                                      {subtitle}
+                                    </p>
+                                  )}
                                 </div>
 
                                 <div className="text-right shrink-0">
@@ -1729,41 +1691,33 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                     : 'bg-gradient-to-br from-[#D4A017] via-[#C29215] to-[#8A5A00] border-[#FFE082]/80 shadow-[0_4px_16px_rgba(184,134,11,0.35)]'
                                 }`}
                               >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <span className="text-2xl shrink-0">{isSecond ? '🥈' : '🥉'}</span>
-                                  <div className="min-w-0">
-                                    <h4 className="text-sm sm:text-base font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
-                                      {positionTitle}
-                                    </h4>
-                                    {subtitle && (
-                                      <p className="text-xs font-medium text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
-                                        {subtitle}
-                                      </p>
-                                    )}
-                                  </div>
+                                <div className="min-w-0">
+                                  <h4 className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
+                                    {positionTitle}
+                                  </h4>
+                                  {subtitle && (
+                                    <p className="text-xs font-medium text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate mt-0.5">
+                                      {subtitle}
+                                    </p>
+                                  )}
                                 </div>
 
-                                <span className="text-lg sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
+                                <span className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
                                   {row.prize}
                                 </span>
                               </div>
                             );
                           }
 
-                          // Ranks 4+ or MVP / Kill Rewards
+                          // Ranks 4+
                           return (
                             <div
                               key={i}
                               className="bg-gradient-to-r from-[#C29215] to-[#9E740E] border border-[#FFE082]/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm"
                             >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <span className="w-7 h-7 rounded-full bg-[#8A5A00]/50 border border-[#FFF4C2]/40 flex items-center justify-center text-xs font-black text-[#FFFFFF] shrink-0">
-                                  {row.badge || (i + 1).toString().padStart(2, '0')}
-                                </span>
-                                <span className="font-extrabold text-sm text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
-                                  {positionTitle}
-                                </span>
-                              </div>
+                              <span className="font-black text-sm sm:text-base text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
+                                {positionTitle}
+                              </span>
                               <span className="font-black text-sm sm:text-base text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] shrink-0 ml-3">
                                 {row.prize}
                               </span>
