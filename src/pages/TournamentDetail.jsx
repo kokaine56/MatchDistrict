@@ -75,6 +75,464 @@ function getDetailPageTheme(themeKey) {
   }
 }
 
+const formatRoadmapDateDetails = (dateStr) => {
+  if (!dateStr) return { weekday: '', dateFormatted: 'TBD' };
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return { weekday: '', dateFormatted: String(dateStr) };
+    const weekday = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const dateFormatted = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return { weekday, dateFormatted };
+  } catch (_) {
+    return { weekday: '', dateFormatted: String(dateStr) };
+  }
+};
+
+const formatRoadmapTimeIST = (timeStr, dateStr) => {
+  if (!timeStr) return 'TBD';
+  const cleanTime = String(timeStr).trim();
+
+  let hours = NaN;
+  let minutes = NaN;
+
+  const match24 = cleanTime.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (match24) {
+    hours = parseInt(match24[1], 10);
+    minutes = parseInt(match24[2], 10);
+  } else if (dateStr) {
+    try {
+      const combined = new Date(`${dateStr}T${cleanTime}`);
+      if (!isNaN(combined.getTime())) {
+        hours = combined.getHours();
+        minutes = combined.getMinutes();
+      }
+    } catch (_) {}
+  }
+
+  if (isNaN(hours) || isNaN(minutes)) {
+    if (/AM|PM/i.test(cleanTime)) {
+      return cleanTime.includes('IST') ? cleanTime : `${cleanTime} IST`;
+    }
+    return cleanTime;
+  }
+
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 === 0 ? 12 : hours % 12;
+  const formattedHours = String(displayHours).padStart(2, '0');
+  const formattedMinutes = String(minutes).padStart(2, '0');
+
+  return `${formattedHours}:${formattedMinutes} ${period} IST`;
+};
+
+const DesktopRoadmapView = ({ roadmap }) => {
+  const N = roadmap.length;
+  const stepY = 190;
+  const startY = 80;
+  // Ample vertical padding so the final round card is never cut off or cropped
+  const totalHeight = Math.max(380, (N - 1) * stepY + 260);
+
+  const [journeyIndex, setJourneyIndex] = useState(0);
+  const [hasCompletedJourney, setHasCompletedJourney] = useState(false);
+
+  // Sequential Journey Animation on mount
+  useEffect(() => {
+    if (N <= 1) return;
+    const timer = setInterval(() => {
+      setJourneyIndex((prev) => {
+        if (prev < N - 1) {
+          return prev + 1;
+        } else {
+          clearInterval(timer);
+          setHasCompletedJourney(true);
+          return prev;
+        }
+      });
+    }, 1100);
+    return () => clearInterval(timer);
+  }, [N]);
+
+  // Left nodes at x = 260 (26%), Right nodes at x = 740 (74%)
+  const getCoords = (index) => {
+    if (N === 1) return { x: 500, y: startY };
+    const x = index % 2 === 0 ? 260 : 740;
+    const y = index * stepY + startY;
+    return { x, y };
+  };
+
+  // Build continuous cubic bezier S-curve SVG path
+  let pathD = '';
+  if (N > 1) {
+    const p0 = getCoords(0);
+    pathD = `M ${p0.x} ${p0.y}`;
+    for (let i = 0; i < N - 1; i++) {
+      const curr = getCoords(i);
+      const next = getCoords(i + 1);
+      const midY = (curr.y + next.y) / 2;
+      pathD += ` C ${curr.x} ${midY}, ${next.x} ${midY}, ${next.x} ${next.y}`;
+    }
+  }
+
+  // Calculate pathLength progress (0 to 1) during sequential animation
+  const progressPathLength = N > 1 ? Math.min(1, (journeyIndex + 1) / N) : 1;
+
+  return (
+    <div className="relative w-full max-w-5xl mx-auto pb-12" style={{ height: `${totalHeight}px` }}>
+      {/* Winding SVG Route */}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible"
+        viewBox={`0 0 1000 ${totalHeight}`}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id="royalGoldPathGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#8A5A00" />
+            <stop offset="30%" stopColor="#C69214" />
+            <stop offset="70%" stopColor="#E6B93C" />
+            <stop offset="100%" stopColor="#FFD86A" />
+          </linearGradient>
+          <filter id="royalGoldGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+
+        {pathD && (
+          <>
+            {/* Outer Deep Glow Path */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#8A5A00"
+              strokeWidth="9"
+              strokeLinecap="round"
+              opacity="0.5"
+              filter="url(#royalGoldGlow)"
+            />
+            {/* Base Metallic Path */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#C69214"
+              strokeWidth="5"
+              strokeLinecap="round"
+              opacity="0.8"
+            />
+            {/* Animated Gold Highlight Path */}
+            <motion.path
+              d={pathD}
+              fill="none"
+              stroke="url(#royalGoldPathGrad)"
+              strokeWidth="4"
+              strokeLinecap="round"
+              animate={{ pathLength: progressPathLength }}
+              transition={{ duration: 0.9, ease: "easeInOut" }}
+            />
+          </>
+        )}
+      </svg>
+
+      {/* Render Milestones and Pure Gold Info Cards */}
+      {roadmap.map((round, i) => {
+        const { x, y } = getCoords(i);
+        const isLeft = N === 1 ? true : i % 2 === 0;
+        const isVisibleInJourney = i <= journeyIndex;
+        const isCurrentActive = journeyIndex === i;
+        const { weekday, dateFormatted } = formatRoadmapDateDetails(round.date);
+        const formattedTime = formatRoadmapTimeIST(round.time, round.date);
+
+        return (
+          <React.Fragment key={i}>
+            {/* Milestone Circular Node (ONLY WHITE NUMBER 01, NO DUPLICATE LABELS) */}
+            <div
+              className="absolute z-10"
+              style={{
+                top: `${y}px`,
+                left: `${x / 10}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+            >
+              <motion.div
+                onClick={() => {
+                  setJourneyIndex(i);
+                  setHasCompletedJourney(true);
+                }}
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{
+                  scale: isVisibleInJourney ? 1 : 0,
+                  opacity: isVisibleInJourney ? 1 : 0,
+                }}
+                transition={{ duration: 0.4 }}
+                whileHover={{ scale: 1.15 }}
+                className="relative flex items-center justify-center cursor-pointer group"
+              >
+                {/* Active Round Pulsing Aura */}
+                {isCurrentActive && (
+                  <span className="absolute w-14 h-14 rounded-full bg-[#FFD86A] opacity-50 animate-ping" />
+                )}
+
+                {/* Outer Metallic Gold Ring */}
+                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_20px_rgba(230,185,60,0.7)] group-hover:shadow-[0_0_28px_rgba(255,216,106,1)] transition-all">
+                  {/* Inner Gold Center */}
+                  <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
+                    <span className="text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+                      {(i + 1).toString().padStart(2, '0')}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Pure Royal Gold Information Card (NO DUPLICATE ROUND 1 TITLE, PURE WHITE TEXT) */}
+            <AnimatePresence>
+              {(journeyIndex === i || (hasCompletedJourney && journeyIndex === i)) && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, x: isLeft ? -15 : 15 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{ duration: 0.35, ease: "easeOut" }}
+                  className="absolute z-20"
+                  style={{
+                    top: `${y}px`,
+                    left: N === 1 ? '58%' : isLeft ? '3%' : '77%',
+                    width: N === 1 ? '38%' : '20%',
+                    minWidth: '200px',
+                    transform: 'translateY(-50%)',
+                  }}
+                >
+                  <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3.5 shadow-[0_10px_30px_rgba(212,160,23,0.5)] backdrop-blur-md">
+                    <div className="space-y-1 text-xs text-[#FFFFFF]">
+                      {weekday && <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
+                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
+                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
+                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
+                        Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+const MobileRoadmapView = ({ roadmap }) => {
+  const N = roadmap.length;
+  const stepY = 160;
+  const startY = 60;
+  const totalHeight = Math.max(340, (N - 1) * stepY + 220);
+
+  const [journeyIndex, setJourneyIndex] = useState(0);
+  const [hasCompletedJourney, setHasCompletedJourney] = useState(false);
+
+  // Sequential Journey Animation on mount
+  useEffect(() => {
+    if (N <= 1) return;
+    const timer = setInterval(() => {
+      setJourneyIndex((prev) => {
+        if (prev < N - 1) {
+          return prev + 1;
+        } else {
+          clearInterval(timer);
+          setHasCompletedJourney(true);
+          return prev;
+        }
+      });
+    }, 1100);
+    return () => clearInterval(timer);
+  }, [N]);
+
+  // Weave milestone x positions between 260px (72% right) and 100px (28% left) for a curved road
+  const getCoords = (index) => {
+    if (N === 1) return { x: 180, y: startY };
+    const x = index % 2 === 0 ? 260 : 100;
+    const y = index * stepY + startY;
+    return { x, y };
+  };
+
+  let pathD = '';
+  if (N > 1) {
+    const p0 = getCoords(0);
+    pathD = `M ${p0.x} ${p0.y}`;
+    for (let i = 0; i < N - 1; i++) {
+      const curr = getCoords(i);
+      const next = getCoords(i + 1);
+      const midY = (curr.y + next.y) / 2;
+      pathD += ` C ${curr.x} ${midY}, ${next.x} ${midY}, ${next.x} ${next.y}`;
+    }
+  }
+
+  const progressPathLength = N > 1 ? Math.min(1, (journeyIndex + 1) / N) : 1;
+
+  return (
+    <div className="relative w-full max-w-[430px] mx-auto select-none pb-12 overflow-hidden" style={{ height: `${totalHeight}px` }}>
+      {/* Mobile Winding Curved SVG Path */}
+      <svg
+        className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible"
+        viewBox={`0 0 360 ${totalHeight}`}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id="mobPathGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#8A5A00" />
+            <stop offset="50%" stopColor="#E6B93C" />
+            <stop offset="100%" stopColor="#FFD86A" />
+          </linearGradient>
+          <filter id="mobGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+
+        {pathD && (
+          <>
+            {/* Outer Glow Road */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#8A5A00"
+              strokeWidth="8"
+              strokeLinecap="round"
+              opacity="0.5"
+              filter="url(#mobGlow)"
+            />
+            {/* Base Road */}
+            <path
+              d={pathD}
+              fill="none"
+              stroke="#C69214"
+              strokeWidth="5"
+              strokeLinecap="round"
+              opacity="0.8"
+            />
+            {/* Gold Highlight Path */}
+            <motion.path
+              d={pathD}
+              fill="none"
+              stroke="url(#mobPathGrad)"
+              strokeWidth="4"
+              strokeLinecap="round"
+              animate={{ pathLength: progressPathLength }}
+              transition={{ duration: 0.9, ease: "easeInOut" }}
+            />
+          </>
+        )}
+      </svg>
+
+      {/* Render Mobile Milestones & Floating Tap-to-Reveal Cards */}
+      {roadmap.map((round, i) => {
+        const { x, y } = getCoords(i);
+        const isLeftNode = i % 2 !== 0; // index 1, 3 are on left (x=100)
+        const isVisibleInJourney = i <= journeyIndex;
+        const isSelectedCard = journeyIndex === i;
+        const isCurrent = journeyIndex === i;
+        const { weekday, dateFormatted } = formatRoadmapDateDetails(round.date);
+        const formattedTime = formatRoadmapTimeIST(round.time, round.date);
+
+        return (
+          <React.Fragment key={i}>
+            {/* Milestone Circular Node Marker sitting directly on the curve bend (NO DUPLICATE RECTANGLE UNDERNEATH!) */}
+            <div
+              className="absolute z-10"
+              style={{
+                top: `${y}px`,
+                left: `${(x / 360) * 100}%`,
+                transform: 'translate(-50%, -50%)',
+              }}
+            >
+              <motion.div
+                onClick={() => {
+                  setJourneyIndex(i);
+                  setHasCompletedJourney(true);
+                }}
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{
+                  scale: isVisibleInJourney ? 1 : 0,
+                  opacity: isVisibleInJourney ? 1 : 0,
+                }}
+                transition={{ duration: 0.3 }}
+                whileHover={{ scale: 1.15 }}
+                className="relative flex flex-col items-center justify-center cursor-pointer group"
+              >
+                {/* Active Pulsing Aura */}
+                {isCurrent && (
+                  <span className="absolute w-12 h-12 rounded-full bg-[#FFD86A] opacity-50 animate-ping" />
+                )}
+
+                {/* Pure Circular Milestone Node */}
+                <div className={`w-11 h-11 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_16px_rgba(230,185,60,0.7)] transition-all ${isSelectedCard ? 'scale-110 shadow-[0_0_24px_rgba(255,216,106,1)]' : ''}`}>
+                  <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
+                    <span className="text-xs font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+                      {(i + 1).toString().padStart(2, '0')}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+
+            {/* Expandable Pure Royal Gold Info Card (NO DUPLICATE ROUND TITLE, PURE WHITE TEXT) */}
+            <AnimatePresence>
+              {isSelectedCard && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.85, y: -10 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.85, y: -10 }}
+                  transition={{ duration: 0.25, ease: 'easeOut' }}
+                  className="absolute z-20"
+                  style={{
+                    top: `${y + 24}px`,
+                    left: isLeftNode ? '16px' : 'auto',
+                    right: isLeftNode ? 'auto' : '16px',
+                    width: '185px',
+                  }}
+                >
+                  <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3 shadow-[0_10px_28px_rgba(212,160,23,0.6)] backdrop-blur-md">
+                    <div className="space-y-1 text-xs text-[#FFFFFF]">
+                      {weekday && <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
+                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
+                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
+                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
+                        Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
+
+const RoyalGoldRoadmap = ({ roadmap }) => {
+  if (!roadmap || roadmap.length === 0) {
+    return (
+      <div className="p-6 rounded-xl border w-full bg-[#3D2800]/90 border-[#FFE082]/40 text-white text-center font-bold shadow-md">
+        No roadmap rounds scheduled yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full relative py-6 sm:py-10 px-2 sm:px-4 select-none">
+      {/* DESKTOP / TABLET (md and up): Alternating S-Curve Winding Journey */}
+      <div className="hidden md:block relative w-full">
+        <DesktopRoadmapView roadmap={roadmap} />
+      </div>
+
+      {/* MOBILE (below md): Vertical Winding Journey with Tap-to-Reveal */}
+      <div className="block md:hidden relative w-full">
+        <MobileRoadmapView roadmap={roadmap} />
+      </div>
+    </div>
+  );
+};
+
 function TournamentDetail({ onNavigate, tournamentId }) {
   const navigate = useNavigate();
   const [showToast, setShowToast] = useState(false);
@@ -1310,61 +1768,61 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'roadmap' && (
-              <div className="flex items-center gap-4 overflow-x-auto pb-4 w-full scrollbar-hide">
-                {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
-                  parsedTimeline.roadmap.map((round, index) => (
-                    <React.Fragment key={round.id || index}>
-                      <div className={`min-w-[180px] sm:min-w-[220px] rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0 border ${
-                        isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#1F2937]' : 'bg-white border-slate-200'
-                      }`}>
-                        <h4 className={`font-black text-base sm:text-lg mb-2 ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'}`}>{round.title || `Qualifier ${index + 1}`}</h4>
-                        <div className={`space-y-1.5 text-xs font-medium ${isGoldTheme ? 'text-[#374151]' : 'text-slate-500'}`}>
-                          <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                            <span>{round.date ? formatDate(round.date) : 'TBD'}</span>
-                          </p>
-                          <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <span>{round.time || 'TBD'}</span>
-                          </p>
-                          <p className="flex items-center gap-1.5 sm:gap-2">
-                            <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 ${isGoldTheme ? 'text-[#D4A017]' : 'text-slate-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
-                            <span>Map: <span className={`font-bold ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-700'}`}>{round.map || 'TBD'}</span></span>
-                          </p>
+              isGoldTheme ? (
+                <RoyalGoldRoadmap roadmap={parsedTimeline.roadmap} />
+              ) : (
+                <div className="flex items-center gap-4 overflow-x-auto pb-4 w-full scrollbar-hide">
+                  {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
+                    parsedTimeline.roadmap.map((round, index) => (
+                      <React.Fragment key={round.id || index}>
+                        <div className={`min-w-[180px] sm:min-w-[220px] rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0 border bg-white border-slate-200`}>
+                          <h4 className={`font-black text-base sm:text-lg mb-2 text-slate-900`}>{round.title || `Qualifier ${index + 1}`}</h4>
+                          <div className={`space-y-1.5 text-xs font-medium text-slate-500`}>
+                            <p className="flex items-center gap-1.5 sm:gap-2">
+                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              <span>{round.date ? formatDate(round.date) : 'TBD'}</span>
+                            </p>
+                            <p className="flex items-center gap-1.5 sm:gap-2">
+                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>{round.time || 'TBD'}</span>
+                            </p>
+                            <p className="flex items-center gap-1.5 sm:gap-2">
+                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                              <span>Map: <span className={`font-bold text-slate-700`}>{round.map || 'TBD'}</span></span>
+                            </p>
+                          </div>
+                          {round.qualified && (
+                            <div className={`mt-3 sm:mt-4 text-xs font-bold px-2.5 py-1.5 rounded-md border w-fit flex items-center gap-1.5 bg-green-50/80 border-green-100 text-green-700`}>
+                              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                              <span>Qualifies: {round.qualified}</span>
+                            </div>
+                          )}
                         </div>
-                        {round.qualified && (
-                          <div className={`mt-3 sm:mt-4 text-xs font-bold px-2.5 py-1.5 rounded-md border w-fit flex items-center gap-1.5 ${
-                            isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#B8860B]' : 'bg-green-50/80 border-green-100 text-green-700'
-                          }`}>
-                            <svg className="w-3.5 h-3.5 text-[#D4A017] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        {index < parsedTimeline.roadmap.length - 1 && (
+                          <div className={`shrink-0 text-slate-300`}>
+                            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                             </svg>
-                            <span>Qualifies: {round.qualified}</span>
                           </div>
                         )}
-                      </div>
-                      {index < parsedTimeline.roadmap.length - 1 && (
-                        <div className={`shrink-0 ${isGoldTheme ? 'text-[#D4A017]/70' : 'text-slate-300'}`}>
-                          <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                          </svg>
-                        </div>
-                      )}
-                    </React.Fragment>
-                  ))
-                ) : (
-                  <div className={`p-6 rounded-xl border w-full ${isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#374151]' : 'text-slate-500 bg-slate-50 border-slate-100'}`}>
-                    No roadmap rounds scheduled yet.
-                  </div>
-                )}
-              </div>
+                      </React.Fragment>
+                    ))
+                  ) : (
+                    <div className={`p-6 rounded-xl border w-full text-slate-500 bg-slate-50 border-slate-100`}>
+                      No roadmap rounds scheduled yet.
+                    </div>
+                  )}
+                </div>
+              )
             )}
             {activeTab === 'rules' && (
               <div className="max-w-2xl space-y-3">
