@@ -131,26 +131,6 @@ const DesktopRoadmapView = ({ roadmap }) => {
   // Ample vertical padding so the final round card is never cut off or cropped
   const totalHeight = Math.max(380, (N - 1) * stepY + 260);
 
-  const [journeyIndex, setJourneyIndex] = useState(0);
-  const [hasCompletedJourney, setHasCompletedJourney] = useState(false);
-
-  // Sequential Journey Animation on mount
-  useEffect(() => {
-    if (N <= 1) return;
-    const timer = setInterval(() => {
-      setJourneyIndex((prev) => {
-        if (prev < N - 1) {
-          return prev + 1;
-        } else {
-          clearInterval(timer);
-          setHasCompletedJourney(true);
-          return prev;
-        }
-      });
-    }, 1100);
-    return () => clearInterval(timer);
-  }, [N]);
-
   // Left nodes at x = 260 (26%), Right nodes at x = 740 (74%)
   const getCoords = (index) => {
     if (N === 1) return { x: 500, y: startY };
@@ -172,11 +152,8 @@ const DesktopRoadmapView = ({ roadmap }) => {
     }
   }
 
-  // Calculate pathLength progress (0 to 1) during sequential animation
-  const progressPathLength = N > 1 ? Math.min(1, (journeyIndex + 1) / N) : 1;
-
   return (
-    <div className="relative w-full max-w-5xl mx-auto pb-12" style={{ height: `${totalHeight}px` }}>
+    <div className="relative w-full max-w-5xl mx-auto pb-12 select-none" style={{ height: `${totalHeight}px` }}>
       {/* Winding SVG Route */}
       <svg
         className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible"
@@ -224,27 +201,27 @@ const DesktopRoadmapView = ({ roadmap }) => {
               stroke="url(#royalGoldPathGrad)"
               strokeWidth="4"
               strokeLinecap="round"
-              animate={{ pathLength: progressPathLength }}
-              transition={{ duration: 0.9, ease: "easeInOut" }}
+              initial={{ pathLength: 0 }}
+              whileInView={{ pathLength: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 1.4, ease: "easeInOut" }}
             />
           </>
         )}
       </svg>
 
-      {/* Render Milestones and Pure Gold Info Cards */}
+      {/* Render Milestones and All Info Cards Openly on Desktop */}
       {roadmap.map((round, i) => {
         const { x, y } = getCoords(i);
         const isLeft = N === 1 ? true : i % 2 === 0;
-        const isVisibleInJourney = i <= journeyIndex;
-        const isCurrentActive = journeyIndex === i;
         const { weekday, dateFormatted } = formatRoadmapDateDetails(round.date);
         const formattedTime = formatRoadmapTimeIST(round.time, round.date);
 
         return (
           <React.Fragment key={i}>
-            {/* Milestone Circular Node (ONLY WHITE NUMBER 01, NO DUPLICATE LABELS) */}
+            {/* Milestone Circular Node */}
             <div
-              className="absolute z-10"
+              className="absolute z-20 cursor-pointer"
               style={{
                 top: `${y}px`,
                 left: `${x / 10}%`,
@@ -252,29 +229,17 @@ const DesktopRoadmapView = ({ roadmap }) => {
               }}
             >
               <motion.div
-                onClick={() => {
-                  setJourneyIndex(i);
-                  setHasCompletedJourney(true);
-                }}
                 initial={{ scale: 0, opacity: 0 }}
-                animate={{
-                  scale: isVisibleInJourney ? 1 : 0,
-                  opacity: isVisibleInJourney ? 1 : 0,
-                }}
-                transition={{ duration: 0.4 }}
-                whileHover={{ scale: 1.15 }}
-                className="relative flex items-center justify-center cursor-pointer group"
+                whileInView={{ scale: 1, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.4, delay: i * 0.1 }}
+                className="relative flex items-center justify-center group"
               >
-                {/* Active Round Pulsing Aura */}
-                {isCurrentActive && (
-                  <span className="absolute w-14 h-14 rounded-full bg-[#FFD86A] opacity-50 animate-ping" />
-                )}
-
                 {/* Outer Metallic Gold Ring */}
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_20px_rgba(230,185,60,0.7)] group-hover:shadow-[0_0_28px_rgba(255,216,106,1)] transition-all">
                   {/* Inner Gold Center */}
                   <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
-                    <span className="text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+                    <span className="text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] select-none">
                       {(i + 1).toString().padStart(2, '0')}
                     </span>
                   </div>
@@ -282,36 +247,32 @@ const DesktopRoadmapView = ({ roadmap }) => {
               </motion.div>
             </div>
 
-            {/* Pure Royal Gold Information Card (NO DUPLICATE ROUND 1 TITLE, PURE WHITE TEXT) */}
-            <AnimatePresence>
-              {(journeyIndex === i || (hasCompletedJourney && journeyIndex === i)) && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9, x: isLeft ? -15 : 15 }}
-                  animate={{ opacity: 1, scale: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.35, ease: "easeOut" }}
-                  className="absolute z-20"
-                  style={{
-                    top: `${y}px`,
-                    left: N === 1 ? '58%' : isLeft ? '3%' : '77%',
-                    width: N === 1 ? '38%' : '20%',
-                    minWidth: '200px',
-                    transform: 'translateY(-50%)',
-                  }}
-                >
-                  <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3.5 shadow-[0_10px_30px_rgba(212,160,23,0.5)] backdrop-blur-md">
-                    <div className="space-y-1 text-xs text-[#FFFFFF]">
-                      {weekday && <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
-                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
-                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
-                      <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
-                        Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {/* Pure Royal Gold Information Card (ALWAYS VISIBLE ON DESKTOP) */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, x: isLeft ? -15 : 15 }}
+              whileInView={{ opacity: 1, scale: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.35, delay: i * 0.12 }}
+              className="absolute z-30"
+              style={{
+                top: `${y}px`,
+                left: N === 1 ? '58%' : isLeft ? '3%' : '77%',
+                width: N === 1 ? '38%' : '20%',
+                minWidth: '200px',
+                transform: 'translateY(-50%)',
+              }}
+            >
+              <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3.5 shadow-[0_10px_30px_rgba(212,160,23,0.5)] backdrop-blur-md">
+                <div className="space-y-1 text-xs text-[#FFFFFF]">
+                  {weekday && <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
+                    Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
+                  </p>
+                </div>
+              </div>
+            </motion.div>
           </React.Fragment>
         );
       })}
@@ -325,25 +286,7 @@ const MobileRoadmapView = ({ roadmap }) => {
   const startY = 60;
   const totalHeight = Math.max(340, (N - 1) * stepY + 220);
 
-  const [journeyIndex, setJourneyIndex] = useState(0);
-  const [hasCompletedJourney, setHasCompletedJourney] = useState(false);
-
-  // Sequential Journey Animation on mount
-  useEffect(() => {
-    if (N <= 1) return;
-    const timer = setInterval(() => {
-      setJourneyIndex((prev) => {
-        if (prev < N - 1) {
-          return prev + 1;
-        } else {
-          clearInterval(timer);
-          setHasCompletedJourney(true);
-          return prev;
-        }
-      });
-    }, 1100);
-    return () => clearInterval(timer);
-  }, [N]);
+  const [activeRound, setActiveRound] = useState(0);
 
   // Weave milestone x positions between 260px (72% right) and 100px (28% left) for a curved road
   const getCoords = (index) => {
@@ -364,8 +307,6 @@ const MobileRoadmapView = ({ roadmap }) => {
       pathD += ` C ${curr.x} ${midY}, ${next.x} ${midY}, ${next.x} ${next.y}`;
     }
   }
-
-  const progressPathLength = N > 1 ? Math.min(1, (journeyIndex + 1) / N) : 1;
 
   return (
     <div className="relative w-full max-w-[430px] mx-auto select-none pb-12 overflow-hidden" style={{ height: `${totalHeight}px` }}>
@@ -415,8 +356,10 @@ const MobileRoadmapView = ({ roadmap }) => {
               stroke="url(#mobPathGrad)"
               strokeWidth="4"
               strokeLinecap="round"
-              animate={{ pathLength: progressPathLength }}
-              transition={{ duration: 0.9, ease: "easeInOut" }}
+              initial={{ pathLength: 0 }}
+              whileInView={{ pathLength: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 1.2, ease: "easeInOut" }}
             />
           </>
         )}
@@ -426,46 +369,39 @@ const MobileRoadmapView = ({ roadmap }) => {
       {roadmap.map((round, i) => {
         const { x, y } = getCoords(i);
         const isLeftNode = i % 2 !== 0; // index 1, 3 are on left (x=100)
-        const isVisibleInJourney = i <= journeyIndex;
-        const isSelectedCard = journeyIndex === i;
-        const isCurrent = journeyIndex === i;
+        const isActive = activeRound === i;
         const { weekday, dateFormatted } = formatRoadmapDateDetails(round.date);
         const formattedTime = formatRoadmapTimeIST(round.time, round.date);
 
         return (
           <React.Fragment key={i}>
-            {/* Milestone Circular Node Marker sitting directly on the curve bend (NO DUPLICATE RECTANGLE UNDERNEATH!) */}
+            {/* Milestone Circular Node Marker */}
             <div
-              className="absolute z-10"
+              className="absolute z-20 cursor-pointer"
               style={{
                 top: `${y}px`,
                 left: `${(x / 360) * 100}%`,
                 transform: 'translate(-50%, -50%)',
               }}
+              onClick={() => setActiveRound(prev => prev === i ? null : i)}
             >
               <motion.div
-                onClick={() => {
-                  setJourneyIndex(i);
-                  setHasCompletedJourney(true);
-                }}
                 initial={{ scale: 0, opacity: 0 }}
-                animate={{
-                  scale: isVisibleInJourney ? 1 : 0,
-                  opacity: isVisibleInJourney ? 1 : 0,
-                }}
-                transition={{ duration: 0.3 }}
+                whileInView={{ scale: 1, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.3, delay: i * 0.08 }}
                 whileHover={{ scale: 1.15 }}
                 className="relative flex flex-col items-center justify-center cursor-pointer group"
               >
                 {/* Active Pulsing Aura */}
-                {isCurrent && (
-                  <span className="absolute w-12 h-12 rounded-full bg-[#FFD86A] opacity-50 animate-ping" />
+                {isActive && (
+                  <span className="absolute w-12 h-12 rounded-full bg-[#FFD86A] opacity-50 animate-ping pointer-events-none" />
                 )}
 
                 {/* Pure Circular Milestone Node */}
-                <div className={`w-11 h-11 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_16px_rgba(230,185,60,0.7)] transition-all ${isSelectedCard ? 'scale-110 shadow-[0_0_24px_rgba(255,216,106,1)]' : ''}`}>
+                <div className={`w-11 h-11 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_16px_rgba(230,185,60,0.7)] transition-all ${isActive ? 'scale-110 shadow-[0_0_24px_rgba(255,216,106,1)]' : ''}`}>
                   <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
-                    <span className="text-xs font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">
+                    <span className="text-xs font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] select-none">
                       {(i + 1).toString().padStart(2, '0')}
                     </span>
                   </div>
@@ -473,15 +409,15 @@ const MobileRoadmapView = ({ roadmap }) => {
               </motion.div>
             </div>
 
-            {/* Expandable Pure Royal Gold Info Card (NO DUPLICATE ROUND TITLE, PURE WHITE TEXT) */}
+            {/* Expandable Pure Royal Gold Info Card */}
             <AnimatePresence>
-              {isSelectedCard && (
+              {isActive && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.85, y: -10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.85, y: -10 }}
                   transition={{ duration: 0.25, ease: 'easeOut' }}
-                  className="absolute z-20"
+                  className="absolute z-30"
                   style={{
                     top: `${y + 24}px`,
                     left: isLeftNode ? '16px' : 'auto',
@@ -1663,109 +1599,276 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'prize' && (
-              <div className="flex flex-col gap-5 max-w-2xl">
-                {/* Prize Pool Breakdown Summary */}
-                <div className={`relative overflow-hidden rounded-2xl p-6 ${
-                  isGoldTheme
-                    ? 'bg-[#FAF7F0] border border-[#D4A017]/35 text-[#1F2937] shadow-[0_8px_20px_rgba(0,0,0,0.12)]'
-                    : 'bg-white border border-slate-200 shadow-lg'
-                }`}>
-                  {sponsoredAmount > 0 ? (
-                    <>
-                      <h4 className={`text-[10px] font-bold uppercase tracking-[0.2em] mb-5 relative z-10 ${
-                        isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-400'
-                      }`}>Prize Pool Breakdown</h4>
+              isGoldTheme ? (
+                <div className="flex flex-col gap-6 w-full max-w-4xl select-none">
+                  {/* Royal Gold Header Card: Total Prize Pool */}
+                  <div className="relative overflow-hidden rounded-2xl p-6 sm:p-8 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_35px_rgba(212,160,23,0.45)] backdrop-blur-md">
+                    {/* Subtle Brushed Texture */}
+                    <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#FFF4C2_1px,transparent_1px)] [background-size:16px_16px]" />
 
-                      <div className="flex items-center justify-between relative z-10">
-                        <span className={`text-sm font-medium ${isGoldTheme ? 'text-[#374151]' : 'text-slate-600'}`}>Base Prize</span>
-                        <span className={`text-sm font-bold ${isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-800'}`}>{formatIndianCurrency(basePrize)}</span>
+                    <div className="relative z-10 space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <span className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                            Total Prize Pool
+                          </span>
+                          <h2 className="text-3xl sm:text-5xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] mt-1 tracking-tight">
+                            {formatIndianCurrency(totalPrize)}
+                          </h2>
+                        </div>
+
+                        {/* Quick Metadata Stats Grid */}
+                        <div className="grid grid-cols-2 gap-2 text-xs text-[#FFFFFF]">
+                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
+                            <span className="text-base">🏆</span>
+                            <div>
+                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Qualifying Teams</p>
+                              <p className="font-black text-[#FFFFFF] mt-0.5">{tourney?.qualifying_teams || tourney?.qualifyingTeams || tourney?.slotsTotal || slotsData?.slotsTotal || 64} Teams</p>
+                            </div>
+                          </div>
+
+                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
+                            <span className="text-base">🎮</span>
+                            <div>
+                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Format</p>
+                              <p className="font-black text-[#FFFFFF] mt-0.5">{(tourney?.match_type || 'squad').toUpperCase()} • {(tourney?.perspective || 'tpp').toUpperCase()}</p>
+                            </div>
+                          </div>
+
+                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
+                            <span className="text-base">💰</span>
+                            <div>
+                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Entry Fee</p>
+                              <p className="font-black text-[#FFFFFF] mt-0.5">{entryDisplay}</p>
+                            </div>
+                          </div>
+
+                          <div className="bg-[#8A5A00]/40 border border-[#FFF4C2]/40 rounded-xl px-3 py-2 flex items-center gap-2 backdrop-blur-sm">
+                            <span className="text-base">⚡</span>
+                            <div>
+                              <p className="text-[10px] text-[#FFFFFF]/80 font-bold leading-none">Available Slots</p>
+                              <p className="font-black text-[#FFFFFF] mt-0.5">{slotAvailable} / {slotTotal}</p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="flex items-center justify-between mt-4 relative z-10">
-                        <span className={`text-sm font-medium flex items-center gap-1.5 ${isGoldTheme ? 'text-[#374151]' : 'text-slate-600'}`}>
-                          Sponsored Contributions
-                          <svg className="w-4 h-4 shrink-0 aspect-square text-amber-500" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
-                          </svg>
-                        </span>
-                        <span className={`text-sm font-bold ${isGoldTheme ? 'text-[#B8860B]' : 'text-amber-400'}`}>+{formatIndianCurrency(sponsoredAmount)}</span>
-                      </div>
+                      {/* Sponsored breakdown if any */}
+                      {sponsoredAmount > 0 && (
+                        <div className="pt-3 border-t border-[#FFF4C2]/30 flex flex-wrap items-center justify-between gap-2 text-xs text-[#FFFFFF]">
+                          <span className="font-bold">Base Prize: {formatIndianCurrency(basePrize)}</span>
+                          <span className="font-bold bg-[#8A5A00]/50 border border-[#FFF4C2]/50 px-2.5 py-1 rounded-lg">
+                            + Sponsored: {formatIndianCurrency(sponsoredAmount)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                      <div className={`my-4 relative z-10 border-t ${isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-100'}`} />
+                  {/* Esports Championship Prize Board */}
+                  {prizeDistributions.length > 0 ? (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-black uppercase tracking-[0.25em] text-[#FFFFFF] drop-shadow-sm pl-1">
+                        Prize Distribution
+                      </h3>
 
-                      <div className="flex items-center justify-between relative z-10">
-                        <span className={`text-xs font-bold uppercase tracking-wider ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-500'}`}>Total Prize Pool</span>
-                        <span className={`text-xl sm:text-2xl font-black tracking-tight ${
-                          isGoldTheme ? 'text-[#B8860B]' : 'bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm'
-                        }`}>
-                          {formatIndianCurrency(totalPrize)}
-                        </span>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        {prizeDistributions.map((row, i) => {
+                          const isWWCD = i === 0 || /wwcd|1st|champion/i.test(row.position);
+                          const isSecond = i === 1 || /2nd/i.test(row.position);
+                          const isThird = i === 2 || /3rd/i.test(row.position);
+
+                          const positionTitle = isWWCD ? 'WWCD / CHAMPION' : isSecond ? '2ND PLACE' : isThird ? '3RD PLACE' : row.position;
+                          const subtitle = isWWCD ? 'Winning Team' : isSecond ? 'Runner-up' : isThird ? 'Third-place finish' : '';
+
+                          if (isWWCD) {
+                            return (
+                              <div
+                                key={i}
+                                className="md:col-span-2 relative overflow-hidden rounded-2xl p-5 sm:p-6 bg-gradient-to-br from-[#FFE082] via-[#E6B93C] to-[#B8860B] border-2 border-[#FFF4C2] shadow-[0_10px_30px_rgba(255,216,106,0.6)] flex items-center justify-between gap-4"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className="w-14 h-14 rounded-full bg-gradient-to-b from-[#FFF4C2] to-[#D4A017] p-0.5 shadow-[0_0_20px_rgba(255,244,194,0.8)] shrink-0 flex items-center justify-center">
+                                    <div className="w-full h-full rounded-full bg-gradient-to-b from-[#B8860B] to-[#8A5A00] flex items-center justify-center text-2xl">
+                                      🏆
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <h4 className="text-lg sm:text-xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
+                                        {positionTitle}
+                                      </h4>
+                                      <span className="text-[10px] font-black uppercase tracking-wider bg-[#FFFFFF]/25 text-[#FFFFFF] px-2 py-0.5 rounded-full border border-[#FFFFFF]/40">
+                                        1st Place
+                                      </span>
+                                    </div>
+                                    {subtitle && (
+                                      <p className="text-xs font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] mt-0.5">
+                                        {subtitle}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <span className="text-2xl sm:text-4xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
+                                    {row.prize}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (isSecond || isThird) {
+                            return (
+                              <div
+                                key={i}
+                                className={`relative overflow-hidden rounded-xl p-4 border-2 flex items-center justify-between gap-3 ${
+                                  isSecond
+                                    ? 'bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#A67B10] border-[#FFF4C2] shadow-[0_6px_20px_rgba(212,160,23,0.4)]'
+                                    : 'bg-gradient-to-br from-[#D4A017] via-[#C29215] to-[#8A5A00] border-[#FFE082]/80 shadow-[0_4px_16px_rgba(184,134,11,0.35)]'
+                                }`}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className="text-2xl shrink-0">{isSecond ? '🥈' : '🥉'}</span>
+                                  <div className="min-w-0">
+                                    <h4 className="text-sm sm:text-base font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
+                                      {positionTitle}
+                                    </h4>
+                                    {subtitle && (
+                                      <p className="text-xs font-medium text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
+                                        {subtitle}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <span className="text-lg sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
+                                  {row.prize}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          // Ranks 4+ or MVP / Kill Rewards
+                          return (
+                            <div
+                              key={i}
+                              className="bg-gradient-to-r from-[#C29215] to-[#9E740E] border border-[#FFE082]/50 rounded-xl p-3.5 flex items-center justify-between shadow-sm"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="w-7 h-7 rounded-full bg-[#8A5A00]/50 border border-[#FFF4C2]/40 flex items-center justify-center text-xs font-black text-[#FFFFFF] shrink-0">
+                                  {row.badge || (i + 1).toString().padStart(2, '0')}
+                                </span>
+                                <span className="font-extrabold text-sm text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
+                                  {positionTitle}
+                                </span>
+                              </div>
+                              <span className="font-black text-sm sm:text-base text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] shrink-0 ml-3">
+                                {row.prize}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
-                    </>
+                    </div>
                   ) : (
-                    <div className="flex items-center justify-between relative z-10">
-                      <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-400'}`}>Prize Pool</span>
-                      <span className={`text-xl sm:text-2xl font-black tracking-tight ${
-                        isGoldTheme ? 'text-[#B8860B]' : 'bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm'
-                      }`}>
-                        {formatIndianCurrency(totalPrize)}
-                      </span>
+                    <div className="p-6 rounded-xl text-sm border bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-[#FFF4C2] text-[#FFFFFF] font-bold">
+                      No prize distribution data available.
                     </div>
                   )}
                 </div>
+              ) : (
+                <div className="flex flex-col gap-5 max-w-2xl">
+                  {/* Prize Pool Breakdown Summary */}
+                  <div className="relative overflow-hidden rounded-2xl p-6 bg-white border border-slate-200 shadow-lg">
+                    {sponsoredAmount > 0 ? (
+                      <>
+                        <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] mb-5 relative z-10 text-slate-400">Prize Pool Breakdown</h4>
 
-                {/* Prize Distribution Cards */}
-                {prizeDistributions.length > 0 ? (
-                  <div className="flex flex-col gap-2.5">
-                    <h5 className={`text-[10px] font-black uppercase tracking-[0.2em] pl-1 ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-400'}`}>Prize Distribution</h5>
-                    {prizeDistributions.slice(0, 15).map((row, i) => {
-                      const medalSvgs = [
-                        <svg key="g" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.45)]" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
-                        </svg>,
-                        <svg key="s" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(148,163,184,0.35)]" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
-                        </svg>,
-                        <svg key="b" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(217,119,6,0.35)]" viewBox="0 0 24 24" fill="none">
-                          <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                          <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
-                          <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
-                        </svg>
-                      ];
-
-                      const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
-
-                      return (
-                        <div key={i} className={`flex items-center justify-between rounded-xl px-4 py-3.5 shadow-sm border ${
-                          isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/30 text-[#1F2937]' : 'bg-white border-slate-200'
-                        }`}>
-                          <div className="flex items-center gap-3 min-w-0">
-                            {i <= 2 ? (
-                              medalSvgs[i]
-                            ) : (
-                              <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                                isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#1F2937]' : 'bg-slate-100 border-slate-200 text-slate-500'
-                              }`}>
-                                {i + 1}
-                              </span>
-                            )}
-                            <span className={`font-extrabold text-sm leading-tight truncate ${isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'}`}>
-                              {i <= 2 ? displayName : `Rank ${i + 1}`}
-                            </span>
-                          </div>
-                          <span className={`font-black text-sm sm:text-base shrink-0 ml-3 ${isGoldTheme ? 'text-[#B8860B]' : 'text-green-700'}`}>{row.prize}</span>
+                        <div className="flex items-center justify-between relative z-10">
+                          <span className="text-sm font-medium text-slate-600">Base Prize</span>
+                          <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
                         </div>
-                      );
-                    })}
+
+                        <div className="flex items-center justify-between mt-4 relative z-10">
+                          <span className="text-sm font-medium flex items-center gap-1.5 text-slate-600">
+                            Sponsored Contributions
+                            <svg className="w-4 h-4 shrink-0 aspect-square text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
+                            </svg>
+                          </span>
+                          <span className="text-sm font-bold text-amber-400">+{formatIndianCurrency(sponsoredAmount)}</span>
+                        </div>
+
+                        <div className="my-4 relative z-10 border-t border-slate-100" />
+
+                        <div className="flex items-center justify-between relative z-10">
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Prize Pool</span>
+                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm">
+                            {formatIndianCurrency(totalPrize)}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-between relative z-10">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Prize Pool</span>
+                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm">
+                          {formatIndianCurrency(totalPrize)}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className={`p-6 rounded-xl text-sm border ${isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#374151]' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>No prize distribution data available.</div>
-                )}
-              </div>
+
+                  {/* Prize Distribution Cards */}
+                  {prizeDistributions.length > 0 ? (
+                    <div className="flex flex-col gap-2.5">
+                      <h5 className="text-[10px] font-black uppercase tracking-[0.2em] pl-1 text-slate-400">Prize Distribution</h5>
+                      {prizeDistributions.slice(0, 15).map((row, i) => {
+                        const medalSvgs = [
+                          <svg key="g" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.45)]" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#F59E0B" stroke="#D97706" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FEF3C7" />
+                          </svg>,
+                          <svg key="s" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(148,163,184,0.35)]" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#94A3B8" stroke="#64748B" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#F1F5F9" />
+                          </svg>,
+                          <svg key="b" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(217,119,6,0.35)]" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="8" r="5" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                            <path d="M8 22v-6a4 4 0 018 0v6" fill="#D97706" stroke="#B45309" strokeWidth="1.2" />
+                            <path d="M12 3l1.5 3 3.5.5-2.5 2.5.5 3.5L12 11l-3 1.5.5-3.5L7 6.5l3.5-.5L12 3z" fill="#FED7AA" />
+                          </svg>
+                        ];
+
+                        const displayName = i === 0 && row.position !== 'WWCD' && /1st/i.test(row.position) ? 'WWCD' : row.position;
+
+                        return (
+                          <div key={i} className="flex items-center justify-between rounded-xl px-4 py-3.5 shadow-sm border bg-white border-slate-200">
+                            <div className="flex items-center gap-3 min-w-0">
+                              {i <= 2 ? (
+                                medalSvgs[i]
+                              ) : (
+                                <span className="w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 bg-slate-100 border-slate-200 text-slate-500">
+                                  {i + 1}
+                                </span>
+                              )}
+                              <span className="font-extrabold text-sm leading-tight truncate text-slate-900">
+                                {i <= 2 ? displayName : `Rank ${i + 1}`}
+                              </span>
+                            </div>
+                            <span className="font-black text-sm sm:text-base shrink-0 ml-3 text-green-700">{row.prize}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-6 rounded-xl text-sm border bg-slate-50 border-slate-100 text-slate-500">No prize distribution data available.</div>
+                  )}
+                </div>
+              )
             )}
             {activeTab === 'roadmap' && (
               isGoldTheme ? (
