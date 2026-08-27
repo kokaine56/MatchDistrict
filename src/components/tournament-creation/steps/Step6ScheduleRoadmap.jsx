@@ -4,6 +4,27 @@ import RoundEditor from '../RoundEditor'
 import TimelinePreview from '../TimelinePreview'
 
 const emptyRound = { date: '', time: '', name: '', map: '', qualified: '' }
+const ROUND_GAP_MINUTES = 45
+
+function nextRoundName(prevName) {
+  const trimmed = (prevName || '').trim()
+  if (!trimmed) return ''
+  const match = trimmed.match(/^(.*?)(\d+)$/)
+  if (match) return `${match[1]}${Number(match[2]) + 1}`
+  return `${trimmed} 2`
+}
+
+function shiftDateTime(dateStr, timeStr, minutes) {
+  if (!dateStr) return { date: '', time: '' }
+  const base = new Date(`${dateStr}T${timeStr || '00:00'}`)
+  if (isNaN(base.getTime())) return { date: '', time: '' }
+  const shifted = new Date(base.getTime() + minutes * 60000)
+  const pad = (n) => String(n).padStart(2, '0')
+  return {
+    date: `${shifted.getFullYear()}-${pad(shifted.getMonth() + 1)}-${pad(shifted.getDate())}`,
+    time: `${pad(shifted.getHours())}:${pad(shifted.getMinutes())}`,
+  }
+}
 
 function getRoundTs(r) {
   if (!r.date) return null
@@ -143,10 +164,22 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
   const addRound = useCallback(() => {
     if (!onChange) return
     const prev = data || {}
-    onChange({
-      ...prev,
-      roadmap: [...(prev.roadmap || []), { ...emptyRound }]
-    })
+    const list = [...(prev.roadmap || [])]
+    const last = list[list.length - 1]
+
+    let preset = { ...emptyRound }
+    if (last) {
+      const shifted = shiftDateTime(last.date, last.time, ROUND_GAP_MINUTES)
+      preset = {
+        date: shifted.date,
+        time: shifted.time,
+        name: nextRoundName(last.name),
+        map: last.map || '',
+        qualified: ''
+      }
+    }
+
+    onChange({ ...prev, roadmap: [...list, preset] })
   }, [data, onChange])
 
   const removeRound = useCallback((index) => {
@@ -311,7 +344,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
           onClick={addRound}
           whileHover={{ scale: 1.01 }}
           whileTap={{ scale: 0.98 }}
-          className="w-full py-3.5 rounded-xl bg-primary/15 text-sm font-bold text-primary hover:bg-primary/25 hover:shadow-[0_0_24px_rgba(59,130,246,0.2)] transition-all flex items-center justify-center gap-2.5"
+          className="w-full py-3.5 rounded-xl bg-primary text-on-primary text-sm font-bold shadow-[0_4px_18px_-4px_rgba(59,130,246,0.45)] hover:shadow-[0_0_24px_rgba(59,130,246,0.35)] hover:bg-primary/90 transition-all flex items-center justify-center gap-2.5"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />

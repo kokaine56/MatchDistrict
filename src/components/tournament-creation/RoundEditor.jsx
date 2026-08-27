@@ -1,13 +1,20 @@
 import { motion } from 'framer-motion'
 import { OptimizedInput } from '../OptimizedInput'
+import { useTheme } from '../../ThemeContext'
 
 const BGMI_MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Karakin', 'Nusa', 'Rondo']
 
 export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp, onMoveDown, isFirst, isLast, error, minDate, minTime }) {
   const timeValue = round.time || ''
+  const { theme } = useTheme()
+  const colorScheme = theme === 'dark' ? 'dark' : 'light'
 
   const handleTimeChange = (e) => {
     onChange({ ...round, time: e.target.value })
+  }
+
+  const handleDateChange = (e) => {
+    onChange({ ...round, date: e.target.value })
   }
 
   return (
@@ -68,11 +75,12 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">
               <span className="text-error mr-1">*</span>Date
             </label>
-            <OptimizedInput
+            <input
               type="date"
               value={round.date || ''}
-              onChange={(v) => onChange({ ...round, date: v })}
+              onChange={handleDateChange}
               min={minDate || ''}
+              style={{ colorScheme }}
               className="w-full px-3 py-2.5 rounded-xl bg-surface/80 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner"
             />
           </div>
@@ -85,7 +93,8 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
               value={timeValue}
               onChange={handleTimeChange}
               min={minTime || ''}
-              className="w-full px-3 py-2.5 rounded-xl bg-surface/80 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner [color-scheme:dark]"
+              style={{ colorScheme }}
+              className="w-full px-3 py-2.5 rounded-xl bg-surface/80 text-sm text-on-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner"
             />
           </div>
         </div>
@@ -119,6 +128,12 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
               placeholder="e.g. 16"
               className="w-full px-3 py-2.5 rounded-xl bg-surface/80 text-sm text-on-background placeholder-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner"
             />
+            <p className="text-[10px] text-on-surface-variant/50 mt-1.5 flex items-center gap-1">
+              <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Teams that qualify here move on to the next round
+            </p>
           </div>
         </div>
 

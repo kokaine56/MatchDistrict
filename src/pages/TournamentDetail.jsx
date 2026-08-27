@@ -1165,6 +1165,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   const isGoldTheme = ['gold', 'royal_gold', 'royal gold', 'royalgold'].includes((tourney?.card_color || tourney?.cardColor || tourney?.theme || '').toLowerCase().trim());
+  const isArcticWhite = !isGoldTheme
 
   const cardContainerClass = isGoldTheme
     ? 'bg-[#FAF7F0] border border-[#D4A017]/35 rounded-xl p-4 sm:p-5 shadow-[0_8px_20px_rgba(0,0,0,0.12)]'
@@ -1300,7 +1301,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </h1>
 
                   {/* Organizer */}
-                  <div className={`text-xs sm:text-sm font-bold flex items-center gap-1.5 mt-1.5 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-300'}`}>
+                  <div className={`text-xs sm:text-sm font-bold flex items-center gap-1.5 mt-1.5 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-800'}`}>
                     <div className="w-4 sm:w-5 h-4 sm:h-5 rounded-full overflow-hidden shrink-0 bg-white/10 border border-white/20 flex items-center justify-center font-bold text-[6px] sm:text-[7px] text-white">
                       {tourney?.orgLogo || orgProfile?.avatar ? (
                         <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
@@ -1308,7 +1309,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
                       )}
                     </div>
-                    <span className="truncate text-[#FFFFFF] drop-shadow-sm">{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                    <span className={`truncate ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'} drop-shadow-sm`}>{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
                     <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
                   </div>
 
@@ -1316,9 +1317,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   <div className="grid grid-cols-2 gap-y-4 gap-x-4 w-full mt-4">
                     {/* Prize */}
                     <div className="flex flex-col items-start gap-0.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-400'}`}>PRIZE</span>
+                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>PRIZE</span>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-sm sm:text-base font-extrabold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">{prizeDisplay}</span>
+                        <span className={`text-sm sm:text-base font-extrabold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{prizeDisplay}</span>
                         {sponsoredAmount > 0 && (
                           <svg className="w-4 h-4 text-amber-400 shrink-0 drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -1328,21 +1329,21 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     </div>
                     {/* Entry */}
                     <div className="flex flex-col items-start gap-0.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-400'}`}>ENTRY</span>
-                      <span className="text-sm sm:text-base font-extrabold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)]">{entryDisplay}</span>
+                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>ENTRY</span>
+                      <span className={`text-sm sm:text-base font-extrabold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{entryDisplay}</span>
                     </div>
                     {/* Format */}
                     <div className="flex flex-col items-start gap-0.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-400'}`}>FORMAT</span>
-                      <span className="text-xs sm:text-sm font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1">
+                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>FORMAT</span>
+                      <span className={`text-xs sm:text-sm font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
                         {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
                       </span>
                     </div>
                     {/* Slots */}
                     <div className="flex flex-col items-start gap-0.5">
-                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-400'}`}>SLOTS</span>
-                      <span className="text-xs sm:text-sm font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1">
-                        <svg className={`w-3 sm:w-3.5 h-3 sm:h-3.5 ${isGoldTheme ? 'text-white/90' : 'text-slate-400'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>SLOTS</span>
+                      <span className={`text-xs sm:text-sm font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
+                        <svg className={`w-3 sm:w-3.5 h-3 sm:h-3.5 ${isGoldTheme ? 'text-white/90' : 'text-slate-600'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                           <circle cx="9" cy="7" r="4" />
                           <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
