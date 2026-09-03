@@ -18,6 +18,13 @@ body {
   margin: 0;
 }
 
+/* Flatten ALL text shadows / glows app-wide.
+   text-shadow only ever applies to text, so this cannot affect box-shadows
+   or legitimate shadows on cards, buttons, containers, modals, etc. */
+* {
+  text-shadow: none !important;
+}
+
 @keyframes card-gold-shimmer {
   0% {
     background-position: 0% 50%;
@@ -1291,10 +1298,6 @@ html.light .testimonial-card {
 .bracket-line {
   background: #334155;
   height: 2px;
-}
-
-.text-glow-primary {
-  text-shadow: 0 0 15px rgb(var(--primary) / 0.3);
 }
 
 @keyframes marquee {

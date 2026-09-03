@@ -19,9 +19,6 @@ function DetailRow({ label, value }) {
 export default function Step8Preview({ data, orgName, orgTier }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
-  const teams = data.match_type === 'solo' ? totalSlots
-    : data.match_type === 'duo' ? Math.floor(totalSlots / 2)
-    : Math.floor(totalSlots / 4)
 
   const basePrizePool = entryFee * totalSlots
 
@@ -59,12 +56,43 @@ export default function Step8Preview({ data, orgName, orgTier }) {
         <p className="text-sm text-on-surface-variant mt-1">Review your tournament before publishing.</p>
       </div>
 
-      <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/25 rounded-2xl overflow-hidden">
-        {data.cover_image_url && (
-          <div className="h-40 overflow-hidden">
-            <img src={data.cover_image_url} alt="" className="w-full h-full object-cover" />
+      {/* Primary Card Preview — the exact tournament card used across the app */}
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Tournament Card</h4>
+        <div className="flex justify-center overflow-hidden sm:overflow-visible bg-surface-container/40 border border-slate-200 dark:border-outline-variant/25 rounded-2xl py-10">
+          <div className="origin-center scale-[0.78] sm:scale-100 -my-6 sm:my-0">
+            <TournamentCard
+              id="preview"
+              title={data.title || 'Untitled Tournament'}
+              game={data.game || 'GAME'}
+              badgeText="UPCOMING"
+              badgeBg="bg-primary"
+              badgeTextColor="text-white"
+              imgSrc={data.cover_image_url || ''}
+              imgAlt={data.title || 'Tournament cover'}
+              prizePool={totalPrizePool > 0 ? `₹${totalPrizePool.toLocaleString('en-IN')}` : 'TBD'}
+              entryFee={entryFee > 0 ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free'}
+              matchType={matchLabel}
+              perspective={perspLabel}
+              orgName={orgName}
+              orgTier={orgTier}
+              slotsTotal={data.slotsTotal}
+              slotsFilled={0}
+              entryFeeAmount={entryFee}
+              isPreview={true}
+              buttonText="JOIN NOW"
+              onNavigate={() => {}}
+              cardColor={data.card_color || 'white'}
+              registrationOpenDate={data.registrationOpenDate || ''}
+              registrationCloseDate={data.registrationCloseDate || ''}
+              startDate={data.startDate || ''}
+            />
           </div>
-        )}
+        </div>
+      </div>
+
+      {/* Tournament details summary */}
+      <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/25 rounded-2xl overflow-hidden">
         <div className="p-5 space-y-3">
           <div className="flex items-start gap-2">
             <div className="flex-1">
@@ -167,34 +195,6 @@ export default function Step8Preview({ data, orgName, orgTier }) {
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Card Preview */}
-      <div className="pt-2">
-        <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-3">Homepage Card Preview</h4>
-        <div className="flex justify-center">
-          <TournamentCard
-            id="preview"
-            title={data.title || 'Untitled Tournament'}
-            game={data.game || 'GAME'}
-            badgeText="UPCOMING"
-            badgeBg="bg-primary"
-            badgeTextColor="text-white"
-            imgSrc={data.cover_image_url || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80'}
-            imgAlt={data.title || 'Tournament cover'}
-            prizePool={totalPrizePool > 0 ? `₹${totalPrizePool.toLocaleString('en-IN')}` : 'TBD'}
-            entryFee={entryFee > 0 ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free'}
-            matchType={matchLabel}
-            perspective={perspLabel}
-            orgName={orgName}
-            orgTier={orgTier}
-            slotsTotal={data.slotsTotal}
-            slotsFilled={0}
-            entryFeeAmount={entryFee}
-            buttonText="JOIN NOW"
-            onNavigate={() => {}}
-          />
         </div>
       </div>
     </motion.div>

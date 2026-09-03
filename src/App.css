@@ -3,9 +3,6 @@
     height: 2px;
     background: #334155;
 }
-.text-glow-primary {
-    text-shadow: 0 0 15px rgb(var(--primary) / 0.3);
-}
 
 @keyframes marquee {
   0% {

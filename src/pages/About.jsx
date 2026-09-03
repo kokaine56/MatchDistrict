@@ -69,7 +69,7 @@ function About({ onNavigate }) {
 
           <h1 className="font-display-lg text-3xl sm:text-4xl md:text-5xl font-extrabold text-white tracking-tight uppercase leading-tight">
             Bridging Competitive <br />
-            Esports and <span className="inline-block bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-500 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(99,102,241,0.35)]">Community</span>
+            Esports and <span className="inline-block bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-500 bg-clip-text text-transparent">Community</span>
           </h1>
 
           <p className="font-body-lg text-xs sm:text-sm text-on-surface-variant max-w-xl mx-auto leading-relaxed">

@@ -264,7 +264,7 @@ const DesktopRoadmapView = ({ roadmap }) => {
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_20px_rgba(230,185,60,0.7)] group-hover:shadow-[0_0_28px_rgba(255,216,106,1)] transition-all">
                   {/* Inner Gold Center */}
                   <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
-                    <span className="text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] select-none">
+                    <span className="text-sm font-black text-[#FFFFFF] select-none">
                       {(i + 1).toString().padStart(2, '0')}
                     </span>
                   </div>
@@ -289,10 +289,10 @@ const DesktopRoadmapView = ({ roadmap }) => {
             >
               <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3.5 shadow-[0_10px_30px_rgba(212,160,23,0.5)] backdrop-blur-md">
                 <div className="space-y-1 text-xs text-[#FFFFFF]">
-                  {weekday && <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
-                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
-                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
-                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
+                  {weekday && <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm leading-tight">{weekday}</p>}
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm leading-tight">{dateFormatted}</p>
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm leading-tight">{formattedTime}</p>
+                  <p className="font-bold text-[#FFFFFF] text-xs sm:text-sm leading-tight">
                     Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
                   </p>
                 </div>
@@ -438,7 +438,7 @@ const MobileRoadmapView = ({ roadmap }) => {
                 {/* Pure Circular Milestone Node */}
                 <div className={`w-11 h-11 rounded-full bg-gradient-to-br from-[#FFF4C2] via-[#E6B93C] to-[#8A5A00] p-0.5 shadow-[0_0_16px_rgba(230,185,60,0.7)] transition-all ${isActive ? 'scale-110 shadow-[0_0_24px_rgba(255,216,106,1)]' : ''}`}>
                   <div className="w-full h-full rounded-full bg-gradient-to-b from-[#D4A017] via-[#B8860B] to-[#8A5A00] flex items-center justify-center border border-[#FFF4C2]/60">
-                    <span className="text-xs font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] select-none">
+                    <span className="text-xs font-black text-[#FFFFFF] select-none">
                       {(i + 1).toString().padStart(2, '0')}
                     </span>
                   </div>
@@ -464,10 +464,10 @@ const MobileRoadmapView = ({ roadmap }) => {
                 >
                   <div className="bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border-2 border-[#FFF4C2] rounded-xl p-3 shadow-[0_10px_28px_rgba(212,160,23,0.6)] backdrop-blur-md">
                     <div className="space-y-1 text-xs text-[#FFFFFF]">
-                      {weekday && <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{weekday}</p>}
-                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{dateFormatted}</p>
-                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">{formattedTime}</p>
-                      <p className="font-bold text-[#FFFFFF] text-[11px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] leading-tight">
+                      {weekday && <p className="font-bold text-[#FFFFFF] text-[11px] leading-tight">{weekday}</p>}
+                      <p className="font-bold text-[#FFFFFF] text-[11px] leading-tight">{dateFormatted}</p>
+                      <p className="font-bold text-[#FFFFFF] text-[11px] leading-tight">{formattedTime}</p>
+                      <p className="font-bold text-[#FFFFFF] text-[11px] leading-tight">
                         Map: <span className="font-black text-[#FFFFFF]">{round.map || 'TBD'}</span>
                       </p>
                     </div>
@@ -1296,7 +1296,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <div className="flex-1 flex flex-col items-start justify-start md:justify-center text-left min-w-0">
                   
                   {/* Title */}
-                  <h1 className={`text-lg sm:text-2xl font-black text-[#FFFFFF] !text-white leading-tight line-clamp-2 break-words drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)] ${isGoldTheme ? 'royal-gold-title' : ''}`} style={{ color: '#FFFFFF' }}>
+                  <h1 className={`text-lg sm:text-2xl font-black text-[#FFFFFF] !text-white leading-tight line-clamp-2 break-words ${isGoldTheme ? 'royal-gold-title' : ''}`} style={{ color: '#FFFFFF' }}>
                     {tourney.title}
                   </h1>
 
@@ -1309,7 +1309,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         (orgProfile?.orgName || tourney.orgName || 'MD').slice(0, 2).toUpperCase()
                       )}
                     </div>
-                    <span className={`truncate ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'} drop-shadow-sm`}>{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
+                    <span className={`truncate ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{orgProfile?.orgName || tourney.orgName || orgProfile?.name}</span>
                     <VerificationBadge tier={orgProfile?.tier || tourney.orgTier} size="xs" />
                   </div>
 
@@ -1319,7 +1319,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <div className="flex flex-col items-start gap-0.5">
                       <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>PRIZE</span>
                       <div className="flex items-center gap-1.5">
-                        <span className={`text-sm sm:text-base font-extrabold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{prizeDisplay}</span>
+                        <span className={`text-sm sm:text-base font-extrabold ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{prizeDisplay}</span>
                         {sponsoredAmount > 0 && (
                           <svg className="w-4 h-4 text-amber-400 shrink-0 drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -1330,19 +1330,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {/* Entry */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>ENTRY</span>
-                      <span className={`text-sm sm:text-base font-extrabold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{entryDisplay}</span>
+                      <span className={`text-sm sm:text-base font-extrabold ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>{entryDisplay}</span>
                     </div>
                     {/* Format */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>FORMAT</span>
-                      <span className={`text-xs sm:text-sm font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
+                      <span className={`text-xs sm:text-sm font-bold flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
                         {formatLabel(tourney.match_type)} &bull; {(tourney.perspective || 'TPP').toUpperCase()}
                       </span>
                     </div>
                     {/* Slots */}
                     <div className="flex flex-col items-start gap-0.5">
                       <span className={`text-[10px] font-bold uppercase tracking-widest ${isGoldTheme ? 'text-[#FFFFFF]/85' : 'text-slate-600'}`}>SLOTS</span>
-                      <span className={`text-xs sm:text-sm font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.6)] flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
+                      <span className={`text-xs sm:text-sm font-bold flex items-center gap-1 ${isGoldTheme ? 'text-[#FFFFFF]' : 'text-slate-900'}`}>
                         <svg className={`w-3 sm:w-3.5 h-3 sm:h-3.5 ${isGoldTheme ? 'text-white/90' : 'text-slate-600'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                           <circle cx="9" cy="7" r="4" />
@@ -1506,7 +1506,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
               <span className={`text-xs sm:text-sm relative z-10 ${
                 isGoldTheme
-                  ? 'font-bold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)]'
+                  ? 'font-bold text-white'
                   : countdown.type === 'regOpen' ? 'font-black tracking-widest text-emerald-600' :
                     countdown.type === 'registration' ? 'font-black tracking-widest text-blue-600' :
                     'font-black tracking-widest text-slate-500'
@@ -1514,7 +1514,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
               <div className={`text-sm sm:text-base font-black px-3.5 py-1.5 rounded-xl whitespace-nowrap border relative z-10 ${
                 isGoldTheme
-                  ? 'text-white bg-[#8A5C00]/40 border-[#FFE082]/40 shadow-inner drop-shadow-sm'
+                  ? 'text-white bg-[#8A5C00]/40 border-[#FFE082]/40 shadow-inner'
                   : countdown.type === 'regOpen' ? 'text-emerald-700 bg-emerald-100/50 border-emerald-200' :
                     countdown.type === 'registration' ? 'text-blue-700 bg-blue-100/50 border-blue-200' :
                     'text-slate-700 bg-slate-100/50 border-slate-200'
@@ -1542,7 +1542,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   className={
                     activeTab === tab.id
                       ? isGoldTheme
-                        ? 'text-[#D4A017] font-black border-b-2 border-[#D4A017] pb-2 whitespace-nowrap drop-shadow-[0_0_6px_rgba(212,160,23,0.3)]'
+                        ? 'text-[#D4A017] font-black border-b-2 border-[#D4A017] pb-2 whitespace-nowrap'
                         : 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap'
                       : isGoldTheme
                         ? 'text-[#9CA3AF] hover:text-[#D4A017] font-medium pb-2 cursor-pointer whitespace-nowrap transition-colors'
@@ -1645,10 +1645,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                     <div className="relative z-10 space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs sm:text-sm font-black uppercase tracking-[0.2em] text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                        <span className="text-xs sm:text-sm font-black uppercase tracking-[0.2em] text-[#FFFFFF]">
                           Total Prize Pool
                         </span>
-                        <h2 className="text-2xl sm:text-3xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight text-right">
+                        <h2 className="text-2xl sm:text-3xl font-black text-[#FFFFFF] tracking-tight text-right">
                           {formatIndianCurrency(totalPrize)}
                         </h2>
                       </div>
@@ -1667,7 +1667,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   {/* Sleek Royal Gold Prize Distribution Board */}
                   {prizeDistributions.length > 0 ? (
                     <div className="space-y-2.5">
-                      <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#FFFFFF] drop-shadow-sm pl-1">
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#FFFFFF] pl-1">
                         Prize Distribution
                       </h3>
 
@@ -1702,18 +1702,18 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 className="md:col-span-2 relative overflow-hidden rounded-xl p-3.5 sm:p-4 bg-gradient-to-br from-[#FFE082] via-[#E6B93C] to-[#B8860B] border border-[#FFF4C2] shadow-[0_6px_20px_rgba(255,216,106,0.5)] flex items-center justify-between gap-3"
                               >
                                 <div>
-                                  <h4 className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] tracking-wide">
+                                  <h4 className="text-base sm:text-lg font-black text-[#FFFFFF] tracking-wide">
                                     {positionTitle}
                                   </h4>
                                   {subtitle && (
-                                    <p className="text-xs sm:text-sm font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] mt-0.5">
+                                    <p className="text-xs sm:text-sm font-bold text-[#FFFFFF] mt-0.5">
                                       {subtitle}
                                     </p>
                                   )}
                                 </div>
 
                                 <div className="text-right shrink-0">
-                                  <span className="text-xl sm:text-2xl font-black text-[#FFFFFF] drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)] tracking-tight">
+                                  <span className="text-xl sm:text-2xl font-black text-[#FFFFFF] tracking-tight">
                                     {row.prize}
                                   </span>
                                 </div>
@@ -1732,17 +1732,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 }`}
                               >
                                 <div className="min-w-0">
-                                  <h4 className="text-xs sm:text-sm font-black text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] truncate">
+                                  <h4 className="text-xs sm:text-sm font-black text-[#FFFFFF] truncate">
                                     {positionTitle}
                                   </h4>
                                   {subtitle && (
-                                    <p className="text-xs font-bold text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate mt-0.5">
+                                    <p className="text-xs font-bold text-[#FFFFFF] truncate mt-0.5">
                                       {subtitle}
                                     </p>
                                   )}
                                 </div>
 
-                                <span className="text-base sm:text-lg font-black text-[#FFFFFF] drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)] shrink-0 ml-2">
+                                <span className="text-base sm:text-lg font-black text-[#FFFFFF] shrink-0 ml-2">
                                   {row.prize}
                                 </span>
                               </div>
@@ -1755,10 +1755,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                               key={i}
                               className="bg-gradient-to-r from-[#C29215] to-[#9E740E] border border-[#FFE082]/40 rounded-lg p-2.5 px-3 flex items-center justify-between shadow-sm"
                             >
-                              <span className="font-bold text-xs text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] truncate">
+                              <span className="font-bold text-xs text-[#FFFFFF] truncate">
                                 {positionTitle}
                               </span>
-                              <span className="font-black text-xs sm:text-sm text-[#FFFFFF] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)] shrink-0 ml-2">
+                              <span className="font-black text-xs sm:text-sm text-[#FFFFFF] shrink-0 ml-2">
                                 {row.prize}
                               </span>
                             </div>
@@ -1799,7 +1799,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                         <div className="flex items-center justify-between relative z-10">
                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Prize Pool</span>
-                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm">
+                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
                             {formatIndianCurrency(totalPrize)}
                           </span>
                         </div>
@@ -1807,7 +1807,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     ) : (
                       <div className="flex items-center justify-between relative z-10">
                         <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Prize Pool</span>
-                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent drop-shadow-sm">
+                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
                           {formatIndianCurrency(totalPrize)}
                         </span>
                       </div>

@@ -217,7 +217,7 @@ function Archive({ onNavigate }) {
                               </span>
                             </div>
                             <div className="absolute bottom-3 left-3 right-3">
-                              <h3 className="font-headline-md text-sm sm:text-base font-bold text-white leading-snug line-clamp-2 drop-shadow-lg">
+                              <h3 className="font-headline-md text-sm sm:text-base font-bold text-white leading-snug line-clamp-2">
                                 {tournament.title}
                               </h3>
                               <div className="flex items-center gap-1.5 mt-1">

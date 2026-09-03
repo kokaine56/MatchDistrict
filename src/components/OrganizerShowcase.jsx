@@ -75,7 +75,7 @@ const OrganizerShowcase = ({ onNavigate }) => {
           >
             <motion.h2 variants={itemVariants} className="font-display-lg text-3xl sm:text-4xl md:text-5xl font-extrabold text-white leading-[1.1] tracking-tight">
               Run eSports Tournaments <br className="hidden lg:block" />
-              <span className="inline-block bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-500 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(99,102,241,0.35)]">Like a Pro</span>
+              <span className="inline-block bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-500 bg-clip-text text-transparent">Like a Pro</span>
             </motion.h2>
 
             <motion.p variants={itemVariants} className="font-body-lg text-xs sm:text-sm md:text-base text-on-surface-variant max-w-xl mx-auto lg:mx-0 leading-relaxed">
