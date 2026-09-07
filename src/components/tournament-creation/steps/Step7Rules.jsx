@@ -281,7 +281,7 @@ export default function Step7Rules({ data, onChange }) {
                               isChecked ? 'bg-primary border-primary' : 'border-outline-variant/50 group-hover:border-primary/50'
                             }`}>
                               {isChecked && (
-                                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="#FFFFFF" strokeWidth={3}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
                               )}

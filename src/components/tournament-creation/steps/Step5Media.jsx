@@ -233,11 +233,8 @@ export default function Step5Media({ data, onChange, orgName, orgTier, userTier 
       {/* ── Collectible Card Theme Selection ── */}
       <div className="space-y-4">
         <div>
-          <h3 className="text-sm font-bold text-on-background flex items-center gap-2">
-            <span>Collectible Card Theme</span>
-            <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              Living Artwork
-            </span>
+          <h3 className="text-sm font-bold text-on-background">
+            Collectible Card Theme
           </h3>
           <p className="text-[10px] text-on-surface-variant mt-0.5">Select a handcrafted theme for your tournament card & hero banner. Upgrading unlocks living legendary game artwork.</p>
         </div>
@@ -249,11 +246,6 @@ export default function Step5Media({ data, onChange, orgName, orgTier, userTier 
               <span className="text-[10px] font-black uppercase tracking-widest text-on-surface-variant/80">
                 {tierName === 'free' ? 'Free Plan Theme' : 'Pro Theme'}
               </span>
-              {tierName !== 'free' && (
-                <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  PRO
-                </span>
-              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -266,19 +258,25 @@ export default function Step5Media({ data, onChange, orgName, orgTier, userTier 
                     key={theme.id}
                     type="button"
                     onClick={() => onChange({ ...data, card_color: theme.id })}
-                    className={`group relative flex items-center gap-2.5 p-2 rounded-xl border-2 transition-all duration-300 ${
+                    aria-pressed={isSelected}
+                    className={`group relative flex items-center gap-3 p-3 rounded-xl border transition-all duration-300 ${
                       isSelected
-                        ? 'border-amber-400 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
-                        : 'border-outline-variant/20 bg-surface-container/30 hover:border-outline-variant/50'
+                        ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500/40 shadow-[0_0_18px_rgba(99,102,241,0.18)] dark:border-indigo-400/70 dark:bg-indigo-500/10'
+                        : 'border-outline-variant/25 bg-surface-container/40 hover:border-outline-variant/60 hover:bg-surface-container/70 hover:-translate-y-0.5 hover:shadow-md'
                     }`}
                   >
+                    {isSelected && (
+                      <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow-[0_1px_6px_rgba(99,102,241,0.45)]">
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="#FFFFFF"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 13l4 4L19 7" /></svg>
+                      </span>
+                    )}
                     {/* Swatch Circle */}
-                    <div 
-                      className="w-8 h-8 rounded-lg shrink-0 border relative overflow-hidden transition-transform duration-300 group-hover:scale-105"
+                    <div
+                      className={`w-8 h-8 rounded-lg shrink-0 border relative overflow-hidden transition-all duration-300 ${isSelected ? 'scale-110 shadow-sm' : 'group-hover:scale-105'}`}
                       style={{ backgroundColor: theme.cardBg, borderColor: theme.borderHex }}
                     >
-                      <div 
-                        className="absolute inset-0 opacity-40"
+                      <div
+                        className={`absolute inset-0 ${isSelected ? 'opacity-60' : 'opacity-40'}`}
                         style={{ background: `radial-gradient(circle at 30% 30%, ${theme.accentColor}, transparent 70%)` }}
                       />
                       {!isUnlocked && (
@@ -290,10 +288,10 @@ export default function Step5Media({ data, onChange, orgName, orgTier, userTier 
 
                     {/* Label & Tagline */}
                     <div className="flex flex-col text-left min-w-0">
-                      <span className="text-xs font-bold text-on-background truncate group-hover:text-amber-400 transition-colors">
+                      <span className="text-xs font-bold text-on-background truncate transition-colors">
                         {theme.name}
                       </span>
-                      <span className="text-[8px] text-on-surface-variant/70 truncate">
+                      <span className="text-[10px] text-on-surface-variant truncate">
                         {isUnlocked ? theme.tagline : 'Unlock with subscription'}
                       </span>
                     </div>
