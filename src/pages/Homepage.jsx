@@ -152,7 +152,7 @@ function Homepage({ onNavigate }) {
 
     return (
     <div className={containerClassName}>
-      <div className="relative w-full overflow-hidden py-1 hardware-clip">
+      <div className="relative w-full overflow-hidden py-4 hardware-clip">
         <div
           className="flex w-max animate-marquee gap-4 md:hover:[animation-play-state:paused]"
           style={{ animationPlayState: isFeedbackPaused ? 'paused' : undefined }}
