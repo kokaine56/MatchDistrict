@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { fetchJsonWithRetry } from '../utils/api.js';
 
 const PAGE_SIZE = 20;
-const MOBILE_COLS = 'grid-cols-[26px_minmax(0,1fr)_28px_32px_24px_44px]';
+const MOBILE_COLS = 'grid-cols-[24px_minmax(0,1fr)_30px_48px_24px_40px]';
 
 function rankBadgeClass(rank, isGoldTheme) {
   const base = 'inline-flex items-center justify-center w-6 h-6 rounded-md text-[10px] font-black shrink-0';
@@ -97,13 +97,13 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
   const headerClass = `text-[10px] font-black uppercase tracking-widest ${
     isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
   }`;
-  const headerClassMobile = `text-[9px] font-black uppercase tracking-wide ${
+  const headerClassMobile = `text-[8px] font-bold uppercase whitespace-nowrap ${
     isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
   }`;
   const teamNameClass = `block min-w-0 w-full truncate text-[13px] font-bold ${
     isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'
   }`;
-  const rankTextClass = `text-[13px] font-black tabular-nums ${isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'}`;
+  const rankTextClass = `text-[11px] font-bold tabular-nums ${isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'}`;
   const statClass = `text-xs font-semibold tabular-nums whitespace-nowrap ${
     isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
   }`;
@@ -129,11 +129,11 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
           <thead>
             <tr className={`border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'}`}>
               <th className={`${headerClass} text-left py-2 pr-2 pl-1 whitespace-nowrap w-[8%]`}>Rank</th>
-              <th className={`${headerClass} text-left py-2 px-2 w-[48%]`}>Team</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[10%]`}>Kills</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[14%]`}>Placement</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[8%]`}>WWCD</th>
-              <th className={`${headerClass} text-right py-2 pl-2 pr-1 whitespace-nowrap w-[12%]`}>Points</th>
+              <th className={`${headerClass} text-left py-2 px-2 w-[43%]`}>Team</th>
+              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[11%]`}>Kills</th>
+              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[14%]`}>Position</th>
+              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[11%]`}>WWCD</th>
+              <th className={`${headerClass} text-right py-2 pl-2 pr-1 whitespace-nowrap w-[13%]`}>Points</th>
             </tr>
           </thead>
           <tbody>
@@ -165,15 +165,15 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
         </table>
       </div>
 
-      {/* Mobile: compact single-line grid — # | TEAM | K | POS | W | PTS */}
+      {/* Mobile: compact single-line grid — RANK | TEAM | KILLS | POSITION | WWCD | POINTS */}
       <div className="md:hidden">
         <div className={`grid ${MOBILE_COLS} items-center border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'} py-1.5`}>
-          <span className={`${headerClassMobile} text-left pl-0.5`}>#</span>
+          <span className={`${headerClassMobile} text-left pl-0.5`}>Rank</span>
           <span className={`${headerClassMobile} text-left truncate`}>Team</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>K</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>POS</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>W</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>PTS</span>
+          <span className={`${headerClassMobile} text-right pr-0.5`}>Kills</span>
+          <span className={`${headerClassMobile} text-right pr-0.5`}>Position</span>
+          <span className={`${headerClassMobile} text-right pr-0.5`}>WWCD</span>
+          <span className={`${headerClassMobile} text-right pr-0.5`}>Points</span>
         </div>
         {pageRows.map(row => (
           <div

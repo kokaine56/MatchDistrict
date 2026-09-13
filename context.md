@@ -1228,9 +1228,9 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 
 ### 12A.3 Public Display (`src/components/TournamentLeaderboard.jsx`)
 - Fetches `GET /api/tournaments/:id/leaderboard` (returns sorted standings; pagination is client-side **after** ranking).
-- Columns: **Rank | Team | Kills | Placement | WWCD | Points**.
-- **Desktop (≥768)**: full-content-width `table-fixed` grid (Rank 8% · Team 48% · Kills 10% · Placement 14% · WWCD 8% · Points 12%), `py-2` compact rows, single-line rows (`nowrap` numerics + `truncate` team names), top-3 subtle gold/silver/bronze gradient badges, tinted header band.
-- **Mobile (<768)**: single-line compact grid `# | TEAM | K | POS | W | PTS` (fixed numeric columns 26/28/32/24/44px + flexible `minmax(0,1fr)` Team), no horizontal scrolling, no stacked cards.
+- Columns: **Rank | Team | Kills | Position | WWCD | Points**.
+- **Desktop (≥768)**: full-content-width `table-fixed` grid (Rank 8% · Team 43% · Kills 11% · Position 14% · WWCD 11% · Points 13%), `py-2` compact rows, single-line rows (`nowrap` numerics + `truncate` team names), top-3 subtle gold/silver/bronze gradient badges, tinted header band.
+- **Mobile (<768)**: single-line compact grid `RANK | TEAM | KILLS | POSITION | WWCD | POINTS` (full labels, 8px headers; fixed columns 24/30/48/24/40px + flexible `minmax(0,1fr)` Team), ranks as plain text (no badges), no horizontal scrolling, no stacked cards.
 - **Pagination**: max 20 teams/page, `‹ Prev | Page X of N | Next ›` below the table (hidden when ≤20), disabled at bounds, `h-10` tap targets, client-side only (no reload, tab stays open). Global ranks preserved across pages.
 - Empty state: "Leaderboard will appear once match results are added." Loading = pulse skeleton; fetch errors shown inline. Both themes supported (standard white/emerald + `royal-gold-theme` cream/gold).
 
