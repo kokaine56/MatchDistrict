@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
   { id: 'devices', label: 'Payment Verifier', icon: 'qr_code_scanner' },
+  { id: 'leaderboard', label: 'Leaderboard', icon: 'leaderboard' },
 ]
 
 export default function AdminLayout({

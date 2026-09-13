@@ -1224,6 +1224,15 @@ export default function AdminDashboard({ onNavigate }) {
         </div>
       )}
 
+      {/* TAB 6: LEADERBOARD SCORING */}
+      {activeTab === 'leaderboard' && (
+        <LeaderboardManagerTab
+          triggerToast={triggerToast}
+          tournamentsList={tournamentsList}
+          tournamentsLoading={tournamentsLoading}
+        />
+      )}
+
     </AdminLayout>
 
       <QRPairingModal
@@ -1773,6 +1782,354 @@ function RegistrationManager({
         </div>
       )}
 
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────
+// TAB 6: LEADERBOARD — Tournament Score Management
+// Admin enters each registered team's total points;
+// the platform derives ranking automatically.
+// ────────────────────────────────────────────────
+function LeaderboardManagerTab({ triggerToast, tournamentsList, tournamentsLoading }) {
+  const [selectedId, setSelectedId] = useState('');
+  const [teams, setTeams] = useState([]);
+  const [standings, setStandings] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [scores, setScores] = useState({});
+  const [savingId, setSavingId] = useState(null);
+  const [error, setError] = useState('');
+
+  const selectedTournament = tournamentsList.find(t => t.id === selectedId) || null;
+
+  const fetchScores = useCallback(async (tournId) => {
+    setLoading(true);
+    setError('');
+    try {
+      const token = await getAuthToken();
+      const { ok, data } = await fetchJsonWithRetry(`/api/admin/leaderboard/${tournId}`, {
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      if (ok && data?.success) {
+        const nextScores = {};
+        data.teams.forEach(t => {
+          nextScores[t.id] = t.score
+            ? {
+                kills: String(t.score.kills ?? ''),
+                placement_points: String(t.score.placement_points ?? ''),
+                wwcd: String(t.score.wwcd ?? ''),
+                bonus_points: String(t.score.bonus_points ?? ''),
+              }
+            : { kills: '', placement_points: '', wwcd: '', bonus_points: '' };
+        });
+        setTeams(data.teams || []);
+        setStandings(data.standings || []);
+        setScores(nextScores);
+      } else {
+        setError(data?.message || 'Failed to load tournament scores.');
+      }
+    } catch {
+      setError('Network error while loading scores.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const handleSelect = (tournId) => {
+    setSelectedId(tournId);
+    if (tournId) {
+      fetchScores(tournId);
+    } else {
+      setTeams([]);
+      setStandings([]);
+      setScores({});
+      setError('');
+    }
+  };
+
+  const rankByTeamId = useMemo(() => {
+    const map = {};
+    standings.forEach(s => { map[s.team_id] = s.rank; });
+    return map;
+  }, [standings]);
+
+  const handleScoreChange = (teamId, field, value) => {
+    setScores(prev => ({
+      ...prev,
+      [teamId]: { ...(prev[teamId] || { kills: '', placement_points: '', wwcd: '', bonus_points: '' }), [field]: value },
+    }));
+  };
+
+  const handleSave = async (teamId) => {
+    const entry = scores[teamId] || { kills: '', placement_points: '', wwcd: '', bonus_points: '' };
+    const fields = [
+      ['kills', 'Kills'],
+      ['placement_points', 'Placement'],
+      ['wwcd', 'WWCD'],
+      ['bonus_points', 'Bonus'],
+    ];
+    const payload = {};
+    let hasInput = false;
+    for (const [key, label] of fields) {
+      const raw = String(entry[key] ?? '').trim();
+      if (raw !== '') hasInput = true;
+      const num = raw === '' ? 0 : Number(raw);
+      if (!Number.isInteger(num) || num < 0 || num > 1000000) {
+        triggerToast(`${label} must be a whole number between 0 and 1,000,000.`);
+        return;
+      }
+      payload[key] = num;
+    }
+    if (!hasInput) {
+      triggerToast('Enter a score before saving.');
+      return;
+    }
+    setSavingId(teamId);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/admin/leaderboard/${selectedId}/${teamId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerToast(data.message || 'Score updated successfully');
+        await fetchScores(selectedId);
+      } else {
+        triggerToast(data.message || 'Unable to update score. Please try again.');
+      }
+    } catch {
+      triggerToast('Unable to update score. Please try again.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleClear = async (teamId) => {
+    setSavingId(teamId);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/admin/leaderboard/${selectedId}/${teamId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerToast(data.message || 'Score removed.');
+        await fetchScores(selectedId);
+      } else {
+        triggerToast(data.message || 'Unable to remove the score.');
+      }
+    } catch {
+      triggerToast('Unable to remove the score.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">leaderboard</span>
+            Tournament Leaderboard Scoring
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-white/50 mt-1">
+            Enter kills, placement and bonus per team. Points = Kills + Placement + Bonus. WWCD is tracked separately and doesn't add points automatically.
+          </p>
+        </div>
+      </div>
+
+      {/* Tournament picker */}
+      <div className="glass-card p-4 rounded-[16px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md">
+        <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-white/50 mb-2">
+          Select Tournament
+        </label>
+        {tournamentsLoading ? (
+          <div className="h-10 bg-surface-container-low/30 rounded-lg animate-pulse" />
+        ) : (
+          <select
+            value={selectedId}
+            onChange={(e) => handleSelect(e.target.value)}
+            className="w-full px-3 py-2.5 rounded-lg border border-outline-variant/40 bg-surface/60 text-on-background text-xs font-medium focus:outline-none focus:ring-1 focus:ring-primary/50"
+          >
+            <option value="">Choose a tournament to manage scores</option>
+            {tournamentsList.map(t => (
+              <option key={t.id} value={t.id}>
+                {[t.title, t.game].filter(Boolean).join(' — ')} ({t.id})
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Selected tournament content */}
+      {selectedId && (
+        <>
+          {selectedTournament && (
+            <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-white/60">
+              <span className="font-bold text-slate-900 dark:text-white">{selectedTournament.title}</span>
+              <span className="text-slate-400">•</span>
+              <span>{selectedTournament.game}</span>
+              <span className="text-slate-400">•</span>
+              <span>{selectedTournament.slotsFilled ?? 0} / {selectedTournament.slotsTotal} slots</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="px-4 py-3 rounded-xl bg-error/10 text-error text-xs font-semibold border border-error/20">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="h-14 bg-surface-container-low/30 rounded-xl animate-pulse" />)}</div>
+          ) : teams.length === 0 ? (
+            <div className="glass-card p-8 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md text-center">
+              <span className="material-symbols-outlined text-3xl text-on-surface-variant block mb-3">groups</span>
+              <p className="text-sm font-semibold text-on-background">No registered teams found</p>
+              <p className="text-xs text-on-surface-variant">Teams appear here once they have submitted an active registration.</p>
+            </div>
+          ) : (
+            <div className="glass-card rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-surface-container-low/50">
+                  <tr className="border-b border-outline-variant/20">
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Rank</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Team</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Status</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Kills</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Placement</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">WWCD</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Bonus</th>
+                    <th className="text-left p-3 font-semibold text-on-surface-variant">Points</th>
+                    <th className="text-right p-3 font-semibold text-on-surface-variant">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teams.map((team) => {
+                    const rank = rankByTeamId[team.id];
+                    const entry = scores[team.id] || { kills: '', placement_points: '', wwcd: '', bonus_points: '' };
+                    const total = (Number(entry.kills) || 0) + (Number(entry.placement_points) || 0) + (Number(entry.bonus_points) || 0);
+                    return (
+                      <tr key={team.id} className="border-b border-outline-variant/10 hover:bg-surface-container-low/30 transition-colors">
+                        <td className="p-3">
+                          {rank ? (
+                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-md text-[10px] font-black ${
+                              rank === 1 ? 'bg-amber-400/20 text-amber-500'
+                                : rank === 2 ? 'bg-slate-300/40 text-slate-500'
+                                  : rank === 3 ? 'bg-orange-400/20 text-orange-600'
+                                    : 'bg-surface-container-low text-on-surface-variant'
+                            }`}>{rank}</span>
+                          ) : (
+                            <span className="text-on-surface-variant/40">–</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <p className="font-bold text-slate-900 dark:text-white">{team.team_name}</p>
+                          <p className="text-[10px] text-on-surface-variant">{team.id}</p>
+                        </td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-surface-container-low text-on-surface-variant">{team.status}</span>
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000000}
+                            value={entry.kills}
+                            onChange={(e) => handleScoreChange(team.id, 'kills', e.target.value)}
+                            placeholder="–"
+                            className="w-16 px-2 py-2 rounded-lg border border-outline-variant/40 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000000}
+                            value={entry.placement_points}
+                            onChange={(e) => handleScoreChange(team.id, 'placement_points', e.target.value)}
+                            placeholder="–"
+                            className="w-16 px-2 py-2 rounded-lg border border-outline-variant/40 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000000}
+                            value={entry.wwcd}
+                            onChange={(e) => handleScoreChange(team.id, 'wwcd', e.target.value)}
+                            placeholder="–"
+                            className="w-16 px-2 py-2 rounded-lg border border-outline-variant/40 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </td>
+                        <td className="p-3">
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000000}
+                            value={entry.bonus_points}
+                            onChange={(e) => handleScoreChange(team.id, 'bonus_points', e.target.value)}
+                            placeholder="–"
+                            className="w-16 px-2 py-2 rounded-lg border border-outline-variant/40 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary/50"
+                          />
+                        </td>
+                        <td className="p-3">
+                          <span className={`inline-flex items-center gap-1 font-black tabular-nums ${
+                            total > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-on-surface-variant/50'
+                          }`}>
+                            {total.toLocaleString('en-IN')}
+                            <span className="text-[9px] font-semibold uppercase">pts</span>
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleSave(team.id)}
+                              disabled={savingId === team.id}
+                              className="px-2.5 py-1.5 min-h-[44px] bg-success/10 text-success text-[10px] font-semibold rounded-lg hover:bg-success/20 disabled:opacity-50 transition-colors flex items-center gap-1"
+                            >
+                              {savingId === team.id ? <span className="animate-spin material-symbols-outlined text-[10px]">sync</span> : <span className="material-symbols-outlined text-[10px]">save</span>}
+                              Save
+                            </button>
+                            {rank && (
+                              <button
+                                onClick={() => handleClear(team.id)}
+                                disabled={savingId === team.id}
+                                className="px-2.5 py-1.5 min-h-[44px] bg-error/10 text-error text-[10px] font-semibold rounded-lg hover:bg-error/20 disabled:opacity-50 transition-colors flex items-center gap-1"
+                              >
+                                <span className="material-symbols-outlined text-[10px]">delete</span>
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="px-4 py-2.5 border-t border-outline-variant/10 text-[10px] text-on-surface-variant/70">
+                Points = Kills + Placement + Bonus. WWCD counts first-place finishes (WWCD itself adds no points).
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Empty state: no tournament selected yet */}
+      {!selectedId && (
+        <div className="glass-card p-8 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md text-center">
+          <span className="material-symbols-outlined text-3xl text-on-surface-variant block mb-3">leaderboard</span>
+          <p className="text-sm font-semibold text-on-background">Select a tournament to manage its leaderboard</p>
+          <p className="text-xs text-on-surface-variant">Scores you save here appear instantly on the tournament's public page.</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -11,6 +11,7 @@ import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
+import { validateScoring, computeTotalPoints, sortAndRank, calculateRankings } from './server/leaderboardService.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -718,6 +719,48 @@ async function initDb() {
       console.log('📦 [MATCH DISTRICT DB] slot_grid table initialized.');
     } catch (slotErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create slot_grid table:', slotErr.message);
+    }
+
+    // CREATE tournament_leaderboard + leaderboard_audit tables for tournament scoring
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_leaderboard (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          team_id VARCHAR(50) NOT NULL REFERENCES tournament_registrations(id) ON DELETE CASCADE,
+          team_name VARCHAR(255) NOT NULL,
+          kills INTEGER DEFAULT 0,
+          placement_points INTEGER DEFAULT 0,
+          wwcd INTEGER DEFAULT 0,
+          bonus_points INTEGER DEFAULT 0,
+          total_points INTEGER DEFAULT 0,
+          updated_by VARCHAR(50),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(tournament_id, team_id)
+        );
+
+        ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS wwcd INTEGER DEFAULT 0;
+        ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS placement_points INTEGER DEFAULT 0;
+        ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS bonus_points INTEGER DEFAULT 0;
+
+        CREATE TABLE IF NOT EXISTS leaderboard_audit (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          team_id VARCHAR(50) NOT NULL REFERENCES tournament_registrations(id) ON DELETE CASCADE,
+          team_name VARCHAR(255),
+          previous_score INTEGER,
+          new_score INTEGER,
+          updated_by VARCHAR(50),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_leaderboard_tournament ON tournament_leaderboard(tournament_id);
+        CREATE INDEX IF NOT EXISTS idx_leaderboard_audit_tournament ON leaderboard_audit(tournament_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] tournament_leaderboard tables initialized.');
+    } catch (lbErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_leaderboard tables:', lbErr.message);
     }
 
     // --- ENABLE REALTIME REPLICATION ---
@@ -4828,6 +4871,181 @@ const server = http.createServer(async (req, res) => {
       const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC', [id]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // ── PUBLIC: Tournament Leaderboard (read-only standings) ──────────────────
+  if (req.url.startsWith('/api/tournaments/') && req.url.endsWith('/leaderboard') && req.method === 'GET') {
+    const parts = req.url.split('/');
+    const tournId = parts[3];
+    try {
+      const standings = await calculateRankings(pool, tournId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, standings }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // ── ADMIN: Leaderboard scores for a tournament (registered teams + scores) ──
+  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'GET') {
+    const parts = req.url.split('/');
+    const tournId = parts[4];
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+      if (!tournId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Tournament id is required.' }));
+        return;
+      }
+      const [scoreRes, regRes, tournRes] = await Promise.all([
+        pool.query('SELECT * FROM tournament_leaderboard WHERE tournament_id = $1', [tournId]),
+        pool.query(
+          `SELECT id, team_name, status FROM tournament_registrations
+           WHERE tournament_id = $1 AND status NOT IN ('rejected', 'cancelled', 'expired')
+           ORDER BY created_at ASC`,
+          [tournId]
+        ),
+        pool.query('SELECT id, title FROM tournaments WHERE id = $1', [tournId]),
+      ]);
+      const scoresByTeam = new Map(scoreRes.rows.map(s => [s.team_id, s]));
+      const standings = sortAndRank(scoreRes.rows);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        tournament: tournRes.rows[0] || null,
+        teams: regRes.rows.map(r => ({ ...r, score: scoresByTeam.get(r.id) || null })),
+        standings,
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // ── ADMIN: Upsert a team's leaderboard score ───────────────────────────────
+  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'PUT') {
+    const parts = req.url.split('/');
+    const tournId = parts[4];
+    const teamId = parts[5];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          return;
+        }
+        const data = JSON.parse(body || '{}');
+        const scoringCheck = validateScoring(data);
+        if (!scoringCheck.valid) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_SCORE', message: scoringCheck.errors.join(' ') }));
+          return;
+        }
+        const regRes = await pool.query(
+          `SELECT id, team_name, status FROM tournament_registrations
+           WHERE id = $1 AND tournament_id = $2
+           AND status NOT IN ('rejected', 'cancelled', 'expired')`,
+          [teamId, tournId]
+        );
+        if (regRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TEAM_NOT_REGISTERED', message: 'Team is not registered for this tournament.' }));
+          return;
+        }
+        const reg = regRes.rows[0];
+        const { kills, placement_points, wwcd, bonus_points } = scoringCheck.values;
+        const totalPoints = computeTotalPoints(scoringCheck.values);
+
+        const existing = await pool.query(
+          'SELECT id, total_points FROM tournament_leaderboard WHERE tournament_id = $1 AND team_id = $2',
+          [tournId, teamId]
+        );
+        const previousScore = existing.rows.length ? existing.rows[0].total_points : null;
+        const lbId = existing.rows.length ? existing.rows[0].id : 'LB-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+
+        await pool.query(
+          `INSERT INTO tournament_leaderboard
+             (id, tournament_id, team_id, team_name, kills, placement_points, wwcd, bonus_points, total_points, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
+           ON CONFLICT (tournament_id, team_id)
+           DO UPDATE SET
+             team_name = EXCLUDED.team_name,
+             kills = EXCLUDED.kills,
+             placement_points = EXCLUDED.placement_points,
+             wwcd = EXCLUDED.wwcd,
+             bonus_points = EXCLUDED.bonus_points,
+             total_points = EXCLUDED.total_points,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = CURRENT_TIMESTAMP
+           RETURNING *`,
+          [lbId, tournId, teamId, reg.team_name, kills, placement_points, wwcd, bonus_points, totalPoints, authUser.id]
+        );
+
+        const auditId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(
+          `INSERT INTO leaderboard_audit (id, tournament_id, team_id, team_name, previous_score, new_score, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [auditId, tournId, teamId, reg.team_name, previousScore, totalPoints, authUser.id]
+        );
+
+        const standings = await calculateRankings(pool, tournId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Score updated successfully', standings }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── ADMIN: Remove a team's leaderboard score ──────────────────────────────
+  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'DELETE') {
+    const parts = req.url.split('/');
+    const tournId = parts[4];
+    const teamId = parts[5];
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+      const delRes = await pool.query(
+        'DELETE FROM tournament_leaderboard WHERE tournament_id = $1 AND team_id = $2 RETURNING *',
+        [tournId, teamId]
+      );
+      if (delRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'No score found for this team.' }));
+        return;
+      }
+      const removed = delRes.rows[0];
+      const auditId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+      await pool.query(
+        `INSERT INTO leaderboard_audit (id, tournament_id, team_id, team_name, previous_score, new_score, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [auditId, tournId, teamId, removed.team_name, removed.total_points, null, authUser.id]
+      );
+      const standings = await calculateRankings(pool, tournId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Score removed.', standings }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));

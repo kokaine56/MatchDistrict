@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Header from '../components/Header.jsx';
@@ -16,6 +16,7 @@ import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
+import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -501,6 +502,91 @@ const RoyalGoldRoadmap = ({ roadmap }) => {
       {/* MOBILE (below md): Vertical Winding Journey with Tap-to-Reveal */}
       <div className="block md:hidden relative w-full">
         <MobileRoadmapView roadmap={roadmap} />
+      </div>
+    </div>
+  );
+};
+
+const RoadmapRoundCard = ({ round, index }) => (
+  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 sm:px-4 sm:py-3 shadow-[0_1px_6px_rgba(15,23,42,0.06)] w-full sm:w-auto sm:shrink-0">
+    <h4 className="text-sm font-black text-slate-900 mb-1.5 truncate" title={round.title || `Qualifier ${index + 1}`}>
+      {round.title || `Qualifier ${index + 1}`}
+    </h4>
+
+    <div className="space-y-1 text-xs text-slate-500">
+      <p className="flex items-center gap-1.5">
+        <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+        <span>{round.date ? formatRoadmapDateDetails(round.date).dateFormatted : 'TBD'}</span>
+      </p>
+      <p className="flex items-center gap-1.5">
+        <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>{formatRoadmapTimeIST(round.time, round.date)}</span>
+      </p>
+      <p className="flex items-center gap-1.5">
+        <svg className="w-3.5 h-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+        <span>Map: <span className="font-semibold text-slate-700">{round.map || 'TBD'}</span></span>
+      </p>
+    </div>
+
+    {round.qualified ? (
+      <div className="mt-2 pt-2 border-t border-slate-100 text-[11px] font-bold text-emerald-600 flex items-center gap-1.5">
+        <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Qualifies: {round.qualified}</span>
+      </div>
+    ) : null}
+  </div>
+);
+
+const ResponsiveRoadmap = ({ roadmap }) => {
+  const N = (roadmap || []).length;
+
+  if (N === 0) {
+    return (
+      <div className="p-4 sm:p-5 rounded-lg border border-slate-200 bg-white shadow-[0_1px_6px_rgba(15,23,42,0.06)] text-sm text-slate-400">
+        No roadmap rounds scheduled yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full select-none">
+      {/* Mobile: vertical timeline, one qualifier after another */}
+      <div className="flex sm:hidden flex-col">
+        {roadmap.map((round, index) => (
+          <React.Fragment key={round.id || index}>
+            <RoadmapRoundCard round={round} index={index} />
+            {index < N - 1 && (
+              <div className="flex justify-center py-1" aria-hidden="true">
+                <svg className="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+              </div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* Desktop/tablet: horizontal content-sized progression */}
+      <div className="hidden sm:flex items-center gap-2 overflow-x-auto scrollbar-hide touch-pan-x">
+        {roadmap.map((round, index) => (
+          <React.Fragment key={round.id || index}>
+            <RoadmapRoundCard round={round} index={index} />
+            {index < N - 1 && (
+              <svg className="w-4 h-4 shrink-0 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );
@@ -1176,8 +1262,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     : 'text-xs font-black text-slate-800 tracking-widest uppercase mb-2';
 
   const cardBodyClass = isGoldTheme
-    ? 'text-xs sm:text-sm text-[#374151] leading-relaxed whitespace-pre-wrap font-medium'
-    : 'text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap';
+    ? 'text-[13px] sm:text-sm text-[#374151] leading-relaxed whitespace-pre-wrap font-medium'
+    : 'text-[13px] sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap';
 
   if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
 
@@ -1527,13 +1613,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
           {/* Horizontal Scrollable Tabs */}
           <div className={`mt-8 border-b w-full overflow-hidden ${isGoldTheme ? 'border-[#D4A017]/30' : 'border-slate-200'}`}>
-            <div className="flex items-center gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
+            <div className="flex items-center gap-4 sm:gap-6 overflow-x-auto whitespace-nowrap pb-3 scrollbar-hide touch-pan-x">
               {[
                 { id: 'overview', label: 'Overview' },
                 { id: 'prize', label: 'Prize Pool' },
                 { id: 'roadmap', label: 'Roadmap' },
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
+                { id: 'leaderboard', label: 'Leaderboard' },
                 { id: 'sponsors', label: 'Sponsors' },
               ].map((tab) => (
                 <button
@@ -1542,11 +1629,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   className={
                     activeTab === tab.id
                       ? isGoldTheme
-                        ? 'text-[#D4A017] font-black border-b-2 border-[#D4A017] pb-2 whitespace-nowrap'
-                        : 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap'
+                        ? 'text-[#D4A017] font-black border-b-2 border-[#D4A017] pb-2 whitespace-nowrap text-sm sm:text-base py-1'
+                        : 'text-blue-600 font-bold border-b-2 border-blue-600 pb-2 whitespace-nowrap text-sm sm:text-base py-1'
                       : isGoldTheme
-                        ? 'text-[#9CA3AF] hover:text-[#D4A017] font-medium pb-2 cursor-pointer whitespace-nowrap transition-colors'
-                        : 'text-slate-400 hover:text-slate-600 pb-2 cursor-pointer whitespace-nowrap'
+                        ? 'text-[#9CA3AF] hover:text-[#D4A017] font-medium pb-2 cursor-pointer whitespace-nowrap transition-colors text-sm sm:text-base py-1'
+                        : 'text-slate-400 hover:text-slate-600 pb-2 cursor-pointer whitespace-nowrap text-sm sm:text-base py-1'
                   }
                 >
                   {tab.label}
@@ -1568,7 +1655,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </div>
                   <div className={cardContainerClass}>
                     <h3 className={cardTitleClass}>About Organizer</h3>
-                    <p className={cardBodyClass}>{orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
+                    <p className={cardBodyClass}>{orgProfile?.orgBio || orgProfile?.experience || orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
                   </div>
                 </div>
 
@@ -1799,7 +1886,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                         <div className="flex items-center justify-between relative z-10">
                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Prize Pool</span>
-                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
+                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 bg-clip-text text-transparent">
                             {formatIndianCurrency(totalPrize)}
                           </span>
                         </div>
@@ -1807,7 +1894,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     ) : (
                       <div className="flex items-center justify-between relative z-10">
                         <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Prize Pool</span>
-                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
+                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 bg-clip-text text-transparent">
                           {formatIndianCurrency(totalPrize)}
                         </span>
                       </div>
@@ -1868,57 +1955,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               isGoldTheme ? (
                 <RoyalGoldRoadmap roadmap={parsedTimeline.roadmap} />
               ) : (
-                <div className="flex items-center gap-4 overflow-x-auto pb-4 w-full scrollbar-hide">
-                  {parsedTimeline.roadmap && parsedTimeline.roadmap.length > 0 ? (
-                    parsedTimeline.roadmap.map((round, index) => (
-                      <React.Fragment key={round.id || index}>
-                        <div className={`min-w-[180px] sm:min-w-[220px] rounded-xl p-3 sm:p-4 shadow-sm flex flex-col shrink-0 border bg-white border-slate-200`}>
-                          <h4 className={`font-black text-base sm:text-lg mb-2 text-slate-900`}>{round.title || `Qualifier ${index + 1}`}</h4>
-                          <div className={`space-y-1.5 text-xs font-medium text-slate-500`}>
-                            <p className="flex items-center gap-1.5 sm:gap-2">
-                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                              </svg>
-                              <span>{round.date ? formatDate(round.date) : 'TBD'}</span>
-                            </p>
-                            <p className="flex items-center gap-1.5 sm:gap-2">
-                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              <span>{round.time || 'TBD'}</span>
-                            </p>
-                            <p className="flex items-center gap-1.5 sm:gap-2">
-                              <svg className={`w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-slate-400`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                              </svg>
-                              <span>Map: <span className={`font-bold text-slate-700`}>{round.map || 'TBD'}</span></span>
-                            </p>
-                          </div>
-                          {round.qualified && (
-                            <div className={`mt-3 sm:mt-4 text-xs font-bold px-2.5 py-1.5 rounded-md border w-fit flex items-center gap-1.5 bg-green-50/80 border-green-100 text-green-700`}>
-                              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              <span>Qualifies: {round.qualified}</span>
-                            </div>
-                          )}
-                        </div>
-                        {index < parsedTimeline.roadmap.length - 1 && (
-                          <div className={`shrink-0 text-slate-300`}>
-                            <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                            </svg>
-                          </div>
-                        )}
-                      </React.Fragment>
-                    ))
-                  ) : (
-                    <div className={`p-6 rounded-xl border w-full text-slate-500 bg-slate-50 border-slate-100`}>
-                      No roadmap rounds scheduled yet.
-                    </div>
-                  )}
-                </div>
+                <ResponsiveRoadmap roadmap={parsedTimeline.roadmap} />
               )
             )}
             {activeTab === 'rules' && (
@@ -1982,6 +2019,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <RoomSlotGrid
                 slotsData={slotsData}
                 matchType={tourney?.match_type}
+              />
+            )}
+            {activeTab === 'leaderboard' && (
+              <TournamentLeaderboard
+                tournamentId={tournamentId}
+                isGoldTheme={isGoldTheme}
+                cardContainerClass={cardContainerClass}
+                cardTitleClass={cardTitleClass}
               />
             )}
             {activeTab === 'sponsors' && (

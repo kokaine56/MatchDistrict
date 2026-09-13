@@ -89,17 +89,15 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         </div>
       )}
 
-      <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 max-sm:gap-2 sm:gap-2.5 w-full">
+      <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2 sm:gap-2.5 w-full">
         {currentRoomSlots.map((slot, idx) => {
           const slotNum = slot.number;
           const isOccupied = slot.status === 'occupied' || slot.status === 'confirmed';
           return (
             <div
               key={idx}
-              className={`aspect-square max-sm:text-[10px] max-sm:rounded-lg sm:text-xs sm:rounded-xl font-black flex items-center justify-center ${
-                isOccupied
-                  ? 'bg-red-500 text-white border border-red-600'
-                  : 'bg-green-500 text-white border border-green-600'
+              className={`aspect-square rounded-md flex items-center justify-center font-bold text-white text-[10px] sm:text-[11px] shadow-sm ${
+                isOccupied ? 'bg-rose-500' : 'bg-emerald-500'
               }`}
               title={
                 isOccupied
@@ -113,13 +111,13 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         })}
       </div>
 
-      <div className="flex items-center gap-4 mt-6 pt-4 border-t border-slate-100 text-xs font-bold text-slate-500">
+      <div className="flex items-center gap-4 mt-6 pt-4 border-t border-slate-200 text-xs font-bold text-slate-500">
         <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+          <span className="w-3 h-3 rounded-[4px] bg-emerald-500 shadow-sm" />
           <span>Available</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+          <span className="w-3 h-3 rounded-[4px] bg-rose-500 shadow-sm" />
           <span>Occupied</span>
         </div>
       </div>

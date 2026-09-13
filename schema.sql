@@ -491,3 +491,45 @@ BEGIN
     END IF;
 END
 $$;
+
+-- ------------------------------------------
+-- 5b. Tournament Leaderboard Tables
+-- ------------------------------------------
+
+-- Scored teams for a tournament (one row per tournament + team)
+-- Total Points = Kills + Placement Points + Bonus Points.
+-- WWCD (first-place finishes) is tracked separately and is NOT a point category.
+CREATE TABLE IF NOT EXISTS tournament_leaderboard (
+    id VARCHAR(50) PRIMARY KEY,
+    tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    team_id VARCHAR(50) NOT NULL REFERENCES tournament_registrations(id) ON DELETE CASCADE,
+    team_name VARCHAR(255) NOT NULL,
+    kills INTEGER DEFAULT 0,
+    placement_points INTEGER DEFAULT 0,
+    wwcd INTEGER DEFAULT 0,
+    bonus_points INTEGER DEFAULT 0,
+    total_points INTEGER DEFAULT 0,
+    updated_by VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tournament_id, team_id)
+);
+
+ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS wwcd INTEGER DEFAULT 0;
+ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS placement_points INTEGER DEFAULT 0;
+ALTER TABLE tournament_leaderboard ADD COLUMN IF NOT EXISTS bonus_points INTEGER DEFAULT 0;
+
+-- Audit trail for every score change (previous → new) and removal
+CREATE TABLE IF NOT EXISTS leaderboard_audit (
+    id VARCHAR(50) PRIMARY KEY,
+    tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+    team_id VARCHAR(50) NOT NULL REFERENCES tournament_registrations(id) ON DELETE CASCADE,
+    team_name VARCHAR(255),
+    previous_score INTEGER,
+    new_score INTEGER,
+    updated_by VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leaderboard_tournament ON tournament_leaderboard(tournament_id);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_audit_tournament ON leaderboard_audit(tournament_id);

@@ -18,6 +18,7 @@
 10. [Tournament Creation System](#10-tournament-creation-system)
 11. [Registration System](#11-registration-system)
 12. [Payment System](#12-payment-system)
+12A. [Tournament Leaderboard](#12a-tournament-leaderboard)
 13. [Admin System](#13-admin-system)
 14. [Organizer System](#14-organizer-system)
 15. [Profile System](#15-profile-system)
@@ -1212,6 +1213,41 @@ Route `/tournaments/:id/register` is wrapped in `RegistrationRoute`:
 
 ---
 
+## 12A. Tournament Leaderboard
+
+Per-tournament public standings table shown as the **Leaderboard tab** on the Tournament Details page, administered from the Majestic Admin Command Center.
+
+### 12A.1 Scoring Model
+- Total Points = **Kills + Placement Points + Bonus Points** (computed server-side)
+- **WWCD** = count of #1 finishes. It is a statistic only — it is **not** added to points.
+- Ranking is auto-calculated (never admin-set): `total_points DESC → kills DESC → wwcd DESC → placement_points ASC → team_id ASC` → unique ranks 1..N. Running in `server/leaderboardService.js`.
+
+### 12A.2 Database
+- `tournament_leaderboard` (`server.js:727`, `schema.sql:502`): PK `id VARCHAR(50)` (`LB-...`), `tournament_id`, `team_id`, `team_name`, `kills`, `placement_points`, `wwcd`, `bonus_points`, `total_points` (all INT DEFAULT 0), `updated_at`; `UNIQUE(tournament_id, team_id)`. Idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for `wwcd`/`placement_points`/`bonus_points` covers pre-existing tables.
+- `leaderboard_audit`: PK `id VARCHAR(50)` (`LOG-...`), `tournament_id`, `team_id`, `team_name`, `previous_score`, `new_score`, `updated_by` — records every upsert/delete.
+
+### 12A.3 Public Display (`src/components/TournamentLeaderboard.jsx`)
+- Fetches `GET /api/tournaments/:id/leaderboard` (returns sorted standings; pagination is client-side **after** ranking).
+- Columns: **Rank | Team | Kills | Placement | WWCD | Points**.
+- **Desktop (≥768)**: full-content-width `table-fixed` grid (Rank 8% · Team 48% · Kills 10% · Placement 14% · WWCD 8% · Points 12%), `py-2` compact rows, single-line rows (`nowrap` numerics + `truncate` team names), top-3 subtle gold/silver/bronze gradient badges, tinted header band.
+- **Mobile (<768)**: single-line compact grid `# | TEAM | K | POS | W | PTS` (fixed numeric columns 26/28/32/24/44px + flexible `minmax(0,1fr)` Team), no horizontal scrolling, no stacked cards.
+- **Pagination**: max 20 teams/page, `‹ Prev | Page X of N | Next ›` below the table (hidden when ≤20), disabled at bounds, `h-10` tap targets, client-side only (no reload, tab stays open). Global ranks preserved across pages.
+- Empty state: "Leaderboard will appear once match results are added." Loading = pulse skeleton; fetch errors shown inline. Both themes supported (standard white/emerald + `royal-gold-theme` cream/gold).
+
+### 12A.4 Admin Command Center (`LeaderboardManagerTab`, `AdminDashboard.jsx:1794`)
+- Admin selects a tournament → per registered team inputs for **Kills / Placement / WWCD / Bonus** with per-team Save (`PUT`), plus computed Points cell and legend "Points = Kills + Placement + Bonus. WWCD counts first-place finishes (WWCD itself adds no points)."
+- Data flow: Admin input → `validateScoring` (400 `INVALID_SCORE`, each 0..1,000,000 whole number) → upsert to `tournament_leaderboard` → public page re-fetches same source. No duplicated source of truth.
+
+### 12A.5 Endpoints
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/api/tournaments/:id/leaderboard` | Public | Sorted standings (kills, placement_points, wwcd, bonus_points, total_points, rank) |
+| GET | `/api/admin/leaderboard/:tournamentId` | Admin | Registered teams + saved scores |
+| PUT | `/api/admin/leaderboard/:tournamentId/:teamId` | Admin | Upsert breakdown score (computes total) |
+| DELETE | `/api/admin/leaderboard/:tournamentId/:teamId` | Admin | Remove a team's score |
+
+---
+
 ## 13. Admin System
 
 ### 13.1 Admin Dashboard (`AdminDashboard.jsx` — 2761 lines)
@@ -1972,3 +2008,4 @@ src/assets/
 | Initial creation | Full platform documentation | — |
 | 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |
 | 2026-06-25 | Standardized zoom slider across all 5 crop modals: 10%–200% range, step=1, percent-based state (`zoomPercent / 100` → cropper scale). Affected files: `CropModal.jsx`, `Profile.jsx`, `BecomeOrganizer.jsx`, `OrganizerDashboard.jsx`, `OrgPage.jsx`. Documented in Section 10.10. | System |
+| 2026-09-13 | Added per-tournament leaderboard system (Section 12A): `server/leaderboardService.js` (scoring/ranking engine), `tournament_leaderboard` + `leaderboard_audit` tables, public + admin endpoints, `LeaderboardManagerTab` in `AdminDashboard.jsx`, and responsive `TournamentLeaderboard.jsx` (full-width desktop table, compact mobile grid, 20/page client-side pagination). | System |

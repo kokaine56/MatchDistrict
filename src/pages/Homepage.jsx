@@ -40,7 +40,6 @@ function Homepage({ onNavigate }) {
   const [isFeedbackPaused, setIsFeedbackPaused] = useState(false)
   const { currentUser, signOut } = useUser()
   const [tournamentsList, setTournamentsList] = useState([])
-  const [organisersList, setOrganisersList] = useState([])
   const [now, setNow] = useState(new Date())
   const pauseTimeoutRef = useRef(null)
 
@@ -57,15 +56,6 @@ function Homepage({ onNavigate }) {
     if (ok && data?.success && data.tournaments) {
       const filtered = data.tournaments.filter(t => !t.isDraft)
       setTournamentsList(filtered)
-    }
-    try {
-      const r = await fetch('/api/organisers')
-      const orgData = await r.json()
-      if (orgData.success && Array.isArray(orgData.users)) {
-        setOrganisersList(orgData.users)
-      }
-    } catch (e) {
-      console.warn('Failed to load dynamic organizers on homepage:', e)
     }
   }, [])
 
@@ -343,94 +333,6 @@ function Homepage({ onNavigate }) {
               </motion.div>
               {/* Player Feedbacks Marquee (Mobile View) */}
               {renderFeedbacksMarquee("block lg:hidden overflow-hidden pt-1 hardware-clip")}
-
-              {/* Top Organizations Showcase */}
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-80px" }}
-                transition={{ duration: 0.5 }}
-                className="space-y-3 sm:space-y-4"
-              >
-                <div className="flex justify-between items-center border-b border-outline-variant/20 pb-2.5">
-                  <h2 className="font-headline-md text-base sm:text-lg flex items-center gap-1.5 font-bold text-on-background tracking-tight">
-                    <span className="material-symbols-outlined text-[#ff0000] text-lg dark:filter dark:drop-shadow-[0_0_8px_rgba(255,0,0,0.5)]" data-icon="military_tech">military_tech</span>
-                    Top Organizations
-                  </h2>
-                  <button
-                    onClick={() => onNavigate && onNavigate('explore-organisers')}
-                    className="group flex items-center gap-1 text-primary font-label-caps text-xs font-bold hover:text-primary/80 transition-colors"
-                  >
-                    <span>View All</span>
-                    <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform" data-icon="arrow_forward">arrow_forward</span>
-                  </button>
-                </div>
-                {/* Horizontal snap carousel on mobile, 2-col grid on desktop */}
-                <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible snap-x snap-mandatory no-scrollbar pb-2 md:pb-0 -mx-3 px-3 sm:-mx-4 sm:px-4 !touch-auto" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
-                  {organisersList.length > 0 ? (
-                    organisersList.slice(0, 4).map((org, idx) => {
-                      const formatFollowersLocal = (n) => {
-                        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-                        if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
-                        return String(n);
-                      };
-                      return (
-                        <motion.div
-                          key={org.id || idx}
-                          onClick={() => onNavigate && onNavigate('explore-organisers')}
-                          whileHover={{ y: -3, scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
-                          className="relative w-[162px] sm:w-[185px] md:w-full flex-shrink-0 snap-start flex flex-col rounded-xl overflow-hidden group cursor-pointer transition-all duration-300 hover:shadow-[0_6px_24px_rgba(90,93,250,0.12)] bg-surface-container-low"
-                        >
-                          {/* Rank badge */}
-                          <div className={`absolute top-2.5 left-2.5 z-10 w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-black ${
-                            idx === 0 ? 'bg-gradient-to-br from-yellow-400 to-amber-500 text-black shadow-[0_0_10px_rgba(245,158,11,0.3)]' :
-                            idx === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-400 text-slate-900' :
-                            idx === 2 ? 'bg-gradient-to-br from-amber-600 to-amber-700 text-white' :
-                            'bg-surface-container-highest text-on-surface-variant'
-                          }`}>#{idx + 1}</div>
-
-                          <div className="p-3 pt-8">
-                            {/* Logo */}
-                            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-full overflow-hidden mx-auto mb-2 bg-surface-container-high group-hover:shadow-[0_0_8px_rgba(59,130,246,0.3)] transition-shadow">
-                              {org.orgImage || org.avatar ? (
-                                <img alt={org.orgName || org.name} className="avatar-img group-hover:scale-105 transition-transform duration-300" src={org.orgImage || org.avatar} />
-                              ) : (
-                                <img alt="" className="avatar-img group-hover:scale-105 transition-transform duration-300" src={DEFAULT_AVATAR} />
-                              )}
-                            </div>
-                            <h3 className="font-headline-md text-xs sm:text-sm text-on-background font-bold tracking-tight group-hover:text-primary transition-colors text-center truncate flex items-center justify-center gap-1">
-                              <span>{org.orgName || org.name}</span>
-                              <VerificationBadge tier={org.tier} size="sm" />
-                            </h3>
-                            <p className="text-[9px] sm:text-[10px] text-on-surface-variant/60 font-label-caps tracking-wider text-center truncate mt-0.5">{org.orgHandle || org.gamerTag}</p>
-
-                            {/* Stats */}
-                            <div className="flex items-center justify-center gap-3 mt-2.5 mb-3 text-[10px] sm:text-[11px]">
-                              <div className="flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[11px] text-on-surface-variant/70">group</span>
-                                <span className="font-semibold text-on-background">{formatFollowersLocal(org.followers || 0)}</span>
-                              </div>
-                              <div className="flex items-center gap-0.5">
-                                <span className="material-symbols-outlined text-[11px] text-amber-400" style={{ fontVariationSettings: "'FILL' 1" }}>star</span>
-                                <span className="font-semibold text-on-background">{org.rating || '4.5'}</span>
-                              </div>
-                            </div>
-
-                            <button className="w-full py-1.5 px-3 rounded-lg font-label-caps text-[10px] sm:text-[11px] font-bold tracking-wider text-on-surface-variant bg-surface-container group-hover:bg-primary group-hover:text-white transition-all duration-300">
-                              VIEW PROFILE
-                            </button>
-                          </div>
-                        </motion.div>
-                      );
-                    })
-                  ) : (
-                    <div className="col-span-2 w-full text-center py-8 text-xs text-on-surface-variant/50">
-                      No organizers registered yet.
-                    </div>
-                  )}
-                </div>
-              </motion.div>
             </div>
           </div>
         </section>
