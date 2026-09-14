@@ -1251,17 +1251,30 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 
 ## 12B. Tournament Detail — Share Feature
 
-The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament.
+The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament. On mobile, a dynamically generated 1200×630 promotional PNG card is attached to the native share sheet.
 
 ### 12B.1 Behavior
-- **Native Web Share API (mobile-first)**: If `typeof navigator.share === 'function'`, the share tap calls `navigator.share()` **directly and synchronously from the user gesture** with `{ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href }`. The phone's **system share sheet** opens immediately — the website's custom popup never renders on this path (no intermediate modal, bottom sheet, backdrop, or loading state).
-- **Error handling**: A rejected promise or synchronous throw triggers the fallback popup **only on desktop**. `AbortError` / `NotAllowedError` (user cancelled or dismissed the native sheet) is swallowed silently — no error message shown.
-- **Fallback popup (desktop / `navigator.share` unavailable)**: A compact popover opens with three options:
+- **Native Web Share API with image card (mobile-first)**: When `navigator.share` is available, the tap synchronously calls `navigator.share({ title, text: caption, files: [cardFile] })` with a canvas-generated PNG tournament card attached. On Android/Chrome, the system share sheet opens immediately with the card image visible as an attachment — no intermediate modal, bottom sheet, backdrop, or loading state. Pre-warming via `useEffect` ensures the card is ready before the tap occurs; if the pre-warm is incomplete, the card is generated synchronously on tap.
+- **canShare gate**: Before attaching the file, `navigator.canShare({ files: [file] })` is checked. If files are not supported by the OS/browser, the share falls back to text-only with `url`. If neither files nor native share is available, the desktop fallback popup opens.
+- **Error handling**: `AbortError` / `NotAllowedError` (user cancelled or dismissed the native sheet) is swallowed silently — no error message shown. Any other error on mobile falls back to text-only `navigator.share`; on desktop it opens the fallback popup.
+- **Fallback popup (desktop / `navigator.share` unavailable)**: A compact popover opens with four options:
   - **Copy Link** — copies `window.location.href` to clipboard; shows "Link copied to clipboard!" toast.
   - **WhatsApp** — opens `https://wa.me/?text=...` in a new tab with the formatted share message.
   - **Telegram** — opens `https://t.me/share/url?url=...&text=...` in a new tab.
+  - **Download tournament card** — triggers `downloadDataURL()` to save the generated 1200×630 PNG to the user's device.
 
-### 12B.2 Share Message Format
+### 12B.2 Share Caption (native share `text`)
+```
+{title} 🏆
+
+Prize Pool: {prizeDisplay}
+Entry: {entryDisplay}
+Format: {match_type} · {perspective}
+
+Join the tournament on Match District: {window.location.href}
+```
+
+### 12B.3 Legacy Share Message (WhatsApp/Telegram popup)
 ```
 Hurry up! Registrations are filling fast.
 
@@ -1276,24 +1289,51 @@ Join Now:
 ```
 Where `deadline` is one of: "Registration Closing Soon", "Tournament Starting Soon", "LIVE NOW", or "Register Now".
 
-### 12B.3 UI Placement
+### 12B.4 UI Placement
 - **Button location**: Hero section title row, right-aligned, directly beside the tournament title `<h1>`.
-- **Icon**: Modern 3-node connected dots SVG (standard share icon pattern), 18×18px, `strokeWidth="1.5"` for thin/professional look.
+- **Icon**: Modern 3-node connected dots SVG (standard share icon pattern), 18×18px, `strokeWidth="1.5"` for thin/professional look. A compact `animate-spin` SVG spinner replaces the icon while the card image is being pre-warmed.
 - **Touch target**: `w-9 h-9` (36px) — compact visual aligned with header controls.
 - **Styling**: `text-white/50 → hover:text-white/90 hover:bg-white/8` (dark) / `text-[#FFE082]/60 → hover:text-[#FFE082] hover:bg-[#FFE082]/10` (gold theme). No background by default, no border, no large container.
-- **Label**: `aria-label="Share tournament"` for accessibility.
+- **Accessibility**: `aria-label="Share tournament"`, `aria-busy={shareGenerating}` while card is generating.
 
-### 12B.4 Popup Modal
-- **Trigger**: `showSharePopup` state (boolean).
+### 12B.5 Dynamic Tournament Card Image (`src/utils/shareCardImage.js`)
+
+A client-side canvas-based renderer generates a 1200×630 PNG promotional card for every tournament, cached in a module-level Map for instant synchronous access after pre-warming.
+
+**Card layout**:
+1. **Background**: Deep navy gradient (`#0B1020 → #0F172A`) with subtle blue dot grid (36px spacing) and a radial blue glow in the top-left corner.
+2. **Brand row** (y 0–76): Left-aligned blue rounded-rect badge with "M" monogram + "MATCH DISTRICT" wordmark in 21px bold with 5px letter-spacing. Right-aligned "TOURNAMENT SHARE CARD" in 13px muted text with 3px letter-spacing.
+3. **Banner image** (y 92, 1112×300, r=18): Cross-origin image loaded via `<img crossOrigin="anonymous">`, center-cropped to fill 3:4 aspect. If the image fails to load or isn't set, a branded gradient fallback renders with a large translucent "MD" watermark and "TOURNAMENT COVER" label. A bottom-dark gradient overlay improves text legibility over bright banners.
+4. **Game chip** (top-left of banner, y 110): Small rounded pill with game name in uppercase gold (`#FBBF24`) on semi-transparent dark background. Only rendered when `game` is provided.
+5. **Title** (y 428): Bold 50px white text, max 2 lines, automatic word-wrap with ellipsis truncation if the title overflows.
+6. **Stats row** (y 516–556): Four columns (Prize Pool / Entry / Format / Slots) each with a 13px uppercase muted label and 30px bold value. Prize Pool value is gold (`#FBBF24`); others are off-white (`#F1F593`). The Format column auto-sizes font down to 18px minimum to fit long strings.
+7. **Divider** (y 592): Subtle 8%-opacity white horizontal line.
+8. **Bottom brand bar** (y 619): Left "MATCH DISTRICT" in 15px blue, center organizer name (if present) in 14px muted, right "matchdistrict.in" in 13px muted.
+
+**Exports from `src/utils/shareCardImage.js`**:
+- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, imageUrl, imageEl })` — Synchronous canvas render, returns `data:image/png` data URL.
+- `ensureShareCardImage(url)` — Returns `Promise<HTMLImageElement | null>` with module-level cache; loads the banner image cross-origin and resolves when ready.
+- `peekShareCardImage(url)` — Synchronous cache lookup; returns the cached `HTMLImageElement` if loaded, or `null`.
+- `dataURLToFile(dataUrl, filename)` — Converts a PNG data URL to a `File` object for `navigator.share({ files })`.
+- `downloadDataURL(dataUrl, filename)` — Creates a temporary `<a>` element and triggers a browser download.
+
+**Prewarm lifecycle** (in `TournamentDetail.jsx`):
+- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations]` fires after the tournament data loads, calls `ensureShareCardImage(bannerUrl)` to asynchronously fetch and cache the banner, then synchronously renders the card via `generateTournamentShareCard()` and stores the result in `shareCardRef` (a `useRef` capsule).
+- The `useEffect` returns a cancellation function (`cancelled` flag) so stale updates are discarded if the tournament changes mid-flight.
+- During pre-warm, the share button shows a spinner (`shareGenerating` state + `animate-spin` SVG) to indicate readiness; tapping the button during pre-warm still works because `ensureShareCardReady()` generates synchronously from the cached image as a fallback.
+- `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern).
+
+### 12B.6 Popup Modal
+- **Trigger**: `showSharePopup` state (boolean); only triggered on desktop when native share fails or is unavailable.
 - **Animation**: Framer Motion `AnimatePresence` — spring slide-up from bottom (mobile) / center (desktop), exits via fade+slide.
 - **Mobile**: Full-width bottom sheet (`items-end`), rounded top corners (`rounded-t-2xl`), 320px max on desktop.
 - **Desktop**: Centered `w-[320px]` compact modal with backdrop blur overlay.
 - **Dismissal**: Tap backdrop or compact `×` close button.
-- **Options row**: Each option is a minimal row with icon (Material Symbols `content_copy` for copy, brand SVGs for WhatsApp/Telegram) and single-line label (`text-[13px]`). No subtitles, no description text. Tight `space-y-1` spacing, `p-4` container.
+- **Options row**: Each option is a minimal row with icon (Material Symbols `content_copy` for copy, brand SVGs for WhatsApp/Telegram, download arrow SVG for card download) and single-line label (`text-[13px]`). No subtitles, no description text. Tight `space-y-1` spacing, `p-4` container.
 - **Close button**: Inline `×` SVG icon (not Material Symbols), `w-7 h-7` compact close.
 
-### 12B.5 Endpoints Used
-None — purely client-side. Uses `window.location.href` for the URL and `navigator.clipboard.writeText()` for clipboard.
+### 12B.7 Endpoints Used
+None — purely client-side. Uses `window.location.href` for the URL, `navigator.clipboard.writeText()` for clipboard, and canvas API for card generation.
 
 ---
 
@@ -2060,3 +2100,4 @@ src/assets/
 | 2026-09-14 | Redesigned Tournament Detail Share button (Section 12B.3/12B.4): replaced generic upload-style arrow with **3-node connected dots SVG** (18×18px, `strokeWidth="1.5"`), compact `w-9 h-9` control, subtle `text-white/50 → hover:text-white/90 hover:bg-white/8` (gold: `text-[#FFE082]/60 → #FFE082 / bg-[#FFE082]/10`) hover transition, no default background/border; popup slimmed to minimal `w-[320px]` modal with compact 13px labeled rows (Copy Link/WhatsApp/Telegram), no subtitles. | System |
 | 2026-09-14 | Added Tournament Detail document change log entries for Share feature and redesign (Section 12B). | System |
 | 2026-09-14 | Fixed mobile Share (Section 12B.1): `handleShare` in `TournamentDetail.jsx` now checks `typeof navigator.share === 'function'` and calls `navigator.share({ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href })` directly and synchronously from the tap — no intermediate bottom sheet/backdrop on mobile. `AbortError`/`NotAllowedError` (user cancel) is silent; fallback popup renders only on desktop or when native sharing is unavailable. | System |
+| 2026-09-14 | Added dynamic tournament share card image (Section 12B.5): `src/utils/shareCardImage.js` — canvas-based 1200×630 PNG renderer with branded layout (navy gradient, dot grid, blue glow, brand badge/wordmark, center-cropped banner image with fallback gradient, game chip, title wrap, 4-column stats, divider, bottom brand bar). Exports: `generateTournamentShareCard`, `ensureShareCardImage`, `peekShareCardImage`, `dataURLToFile`, `downloadDataURL`. Module-level image cache. Updated §12B.1 (canShare gate, file attachment lifecycle), §12B.2 (new caption format), §12B.4 (aria-busy, spinner), §12B.6 (Download card option in popup). Prewarm `useEffect` in `TournamentDetail.jsx` keyed on `[tourney, orgProfile, slotsData, registrations]` with cancellation guard; `shareCardRef` useRef capsule persists across renders. | System |

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Header from '../components/Header.jsx';
@@ -16,6 +16,7 @@ import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
+import { generateTournamentShareCard, dataURLToFile, ensureShareCardImage, peekShareCardImage, downloadDataURL } from '../utils/shareCardImage.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
@@ -605,6 +606,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [selectedTier, setSelectedTier] = useState(null);
   const [sponsorStep, setSponsorStep] = useState(1);
   const [showSharePopup, setShowSharePopup] = useState(false);
+  const [shareGenerating, setShareGenerating] = useState(false);
+  const shareCardRef = useRef(null);
 
   // Custom states for premium sponsors cards interaction
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -1017,27 +1020,83 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return `Hurry up! Registrations are filling fast.\n\n🏆 Prize Pool: ${sharePrize}\n\n🎮 ${tourney?.game} ${gameMode} Tournament\n\n⏰ ${deadline}\n\nJoin Now:\n${window.location.href}`;
   };
 
+  const getShareCaption = () => {
+    const gameMode = `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`;
+    return `${tourney?.title || 'Tournament'} 🏆\n\nPrize Pool: ${prizeDisplay}\nEntry: ${entryDisplay}\nFormat: ${gameMode}\n\nJoin the tournament on Match District: ${window.location.href}`;
+  };
+
+  const getShareCardData = () => {
+    const banner = tourney?.cover_image_url || tourney?.bannerUrl || '';
+    return {
+      title: tourney?.title || 'Tournament on Match District',
+      orgName: orgProfile?.orgName || tourney?.orgName || '',
+      prize: prizeDisplay,
+      entry: entryDisplay,
+      format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
+      slots: `${slotFilled}/${slotTotal}`,
+      game: tourney?.game || '',
+      imageUrl: banner,
+      imageEl: peekShareCardImage(banner) || null
+    };
+  };
+
+  const ensureShareCardReady = () => {
+    if (shareCardRef.current) return shareCardRef.current;
+    try {
+      const card = generateTournamentShareCard(getShareCardData());
+      shareCardRef.current = card;
+      return card;
+    } catch {
+      return null;
+    }
+  };
+
   const handleShare = () => {
     const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-    if (canNativeShare) {
-      try {
-        navigator.share({
-          title: tourney?.title || 'Tournament on Match District',
-          text: 'Check out this tournament on Match District.',
-          url: window.location.href
-        }).catch((err) => {
-          if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
-            return;
-          }
-          const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-          if (!isMobile) setShowSharePopup(true);
-        });
-      } catch {
-        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-        if (!isMobile) setShowSharePopup(true);
-      }
-    } else {
+    if (!canNativeShare) {
       setShowSharePopup(true);
+      return;
+    }
+
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+    const handleShareError = (err) => {
+      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return;
+      if (!isMobile) setShowSharePopup(true);
+    };
+
+    const card = ensureShareCardReady();
+    const title = tourney?.title || 'Tournament on Match District';
+    const text = getShareCaption();
+
+    if (card) {
+      try {
+        const file = dataURLToFile(card, 'matchdistrict-tournament-card.png');
+        if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+          navigator.share({ title, text, files: [file] }).catch(handleShareError);
+        } else {
+          navigator.share({ title, text, url: window.location.href }).catch(handleShareError);
+        }
+        return;
+      } catch {
+        if (!isMobile) setShowSharePopup(true);
+        return;
+      }
+    }
+
+    try {
+      navigator.share({ title, text: getShareMessage(), url: window.location.href }).catch(handleShareError);
+    } catch {
+      if (!isMobile) setShowSharePopup(true);
+    }
+  };
+
+  const handleDownloadCard = () => {
+    const card = ensureShareCardReady();
+    if (card) {
+      downloadDataURL(card, 'matchdistrict-tournament-card.png');
+      triggerToast('Tournament card downloaded.');
+    } else {
+      triggerToast('Card not ready yet. Try again in a moment.');
     }
   };
 
@@ -1135,6 +1194,49 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
 
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
+
+  // Pre-warm the shareable tournament card image (1200x630 PNG) so taps share instantly
+  useEffect(() => {
+    let cancelled = false;
+    if (!tourney) {
+      shareCardRef.current = null;
+      setShareGenerating(false);
+      return undefined;
+    }
+    setShareGenerating(true);
+    const banner = tourney.cover_image_url || tourney.bannerUrl || '';
+    ensureShareCardImage(banner).then((img) => {
+      if (cancelled) return;
+      try {
+        const fmt = (value) => {
+          if (value === null || value === undefined || value === '') return '—';
+          const num = typeof value === 'number' ? value : parseInt(String(value).replace(/[^0-9]/g, ''), 10);
+          if (isNaN(num) || num === 0) return 'Free';
+          return `₹${num.toLocaleString('en-IN')}`;
+        };
+        const filled = slotsData?.slotsFilled ?? (registrations ? registrations.filter(r => !['cancelled', 'expired', 'rejected'].includes((r.status || '').toLowerCase())).length : 0);
+        const total = tourney.slotsTotal || slotsData?.slotsTotal || 100;
+        const basePrize = parseInt(tourney.prize_pool_amount || tourney.basePrize || tourney.prizePool || 0, 10) || 0;
+        const sponsored = tourney.totalSponsorContributions || tourney.sponsorRevenue || 0;
+        const modeName = ((tourney.match_type || 'squad').charAt(0).toUpperCase()) + ((tourney.match_type || 'squad').slice(1));
+        shareCardRef.current = generateTournamentShareCard({
+          title: tourney.title || 'Tournament on Match District',
+          orgName: orgProfile?.orgName || tourney.orgName || '',
+          prize: fmt(basePrize + sponsored),
+          entry: (parseInt(tourney.entry_fee_amount, 10) || 0) === 0 ? 'Free' : fmt(tourney.entry_fee_amount),
+          format: `${modeName} · ${(tourney.perspective || 'TPP').toUpperCase()}`,
+          slots: `${filled}/${total}`,
+          game: tourney.game || '',
+          imageUrl: banner,
+          imageEl: img || null
+        });
+      } catch {
+        shareCardRef.current = null;
+      }
+      setShareGenerating(false);
+    });
+    return () => { cancelled = true; };
+  }, [tourney, orgProfile, slotsData, registrations]);
 
   const startDateStr = tourney?.startDate ? new Date(tourney.startDate) : null;
   const formattedDate = startDateStr ? formatDate(startDateStr.toISOString()) : '';
@@ -1426,22 +1528,30 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       {tourney.title}
                     </h1>
                     <button
-                      onClick={handleShare}
-                      aria-label="Share tournament"
-                      className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
-                        isGoldTheme
-                          ? 'text-[#FFE082]/60 hover:text-[#FFE082] hover:bg-[#FFE082]/10'
-                          : 'text-white/50 hover:text-white/90 hover:bg-white/8'
-                      }`}
-                    >
-                      <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" />
-                        <circle cx="6" cy="12" r="3" />
-                        <circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                      </svg>
-                    </button>
+                        onClick={handleShare}
+                        aria-label="Share tournament"
+                        aria-busy={shareGenerating}
+                        className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
+                          isGoldTheme
+                            ? 'text-[#FFE082]/60 hover:text-[#FFE082] hover:bg-[#FFE082]/10'
+                            : 'text-white/50 hover:text-white/90 hover:bg-white/8'
+                        }`}
+                      >
+                        {shareGenerating ? (
+                          <svg className="w-[18px] h-[18px] animate-spin" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                            <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="18" cy="5" r="3" />
+                            <circle cx="6" cy="12" r="3" />
+                            <circle cx="18" cy="19" r="3" />
+                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                          </svg>
+                        )}
+                      </button>
                   </div>
 
                   {/* Organizer */}
@@ -2402,6 +2512,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.492-1.302.48-.428-.013-1.252-.242-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                     </svg>
                     <span className="text-[13px] font-medium text-on-background">Telegram</span>
+                  </button>
+                  <button onClick={handleDownloadCard}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-amber-500/8 transition-colors text-left min-h-[40px]">
+                    <svg className="w-[18px] h-[18px] text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span className="text-[13px] font-medium text-on-background">Download tournament card</span>
                   </button>
                 </div>
               </div>
