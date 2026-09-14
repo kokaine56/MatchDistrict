@@ -1254,8 +1254,9 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament.
 
 ### 12B.1 Behavior
-- **Native Web Share API**: On mobile devices with `navigator.share` support, tapping the share icon triggers the system share sheet with the tournament title, prize info, game/format, registration deadline, and URL.
-- **Fallback popup**: On desktop (or when `navigator.share` is unavailable), a bottom-sheet popup opens with three options:
+- **Native Web Share API (mobile-first)**: If `typeof navigator.share === 'function'`, the share tap calls `navigator.share()` **directly and synchronously from the user gesture** with `{ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href }`. The phone's **system share sheet** opens immediately — the website's custom popup never renders on this path (no intermediate modal, bottom sheet, backdrop, or loading state).
+- **Error handling**: A rejected promise or synchronous throw triggers the fallback popup **only on desktop**. `AbortError` / `NotAllowedError` (user cancelled or dismissed the native sheet) is swallowed silently — no error message shown.
+- **Fallback popup (desktop / `navigator.share` unavailable)**: A compact popover opens with three options:
   - **Copy Link** — copies `window.location.href` to clipboard; shows "Link copied to clipboard!" toast.
   - **WhatsApp** — opens `https://wa.me/?text=...` in a new tab with the formatted share message.
   - **Telegram** — opens `https://t.me/share/url?url=...&text=...` in a new tab.
@@ -2058,3 +2059,4 @@ src/assets/
 | 2026-09-13 | Added Tournament Detail Share feature (Section 12B): Native Web Share API on mobile with bottom-sheet fallback popup (Copy Link, WhatsApp, Telegram), `handleShare`/`handleCopyLink`/`handleShareWhatsApp`/`handleShareTelegram` handlers in `TournamentDetail.jsx`, `AnimatePresence` spring-animated popup modal, 44×44px touch target, `aria-label="Share tournament"`, design-system-matched blue accent styling. | System |
 | 2026-09-14 | Redesigned Tournament Detail Share button (Section 12B.3/12B.4): replaced generic upload-style arrow with **3-node connected dots SVG** (18×18px, `strokeWidth="1.5"`), compact `w-9 h-9` control, subtle `text-white/50 → hover:text-white/90 hover:bg-white/8` (gold: `text-[#FFE082]/60 → #FFE082 / bg-[#FFE082]/10`) hover transition, no default background/border; popup slimmed to minimal `w-[320px]` modal with compact 13px labeled rows (Copy Link/WhatsApp/Telegram), no subtitles. | System |
 | 2026-09-14 | Added Tournament Detail document change log entries for Share feature and redesign (Section 12B). | System |
+| 2026-09-14 | Fixed mobile Share (Section 12B.1): `handleShare` in `TournamentDetail.jsx` now checks `typeof navigator.share === 'function'` and calls `navigator.share({ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href })` directly and synchronously from the tap — no intermediate bottom sheet/backdrop on mobile. `AbortError`/`NotAllowedError` (user cancel) is silent; fallback popup renders only on desktop or when native sharing is unavailable. | System |

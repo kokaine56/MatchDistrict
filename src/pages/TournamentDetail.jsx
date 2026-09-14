@@ -1018,8 +1018,24 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({ title: tourney?.title, text: getShareMessage(), url: window.location.href }).catch(() => {});
+    const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+    if (canNativeShare) {
+      try {
+        navigator.share({
+          title: tourney?.title || 'Tournament on Match District',
+          text: 'Check out this tournament on Match District.',
+          url: window.location.href
+        }).catch((err) => {
+          if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
+            return;
+          }
+          const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+          if (!isMobile) setShowSharePopup(true);
+        });
+      } catch {
+        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+        if (!isMobile) setShowSharePopup(true);
+      }
     } else {
       setShowSharePopup(true);
     }
