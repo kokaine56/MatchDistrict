@@ -19,6 +19,7 @@
 11. [Registration System](#11-registration-system)
 12. [Payment System](#12-payment-system)
 12A. [Tournament Leaderboard](#12a-tournament-leaderboard)
+12B. [Tournament Detail — Share Feature](#12b-tournament-detail--share-feature)
 13. [Admin System](#13-admin-system)
 14. [Organizer System](#14-organizer-system)
 15. [Profile System](#15-profile-system)
@@ -1248,7 +1249,52 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 
 ---
 
-## 13. Admin System
+## 12B. Tournament Detail — Share Feature
+
+The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament.
+
+### 12B.1 Behavior
+- **Native Web Share API**: On mobile devices with `navigator.share` support, tapping the share icon triggers the system share sheet with the tournament title, prize info, game/format, registration deadline, and URL.
+- **Fallback popup**: On desktop (or when `navigator.share` is unavailable), a bottom-sheet popup opens with three options:
+  - **Copy Link** — copies `window.location.href` to clipboard; shows "Link copied to clipboard!" toast.
+  - **WhatsApp** — opens `https://wa.me/?text=...` in a new tab with the formatted share message.
+  - **Telegram** — opens `https://t.me/share/url?url=...&text=...` in a new tab.
+
+### 12B.2 Share Message Format
+```
+Hurry up! Registrations are filling fast.
+
+🏆 Prize Pool: {prizeDisplay}
+
+🎮 {game} {perspective} - {match_type} Tournament
+
+⏰ {deadline}
+
+Join Now:
+{window.location.href}
+```
+Where `deadline` is one of: "Registration Closing Soon", "Tournament Starting Soon", "LIVE NOW", or "Register Now".
+
+### 12B.3 UI Placement
+- **Button location**: Hero section title row, right-aligned, directly beside the tournament title `<h1>`.
+- **Icon**: Modern 3-node connected dots SVG (standard share icon pattern), 18×18px, `strokeWidth="1.5"` for thin/professional look.
+- **Touch target**: `w-9 h-9` (36px) — compact visual aligned with header controls.
+- **Styling**: `text-white/50 → hover:text-white/90 hover:bg-white/8` (dark) / `text-[#FFE082]/60 → hover:text-[#FFE082] hover:bg-[#FFE082]/10` (gold theme). No background by default, no border, no large container.
+- **Label**: `aria-label="Share tournament"` for accessibility.
+
+### 12B.4 Popup Modal
+- **Trigger**: `showSharePopup` state (boolean).
+- **Animation**: Framer Motion `AnimatePresence` — spring slide-up from bottom (mobile) / center (desktop), exits via fade+slide.
+- **Mobile**: Full-width bottom sheet (`items-end`), rounded top corners (`rounded-t-2xl`), 320px max on desktop.
+- **Desktop**: Centered `w-[320px]` compact modal with backdrop blur overlay.
+- **Dismissal**: Tap backdrop or compact `×` close button.
+- **Options row**: Each option is a minimal row with icon (Material Symbols `content_copy` for copy, brand SVGs for WhatsApp/Telegram) and single-line label (`text-[13px]`). No subtitles, no description text. Tight `space-y-1` spacing, `p-4` container.
+- **Close button**: Inline `×` SVG icon (not Material Symbols), `w-7 h-7` compact close.
+
+### 12B.5 Endpoints Used
+None — purely client-side. Uses `window.location.href` for the URL and `navigator.clipboard.writeText()` for clipboard.
+
+---
 
 ### 13.1 Admin Dashboard (`AdminDashboard.jsx` — 2761 lines)
 Tabbed interface:
@@ -2009,3 +2055,6 @@ src/assets/
 | 2026-06-17 | Added "Premium Light" aesthetic, 3D elevation rules, touch-gesture management (Section 17), Hero section architecture (Section 18), Wallet Pass card metaphor (Section 19), Footer rules (Section 20), Match start time inheritance rule (§10.2), Vite envPrefix configuration (§2), light mode CSS overrides (§16.14), header page visibility rules (§7.5) | System |
 | 2026-06-25 | Standardized zoom slider across all 5 crop modals: 10%–200% range, step=1, percent-based state (`zoomPercent / 100` → cropper scale). Affected files: `CropModal.jsx`, `Profile.jsx`, `BecomeOrganizer.jsx`, `OrganizerDashboard.jsx`, `OrgPage.jsx`. Documented in Section 10.10. | System |
 | 2026-09-13 | Added per-tournament leaderboard system (Section 12A): `server/leaderboardService.js` (scoring/ranking engine), `tournament_leaderboard` + `leaderboard_audit` tables, public + admin endpoints, `LeaderboardManagerTab` in `AdminDashboard.jsx`, and responsive `TournamentLeaderboard.jsx` (full-width desktop table, compact mobile grid, 20/page client-side pagination). | System |
+| 2026-09-13 | Added Tournament Detail Share feature (Section 12B): Native Web Share API on mobile with bottom-sheet fallback popup (Copy Link, WhatsApp, Telegram), `handleShare`/`handleCopyLink`/`handleShareWhatsApp`/`handleShareTelegram` handlers in `TournamentDetail.jsx`, `AnimatePresence` spring-animated popup modal, 44×44px touch target, `aria-label="Share tournament"`, design-system-matched blue accent styling. | System |
+| 2026-09-14 | Redesigned Tournament Detail Share button (Section 12B.3/12B.4): replaced generic upload-style arrow with **3-node connected dots SVG** (18×18px, `strokeWidth="1.5"`), compact `w-9 h-9` control, subtle `text-white/50 → hover:text-white/90 hover:bg-white/8` (gold: `text-[#FFE082]/60 → #FFE082 / bg-[#FFE082]/10`) hover transition, no default background/border; popup slimmed to minimal `w-[320px]` modal with compact 13px labeled rows (Copy Link/WhatsApp/Telegram), no subtitles. | System |
+| 2026-09-14 | Added Tournament Detail document change log entries for Share feature and redesign (Section 12B). | System |
