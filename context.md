@@ -1265,13 +1265,13 @@ The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share
 
 ### 12B.2 Share Caption (native share `text`)
 ```
-{title} 🏆
+{title} 🎮
 
 Prize Pool: {prizeDisplay}
 Entry: {entryDisplay}
 Format: {match_type} · {perspective}
 
-Join the tournament on Match District: {window.location.href}
+Join now on Match District: {window.location.href}
 ```
 
 ### 12B.3 Legacy Share Message (WhatsApp/Telegram popup)
@@ -1298,20 +1298,32 @@ Where `deadline` is one of: "Registration Closing Soon", "Tournament Starting So
 
 ### 12B.5 Dynamic Tournament Card Image (`src/utils/shareCardImage.js`)
 
-A client-side canvas-based renderer generates a **portrait 1200×1500 (4:5) PNG** premium "visiting card / event card" for every tournament, cached in a module-level Map for instant synchronous access after pre-warming. The output resembles a polished physical esports event invitation — **not** a website banner, screenshot, or 16:9 thumbnail.
+A client-side canvas-based renderer generates a **portrait 1200×1500 (4:5) PNG** premium "wallet + card holder" composition for every tournament, cached in a module-level Map for instant synchronous access after pre-warming. The output resembles a polished esports **pass card partially inserted into a dark leather wallet** (~70% of the card exposed above, bottom ~30% covered by the wallet) — **not** a website banner, screenshot, or 16:9 thumbnail.
+
+**Important detail — real logo asset**: The card uses the **actual Match District logo** from `public/logo.png` (1940×2018, served at `/logo.png`). It is **not** redrawn/re-created. The module pre-loads it at import time (`logoImg` + `logoReady` flag); if still loading at render time it gracefully falls back to the blue "M" monogram tile.
 
 **Card layout** (all coordinates relative to 1200×1500):
 
-1. **Rounded card canvas**: The PNG is drawn with `CORNER_RADIUS = 44` transparent rounded corners (clipped card body + border), so it renders like a sticker/card inside chat apps.
-2. **Background**: Deep navy vertical gradient (`#0B1020 → #0E1526 → #0F172A`) with a subtle blue dot grid (40px spacing), a top-left radial blue glow, and a thin blue gradient accent hairline near the top edge.
-3. **Brand row** (y 52–98): Left-aligned blue rounded logo tile (46×46, `#2563EB`) with "M" monogram + "MATCH DISTRICT" wordmark (21px bold, 5px letter-spacing). Right-aligned **TOURNAMENT** tag chip (pill with `rgba(59,130,246,0.16)` fill, 1.5px blue border, `#93C5FD` letter-spaced text).
-4. **Poster image window** (720×960, exact 3:4, centered, y 136): A dedicated framed image area — **object-fit: contain** (`drawContainImage`). The tournament poster is drawn full-frame inside this 3:4 window with **zero cropping**; different aspect ratios letterbox gracefully onto the dark navy frame (rounded 28px, `rgba(59,130,246,0.28)` border, subtle blue inner glow, darker frame gradient). A 3:4 poster (the wizard's standard 1200×1600 cover) fills the window edge-to-edge. If no image loads, a branded `#1E3A8A → #2563EB` gradient fallback with a large translucent "MD" watermark + "TOURNAMENT POSTER" label renders.
-5. **Game eyebrow** (y `imgBottom + 34`): 13px `#60A5FA` uppercase letter-spaced text: `"{GAME}  •  TOURNAMENT"` (falls back to just `TOURNAMENT`).
-6. **Tournament title** (y `imgBottom + 60`): Bold 52px white, max 2 lines (62px line height), word-wrap with ellipsis truncation.
-7. **Organizer + date row**: "BY {ORG NAME}" in 16px `#C9D4E0` letter-spaced uppercase (gold 5-point star `★` prefix when the organizer's tier is **Pro**); the formatted date/time (`toLocaleString('en-IN', { weekday, day, month, hour, minute })`) sits right-aligned on the same baseline (12px may force-drop the date if space is tight).
-8. **Stats 2×2 grid** (four cells: Prize Pool, Entry, Format, Slots): 12px uppercase muted labels (`#7C8AA0`, 2px letter-spacing) above 26px bold values (`#F1F5F9`, Prize Pool value in gold `#FBBF24`). Values auto-shrink down to 15px to fit the cell (528px column width).
-9. **Divider** (y `valueYRow2 + 34`): subtle 8%-opacity white hairline.
-10. **Bottom brand bar** (y `valueYRow2 + 64`): Left "MATCH DISTRICT" (15px `#3B82F6`, 3px letter-spacing), right "matchdistrict.in" (13px muted). **The full tournament URL is NOT printed on the card** — the clickable link lives only in the share caption.
+1. **Rounded card canvas**: The PNG is drawn with `CORNER_RADIUS = 44` transparent rounded corners (clipped card body), so it renders like a sticker/card inside chat apps.
+2. **Exposed card face (y 0 → 1012, ~70%) — the tournament poster as primary visual**: The poster fills the exposed face edge-to-edge via **object-fit: cover** (`drawCoverImage`) with a **35% top-bias crop** so the important subject/logo/artwork (usually near the top of tournament posters) stays visible; no letterboxing. If no image loads, a branded `#1E3A8A → #2563EB` gradient fallback with a large translucent "MD" watermark + "TOURNAMENT POSTER" letter-spaced label renders.
+3. **Top scrim** (y 0 → 200, `rgba(0,0,0,0.55) → transparent`): guarantees logo legibility over any poster.
+4. **Logo** (top-left at `MX=50, 36`): the real `public/logo.png` drawn at 56px height (width auto-scaled from 1940:2018 ratio). Fallback while loading: blue 44×44 rounded tile with white "M".
+5. **Bottom scrim** (y 830 → 1012): dark `rgba(0,0,0,0 → 0.72)` gradient guaranteeing title legibility.
+6. **Game chip** (y 870, only if `game` exists): small pill (`rgba(0,0,0,0.45)` fill, rounded 15px) with uppercase gold `#FBBF24` letter-spaced game label.
+7. **Tournament title on the poster** (y 908–908/948, bold 54px white): max 2 lines (60px line height), word-wrap with ellipsis truncation, left-aligned at 50px.
+8. **Wallet / Card Holder (y 1012 → 1500, ~30%)**: A flat card sleeve sliding under the poster.
+   - **Leather body**: vertical gradient `#1A1726 → #12101C → #0C0A12`, full width, bottom corners clipped by the card's rounded corners.
+   - **Pocket shadow** (y 1012 → 1062): `rgba(0,0,0,0.55) → transparent` vertical overlay suggesting card depth under the wallet lip.
+   - **Pocket rim highlight** (y 1013, 2px): horizontal gradient `transparent → rgba(255,255,255,0.12) → transparent`.
+   - **Stitching**: dashed rounded rect (`setLineDash([6, 8])`, 1.5px) inset 18px from wallet edges, `rgba(255,255,255,0.055)`, corner radius 30 — subtle premium leather detailing.
+   - **Engraved content** (x 50, width 1100):
+     - **TOURNAMENT** (12px muted `#7C8AA0`, 2px letter-spacing) label + tournament title (bold 22px white, max 2 lines).
+     - **ORGANIZED BY** label + organizer name (semi-bold 17px white) with a gold `★` 5-point star (16px outer) prefix when organizer tier is **Pro**; the formatted date/time (`toLocaleString('en-IN', { weekday, day, month, hour, minute })`) right-aligns on the same line, only if `date` parses.
+     - Thin 1.5px `rgba(255,255,255,0.07)` divider.
+     - **Stats 2×2 grid** (Prize Pool, Entry Fee, Format, Slots as labels; values auto-shrink from 26px down to 15px via `fitFontSize` to fit the 538px column): Prize Pool value in gold `#FBBF24`, others `#F1F5F9`; 12px uppercase muted letter-spaced labels. Missing values render `—`.
+     - Thin divider.
+     - **Bottom brand bar**: left "MATCH DISTRICT" (15px `#3B82F6`, 3px letter-spacing), right "matchdistrict.in" (13px muted). **The full tournament URL is NOT printed on the card** — the clickable link lives only in the share caption.
+9. **Only fields that exist are shown**: game chip skipped when no game; organizer/date/verified only when present.
 
 **Exports from `src/utils/shareCardImage.js`**:
 - `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, date, verified, imageUrl, imageEl })` — Synchronous canvas render, returns `data:image/png` data URL.
@@ -1321,7 +1333,7 @@ A client-side canvas-based renderer generates a **portrait 1200×1500 (4:5) PNG*
 - `downloadDataURL(dataUrl, filename)` — Creates a temporary `<a>` element and triggers a browser download.
 
 **Prewarm lifecycle** (in `TournamentDetail.jsx`):
-- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations]` fires after the tournament data loads, calls `ensureShareCardImage(bannerUrl)` to asynchronously fetch and cache the banner, then synchronously renders the card via `generateTournamentShareCard()` and stores the result in `shareCardRef` (a `useRef` capsule).
+- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations]` fires after the tournament data loads, calls `ensureShareCardImage(bannerUrl)` to asynchronously fetch and cache the banner, then synchronously renders the card via `generateTournamentShareCard()` and stores the result in `shareCardRef` (a `useRef` capsule). The real logo (`/logo.png`) is pre-loaded at module scope and is ready by pre-warm time.
 - The `useEffect` returns a cancellation function (`cancelled` flag) so stale updates are discarded if the tournament changes mid-flight.
 - During pre-warm, the share button shows a spinner (`shareGenerating` state + `animate-spin` SVG) to indicate readiness; tapping the button during pre-warm still works because `ensureShareCardReady()` generates synchronously from the cached image as a fallback.
 - `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern).
@@ -2106,3 +2118,4 @@ src/assets/
 | 2026-09-14 | Fixed mobile Share (Section 12B.1): `handleShare` in `TournamentDetail.jsx` now checks `typeof navigator.share === 'function'` and calls `navigator.share({ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href })` directly and synchronously from the tap — no intermediate bottom sheet/backdrop on mobile. `AbortError`/`NotAllowedError` (user cancel) is silent; fallback popup renders only on desktop or when native sharing is unavailable. | System |
 | 2026-09-14 | Added dynamic tournament share card image (Section 12B.5): `src/utils/shareCardImage.js` — canvas-based 1200×630 PNG renderer with branded layout (navy gradient, dot grid, blue glow, brand badge/wordmark, center-cropped banner image with fallback gradient, game chip, title wrap, 4-column stats, divider, bottom brand bar). Exports: `generateTournamentShareCard`, `ensureShareCardImage`, `peekShareCardImage`, `dataURLToFile`, `downloadDataURL`. Module-level image cache. Updated §12B.1 (canShare gate, file attachment lifecycle), §12B.2 (new caption format), §12B.4 (aria-busy, spinner), §12B.6 (Download card option in popup). Prewarm `useEffect` in `TournamentDetail.jsx` keyed on `[tourney, orgProfile, slotsData, registrations]` with cancellation guard; `shareCardRef` useRef capsule persists across renders. | System |
 | 2026-09-14 | Redesigned Tournament Share Card (Section 12B.5) to a **portrait 4:5 premium "visiting card"** (1200×1500 PNG): added 44px transparent rounded corners, navy gradient + dot grid + top accent hairline, brand row with TOURNAMENT tag chip, dedicated **3:4 poster window using object-fit: contain** (`drawContainImage` — zero cropping, graceful letterboxing on a framed navy well), gold star `verified` indicator for Pro organizers, date/time line on the organizer row, 2×2 stats grid (Prize/Entry/Format/Slots) with auto-shrinking values, and a bottom brand bar (URL kept out of the card — link stays in the share caption). New renderer params: `date`, `verified`. Build + lint clean; 45 pre-existing lint errors unchanged. | System |
+| 2026-09-14 | Redesigned Tournament Share Card (Section 12B.5) to a **wallet + card holder** composition (1200×1500 PNG): ~70% of the card exposed as the tournament poster (object-fit: cover with 35% top-bias crop, edge-to-edge, no letterboxing) overlaid with top/bottom scrims, the **real Match District logo asset** (`public/logo.png`, pre-loaded at module scope, 56px height, "M" monogram fallback), optional gold game chip, and 54px bold title; bottom ~30% is a dark leather wallet (`#1A1726 → #12101C → #0C0A12`) with pocket shadow + rim highlight, dashed stitching, engraved TOURNAMENT / ORGANIZED BY (gold ★ for Pro + date/time) rows, 2×2 stats grid (Prize gold), and MATCH DISTRICT · matchdistrict.in brand bar. Only existing fields render; caption updated to `🎮` + "Join now on Match District". | System |

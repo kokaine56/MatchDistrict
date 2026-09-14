@@ -1022,7 +1022,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const getShareCaption = () => {
     const gameMode = `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`;
-    return `${tourney?.title || 'Tournament'} 🏆\n\nPrize Pool: ${prizeDisplay}\nEntry: ${entryDisplay}\nFormat: ${gameMode}\n\nJoin the tournament on Match District: ${window.location.href}`;
+    return `${tourney?.title || 'Tournament'} 🎮\n\nPrize Pool: ${prizeDisplay}\nEntry: ${entryDisplay}\nFormat: ${gameMode}\n\nJoin now on Match District: ${window.location.href}`;
   };
 
   const getShareCardData = () => {

@@ -1,16 +1,22 @@
 const CARD_WIDTH = 1200;
 const CARD_HEIGHT = 1500;
 const CORNER_RADIUS = 44;
-const MX = 64;
+const MX = 50;
 
 const FONT_FAMILY = '"Inter","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif';
 
-const PRIMARY = { r: 59, g: 130, b: 246 };
 const GOLD = '#FBBF24';
 const WHITE = '#F1F5F9';
 const MUTED = '#7C8AA0';
 const MUTED_90 = 'rgba(148,163,184,0.9)';
-const BLUE_SOFT = '#93C5FD';
+
+const WALLET_TOP = 1012;
+const WALLET_INSET = 18;
+
+let logoReady = false;
+const logoImg = new Image();
+logoImg.onload = () => { logoReady = true; };
+logoImg.src = '/logo.png';
 
 const imageCache = new Map();
 
@@ -68,23 +74,25 @@ function fitFontSize(ctx, text, family, baseSize, maxWidth, minSize) {
   return size;
 }
 
-function drawContainImage(ctx, img, x, y, w, h) {
+function drawCoverImage(ctx, img, x, y, w, h, topBias) {
   const iw = img.naturalWidth;
   const ih = img.naturalHeight;
+  if (!iw || !ih) return;
   const boxA = w / h;
   const imgA = iw / ih;
-  let dw;
-  let dh;
+  let sx, sy, sw, sh;
   if (imgA > boxA) {
-    dw = w;
-    dh = w / imgA;
+    sw = ih * boxA;
+    sh = ih;
+    sx = (iw - sw) / 2;
+    sy = 0;
   } else {
-    dh = h;
-    dw = h * imgA;
+    sw = iw;
+    sh = iw / boxA;
+    sx = 0;
+    sy = (ih - sh) * (topBias || 0.35);
   }
-  const dx = x + (w - dw) / 2;
-  const dy = y + (h - dh) / 2;
-  ctx.drawImage(img, dx, dy, dw, dh);
+  ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
 }
 
 function drawStar(ctx, cx, cy, outerR, innerR) {
@@ -101,6 +109,15 @@ function drawStar(ctx, cx, cy, outerR, innerR) {
   ctx.fill();
 }
 
+function drawStitching(ctx, x, y, w, h, r, color, lw) {
+  ctx.setLineDash([6, 8]);
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = color;
+  drawRoundRectPath(ctx, x, y, w, h, r);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 export function peekShareCardImage(url) {
   if (!url) return null;
   const v = imageCache.get(url);
@@ -113,23 +130,12 @@ export function ensureShareCardImage(url) {
     const existing = peekShareCardImage(url);
     if (existing) return resolve(existing);
     if (imageCache.get(url) === 'failed') return resolve(null);
-
     const img = new Image();
     img.crossOrigin = 'anonymous';
     let settled = false;
-    const done = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    img.onload = () => {
-      imageCache.set(url, img);
-      done(img.naturalWidth > 0 ? img : null);
-    };
-    img.onerror = () => {
-      imageCache.set(url, 'failed');
-      done(null);
-    };
+    const done = (value) => { if (!settled) { settled = true; resolve(value); } };
+    img.onload = () => { imageCache.set(url, img); done(img.naturalWidth > 0 ? img : null); };
+    img.onerror = () => { imageCache.set(url, 'failed'); done(null); };
     img.src = url;
   });
 }
@@ -158,250 +164,247 @@ export function generateTournamentShareCard({
   if (date) {
     const d = new Date(date);
     if (!isNaN(d.getTime())) {
-      try {
-        dateLine = d.toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-      } catch {
-        dateLine = '';
-      }
+      try { dateLine = d.toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); } catch { dateLine = ''; }
     }
   }
 
-  /* Rounded card canvas (transparent corners) */
+  /* ---- Card canvas (transparent rounded corners) ---- */
   ctx.clearRect(0, 0, W, H);
   ctx.save();
   drawRoundRectPath(ctx, 0, 0, W, H, CORNER_RADIUS);
   ctx.clip();
 
-  /* Background */
-  const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#0B1020');
-  bg.addColorStop(0.62, '#0E1526');
-  bg.addColorStop(1, '#0F172A');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0.06)`;
-  for (let y = 12; y < H; y += 40) {
-    for (let x = 12; x < W; x += 40) {
-      ctx.beginPath();
-      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 760);
-  glow.addColorStop(0, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0.16)`);
-  glow.addColorStop(1, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0)`);
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
-
-  /* Top accent hairline */
-  const accent = ctx.createLinearGradient(140, 0, W - 140, 0);
-  accent.addColorStop(0, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0)`);
-  accent.addColorStop(0.25, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0.9)`);
-  accent.addColorStop(0.75, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0.9)`);
-  accent.addColorStop(1, `rgba(${PRIMARY.r},${PRIMARY.g},${PRIMARY.b},0)`);
-  ctx.fillStyle = accent;
-  ctx.fillRect(0, 14, W, 3);
-
-  /* Brand row */
-  drawRoundRectPath(ctx, MX, 52, 46, 46, 14);
-  ctx.fillStyle = '#2563EB';
-  ctx.fill();
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = `800 25px ${FONT_FAMILY}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('M', MX + 23, 75);
-  ctx.font = `bold 21px ${FONT_FAMILY}`;
-  ctx.textAlign = 'left';
-  ctx.letterSpacing = '5px';
-  ctx.fillStyle = '#EDF2F7';
-  ctx.fillText('MATCH DISTRICT', MX + 66, 75);
-  ctx.letterSpacing = '0px';
-
-  const tagLabel = 'TOURNAMENT';
-  ctx.font = `700 13px ${FONT_FAMILY}`;
-  const tagW = ctx.measureText(tagLabel).width;
-  const tagChipW = tagW + 60;
-  const tagChipH = 36;
-  const tagChipX = W - MX - tagChipW;
-  const tagChipY = 57;
-  drawRoundRectPath(ctx, tagChipX, tagChipY, tagChipW, tagChipH, tagChipH / 2);
-  ctx.fillStyle = 'rgba(59,130,246,0.16)';
-  ctx.fill();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = 'rgba(59,130,246,0.4)';
-  ctx.stroke();
-  ctx.fillStyle = BLUE_SOFT;
-  ctx.font = `700 13px ${FONT_FAMILY}`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.letterSpacing = '3px';
-  ctx.fillText(tagLabel, tagChipX + tagChipW / 2, tagChipY + tagChipH / 2 + 1);
-  ctx.letterSpacing = '0px';
-
-  /* Poster image window — 3:4 portrait, object-fit: contain */
-  const imgW = 720;
-  const imgH = 960;
-  const imgX = (W - imgW) / 2;
-  const imgY = 136;
-  const imgBottom = imgY + imgH;
-
-  const frameGrad = ctx.createLinearGradient(0, imgY, 0, imgBottom);
-  frameGrad.addColorStop(0, '#0D1524');
-  frameGrad.addColorStop(1, '#131C2E');
-  ctx.fillStyle = frameGrad;
-  drawRoundRectPath(ctx, imgX, imgY, imgW, imgH, 28);
-  ctx.fill();
-
-  const imgGlow = ctx.createRadialGradient(imgX + imgW / 2, imgY + imgH / 2, 40, imgX + imgW / 2, imgY + imgH / 2, imgW * 0.72);
-  imgGlow.addColorStop(0, 'rgba(59,130,246,0.12)');
-  imgGlow.addColorStop(1, 'rgba(59,130,246,0)');
-  ctx.fillStyle = imgGlow;
-  ctx.fillRect(imgX, imgY, imgW, imgH);
-
+  /* ---- Exposed card face: poster (0 → WALLET_TOP) ---- */
   const loadedImg = imageEl || peekShareCardImage(imageUrl);
   if (loadedImg) {
     ctx.save();
-    drawRoundRectPath(ctx, imgX, imgY, imgW, imgH, 28);
+    drawRoundRectPath(ctx, 0, 0, W, WALLET_TOP, 0);
     ctx.clip();
-    drawContainImage(ctx, loadedImg, imgX, imgY, imgW, imgH);
+    drawCoverImage(ctx, loadedImg, 0, 0, W, WALLET_TOP, 0.35);
     ctx.restore();
   } else {
-    ctx.save();
-    drawRoundRectPath(ctx, imgX, imgY, imgW, imgH, 28);
-    ctx.clip();
-    const fb = ctx.createLinearGradient(imgX, imgY, imgX, imgBottom);
+    const fb = ctx.createLinearGradient(0, 0, 0, WALLET_TOP);
     fb.addColorStop(0, '#1E3A8A');
     fb.addColorStop(1, '#2563EB');
     ctx.fillStyle = fb;
-    ctx.fillRect(imgX, imgY, imgW, imgH);
-    ctx.fillStyle = 'rgba(148,163,184,0.22)';
-    ctx.font = `900 150px ${FONT_FAMILY}`;
+    ctx.fillRect(0, 0, W, WALLET_TOP);
+    ctx.fillStyle = 'rgba(148,163,184,0.2)';
+    ctx.font = `900 140px ${FONT_FAMILY}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('MD', imgX + imgW / 2, imgY + imgH / 2 - 40);
+    ctx.fillText('MD', W / 2, WALLET_TOP / 2 - 30);
     ctx.fillStyle = 'rgba(241,245,249,0.9)';
-    ctx.font = `700 22px ${FONT_FAMILY}`;
+    ctx.font = `700 20px ${FONT_FAMILY}`;
     ctx.letterSpacing = '5px';
-    ctx.fillText('TOURNAMENT POSTER', imgX + imgW / 2, imgY + imgH / 2 + 96);
+    ctx.fillText('TOURNAMENT POSTER', W / 2, WALLET_TOP / 2 + 80);
     ctx.letterSpacing = '0px';
-    ctx.restore();
   }
 
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(59,130,246,0.28)';
-  drawRoundRectPath(ctx, imgX, imgY, imgW, imgH, 28);
-  ctx.stroke();
+  /* Top scrim for logo legibility */
+  const topScrim = ctx.createLinearGradient(0, 0, 0, 200);
+  topScrim.addColorStop(0, 'rgba(0,0,0,0.55)');
+  topScrim.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = topScrim;
+  ctx.fillRect(0, 0, W, 200);
 
-  /* Game eyebrow */
-  const eyebrow = game ? `${String(game).toUpperCase()}  •  TOURNAMENT` : 'TOURNAMENT';
-  ctx.fillStyle = '#60A5FA';
-  ctx.font = `600 13px ${FONT_FAMILY}`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.letterSpacing = '3px';
-  ctx.fillText(eyebrow, MX, imgBottom + 34);
-  ctx.letterSpacing = '0px';
+  /* Logo */
+  if (logoReady && logoImg.naturalWidth > 0) {
+    const logoH = 56;
+    const logoW = logoH * (logoImg.naturalWidth / logoImg.naturalHeight);
+    ctx.drawImage(logoImg, MX, 36, logoW, logoH);
+  } else {
+    drawRoundRectPath(ctx, MX, 36, 44, 44, 12);
+    ctx.fillStyle = '#2563EB';
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `800 24px ${FONT_FAMILY}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', MX + 22, 58);
+  }
 
-  /* Title */
+  /* Bottom scrim for title */
+  const botScrim = ctx.createLinearGradient(0, 830, 0, WALLET_TOP);
+  botScrim.addColorStop(0, 'rgba(0,0,0,0)');
+  botScrim.addColorStop(0.5, 'rgba(0,0,0,0.35)');
+  botScrim.addColorStop(1, 'rgba(0,0,0,0.72)');
+  ctx.fillStyle = botScrim;
+  ctx.fillRect(0, 830, W, WALLET_TOP - 830);
+
+  /* Game chip */
+  if (game) {
+    const chipLabel = String(game).toUpperCase();
+    ctx.font = `700 13px ${FONT_FAMILY}`;
+    const tw = ctx.measureText(chipLabel).width;
+    const cw = tw + 36;
+    drawRoundRectPath(ctx, MX, 870, cw, 30, 15);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fill();
+    ctx.fillStyle = GOLD;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.letterSpacing = '1.5px';
+    ctx.fillText(chipLabel, MX + 18, 885);
+    ctx.letterSpacing = '0px';
+  }
+
+  /* Title on poster */
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = `800 52px ${FONT_FAMILY}`;
+  ctx.font = `800 54px ${FONT_FAMILY}`;
   const maxTitleW = W - 2 * MX;
   const titleLines = wrapText(ctx, title, maxTitleW, 2);
-  const titleY0 = imgBottom + 60;
-  titleLines.forEach((line, i) => {
-    ctx.fillText(line, MX, titleY0 + i * 62);
-  });
-  const twoLineTitle = titleLines.length === 2;
-
-  /* Organizer + date row */
-  const orgBaseline = twoLineTitle ? titleY0 + 62 + 34 : titleY0 + 40;
+  const titleY0 = titleLines.length === 2 ? 908 : 948;
   ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  titleLines.forEach((line, i) => {
+    ctx.fillText(line, MX, titleY0 + i * 60);
+  });
+
+  /* ---- Wallet / Card Holder (WALLET_TOP → H) ---- */
+  const walletGrad = ctx.createLinearGradient(0, WALLET_TOP, 0, H);
+  walletGrad.addColorStop(0, '#1A1726');
+  walletGrad.addColorStop(0.5, '#12101C');
+  walletGrad.addColorStop(1, '#0C0A12');
+  ctx.fillStyle = walletGrad;
+  ctx.fillRect(0, WALLET_TOP, W, H - WALLET_TOP);
+
+  /* Pocket shadow */
+  const pocketShadow = ctx.createLinearGradient(0, WALLET_TOP, 0, WALLET_TOP + 50);
+  pocketShadow.addColorStop(0, 'rgba(0,0,0,0.55)');
+  pocketShadow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = pocketShadow;
+  ctx.fillRect(0, WALLET_TOP, W, 50);
+
+  /* Pocket rim highlight */
+  const rimGrad = ctx.createLinearGradient(100, 0, W - 100, 0);
+  rimGrad.addColorStop(0, 'rgba(255,255,255,0)');
+  rimGrad.addColorStop(0.3, 'rgba(255,255,255,0.12)');
+  rimGrad.addColorStop(0.7, 'rgba(255,255,255,0.12)');
+  rimGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = rimGrad;
+  ctx.fillRect(0, WALLET_TOP + 1, W, 2);
+
+  /* Stitching */
+  const sX = WALLET_INSET;
+  const sY = WALLET_TOP + WALLET_INSET;
+  const sW = W - WALLET_INSET * 2;
+  const sH = H - WALLET_TOP - WALLET_INSET * 2;
+  drawStitching(ctx, sX, sY, sW, sH, 30, 'rgba(255,255,255,0.055)', 1.5);
+
+  /* ---- Wallet content ---- */
+  const cX = MX;
+  const cW = W - MX * 2;
+  const contentStart = WALLET_TOP + 48;
+  ctx.textAlign = 'left';
+
+  /* TOURNAMENT label + name */
+  ctx.fillStyle = MUTED;
+  ctx.font = `600 12px ${FONT_FAMILY}`;
+  ctx.textBaseline = 'alphabetic';
+  ctx.letterSpacing = '2px';
+  ctx.fillText('TOURNAMENT', cX, contentStart);
+  ctx.letterSpacing = '0px';
+  ctx.fillStyle = WHITE;
+  ctx.font = `800 22px ${FONT_FAMILY}`;
+  const titleMaxW = cW;
+  const walletTitleLines = wrapText(ctx, title, titleMaxW, 2);
+  walletTitleLines.forEach((line, i) => {
+    ctx.fillText(line, cX, contentStart + 32 + i * 30);
+  });
+  const walletTitleBottom = contentStart + 32 + (walletTitleLines.length - 1) * 30;
+
+  /* ORGANIZED BY label + value */
+  const orgY = walletTitleBottom + 36;
+  ctx.fillStyle = MUTED;
+  ctx.font = `600 12px ${FONT_FAMILY}`;
+  ctx.letterSpacing = '2px';
+  ctx.fillText('ORGANIZED BY', cX, orgY);
+  ctx.letterSpacing = '0px';
+
+  const orgValY = orgY + 28;
   ctx.textBaseline = 'middle';
-  const orgLabel = orgName ? `BY ${String(orgName).toUpperCase()}` : '';
-  if (orgLabel) {
-    ctx.font = `600 16px ${FONT_FAMILY}`;
-    const orgW = ctx.measureText(orgLabel).width;
-    let orgX = MX;
+  let orgX = cX;
+  if (orgName) {
     if (verified) {
       ctx.fillStyle = GOLD;
-      drawStar(ctx, orgX + 12, orgBaseline + 1, 10, 4.2);
+      drawStar(ctx, orgX + 12, orgValY, 10, 4.2);
       orgX += 26;
     }
-    ctx.fillStyle = '#C9D4E0';
-    ctx.letterSpacing = '2px';
-    ctx.fillText(orgLabel, orgX, orgBaseline);
-    ctx.letterSpacing = '0px';
-    if (orgW + orgX - MX > (W - 2 * MX) * 0.72 && dateLine) {
-      dateLine = '';
-    }
+    ctx.fillStyle = WHITE;
+    ctx.font = `600 17px ${FONT_FAMILY}`;
+    ctx.fillText(String(orgName), orgX, orgValY);
+    ctx.textAlign = 'left';
   }
   if (dateLine) {
     ctx.fillStyle = MUTED;
-    ctx.font = `500 15px ${FONT_FAMILY}`;
+    ctx.font = `500 14px ${FONT_FAMILY}`;
     ctx.textAlign = 'right';
-    ctx.fillText(dateLine, W - MX, orgBaseline);
+    ctx.fillText(dateLine, cX + cW, orgValY);
     ctx.textAlign = 'left';
   }
+  ctx.textBaseline = 'alphabetic';
 
-  /* Stats 2×2 grid */
+  /* Divider 1 */
+  const div1Y = orgValY + 30;
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fillRect(cX, div1Y, cW, 1.5);
+
+  /* Stats 2×2 */
   const statCols = [
     { label: 'Prize Pool', value: prize || '—' },
-    { label: 'Entry', value: entry || '—' },
+    { label: 'Entry Fee', value: entry || '—' },
     { label: 'Format', value: format || '—' },
     { label: 'Slots', value: slots || '—' }
   ];
-  const colGap = 28;
-  const colW = (W - 2 * MX - colGap) / 2;
-  const colXs = [MX, MX + colW + colGap];
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  const colGap = 24;
+  const colW = (cW - colGap) / 2;
+  const colXs = [cX, cX + colW + colGap];
 
-  const labelYRow1 = orgBaseline + 46;
-  const valueYRow1 = labelYRow1 + 32;
-  const labelYRow2 = valueYRow1 + 56;
-  const valueYRow2 = labelYRow2 + 32;
+  const statY0 = div1Y + 24;
+  const row1LabelY = statY0;
+  const row1ValueY = statY0 + 30;
+  const row2LabelY = row1ValueY + 50;
+  const row2ValueY = row2LabelY + 30;
 
   statCols.forEach((stat, i) => {
     const col = Math.floor(i / 2);
     const row = i % 2;
     const x = colXs[col];
-    const labelY = row === 0 ? labelYRow1 : labelYRow2;
-    const valueY = row === 0 ? valueYRow1 : valueYRow2;
+    const ly = row === 0 ? row1LabelY : row2LabelY;
+    const vy = row === 0 ? row1ValueY : row2ValueY;
 
     ctx.fillStyle = MUTED;
     ctx.font = `600 12px ${FONT_FAMILY}`;
+    ctx.textAlign = 'left';
     ctx.letterSpacing = '2px';
-    ctx.fillText(stat.label.toUpperCase(), x, labelY);
+    ctx.fillText(stat.label.toUpperCase(), x, ly);
     ctx.letterSpacing = '0px';
 
     ctx.font = `800 26px ${FONT_FAMILY}`;
     const size = fitFontSize(ctx, stat.value, FONT_FAMILY, 26, colW - 16, 15);
     ctx.fillStyle = stat.label === 'Prize Pool' ? GOLD : WHITE;
     ctx.font = `800 ${size}px ${FONT_FAMILY}`;
-    ctx.fillText(stat.value, x, valueY);
+    ctx.fillText(stat.value, x, vy);
   });
 
-  /* Divider */
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.fillRect(MX, valueYRow2 + 34, W - 2 * MX, 1.5);
+  /* Divider 2 */
+  const div2Y = row2ValueY + 26;
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fillRect(cX, div2Y, cW, 1.5);
 
   /* Bottom brand bar */
-  const footBaseline = valueYRow2 + 34 + 30;
+  const footY = div2Y + 34;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#3B82F6';
   ctx.font = `800 15px ${FONT_FAMILY}`;
   ctx.letterSpacing = '3px';
-  ctx.fillText('MATCH DISTRICT', MX, footBaseline);
+  ctx.fillText('MATCH DISTRICT', cX, footY);
   ctx.letterSpacing = '0px';
   ctx.fillStyle = MUTED_90;
   ctx.font = `600 13px ${FONT_FAMILY}`;
   ctx.textAlign = 'right';
-  ctx.fillText('matchdistrict.in', W - MX, footBaseline);
-  ctx.textAlign = 'left';
+  ctx.fillText('matchdistrict.in', cX + cW, footY);
 
   ctx.restore();
 
@@ -415,9 +418,7 @@ export function dataURLToFile(dataUrl, filename) {
   const b64 = atob(parts[1]);
   const len = b64.length;
   const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = b64.charCodeAt(i);
-  }
+  for (let i = 0; i < len; i++) bytes[i] = b64.charCodeAt(i);
   return new File([bytes], filename, { type: mime });
 }
 
