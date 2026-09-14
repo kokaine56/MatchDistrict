@@ -1298,20 +1298,23 @@ Where `deadline` is one of: "Registration Closing Soon", "Tournament Starting So
 
 ### 12B.5 Dynamic Tournament Card Image (`src/utils/shareCardImage.js`)
 
-A client-side canvas-based renderer generates a 1200×630 PNG promotional card for every tournament, cached in a module-level Map for instant synchronous access after pre-warming.
+A client-side canvas-based renderer generates a **portrait 1200×1500 (4:5) PNG** premium "visiting card / event card" for every tournament, cached in a module-level Map for instant synchronous access after pre-warming. The output resembles a polished physical esports event invitation — **not** a website banner, screenshot, or 16:9 thumbnail.
 
-**Card layout**:
-1. **Background**: Deep navy gradient (`#0B1020 → #0F172A`) with subtle blue dot grid (36px spacing) and a radial blue glow in the top-left corner.
-2. **Brand row** (y 0–76): Left-aligned blue rounded-rect badge with "M" monogram + "MATCH DISTRICT" wordmark in 21px bold with 5px letter-spacing. Right-aligned "TOURNAMENT SHARE CARD" in 13px muted text with 3px letter-spacing.
-3. **Banner image** (y 92, 1112×300, r=18): Cross-origin image loaded via `<img crossOrigin="anonymous">`, center-cropped to fill 3:4 aspect. If the image fails to load or isn't set, a branded gradient fallback renders with a large translucent "MD" watermark and "TOURNAMENT COVER" label. A bottom-dark gradient overlay improves text legibility over bright banners.
-4. **Game chip** (top-left of banner, y 110): Small rounded pill with game name in uppercase gold (`#FBBF24`) on semi-transparent dark background. Only rendered when `game` is provided.
-5. **Title** (y 428): Bold 50px white text, max 2 lines, automatic word-wrap with ellipsis truncation if the title overflows.
-6. **Stats row** (y 516–556): Four columns (Prize Pool / Entry / Format / Slots) each with a 13px uppercase muted label and 30px bold value. Prize Pool value is gold (`#FBBF24`); others are off-white (`#F1F593`). The Format column auto-sizes font down to 18px minimum to fit long strings.
-7. **Divider** (y 592): Subtle 8%-opacity white horizontal line.
-8. **Bottom brand bar** (y 619): Left "MATCH DISTRICT" in 15px blue, center organizer name (if present) in 14px muted, right "matchdistrict.in" in 13px muted.
+**Card layout** (all coordinates relative to 1200×1500):
+
+1. **Rounded card canvas**: The PNG is drawn with `CORNER_RADIUS = 44` transparent rounded corners (clipped card body + border), so it renders like a sticker/card inside chat apps.
+2. **Background**: Deep navy vertical gradient (`#0B1020 → #0E1526 → #0F172A`) with a subtle blue dot grid (40px spacing), a top-left radial blue glow, and a thin blue gradient accent hairline near the top edge.
+3. **Brand row** (y 52–98): Left-aligned blue rounded logo tile (46×46, `#2563EB`) with "M" monogram + "MATCH DISTRICT" wordmark (21px bold, 5px letter-spacing). Right-aligned **TOURNAMENT** tag chip (pill with `rgba(59,130,246,0.16)` fill, 1.5px blue border, `#93C5FD` letter-spaced text).
+4. **Poster image window** (720×960, exact 3:4, centered, y 136): A dedicated framed image area — **object-fit: contain** (`drawContainImage`). The tournament poster is drawn full-frame inside this 3:4 window with **zero cropping**; different aspect ratios letterbox gracefully onto the dark navy frame (rounded 28px, `rgba(59,130,246,0.28)` border, subtle blue inner glow, darker frame gradient). A 3:4 poster (the wizard's standard 1200×1600 cover) fills the window edge-to-edge. If no image loads, a branded `#1E3A8A → #2563EB` gradient fallback with a large translucent "MD" watermark + "TOURNAMENT POSTER" label renders.
+5. **Game eyebrow** (y `imgBottom + 34`): 13px `#60A5FA` uppercase letter-spaced text: `"{GAME}  •  TOURNAMENT"` (falls back to just `TOURNAMENT`).
+6. **Tournament title** (y `imgBottom + 60`): Bold 52px white, max 2 lines (62px line height), word-wrap with ellipsis truncation.
+7. **Organizer + date row**: "BY {ORG NAME}" in 16px `#C9D4E0` letter-spaced uppercase (gold 5-point star `★` prefix when the organizer's tier is **Pro**); the formatted date/time (`toLocaleString('en-IN', { weekday, day, month, hour, minute })`) sits right-aligned on the same baseline (12px may force-drop the date if space is tight).
+8. **Stats 2×2 grid** (four cells: Prize Pool, Entry, Format, Slots): 12px uppercase muted labels (`#7C8AA0`, 2px letter-spacing) above 26px bold values (`#F1F5F9`, Prize Pool value in gold `#FBBF24`). Values auto-shrink down to 15px to fit the cell (528px column width).
+9. **Divider** (y `valueYRow2 + 34`): subtle 8%-opacity white hairline.
+10. **Bottom brand bar** (y `valueYRow2 + 64`): Left "MATCH DISTRICT" (15px `#3B82F6`, 3px letter-spacing), right "matchdistrict.in" (13px muted). **The full tournament URL is NOT printed on the card** — the clickable link lives only in the share caption.
 
 **Exports from `src/utils/shareCardImage.js`**:
-- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, imageUrl, imageEl })` — Synchronous canvas render, returns `data:image/png` data URL.
+- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, date, verified, imageUrl, imageEl })` — Synchronous canvas render, returns `data:image/png` data URL.
 - `ensureShareCardImage(url)` — Returns `Promise<HTMLImageElement | null>` with module-level cache; loads the banner image cross-origin and resolves when ready.
 - `peekShareCardImage(url)` — Synchronous cache lookup; returns the cached `HTMLImageElement` if loaded, or `null`.
 - `dataURLToFile(dataUrl, filename)` — Converts a PNG data URL to a `File` object for `navigator.share({ files })`.
@@ -1322,6 +1325,7 @@ A client-side canvas-based renderer generates a 1200×630 PNG promotional card f
 - The `useEffect` returns a cancellation function (`cancelled` flag) so stale updates are discarded if the tournament changes mid-flight.
 - During pre-warm, the share button shows a spinner (`shareGenerating` state + `animate-spin` SVG) to indicate readiness; tapping the button during pre-warm still works because `ensureShareCardReady()` generates synchronously from the cached image as a fallback.
 - `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern).
+- **Dynamic data**: title, game, organizer, prize pool, entry fee, format (match_type · perspective), slots (`{filled}/{total}`), and date (`startDate → registrationCloseDate → date`) are all derived per-tournament at generation time. Nothing is hardcoded.
 
 ### 12B.6 Popup Modal
 - **Trigger**: `showSharePopup` state (boolean); only triggered on desktop when native share fails or is unavailable.
@@ -2101,3 +2105,4 @@ src/assets/
 | 2026-09-14 | Added Tournament Detail document change log entries for Share feature and redesign (Section 12B). | System |
 | 2026-09-14 | Fixed mobile Share (Section 12B.1): `handleShare` in `TournamentDetail.jsx` now checks `typeof navigator.share === 'function'` and calls `navigator.share({ title: tournament name, text: 'Check out this tournament on Match District.', url: window.location.href })` directly and synchronously from the tap — no intermediate bottom sheet/backdrop on mobile. `AbortError`/`NotAllowedError` (user cancel) is silent; fallback popup renders only on desktop or when native sharing is unavailable. | System |
 | 2026-09-14 | Added dynamic tournament share card image (Section 12B.5): `src/utils/shareCardImage.js` — canvas-based 1200×630 PNG renderer with branded layout (navy gradient, dot grid, blue glow, brand badge/wordmark, center-cropped banner image with fallback gradient, game chip, title wrap, 4-column stats, divider, bottom brand bar). Exports: `generateTournamentShareCard`, `ensureShareCardImage`, `peekShareCardImage`, `dataURLToFile`, `downloadDataURL`. Module-level image cache. Updated §12B.1 (canShare gate, file attachment lifecycle), §12B.2 (new caption format), §12B.4 (aria-busy, spinner), §12B.6 (Download card option in popup). Prewarm `useEffect` in `TournamentDetail.jsx` keyed on `[tourney, orgProfile, slotsData, registrations]` with cancellation guard; `shareCardRef` useRef capsule persists across renders. | System |
+| 2026-09-14 | Redesigned Tournament Share Card (Section 12B.5) to a **portrait 4:5 premium "visiting card"** (1200×1500 PNG): added 44px transparent rounded corners, navy gradient + dot grid + top accent hairline, brand row with TOURNAMENT tag chip, dedicated **3:4 poster window using object-fit: contain** (`drawContainImage` — zero cropping, graceful letterboxing on a framed navy well), gold star `verified` indicator for Pro organizers, date/time line on the organizer row, 2×2 stats grid (Prize/Entry/Format/Slots) with auto-shrinking values, and a bottom brand bar (URL kept out of the card — link stays in the share caption). New renderer params: `date`, `verified`. Build + lint clean; 45 pre-existing lint errors unchanged. | System |

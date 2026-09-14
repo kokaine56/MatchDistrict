@@ -1035,6 +1035,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
       slots: `${slotFilled}/${slotTotal}`,
       game: tourney?.game || '',
+      date: tourney?.startDate || tourney?.registrationCloseDate || tourney?.date || '',
+      verified: (orgProfile?.tier === 'Pro') || (tourney?.orgTier === 'Pro'),
       imageUrl: banner,
       imageEl: peekShareCardImage(banner) || null
     };
@@ -1227,6 +1229,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           format: `${modeName} · ${(tourney.perspective || 'TPP').toUpperCase()}`,
           slots: `${filled}/${total}`,
           game: tourney.game || '',
+          date: tourney.startDate || tourney.registrationCloseDate || tourney.date || '',
+          verified: (orgProfile?.tier === 'Pro') || (tourney?.orgTier === 'Pro'),
           imageUrl: banner,
           imageEl: img || null
         });
