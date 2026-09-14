@@ -2,15 +2,7 @@ import { useState, useEffect } from 'react';
 import { fetchJsonWithRetry } from '../utils/api.js';
 
 const PAGE_SIZE = 20;
-const MOBILE_COLS = 'grid-cols-[24px_minmax(0,1fr)_30px_48px_24px_40px]';
-
-function rankBadgeClass(rank, isGoldTheme) {
-  const base = 'inline-flex items-center justify-center w-6 h-6 rounded-md text-[10px] font-black shrink-0';
-  if (rank === 1) return `${base} bg-gradient-to-br from-amber-300 to-amber-500 text-amber-950`;
-  if (rank === 2) return `${base} bg-gradient-to-br from-slate-200 to-slate-400 text-slate-800`;
-  if (rank === 3) return `${base} bg-gradient-to-br from-orange-300 to-amber-700 text-orange-950`;
-  return `${base} ${isGoldTheme ? 'bg-[#EDE5D0] text-[#8A6A14]' : 'bg-slate-100 text-slate-500'}`;
-}
+const MOBILE_COLS = 'grid-cols-[8%_minmax(0,1fr)_11%_19%_12%_14%]';
 
 function num(value) {
   return Number(value || 0).toLocaleString('en-IN');
@@ -39,7 +31,7 @@ function TrophyIcon({ isGoldTheme }) {
   );
 }
 
-export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardContainerClass, cardTitleClass }) {
+export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardContainerClass }) {
   const [standings, setStandings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -78,8 +70,7 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
 
   if (standings.length === 0) {
     return (
-      <div className={`${cardContainerClass} w-full text-center`}>
-        <h3 className={cardTitleClass}>Leaderboard</h3>
+      <div className={`${cardContainerClass} pt-2 sm:pt-3 w-full text-center`}>
         <div className="flex flex-col items-center justify-center gap-2.5 py-4">
           <TrophyIcon isGoldTheme={isGoldTheme} />
           <p className={`text-[13px] sm:text-sm font-medium ${isGoldTheme ? 'text-[#6B4D00]' : 'text-slate-500'}`}>
@@ -97,21 +88,26 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
   const headerClass = `text-[10px] font-black uppercase tracking-widest ${
     isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
   }`;
-  const headerClassMobile = `text-[8px] font-bold uppercase whitespace-nowrap ${
+  const headerClassMobile = `text-[9px] font-bold uppercase whitespace-nowrap ${
     isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
   }`;
   const teamNameClass = `block min-w-0 w-full truncate text-[13px] font-bold ${
     isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'
   }`;
-  const rankTextClass = `text-[11px] font-bold tabular-nums ${isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'}`;
+  const rankNumClass = `text-[13px] font-bold tabular-nums ${
+    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'
+  }`;
+  const rankTopClass = isGoldTheme ? 'text-[#B8860B]' : 'text-amber-600';
+  const rankTextClass = `text-[11px] font-bold tabular-nums ${
+    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'
+  }`;
   const statClass = `text-xs font-semibold tabular-nums whitespace-nowrap ${
     isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
   }`;
-  const statClassMobile = `text-[11px] font-semibold tabular-nums whitespace-nowrap ${
+  const statClassMobile = `text-[12px] font-semibold tabular-nums whitespace-nowrap ${
     isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
   }`;
-  const pointsClass = isGoldTheme ? 'text-[#B8860B]' : 'text-emerald-600';
-  const labelClass = isGoldTheme ? 'text-[#B8860B]/70' : 'text-slate-400';
+  const totalClass = isGoldTheme ? 'text-[#B8860B]' : 'text-amber-600';
   const rowBorder = isGoldTheme ? 'border-[#D4A017]/15' : 'border-slate-100';
   const pageBtn =
     `h-10 min-w-[84px] px-3 rounded-lg border text-xs font-bold transition-colors disabled:cursor-not-allowed ` +
@@ -120,20 +116,19 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
       : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:text-slate-300 disabled:hover:bg-white');
 
   return (
-    <div className={`${cardContainerClass} w-full`}>
-      <h3 className={cardTitleClass}>Leaderboard</h3>
+    <div className={`${cardContainerClass} pt-2 sm:pt-3 w-full`}>
 
       {/* Desktop / tablet: full-width single-line rank table */}
       <div className="hidden md:block overflow-hidden">
         <table className="w-full table-fixed">
           <thead>
             <tr className={`border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'}`}>
-              <th className={`${headerClass} text-left py-2 pr-2 pl-1 whitespace-nowrap w-[8%]`}>Rank</th>
-              <th className={`${headerClass} text-left py-2 px-2 w-[43%]`}>Team</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[11%]`}>Kills</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[14%]`}>Position</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[11%]`}>WWCD</th>
-              <th className={`${headerClass} text-right py-2 pl-2 pr-1 whitespace-nowrap w-[13%]`}>Points</th>
+              <th className={`${headerClass} text-center py-2 px-1 whitespace-nowrap w-[8%]`}>#</th>
+              <th className={`${headerClass} text-left py-2 px-3 w-[43%]`}>Team</th>
+              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[11%]`}>WWCD</th>
+              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[14%]`}>Position</th>
+              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[11%]`}>Kills</th>
+              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[13%]`}>Total</th>
             </tr>
           </thead>
           <tbody>
@@ -144,20 +139,17 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
                   isGoldTheme ? 'hover:bg-[#F5F0E1]' : 'hover:bg-slate-50'
                 }`}
               >
-                <td className="py-2 pr-2 pl-1 overflow-hidden">
-                  <span className={rankBadgeClass(row.rank, isGoldTheme)}>{row.rank}</span>
+                <td className="py-2 px-1 text-center overflow-hidden">
+                  <span className={`${rankNumClass} ${row.rank === 1 ? rankTopClass : ''}`}>{row.rank}</span>
                 </td>
-                <td className="py-2 px-2 overflow-hidden">
+                <td className="py-2 px-3 overflow-hidden">
                   <span className={teamNameClass}>{displayTeamName(row.team_name)}</span>
                 </td>
-                <td className={`${statClass} py-2 px-2 text-right overflow-hidden`}>{num(row.kills)}</td>
-                <td className={`${statClass} py-2 px-2 text-right overflow-hidden`}>{num(row.placement_points)}</td>
-                <td className={`${statClass} py-2 px-2 text-right overflow-hidden`}>{num(row.wwcd)}</td>
-                <td className="py-2 pl-2 pr-1 text-right whitespace-nowrap overflow-hidden">
-                  <span className={`inline-flex items-baseline gap-1 text-sm font-black tabular-nums ${pointsClass}`}>
-                    {num(row.total_points)}
-                    <span className={`text-[9px] font-bold uppercase tracking-wide ${labelClass}`}>pts</span>
-                  </span>
+                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.wwcd)}</td>
+                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.placement_points)}</td>
+                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.kills)}</td>
+                <td className="py-2 px-2 text-right whitespace-nowrap overflow-hidden">
+                  <span className={`text-sm font-black tabular-nums ${totalClass}`}>{num(row.total_points)}</span>
                 </td>
               </tr>
             ))}
@@ -165,27 +157,27 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
         </table>
       </div>
 
-      {/* Mobile: compact single-line grid — RANK | TEAM | KILLS | POSITION | WWCD | POINTS */}
+      {/* Mobile: balanced full-width grid — # | TEAM | WWCD | POSITION | KILLS | TOTAL */}
       <div className="md:hidden">
         <div className={`grid ${MOBILE_COLS} items-center border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'} py-1.5`}>
-          <span className={`${headerClassMobile} text-left pl-0.5`}>Rank</span>
+          <span className={`${headerClassMobile} text-center justify-self-stretch`}>#</span>
           <span className={`${headerClassMobile} text-left truncate`}>Team</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>Kills</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>Position</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>WWCD</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>Points</span>
+          <span className={`${headerClassMobile} text-center`}>WWCD</span>
+          <span className={`${headerClassMobile} text-center`}>Position</span>
+          <span className={`${headerClassMobile} text-center`}>Kills</span>
+          <span className={`${headerClassMobile} text-right pr-0.5`}>Total</span>
         </div>
         {pageRows.map(row => (
           <div
             key={row.team_id}
             className={`grid ${MOBILE_COLS} items-center py-[7px] border-b last:border-b-0 ${rowBorder}`}
           >
-            <span className={`${rankTextClass} pl-0.5`}>{row.rank}</span>
+            <span className={`text-center ${rankTextClass} ${row.rank === 1 ? rankTopClass : ''}`}>{row.rank}</span>
             <span className={teamNameClass}>{displayTeamName(row.team_name)}</span>
-            <span className={`${statClassMobile} text-right pr-0.5`}>{num(row.kills)}</span>
-            <span className={`${statClassMobile} text-right pr-0.5`}>{num(row.placement_points)}</span>
-            <span className={`${statClassMobile} text-right pr-0.5`}>{num(row.wwcd)}</span>
-            <span className={`${statClassMobile} font-black text-right pr-0.5 ${pointsClass}`}>{num(row.total_points)}</span>
+            <span className={`${statClassMobile} text-center`}>{num(row.wwcd)}</span>
+            <span className={`${statClassMobile} text-center`}>{num(row.placement_points)}</span>
+            <span className={`${statClassMobile} text-center`}>{num(row.kills)}</span>
+            <span className={`${statClassMobile} font-black text-right pr-0.5 ${totalClass}`}>{num(row.total_points)}</span>
           </div>
         ))}
       </div>
@@ -196,27 +188,29 @@ export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardC
           aria-label="Leaderboard pagination"
           className="mt-3 flex items-center justify-center gap-2.5"
         >
-          <button
-            type="button"
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={currentPage <= 1}
-            aria-label="Previous page"
-            className={pageBtn}
-          >
-            ‹ Prev
-          </button>
+          {currentPage > 1 && (
+            <button
+              type="button"
+              onClick={() => setPage(p => p - 1)}
+              aria-label="Previous page"
+              className={pageBtn}
+            >
+              ← Previous
+            </button>
+          )}
           <span className={`text-[11px] font-semibold tabular-nums ${isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-500'}`}>
             Page {currentPage} of {totalPages}
           </span>
-          <button
-            type="button"
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage >= totalPages}
-            aria-label="Next page"
-            className={pageBtn}
-          >
-            Next ›
-          </button>
+          {currentPage < totalPages && (
+            <button
+              type="button"
+              onClick={() => setPage(p => p + 1)}
+              aria-label="Next page"
+              className={pageBtn}
+            >
+              Next →
+            </button>
+          )}
         </nav>
       )}
     </div>
