@@ -1251,28 +1251,25 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 
 ## 12B. Tournament Detail — Share Feature
 
-The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament. On mobile, a dynamically generated 1200×630 promotional PNG card is attached to the native share sheet.
+The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament. On mobile, a dynamically generated 1080×1536 promotional PNG card (sliding the current tournament's data over the locked master template) is attached to the native share sheet.
 
 ### 12B.1 Behavior
-- **Native Web Share API with image card (mobile-first)**: When `navigator.share` is available, the tap synchronously calls `navigator.share({ title, text: caption, files: [cardFile] })` with a canvas-generated PNG tournament card attached. On Android/Chrome, the system share sheet opens immediately with the card image visible as an attachment — no intermediate modal, bottom sheet, backdrop, or loading state. Pre-warming via `useEffect` ensures the card is ready before the tap occurs; if the pre-warm is incomplete, the card is generated synchronously on tap.
-- **canShare gate**: Before attaching the file, `navigator.canShare({ files: [file] })` is checked. If files are not supported by the OS/browser, the share falls back to text-only with `url`. If neither files nor native share is available, the desktop fallback popup opens.
-- **Error handling**: `AbortError` / `NotAllowedError` (user cancelled or dismissed the native sheet) is swallowed silently — no error message shown. Any other error on mobile falls back to text-only `navigator.share`; on desktop it opens the fallback popup.
-- **Fallback popup (desktop / `navigator.share` unavailable)**: A compact popover opens with four options:
-  - **Copy Link** — copies `window.location.href` to clipboard; shows "Link copied to clipboard!" toast.
-  - **WhatsApp** — opens `https://wa.me/?text=...` in a new tab with the formatted share message.
-  - **Telegram** — opens `https://t.me/share/url?url=...&text=...` in a new tab.
-  - **Download tournament card** — triggers `downloadDataURL()` to save the generated 1200×630 PNG to the user's device.
+- **Single-shot awaited pipeline** (`handleShare` in `TournamentDetail.jsx`): one `navigator.share()` invocation per tap (guarded by `shareInProgressRef`, reset in `finally`). Order is strictly: `await ensureShareTemplateReady()` → resolve/generate card → `dataURLToFile()` → `navigator.canShare({ files })` → `navigator.share({ title, text, files })`. The canvas generation always completes **before** sharing.
+- **Image attachment**: the generated card is converted to a real `File` (`match-district-tournament.png`, `image/png`) and the **same** File object is passed directly into `navigator.share({ title, text, files: [file] })`. On Android/Chrome the native sheet opens with the card visible as an attachment — no intermediate modal/sheet/backdrop.
+- **canShare gate**: `navigator.canShare({ files: [file] })` is checked first. If file sharing is unsupported, it gracefully downgrades to **text-only** `navigator.share({ title, text })` (never a `url` field — the URL appears once, inside the caption). If neither files nor text sharing is available, the desktop fallback popup opens.
+- **No duplicate URL**: every `navigator.share()` call omits the `url` key entirely; the tournament URL is embedded in the caption text exactly once. Runtime failures downgrade once to text-only — no second invocation, no desktop fallback after a successful share.
+- **Error handling**: `AbortError` / `NotAllowedError` (user cancelled/dismissed) → silent stop with `return`. Any other error → one text-only retry, else (desktop) the fallback popup.
+- **Fallback popup (desktop / share unavailable)**: a compact popover (Copy Link, Copy Share Text, WhatsApp, Telegram, **Download Share Card** — the cached card is reused) that never auto-fires after a successful native share.
 
 ### 12B.2 Share Caption (native share `text`)
 ```
-{title} 🎮
+{title}
 
-Prize Pool: {prizeDisplay}
-Entry: {entryDisplay}
-Format: {match_type} · {perspective}
+🏆 Prize Pool: {prizeDisplay} 💰 Entry Fee: {entryDisplay} 🎮 Format: {match_type} · {perspective} 👥 Slots: {filled}/{total}
 
-Join now on Match District: {window.location.href}
+Join the tournament: {window.location.href}
 ```
+The URL appears in the caption **exactly once** and is never passed separately via a `url` share field.
 
 ### 12B.3 Legacy Share Message (WhatsApp/Telegram popup)
 ```
@@ -1298,46 +1295,60 @@ Where `deadline` is one of: "Registration Closing Soon", "Tournament Starting So
 
 ### 12B.5 Dynamic Tournament Card Image (`src/utils/shareCardImage.js`)
 
-A client-side canvas-based renderer generates a **portrait 1200×1500 (4:5) PNG** premium "wallet + card holder" composition for every tournament, cached in a module-level Map for instant synchronous access after pre-warming. The output resembles a polished esports **pass card partially inserted into a dark leather wallet** (~70% of the card exposed above, bottom ~30% covered by the wallet) — **not** a website banner, screenshot, or 16:9 thumbnail.
+A client-side canvas-based renderer generates a **fixed 1080×1536 (5:7 portrait) PNG** for every tournament by rendering the **same locked master template image** (`src/assets/share-template.png`, native 1024×1536, drawn to fill 1080×1536 — zero vertical crop, ~5% horizontal enlargement since heights match) and overlaying only the current tournament's data. The supplied asset is the **fixed background/branding source of truth** — it is never cropped, recolored, redesigned, or regenerated; its embedded Match District logo is official and untouched. The template must look identical for every tournament; only data changes.
 
-**Important detail — real logo asset**: The card uses the **actual Match District logo** from `public/logo.png` (1940×2018, served at `/logo.png`). It is **not** redrawn/re-created. The module pre-loads it at import time (`logoImg` + `logoReady` flag); if still loading at render time it gracefully falls back to the blue "M" monogram tile.
+**Rendering pipeline (spec §18)** — all drawing happens on top of the untouched template:
+1. `ensureShareTemplateReady()` — resolves a module-level promise once the template `Image` (`import ... share-template.png`, Vite-hashed asset) is loaded; pre-loaded at module import time.
+2. `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, url })` — creates a 1080×1536 canvas, draws the template at (0,0) via `ctx.drawImage(templateImg, 0, 0, 1080, 1536)`, then renders the overlay. Returns a `data:image/png` data URL synchronously (template is already cached).
+3. Render helpers (kept as separate functions for maintainability): `renderTournamentTitle`, `renderOrganizer` (+ `renderGameChip`), `renderStatItem`/`renderStats`, `renderURL`.
+4. If the template somehow isn't ready at render time, a navy→blue gradient fallback is drawn so text is never lost.
 
-**Card layout** (all coordinates relative to 1200×1500):
+**Fixed coordinate system** (all coordinates relative to 1080×1536, constant `MX` side margin = 90, content width = 900):
 
-1. **Rounded card canvas**: The PNG is drawn with `CORNER_RADIUS = 44` transparent rounded corners (clipped card body), so it renders like a sticker/card inside chat apps.
-2. **Exposed card face (y 0 → 1012, ~70%) — the tournament poster as primary visual**: The poster fills the exposed face edge-to-edge via **object-fit: cover** (`drawCoverImage`) with a **35% top-bias crop** so the important subject/logo/artwork (usually near the top of tournament posters) stays visible; no letterboxing. If no image loads, a branded `#1E3A8A → #2563EB` gradient fallback with a large translucent "MD" watermark + "TOURNAMENT POSTER" letter-spaced label renders.
-3. **Top scrim** (y 0 → 200, `rgba(0,0,0,0.55) → transparent`): guarantees logo legibility over any poster.
-4. **Logo** (top-left at `MX=50, 36`): the real `public/logo.png` drawn at 56px height (width auto-scaled from 1940:2018 ratio). Fallback while loading: blue 44×44 rounded tile with white "M".
-5. **Bottom scrim** (y 830 → 1012): dark `rgba(0,0,0,0 → 0.72)` gradient guaranteeing title legibility.
-6. **Game chip** (y 870, only if `game` exists): small pill (`rgba(0,0,0,0.45)` fill, rounded 15px) with uppercase gold `#FBBF24` letter-spaced game label.
-7. **Tournament title on the poster** (y 908–908/948, bold 54px white): max 2 lines (60px line height), word-wrap with ellipsis truncation, left-aligned at 50px.
-8. **Wallet / Card Holder (y 1012 → 1500, ~30%)**: A flat card sleeve sliding under the poster.
-   - **Leather body**: vertical gradient `#1A1726 → #12101C → #0C0A12`, full width, bottom corners clipped by the card's rounded corners.
-   - **Pocket shadow** (y 1012 → 1062): `rgba(0,0,0,0.55) → transparent` vertical overlay suggesting card depth under the wallet lip.
-   - **Pocket rim highlight** (y 1013, 2px): horizontal gradient `transparent → rgba(255,255,255,0.12) → transparent`.
-   - **Stitching**: dashed rounded rect (`setLineDash([6, 8])`, 1.5px) inset 18px from wallet edges, `rgba(255,255,255,0.055)`, corner radius 30 — subtle premium leather detailing.
-   - **Engraved content** (x 50, width 1100):
-     - **TOURNAMENT** (12px muted `#7C8AA0`, 2px letter-spacing) label + tournament title (bold 22px white, max 2 lines).
-     - **ORGANIZED BY** label + organizer name (semi-bold 17px white) with a gold `★` 5-point star (16px outer) prefix when organizer tier is **Pro**; the formatted date/time (`toLocaleString('en-IN', { weekday, day, month, hour, minute })`) right-aligns on the same line, only if `date` parses.
-     - Thin 1.5px `rgba(255,255,255,0.07)` divider.
-     - **Stats 2×2 grid** (Prize Pool, Entry Fee, Format, Slots as labels; values auto-shrink from 26px down to 15px via `fitFontSize` to fit the 538px column): Prize Pool value in gold `#FBBF24`, others `#F1F5F9`; 12px uppercase muted letter-spaced labels. Missing values render `—`.
-     - Thin divider.
-     - **Bottom brand bar**: left "MATCH DISTRICT" (15px `#3B82F6`, 3px letter-spacing), right "matchdistrict.in" (13px muted). **The full tournament URL is NOT printed on the card** — the clickable link lives only in the share caption.
-9. **Only fields that exist are shown**: game chip skipped when no game; organizer/date/verified only when present.
+| Element | Y baseline | Style |
+|---|---|---|
+| Tournament title | 1080 (single line) / 1016 & 1114 (2 lines) | Centered, 800-weight white metallic gradient (`#FFF → #B9C4DA`) with subtle blue glow halo; auto-size from 78px down to 44px; max 2 lines; `wrapToLines` + `fitEllipsis`; engraved bevel + highlight via `paintText` |
+| `ORGANIZED BY` label | 1240 | Centered, 700-weight 18px metallic muted label (`#E6EDF7 → #93A8C4`), 4px letter-spacing, uppercase |
+| Game chip (right-aligned) | 1240 row | Glass pill (`rgba(20,30,55,0.72)`, blue hairline border, 16px gold letter-spaced `${GAME}`), only when `game` provided |
+| Organizer name | 1280 | Centered, 700-weight white metallic gradient, fits width (30→18px) |
+| Stats labels 1 | 1346 | Centered per column, 700-weight 18px metallic muted, 3px letter-spacing, uppercase |
+| Stats values 1 | 1382 | Centered, 800-weight metallic white (`#FFF → #BFCAE0`); **Prize Pool in gold metallic (`#FFE9A6 → #E08512`) with strong gold glow** (strongest visual emphasis); auto-size 36→22px per 410px column |
+| Stats labels 2 | 1458 | same style |
+| Stats values 2 | 1494 | same style |
+| Tournament URL | 1514 | Centered, 700-weight blue metallic (`#B5D4FF → #4F8FEA`) with blue glow, protocol stripped (`matchdistrict.in/tournaments/XXXX`), 24→16px |
+
+**Typographic treatment (`paintText` helper)** — every dynamic field is drawn "engraved/embedded" into the artwork, never as flat HTML text:
+1. Optional **glow halo** (blue for title/URL, gold for prize, gold for game chip) drawn behind the glyph.
+2. **Deep drop shadow** (blur 16, offsetY 3, `rgba(0,0,0,0.4–0.65)`) for lift.
+3. **Dark bevel** offsets (+1,+1 and +1,+2) under the glyph edge for engraved depth.
+4. **Light top-highlight** offset (−1,−1) at 14% white for a metallic catch-light rim.
+5. **Crisp main fill** with a vertical metallic gradient (`verticalGradient`, no distortion/compression — glyphs are never scaled or skewed).
+
+**Stats 2×2 grid** — left column: **PRIZE POOL** / **FORMAT**; right column: **ENTRY FEE** / **SLOTS**. Columns 410px wide, 80px gap, horizontally centered. Labels above values (LABEL / VALUE rows), rendered as "printed" text — no table borders, no per-field plates. Missing/empty values render `—`. The URL is shown on the card **and** in the share caption.
+
+**Text fitting (spec §17)**: long tournament names reduce font size, then wrap to a max of 2 lines, then ellipsize — never overflow, clip, overlap, or stray beyond the card. Organizer names fit-to-width (30→18px).
+
+**Color rule (spec §8)**: only Match District identity colors — white metallic text, muted `rgba(201,216,230,0.92)` labels, blue `#60A5FA` for the URL accent, and **gold metallic for the Prize Pool value (strongest visual emphasis)** + gold game chip text. Depth/legibility comes from the `paintText` emboss passes (glow halo + deep shadow) — no decorative fonts, no filled plates behind fields.
+
+**Critical constraints honored**:
+- The template is reused identically for every tournament; only `title, orgName, prize, entry, format, slots, game, url` change.
+- The generated image is **not** responsive — always 1080×1536, identical on every device (no devicePixelRatio scaling; the share image is fixed resolution by spec §10).
+- The card is a dedicated composition (template + overlay data), **not** a screenshot of the webpage.
+- No random graphics, no second logo, no extra decorations — the supplied asset stays dominant.
 
 **Exports from `src/utils/shareCardImage.js`**:
-- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, date, verified, imageUrl, imageEl })` — Synchronous canvas render, returns `data:image/png` data URL.
-- `ensureShareCardImage(url)` — Returns `Promise<HTMLImageElement | null>` with module-level cache; loads the banner image cross-origin and resolves when ready.
-- `peekShareCardImage(url)` — Synchronous cache lookup; returns the cached `HTMLImageElement` if loaded, or `null`.
+- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, url })` — Synchronous canvas render, returns `data:image/png` data URL.
+- `ensureShareTemplateReady()` — `Promise<boolean>`; resolves when the master template image has loaded.
 - `dataURLToFile(dataUrl, filename)` — Converts a PNG data URL to a `File` object for `navigator.share({ files })`.
 - `downloadDataURL(dataUrl, filename)` — Creates a temporary `<a>` element and triggers a browser download.
 
 **Prewarm lifecycle** (in `TournamentDetail.jsx`):
-- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations]` fires after the tournament data loads, calls `ensureShareCardImage(bannerUrl)` to asynchronously fetch and cache the banner, then synchronously renders the card via `generateTournamentShareCard()` and stores the result in `shareCardRef` (a `useRef` capsule). The real logo (`/logo.png`) is pre-loaded at module scope and is ready by pre-warm time.
-- The `useEffect` returns a cancellation function (`cancelled` flag) so stale updates are discarded if the tournament changes mid-flight.
-- During pre-warm, the share button shows a spinner (`shareGenerating` state + `animate-spin` SVG) to indicate readiness; tapping the button during pre-warm still works because `ensureShareCardReady()` generates synchronously from the cached image as a fallback.
-- `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern).
-- **Dynamic data**: title, game, organizer, prize pool, entry fee, format (match_type · perspective), slots (`{filled}/{total}`), and date (`startDate → registrationCloseDate → date`) are all derived per-tournament at generation time. Nothing is hardcoded.
+- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations, prizeDisplay, entryDisplay, slotFilled, slotTotal]` calls `ensureShareTemplateReady()`, then renders the card via `generateTournamentShareCard()` and stores the result in `shareCardRef` (a `useRef` capsule). Spinner state is always reset in the `.then()` and when `tourney` is absent, so `shareGenerating` never sticks.
+- `handleShare` does not depend on the prewarm completing: it awaits `ensureShareTemplateReady()` and generates the card synchronously as a fallback before converting to a `File` and calling `navigator.share({ title, text, files })` once.
+- `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern) and is reused by the popup's Download Share Card action.
+- **Dynamic data**: title, organizer name, game (chip), prize pool, entry fee, format (match_type · perspective), slots (`{filled}/{total}`), and the live `window.location.href` URL are all derived per-tournament at generation time. Nothing is hardcoded.
+
+**Desktop fallback (spec §13–14)** — popup (only when native share unavailable/fails): **Copy Link**, **Copy Share Text**, WhatsApp, Telegram, **Download Share Card** (`match-district-tournament.png`).
 
 ### 12B.6 Popup Modal
 - **Trigger**: `showSharePopup` state (boolean); only triggered on desktop when native share fails or is unavailable.
@@ -2119,3 +2130,6 @@ src/assets/
 | 2026-09-14 | Added dynamic tournament share card image (Section 12B.5): `src/utils/shareCardImage.js` — canvas-based 1200×630 PNG renderer with branded layout (navy gradient, dot grid, blue glow, brand badge/wordmark, center-cropped banner image with fallback gradient, game chip, title wrap, 4-column stats, divider, bottom brand bar). Exports: `generateTournamentShareCard`, `ensureShareCardImage`, `peekShareCardImage`, `dataURLToFile`, `downloadDataURL`. Module-level image cache. Updated §12B.1 (canShare gate, file attachment lifecycle), §12B.2 (new caption format), §12B.4 (aria-busy, spinner), §12B.6 (Download card option in popup). Prewarm `useEffect` in `TournamentDetail.jsx` keyed on `[tourney, orgProfile, slotsData, registrations]` with cancellation guard; `shareCardRef` useRef capsule persists across renders. | System |
 | 2026-09-14 | Redesigned Tournament Share Card (Section 12B.5) to a **portrait 4:5 premium "visiting card"** (1200×1500 PNG): added 44px transparent rounded corners, navy gradient + dot grid + top accent hairline, brand row with TOURNAMENT tag chip, dedicated **3:4 poster window using object-fit: contain** (`drawContainImage` — zero cropping, graceful letterboxing on a framed navy well), gold star `verified` indicator for Pro organizers, date/time line on the organizer row, 2×2 stats grid (Prize/Entry/Format/Slots) with auto-shrinking values, and a bottom brand bar (URL kept out of the card — link stays in the share caption). New renderer params: `date`, `verified`. Build + lint clean; 45 pre-existing lint errors unchanged. | System |
 | 2026-09-14 | Redesigned Tournament Share Card (Section 12B.5) to a **wallet + card holder** composition (1200×1500 PNG): ~70% of the card exposed as the tournament poster (object-fit: cover with 35% top-bias crop, edge-to-edge, no letterboxing) overlaid with top/bottom scrims, the **real Match District logo asset** (`public/logo.png`, pre-loaded at module scope, 56px height, "M" monogram fallback), optional gold game chip, and 54px bold title; bottom ~30% is a dark leather wallet (`#1A1726 → #12101C → #0C0A12`) with pocket shadow + rim highlight, dashed stitching, engraved TOURNAMENT / ORGANIZED BY (gold ★ for Pro + date/time) rows, 2×2 stats grid (Prize gold), and MATCH DISTRICT · matchdistrict.in brand bar. Only existing fields render; caption updated to `🎮` + "Join now on Match District". | System |
+| 2026-09-15 | Rebuilt Tournament Share Card (Section 12B.5) around a **LOCKED master template** (`src/assets/share-template.png`, supplied by user, 1024×1536 → drawn edge-to-edge at 1080×1536, zero vertical crop): the official template/branding/logo stays identical for every tournament; only overlaid fields change. Renderer rewritten with separate `renderTournamentTitle`/`renderOrganizer`/`renderStats`/`renderURL` helpers, fixed 1080×1536 coordinate table, auto-fit/fit-ellipsis text engine, subtle contrast shadow, URL printed on card (protocol stripped) + in caption. Exports now `generateTournamentShareCard`, `ensureShareTemplateReady`, `dataURLToFile`, `downloadDataURL`. Added **Copy Share Text** to the fallback popup; download/share filename is `match-district-tournament.png`; caption uses `🔥` + "Join the tournament on Match District: {url}". Build + lint clean. | System |
+| 2026-09-15 | Upgraded share-card typography to premium engraved/3D treatment (Section 12B.5): new `paintText` helper draws every dynamic field with optional glow halo (blue title/URL, gold prize), deep drop shadow (blur 16, offsetY 3), dark bevel offsets (+1,+1/+1,+2) for engraved depth, 14% white top-highlight rim, and a crisp vertical **metallic gradient** fill (never scaled/skewed). **Prize Pool value is now the strongest emphasis** — gold metallic (`#FFE9A6 → #E08512`) with gold glow; labels are smaller 18px metallic muted caps. Re-added the **game field** (`game` param) rendered as a right-aligned glass pill chip (`rgba(20,30,55,0.72)`, blue hairline border, 16px gold letter-spaced uppercase) on the ORGANIZED BY row. `roundRect` replaced with safe `roundRectPath`. Build + lint clean (`shareCardImage.js` 0 errors). | System |
+| 2026-09-15 | Fixed the share pipeline + duplicate URL (Section 12B.1/12B.2): `handleShare` rewritten as a single-shot `async` function guarded by `shareInProgressRef`; strict order is `await ensureShareTemplateReady()` → resolve/generate card → `dataURLToFile()` (real `image/png` File, `match-district-tournament.png`) → `navigator.canShare({ files })` → exactly **one** `await navigator.share({ title, text, files })`. The card-dependent code path is gone — the click no longer falls through to a file-less `navigator.share`. All `url:` keys removed from `navigator.share()` calls (URL appears **once**, inside `getShareCaption`); caption reformatted to the single-line stats format (🏆💰🎮👥 + "Join the tournament: {url}"). Prewarm `useEffect` always resets `shareGenerating`, and the Download Share Card still reuses `shareCardRef`. Build + lint clean (TournamentDetail baseline 45 errors / 1 warning unchanged). | System |

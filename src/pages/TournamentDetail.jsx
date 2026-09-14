@@ -16,7 +16,7 @@ import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
-import { generateTournamentShareCard, dataURLToFile, ensureShareCardImage, peekShareCardImage, downloadDataURL } from '../utils/shareCardImage.js';
+import { generateTournamentShareCard, ensureShareTemplateReady, dataURLToFile, downloadDataURL } from '../utils/shareCardImage.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
@@ -608,6 +608,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [showSharePopup, setShowSharePopup] = useState(false);
   const [shareGenerating, setShareGenerating] = useState(false);
   const shareCardRef = useRef(null);
+  const shareInProgressRef = useRef(false);
 
   // Custom states for premium sponsors cards interaction
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -1022,11 +1023,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const getShareCaption = () => {
     const gameMode = `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`;
-    return `${tourney?.title || 'Tournament'} 🎮\n\nPrize Pool: ${prizeDisplay}\nEntry: ${entryDisplay}\nFormat: ${gameMode}\n\nJoin now on Match District: ${window.location.href}`;
+    return `${tourney?.title || 'Tournament on Match District'}\n\n🏆 Prize Pool: ${prizeDisplay} 💰 Entry Fee: ${entryDisplay} 🎮 Format: ${gameMode} 👥 Slots: ${slotFilled}/${slotTotal}\n\nJoin the tournament: ${window.location.href}`;
   };
 
   const getShareCardData = () => {
-    const banner = tourney?.cover_image_url || tourney?.bannerUrl || '';
     return {
       title: tourney?.title || 'Tournament on Match District',
       orgName: orgProfile?.orgName || tourney?.orgName || '',
@@ -1035,10 +1035,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
       slots: `${slotFilled}/${slotTotal}`,
       game: tourney?.game || '',
-      date: tourney?.startDate || tourney?.registrationCloseDate || tourney?.date || '',
-      verified: (orgProfile?.tier === 'Pro') || (tourney?.orgTier === 'Pro'),
-      imageUrl: banner,
-      imageEl: peekShareCardImage(banner) || null
+      url: window.location.href
     };
   };
 
@@ -1053,49 +1050,74 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     }
   };
 
-  const handleShare = () => {
-    const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-    if (!canNativeShare) {
+  const handleShare = async () => {
+    // One share invocation per click.
+    if (shareInProgressRef.current) return;
+    if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') {
       setShowSharePopup(true);
       return;
     }
+    shareInProgressRef.current = true;
 
     const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
-    const handleShareError = (err) => {
-      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return;
-      if (!isMobile) setShowSharePopup(true);
-    };
-
-    const card = ensureShareCardReady();
     const title = tourney?.title || 'Tournament on Match District';
     const text = getShareCaption();
-
-    if (card) {
-      try {
-        const file = dataURLToFile(card, 'matchdistrict-tournament-card.png');
-        if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
-          navigator.share({ title, text, files: [file] }).catch(handleShareError);
-        } else {
-          navigator.share({ title, text, url: window.location.href }).catch(handleShareError);
-        }
-        return;
-      } catch {
-        if (!isMobile) setShowSharePopup(true);
-        return;
-      }
-    }
+    const openFallback = () => { if (!isMobile) setShowSharePopup(true); };
+    const canShareText = () => typeof navigator.canShare === 'function' && navigator.canShare({ text });
 
     try {
-      navigator.share({ title, text: getShareMessage(), url: window.location.href }).catch(handleShareError);
-    } catch {
-      if (!isMobile) setShowSharePopup(true);
+      // 1. Ensure the master template is loaded so the card renders the real artwork.
+      await ensureShareTemplateReady();
+
+      // 2. Resolve the card (pre-warmed ref, or generate synchronously) — generation
+      //    completes BEFORE sharing. The card also feeds the popup's download option.
+      let card = shareCardRef.current;
+      if (!card) {
+        card = generateTournamentShareCard(getShareCardData());
+        shareCardRef.current = card;
+      }
+      if (!card) { openFallback(); return; }
+
+      // 3. Convert the generated card into a real PNG File (valid MIME + filename).
+      const file = dataURLToFile(card, 'match-district-tournament.png');
+
+      // 4. Attach the image when the platform supports file sharing. The URL lives in
+      //    the caption only — never also in a separate `url` field, so it appears once.
+      if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
+        await navigator.share({ title, text, files: [file] });
+        return;
+      }
+
+      // 5. No native file sharing: graceful text-only share (URL already in caption).
+      if (canShareText()) {
+        await navigator.share({ title, text });
+        return;
+      }
+      openFallback();
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
+        // User cancelled or dismissed the native sheet — silently stop, no fallback.
+        return;
+      }
+      // File sharing failed at runtime → downgrade once to text-only (never double-share).
+      try {
+        if (canShareText()) {
+          await navigator.share({ title, text });
+          return;
+        }
+      } catch (e) {
+        if (e && (e.name === 'AbortError' || e.name === 'NotAllowedError')) return;
+      }
+      openFallback();
+    } finally {
+      shareInProgressRef.current = false;
     }
   };
 
   const handleDownloadCard = () => {
     const card = ensureShareCardReady();
     if (card) {
-      downloadDataURL(card, 'matchdistrict-tournament-card.png');
+      downloadDataURL(card, 'match-district-tournament.png');
       triggerToast('Tournament card downloaded.');
     } else {
       triggerToast('Card not ready yet. Try again in a moment.');
@@ -1105,6 +1127,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href);
     triggerToast('Link copied to clipboard!');
+    setShowSharePopup(false);
+  };
+
+  const handleCopyShareText = () => {
+    navigator.clipboard.writeText(getShareCaption());
+    triggerToast('Share text copied to clipboard!');
     setShowSharePopup(false);
   };
 
@@ -1197,7 +1225,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
-  // Pre-warm the shareable tournament card image (1200x630 PNG) so taps share instantly
+  // Pre-warm the shareable tournament card (1080x1536 PNG on the master template) so taps share instantly
   useEffect(() => {
     let cancelled = false;
     if (!tourney) {
@@ -1206,41 +1234,27 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       return undefined;
     }
     setShareGenerating(true);
-    const banner = tourney.cover_image_url || tourney.bannerUrl || '';
-    ensureShareCardImage(banner).then((img) => {
-      if (cancelled) return;
+    ensureShareTemplateReady().then(() => {
       try {
-        const fmt = (value) => {
-          if (value === null || value === undefined || value === '') return '—';
-          const num = typeof value === 'number' ? value : parseInt(String(value).replace(/[^0-9]/g, ''), 10);
-          if (isNaN(num) || num === 0) return 'Free';
-          return `₹${num.toLocaleString('en-IN')}`;
-        };
-        const filled = slotsData?.slotsFilled ?? (registrations ? registrations.filter(r => !['cancelled', 'expired', 'rejected'].includes((r.status || '').toLowerCase())).length : 0);
-        const total = tourney.slotsTotal || slotsData?.slotsTotal || 100;
-        const basePrize = parseInt(tourney.prize_pool_amount || tourney.basePrize || tourney.prizePool || 0, 10) || 0;
-        const sponsored = tourney.totalSponsorContributions || tourney.sponsorRevenue || 0;
-        const modeName = ((tourney.match_type || 'squad').charAt(0).toUpperCase()) + ((tourney.match_type || 'squad').slice(1));
-        shareCardRef.current = generateTournamentShareCard({
-          title: tourney.title || 'Tournament on Match District',
-          orgName: orgProfile?.orgName || tourney.orgName || '',
-          prize: fmt(basePrize + sponsored),
-          entry: (parseInt(tourney.entry_fee_amount, 10) || 0) === 0 ? 'Free' : fmt(tourney.entry_fee_amount),
-          format: `${modeName} · ${(tourney.perspective || 'TPP').toUpperCase()}`,
-          slots: `${filled}/${total}`,
-          game: tourney.game || '',
-          date: tourney.startDate || tourney.registrationCloseDate || tourney.date || '',
-          verified: (orgProfile?.tier === 'Pro') || (tourney?.orgTier === 'Pro'),
-          imageUrl: banner,
-          imageEl: img || null
-        });
+        if (!cancelled) {
+          shareCardRef.current = generateTournamentShareCard({
+            title: tourney.title || 'Tournament on Match District',
+            orgName: orgProfile?.orgName || tourney.orgName || '',
+            prize: prizeDisplay,
+            entry: entryDisplay,
+            format: `${formatLabel(tourney.match_type)} · ${(tourney.perspective || 'TPP').toUpperCase()}`,
+            slots: `${slotFilled}/${slotTotal}`,
+            game: tourney.game || '',
+            url: window.location.href
+          });
+        }
       } catch {
         shareCardRef.current = null;
       }
       setShareGenerating(false);
     });
     return () => { cancelled = true; };
-  }, [tourney, orgProfile, slotsData, registrations]);
+  }, [tourney, orgProfile, slotsData, registrations, prizeDisplay, entryDisplay, slotFilled, slotTotal]);
 
   const startDateStr = tourney?.startDate ? new Date(tourney.startDate) : null;
   const formattedDate = startDateStr ? formatDate(startDateStr.toISOString()) : '';
@@ -2503,6 +2517,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <span className="material-symbols-outlined text-[18px] text-primary">content_copy</span>
                     <span className="text-[13px] font-medium text-on-background">Copy Link</span>
                   </button>
+                  <button onClick={handleCopyShareText}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-primary/8 transition-colors text-left min-h-[40px]">
+                    <span className="material-symbols-outlined text-[18px] text-primary">notes</span>
+                    <span className="text-[13px] font-medium text-on-background">Copy Share Text</span>
+                  </button>
                   <button onClick={handleShareWhatsApp}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-emerald-500/8 transition-colors text-left min-h-[40px]">
                     <svg className="w-[18px] h-[18px] text-emerald-500 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -2524,7 +2543,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       <polyline points="7 10 12 15 17 10" />
                       <line x1="12" y1="15" x2="12" y2="3" />
                     </svg>
-                    <span className="text-[13px] font-medium text-on-background">Download tournament card</span>
+                    <span className="text-[13px] font-medium text-on-background">Download Share Card</span>
                   </button>
                 </div>
               </div>
