@@ -1251,107 +1251,74 @@ Per-tournament public standings table shown as the **Leaderboard tab** on the To
 
 ## 12B. Tournament Detail — Share Feature
 
-The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that lets users share the tournament. A dynamically generated 1080×1536 promotional PNG card (sliding the current tournament's data over the locked master template) is attached to the native share sheet — on mobile and desktop — whenever the browser supports native file sharing.
+The Tournament Detail page (`src/pages/TournamentDetail.jsx`) includes a **Share button** in the hero section's title row (top-right corner) that opens the device/browser's **native system share sheet** and shares **text only** — no image, no share card, no canvas, no file attachment, and no custom sharing UI of any kind.
 
 ### 12B.1 Behavior
-- **Canonical pipeline** (`handleShare` in `TournamentDetail.jsx`): template + tournament data → `generateTournamentShareCard()` (**async**, renders to canvas, flattens via `canvas.toBlob()` → validated `File`) → `navigator.canShare({ files })` → **one** `await navigator.share({ files: [file], text })`. Generation always completes **before** sharing; the `File` is the same object passed directly into the share API.
-- **Real file, never a URL**: the card is a real `File` (`match-district-tournament.png`, `image/png`) built from a non-empty canvas Blob — never a data URL, blob URL, remote URL, canvas/<img> element, base64 text, or HTML. Validated (`instanceof File`, `size > 0`, MIME `image/png`) before sharing.
-- **Pre-generation preserves user activation**: the `File` is pre-warmed in a `useEffect` (spinner shown via `shareGenerating`) so the tap path has **no async work between the tap and `navigator.share()`** — Android/iOS transient activation is never lost. If the pre-warmed file is missing, it is generated with `await` first. The Share button is disabled (`isSharing`) **only while an actual native share is in flight** — background prewarm must never silently swallow a tap.
-- **Native sharing on ALL platforms — no custom share UI**: `handleShare` attempts the native Web Share sheet on **mobile and desktop** whenever `navigator.share` exists — the OS/app picks the destination (WhatsApp, Telegram, Instagram, Messages, Email…). **There is no in-app popup, modal, bottom sheet, or custom overlay anywhere.** The only non-native path is `runFallbackShare()` — a minimal, non-invasive Download + Copy fallback (see below) that never fakes a share and never pretends the image was shared.
-- **canShare gate**: when a valid File exists, `navigator.canShare({ files: [file] })` gates the attachment (`canShare` absent → share is attempted with `files` anyway, and honest failures route to `runFallbackShare`). There is **NO caption-only silent downgrade**: if the File was requested and file sharing is unsupported/fails, `runFallbackShare` downloads the exact generated File and copies the caption (an explicit toast explains the browser limitation). The URL appears only inside the caption (never a `url` share field).
-- **No duplicate URL**: every `navigator.share()` call omits the `url` key; the tournament URL is embedded in the caption text exactly once. Success or user-abort → no second call, no fallback.
-- **Error handling**: `AbortError` / `NotAllowedError` (user cancelled/dismissed) → silent stop with `return`. Any other share error → `runFallbackShare(shareCardRef.current)` (no retry that could double-share). Single-shot guarded by `shareInProgressRef` + `isSharing` state. Generation is hard-capped by a **15s timeout** (`SHARE_GEN_TIMEOUT_MS` in `shareCardImage.js`, `Promise.race` wrapper) plus a 6s template-load stall-guard, so card generation can **never** hang — worst case an honest Download/Copy fallback (dev console shows the real `CARD_*` error message). Every `setShareGenerating(true)` site (prewarm effect, `handleShare` fallback generation) clears the flag in `finally` or effect cleanup. Dev-only logging (gated by `import.meta.env.DEV`) prints `[Share]` stage labels — `template ready`, `canvas rendered`, `overlay text drawn`, `blob created`, `file validated`, `canShare files`, user-cancel, failures — so the exact failure stage can be identified on-device.
-- **`runFallbackShare(file)` (browser lacks native file sharing)**: downloads the generated `File` as `match-district-tournament.png` (best-effort), then writes the canonical caption (URL included once) to the clipboard and shows an explicit toast — e.g. "Native image sharing is not supported in this browser — card downloaded. The full share text (with link) was copied to your clipboard." Never a modal, never a WhatsApp/Telegram redirect.
+- **Single tap → native share sheet**: `handleShare` in `TournamentDetail.jsx` builds the tournament object from live record data and delegates to the centralized `shareTournament()` in `src/utils/tournamentShare.js`. That function calls `navigator.share({ title, text, url })` exactly once when the API is available. There is **no intermediate step** — no modal, no popup, no bottom sheet, no "Preparing share card…", no image preview, no overlay.
+- **Text only — no images anywhere**: no canvas, no `toBlob`, no `File`, no `files`/`files[]` share field, no Blob URLs, no image MIME types, no card download, no upload. The entire image-generation pipeline is removed (`src/utils/shareCardImage.js` and the `share-template.png` asset are deleted).
+- **Payload** (`shareData` in `tournamentShare.js`): `title` = tournament title, `text` = formatted tournament description (see §12B.2) which already ends with the URL exactly once. **No `url` share field is passed** — `navigator.share({ title, text })` only, so no share target can append a duplicate link.
+- **User cancel is silent**: `AbortError` / `NotAllowedError` from `navigator.share()` return `'aborted'` with **no toast, no error UI**.
+- **Graceful non-native fallback**: if `navigator.share` is unavailable or a genuine share error occurs, the full share text (including the URL exactly once) is copied to the clipboard via `copyShareTextToClipboard()` and `handleShare` shows the small toast **"Tournament link copied"**. No fake/custom share popup is opened, and **no image-related browser error is ever shown**.
+- **Single-shot guard**: `shareInProgressRef` is set at the top of `handleShare` and cleared in `finally`, preventing double invocation from rapid taps, duplicate listeners, event bubbling, or nested buttons. One click → one `navigator.share()` call maximum.
+- **Reusable + dynamic**: `shareTournament()` takes a plain tournament object; values (title, orgName, prize, entry, format, slots, url) are derived from the currently opened tournament's record/state each time it is pressed. Nothing is hardcoded.
 
-### 12B.2 Share Caption (native share `text`)
-Built by **`buildTournamentShareCaption()`** in `src/utils/shareCardImage.js` — the single authoritative caption source; used verbatim by `navigator.share` and by the `runFallbackShare` clipboard write.
+### 12B.2 Shared Text (`formatTournamentShareText` in `src/utils/tournamentShare.js`)
+Built dynamically from the tournament record. Missing optional values are omitted silently; the URL appears **exactly once** (it is not re-appended by the clipboard fallback because the text already contains it):
 ```
-🎮 {title}
+🏆 {title}
 
-🏆 Prize Pool: {prizeDisplay}
-💰 Entry Fee: {entryDisplay}
-👥 Format: {formatLabel} · {perspective}
-🎟️ Slots: {filled}/{total}
-🏢 Organized by: {orgName}
+Organized by {orgName}
+
+💰 Prize Pool: {prize}
+🎟️ Entry Fee: {entry}
+🎮 Format: {matchType} · {perspective}
+👥 Slots: {filled}/{total}
 
 Join the tournament on Match District:
-{window.location.href}
+{url}
 ```
-Rules: missing/empty values (besides title) are omitted silently; the URL appears in the caption **exactly once** and is never passed separately via a `url` share field.
+Example output (values come from the live record, never hardcoded):
+```
+🏆 BGIS 2026
 
-### 12B.3 WhatsApp / Telegram quick actions (removed)
-No custom share popup exists, so there are no in-app WhatsApp/Telegram quick links (the legacy `getShareMessage`, the `handleShareWhatsApp`/`handleShareTelegram` handlers, and the popup rows were removed). On Android/iOS the native share sheet itself lists WhatsApp/Telegram as destinations via the real image attachment. Desktop keeps only the `runFallbackShare` Download + Copy path.
+Organized by Nexus Gaming
+
+💰 Prize Pool: ₹2,304
+🎟️ Entry Fee: ₹40
+🎮 Format: Squad • TPP
+👥 Slots: 1/64
+
+Join the tournament on Match District:
+https://matchdistrict.in/tournaments/TRN-tI8I-LWTX
+```
+
+### 12B.3 No Custom Share UI / No App List
+- The website **never** renders its own list of sharing apps (no WhatsApp/Telegram/Discord rows). Destinations (WhatsApp, Telegram, Discord, Messages, Gmail, etc.) are chosen by the OS/browser native share sheet — exactly what `navigator.share()` provides.
+- Android → Android share sheet; iPhone/iOS → iOS share sheet; desktop browsers → the browser's native Web Share capability when present, otherwise the clipboard copy fallback.
 
 ### 12B.4 UI Placement
-- **Button location**: Hero section title row, right-aligned, directly beside the tournament title `<h1>`.
-- **Icon**: Modern 3-node connected dots SVG (standard share icon pattern), 18×18px, `strokeWidth="1.5"` for thin/professional look. A compact `animate-spin` SVG spinner replaces the icon while the card image is being pre-warmed or a native share is in flight.
-- **Touch target**: `w-9 h-9` (36px) — compact visual aligned with header controls.
-- **Styling**: `text-white/50 → hover:text-white/90 hover:bg-white/8` (dark) / `text-[#FFE082]/60 → hover:text-[#FFE082] hover:bg-[#FFE082]/10` (gold theme). No background by default, no border, no large container. `disabled` + `opacity-60 cursor-default pointer-events-none` applied **only while a native share is actually in flight** (`isSharing`).
-- **Accessibility**: `aria-label="Share tournament"`, `aria-busy={isSharing}` while the native share is in flight.
+- **Button location**: Hero section title row, right-aligned, directly beside the tournament title `<h1>` (visual unchanged).
+- **Icon**: Modern 3-node connected dots SVG (standard share icon pattern), 18×18px, `strokeWidth="1.5"`. No spinner state (nothing is generated client-side before sharing).
+- **Touch target**: `w-9 h-9` (36px).
+- **Styling**: `text-white/50 → hover:text-white/90 hover:bg-white/8` (dark) / `text-[#FFE082]/60 → hover:text-[#FFE082] hover:bg-[#FFE082]/10` (gold theme). No background, no border, no disabled state.
+- **Accessibility**: `aria-label="Share tournament"`.
 
-### 12B.5 Dynamic Tournament Card Image (`src/utils/shareCardImage.js`)
-
-A client-side canvas-based renderer generates a **fixed 1080×1536 (5:7 portrait) PNG** for every tournament by rendering the **same locked master template image** (`src/assets/share-template.png`, native 1024×1536, drawn to fill 1080×1536 — zero vertical crop, ~5% horizontal enlargement since heights match) and overlaying only the current tournament's data. The supplied asset is the **fixed background/branding source of truth** — it is never cropped, recolored, redesigned, or regenerated; its embedded Match District logo is official and untouched. The template must look identical for every tournament; only data changes.
-
-**Rendering pipeline (spec §18)** — all drawing happens on top of the untouched template:
-1. `ensureShareTemplateReady()` — resolves a module-level promise once the template `Image` (`import ... share-template.png`, Vite-hashed same-origin asset) is loaded; pre-loaded at module import time and awaited internally by the generator. **`crossOrigin` is never set on the same-origin template** — setting it turns the fetch into a CORS request that many dev/static servers fail (this was the root cause of "Card could not be generated."); same-origin images never taint the canvas. The loader has a 6s stall-guard for browsers that never fire `load`/`error`, **never resolves true from a failed/stalled load** (`naturalWidth === 0`), and **failed outcomes are not cached** so a Retry genuinely reloads the asset. Errors carry `CARD_` codes: `CARD_TEMPLATE_LOAD_FAILED`, `CARD_CANVAS_FAILED`, `CARD_DRAW_FAILED` (with `cause`), `CARD_TO_BLOB_FAILED`, `CARD_FILE_CREATION_FAILED`.
-2. `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, url })` — **async**: awaits template readiness, creates a 1080×1536 canvas, draws the template at (0,0) via `ctx.drawImage(templateImg, 0, 0, 1080, 1536)`, renders the overlay, then flattens via `canvasToBlob()` (Promise-wrapped `canvas.toBlob('image/png')`, rejects on null/empty blob) and returns a **validated `File`** (`instanceof File`, `size > 0`, `type === 'image/png'`).
-3. Render helpers (kept as separate functions for maintainability): `renderTournamentTitle`, `renderOrganizer` (+ `renderGameChip`), `renderStatItem`/`renderStats`, `renderURL`.
-4. If the template cannot be loaded at all, generation **throws** ("tournament share card template could not be loaded") so the caller honestly falls back to text sharing — the card is never silently rendered without its artwork. (Asset is same-origin/bundled, so the canvas is never tainted and `toBlob` always succeeds in normal operation.)
-
-**Fixed coordinate system** (all coordinates relative to 1080×1536, constant `MX` side margin = 90, content width = 900):
-
-| Element | Y baseline | Style |
-|---|---|---|
-| Tournament title | 1080 (single line) / 1016 & 1114 (2 lines) | Centered, 800-weight white metallic gradient (`#FFF → #B9C4DA`) with subtle blue glow halo; auto-size from 78px down to 44px; max 2 lines; `wrapToLines` + `fitEllipsis`; engraved bevel + highlight via `paintText` |
-| `ORGANIZED BY` label | 1240 | Centered, 700-weight 18px metallic muted label (`#E6EDF7 → #93A8C4`), 4px letter-spacing, uppercase |
-| Game chip (right-aligned) | 1240 row | Glass pill (`rgba(20,30,55,0.72)`, blue hairline border, 16px gold letter-spaced `${GAME}`), only when `game` provided |
-| Organizer name | 1280 | Centered, 700-weight white metallic gradient, fits width (30→18px) |
-| Stats labels 1 | 1346 | Centered per column, 700-weight 18px metallic muted, 3px letter-spacing, uppercase |
-| Stats values 1 | 1382 | Centered, 800-weight metallic white (`#FFF → #BFCAE0`); **Prize Pool in gold metallic (`#FFE9A6 → #E08512`) with strong gold glow** (strongest visual emphasis); auto-size 36→22px per 410px column |
-| Stats labels 2 | 1458 | same style |
-| Stats values 2 | 1494 | same style |
-| Tournament URL | 1514 | Centered, 700-weight blue metallic (`#B5D4FF → #4F8FEA`) with blue glow, protocol stripped (`matchdistrict.in/tournaments/XXXX`), 24→16px |
-
-**Typographic treatment (`paintText` helper)** — every dynamic field is drawn "engraved/embedded" into the artwork, never as flat HTML text:
-1. Optional **glow halo** (blue for title/URL, gold for prize, gold for game chip) drawn behind the glyph.
-2. **Deep drop shadow** (blur 16, offsetY 3, `rgba(0,0,0,0.4–0.65)`) for lift.
-3. **Dark bevel** offsets (+1,+1 and +1,+2) under the glyph edge for engraved depth.
-4. **Light top-highlight** offset (−1,−1) at 14% white for a metallic catch-light rim.
-5. **Crisp main fill** with a vertical metallic gradient (`verticalGradient`, no distortion/compression — glyphs are never scaled or skewed).
-
-**Stats 2×2 grid** — left column: **PRIZE POOL** / **FORMAT**; right column: **ENTRY FEE** / **SLOTS**. Columns 410px wide, 80px gap, horizontally centered. Labels above values (LABEL / VALUE rows), rendered as "printed" text — no table borders, no per-field plates. Missing/empty values render `—`. The URL is shown on the card **and** in the share caption.
-
-**Text fitting (spec §17)**: long tournament names reduce font size, then wrap to a max of 2 lines, then ellipsize — never overflow, clip, overlap, or stray beyond the card. Organizer names fit-to-width (30→18px).
-
-**Color rule (spec §8)**: only Match District identity colors — white metallic text, muted `rgba(201,216,230,0.92)` labels, blue `#60A5FA` for the URL accent, and **gold metallic for the Prize Pool value (strongest visual emphasis)** + gold game chip text. Depth/legibility comes from the `paintText` emboss passes (glow halo + deep shadow) — no decorative fonts, no filled plates behind fields.
-
-**Critical constraints honored**:
-- The template is reused identically for every tournament; only `title, orgName, prize, entry, format, slots, game, url` change.
-- The generated image is **not** responsive — always 1080×1536, identical on every device (no devicePixelRatio scaling; the share image is fixed resolution by spec §10).
-- The card is a dedicated composition (template + overlay data), **not** a screenshot of the webpage.
-- No random graphics, no second logo, no extra decorations — the supplied asset stays dominant.
-
-**Exports from `src/utils/shareCardImage.js`**:
-- `generateTournamentShareCard({ title, orgName, prize, entry, format, slots, game, url })` — **async**; one responsibility: flatten template + data into a final PNG and return a validated `File` (never calls `navigator.share()`).
-- `buildTournamentShareCaption({ title, prize, entry, format, slots, orgName, url })` — **pure**; returns the ONE canonical caption string (§12B.2); the URL appears exactly once.
-- `ensureShareTemplateReady()` — `Promise<boolean>`; resolves when the master template image has loaded (awaited internally by the generator).
-- `downloadFile(file, filename)` — Downloads a generated `File` via `URL.createObjectURL()` (object URL revoked after 1s).
-
-**Prewarm lifecycle** (in `TournamentDetail.jsx`):
-- A `useEffect` keyed on `[tourney, orgProfile, slotsData, registrations, prizeDisplay, entryDisplay, slotFilled, slotTotal]` calls `generateTournamentShareCard()` (async) and stores the resulting `File` in `shareCardRef` (a `useRef` capsule). Spinner state is always reset in `.finally()` and when `tourney` is absent, so `shareGenerating` never sticks.
-- `handleShare` does not depend on the prewarm completing: it regenerates the `File` with `await` as a fallback before sharing — the File is always produced before `navigator.share()` runs. The Share button is never disabled by the background prewarm — only `isSharing` (a native share actually in flight) disables it.
-- `shareCardRef.current` persists across re-renders without causing re-renders itself (ref capsule pattern) and is reused by `handleShare` and `runFallbackShare`.
-- **Dynamic data**: title, organizer name, game (chip), prize pool, entry fee, format (match_type · perspective), slots (`{filled}/{total}`), and the live `window.location.href` URL are all derived per-tournament at generation time. Nothing is hardcoded.
-
-**Desktop/old-browser fallback (spec §13–14)** — `runFallbackShare(file)` (only when `navigator.share` is unavailable, `canShare({ files })` is false, the File is invalid, or a real share error occurred): downloads the generated `File` as `match-district-tournament.png` and copies the canonical caption (URL included once) to the clipboard, with an explicit toast. No modal, no WhatsApp/Telegram redirect, no fake share.
+### 12B.5 Centralized Share Module (`src/utils/tournamentShare.js`)
+- `getTournamentShareUrl(tournament)` — returns `tournament.url` if provided, else `${window.location.origin}/tournaments/{id}`, else `window.location.href`.
+- `formatTournamentShareText(tournament)` — **pure**; builds the §12B.2 text (URL exactly once).
+- `copyShareTextToClipboard(shareText, tournamentUrl)` — writes the text (appending the URL only if not already present, so it always stays exactly once) via `navigator.clipboard.writeText()` with a legacy `document.execCommand('copy')` fallback.
+- `shareTournament(tournament)` — **async**; the single authoritative entry point. Builds `shareText` once via `formatTournamentShareText()` and calls `navigator.share({ title, text })` — the `url` field is **never** passed, so the URL appears exactly once (at the bottom of `text`). Returns:
+  - `'shared'` — `navigator.share()` completed (native sheet shown).
+  - `'aborted'` — user cancelled/dismissed the native sheet (silent).
+  - `'copied'` — native sharing unavailable/failed; text + URL copied to clipboard (page shows "Tournament link copied").
+  - `'failed'` — neither native sharing nor clipboard succeeded.
+- The page's `handleShare` maps `'copied'` → toast "Tournament link copied", `'failed'` → "Could not copy the tournament link.", and suppresses toasts for `'shared'`/`'aborted'`.
 
 ### 12B.6 No Custom Share UI
-- The custom share popup/bottom-sheet was **removed entirely** (`showSharePopup`, `sharePreviewUrl`/`sharePreviewError`, `handleDownloadCard`/`handleRetrySharePreview`/`handleCopyLink`/`handleCopyShareText`/`handleShareWhatsApp`/`handleShareTelegram`, and the portaled `createPortal` JSX are gone; `createPortal` import removed, `AnimatePresence` import kept — still used by the photo viewer). No modal, no overlay, no empty popup, no Telegram-only rows can ever render.
-- Native Web Share is the **only** share surface on devices that support it. `runFallbackShare` is the sole non-native path and stays out of the way (download + copy + toast).
+Native Web Share is the **only** share surface. There is no popup, modal, overlay, Telegram-only sheet, download prompt, or fake "share" dialog anywhere in the share flow. `Step9Publish.jsx`'s post-publish WhatsApp/Telegram/Discord quick-links are a separate, self-contained feature and untouched.
 
 ### 12B.7 Endpoints Used
-None — purely client-side. Uses `window.location.href` for the URL, `navigator.clipboard.writeText()` for clipboard, and canvas API for card generation.
+None — purely client-side. Uses `window.location.href` for the URL and `navigator.share()` / `navigator.clipboard.writeText()`. No canvas, file, or image APIs.
 
 ---
 
@@ -2128,3 +2095,6 @@ src/assets/
 | 2026-09-15 | **Root-caused "Card could not be generated."** (Sections 12B.1/12B.5/12B.6): the share-card generator was failing *before* sharing because the template loader set `crossOrigin='anonymous'` on the **same-origin bundled** `share-template.png`. That converts the fetch into a CORS request; when the dev/static server omits `Access-Control-Allow-Origin`, the image load fails even though the asset is same-origin (and would draw + `toBlob` fine). Fixes: (1) **removed `crossOrigin` on the template** — same-origin images never taint the canvas, so `toBlob()` is safe; (2) `ensureShareTemplateReady()` no longer caches a failed outcome — `templateLoadPromise` is reset on failure so the **Retry button genuinely reloads the asset** instead of replaying a poisoned promise; (3) all generator errors now carry `CARD_*` codes (`CARD_TEMPLATE_LOAD_FAILED`, `CARD_CANVAS_FAILED`, `CARD_DRAW_FAILED` with `cause`, `CARD_TO_BLOB_FAILED`, `CARD_FILE_CREATION_FAILED`); (4) `sharePreviewError` now holds the real error message and the fallback popup displays it verbatim in dev (console `[Share]` logs too, incl. new `overlay text drawn` stage) — no more hiding behind a generic message; (5) download + retry paths surface the identical detail. Build + lint clean (`shareCardImage.js` 0 errors; TournamentDetail baseline 45 errors / 1 warning unchanged). | System |
 | 2026-09-15 | **Eliminated "stuck at Preparing share card…"** (Sections 12B.1/12B.4/12B.5/12B.6): (1) `generateTournamentShareCard()` is hard-capped by a **15s `Promise.race` timeout** (`SHARE_GEN_TIMEOUT_MS`), so a stalled template load / `toBlob` can never leave the spinner running indefinitely; template stall-guard tightened to 6s (+ one 6s retry); (2) the fallback popup now has a real failure state — `sharePreviewError` + **Retry** button (`handleRetrySharePreview`) replacing the infinite "Preparing share card…" placeholder; (3) every `setShareGenerating(true)` site (prewarm effect, popup eager-generate effect, `handleDownloadCard`, retry) clears the flag in `finally` or effect cleanup, and `handleShare`'s `finally` resets `shareGenerating`/`isSharing`/`shareInProgressRef` as belt-and-suspenders; (4) the Share button is disabled **only during an actual native share** (`isSharing`) — background prewarm can never silently swallow a tap and the button stays usable right up to the share sheet; (5) internal generator refactored into `renderShareCardFile()` with `[Share] stage:` dev logs — `template ready`, `canvas rendered`, `blob created`, `file validated` — plus `getContext('2d')` null check, so the exact stuck stage is greppable from console. Build + lint clean (TournamentDetail baseline 45 errors / 1 warning unchanged — all new code lint-free; `shareCardImage.js` 0 errors). | System |
 | 2026-09-15 | **Removed the custom share popup; native Web Share only** (Sections 12B.1/12B.3/12B.4/12B.5/12B.6): the entire custom share UI is gone — `showSharePopup`, `sharePreviewUrl`/`sharePreviewError`, `handleDownloadCard`/`handleRetrySharePreview`/`handleCopyLink`/`handleCopyShareText`/`handleShareWhatsApp`/`handleShareTelegram`, and the popup JSX (`createPortal` import removed; `AnimatePresence`/`motion` kept — still used by the photo viewer). `handleShare` is now the single authoritative tap path: `text = getShareCaption()` once → if `navigator.share` exists, use the pre-warmed `shareCardRef.current` File (or `await` regenerate) → validate (`instanceof File`, `size > 0`, `image/png`) → `navigator.canShare({ files })` gate → exactly one `await navigator.share({ title, text, files: [file] })` (no `url` key); `AbortError`/`NotAllowedError` silent; any other failure → `runFallbackShare(file)`. New **`runFallbackShare(file)`** (the only non-native path): downloads the exact generated `match-district-tournament.png` and copies the canonical caption to the clipboard with an explicit toast — never a modal, never a WhatsApp/Telegram redirect, never a fake share. Share button spinner shows on `shareGenerating || isSharing`; `disabled`/`aria-busy` only while a native share is in flight. Build clean; `TournamentDetail.jsx` eslint baseline 45 errors / 1 warning unchanged (all removed code was pre-existing baseline anyway; new code lint-free). | System |
+| 2026-09-15 | **Native-share pipeline hardening + honest error classification** (Sections 12B.1/12B.2): (1) root-caused that `navigator.share` / `canShare({files})` availability depends on a **secure context** (`window.isSecureContext`) — on plain HTTP (LAN IP / non-HTTPS host) the API is undefined on every browser, and on desktop Chrome/Edge/Safari file sharing is unsupported (`canShare({files})` false), so the download/copy fallback is the *correct* platform outcome there, not a bug; (2) `handleShare` now classifies every fallback as **A** `A_IMAGE_GENERATION_FAILED` / **B** `B_FILE_SHARING_UNSUPPORTED` / **C** user cancel (silent) / **D** `D_UNKNOWN_SHARE_ERROR`, each loggging `console.warn/error` with `secureContext`, `navigator.share`, `navigator.canShare`, and the exact `File` name/type/size so the fallback reason is never hidden; (3) the toast is honest per class — A says the card failed, B/D says the browser can't attach images and the card+link were provided (the old collapsed "Native image sharing is not supported" message is gone); (4) fixed a **stale-card race**: the prewarm effect now sets `shareCardRef.current = null` whenever its inputs change, so a tap during regeneration can never share the previous tournament's card with a mismatched caption; (5) `buildTournamentShareCaption()` post-normalizes so the tournament URL appears **exactly once** even if an earlier line (title/org) embeds it. Build clean; eslint baseline 45 errors / 1 warning unchanged; `shareCardImage.js` 0 errors. | System |
+| 2026-09-15 | **Removed the image-based sharing system completely; native text-only share** (Sections 12B.1/12B.2/12B.4/12B.5/12B.6): the entire share-card pipeline is gone — `src/utils/shareCardImage.js`, `src/assets/share-template.png`, `generateTournamentShareCard`/`buildTournamentShareCaption`/`downloadFile`/`ensureShareTemplateReady`, the prewarm `useEffect`, `shareCardRef`/`shareGenerating`/`isSharing` state, `runFallbackShare`, and the Share button spinner/`disabled`/`aria-busy`. New centralized **`src/utils/tournamentShare.js`** — `shareTournament(tournament)` (single authoritative entry) → `navigator.share({ title, text, url })` exactly once when available, returning `'shared' | 'aborted' | 'copied' | 'failed'`; `formatTournamentShareText(tournament)` (pure, `🏆`/`Organized by`/`💰`/`🎟️`/`🎮`/`👥` lines, URL exactly once); `getTournamentShareUrl(tournament)`; `copyShareTextToClipboard(shareText, url)` (clipboard + legacy `execCommand`). `handleShare` in `TournamentDetail.jsx` is a thin wrapper with a `shareInProgressRef` one-shot guard; toast only for `'copied'` ("Tournament link copied") / `'failed'`. No image is ever generated, attached, downloaded, uploaded, or referenced; no custom share popup or app list exists; no image-related error strings remain. `Step9Publish.jsx` post-publish WhatsApp/Telegram/Discord text deep-links untouched (separate feature, no images). Build clean; `TournamentDetail.jsx` eslint baseline 45 errors / 1 warning unchanged; new `tournamentShare.js` 0 errors. | System |
+| 2026-09-15 | **Fixed duplicate tournament URL in native share** (Sections 12B.1/12B.5): `shareTournament()` no longer passes a `url` share field to `navigator.share()` — the URL was already present at the bottom of `text`, so `navigator.share({ title, text, url })` let some share targets append a second copy. Now `shareData = { title, text }` only; the URL lives in `formatTournamentShareText()` exactly once. `copyShareTextToClipboard(shareText)` was also simplified to write the exact share text verbatim (the old signature appended `tournamentUrl` when it wasn't already in the text — redundant now, removed). Audited every `navigator.share`/`writeText`/URL-construction site in the sharing flow; the only tournament-URL duplication source was the `url` field in `tournamentShare.js`. Build + lint clean (baseline 45 errors / 1 warning; `tournamentShare.js` 0 errors). | System |

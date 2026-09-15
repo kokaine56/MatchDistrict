@@ -16,7 +16,7 @@ import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
-import { generateTournamentShareCard, buildTournamentShareCaption, downloadFile } from '../utils/shareCardImage.js';
+import { shareTournament } from '../utils/tournamentShare.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
@@ -605,9 +605,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
   const [selectedTier, setSelectedTier] = useState(null);
   const [sponsorStep, setSponsorStep] = useState(1);
-  const [shareGenerating, setShareGenerating] = useState(false);
-  const [isSharing, setIsSharing] = useState(false);
-  const shareCardRef = useRef(null);
   const shareInProgressRef = useRef(false);
 
   // Custom states for premium sponsors cards interaction
@@ -1014,132 +1011,24 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     } catch (e) { triggerToast('Network error submitting contribution.'); } finally { setSponsorSubmitting(false); }
   };
 
-  const getShareCaption = () => {
-    return buildTournamentShareCaption({
-      title: tourney?.title || 'Tournament on Match District',
-      prize: prizeDisplay,
-      entry: entryDisplay,
-      format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
-      slots: `${slotFilled}/${slotTotal}`,
-      orgName: orgProfile?.orgName || tourney?.orgName || '',
-      url: window.location.href
-    });
-  };
-
-  const getShareCardData = () => {
-    return {
-      title: tourney?.title || 'Tournament on Match District',
-      orgName: orgProfile?.orgName || tourney?.orgName || '',
-      prize: prizeDisplay,
-      entry: entryDisplay,
-      format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
-      slots: `${slotFilled}/${slotTotal}`,
-      game: tourney?.game || '',
-      url: window.location.href
-    };
-  };
-
-  const devLog = (...args) => { if (import.meta.env.DEV) console.log('[Share]', ...args); };
-
   const handleShare = async () => {
-    // Exactly one share operation per user action.
-    if (shareInProgressRef.current || isSharing) return;
-
-    // ONE authoritative share text — built once here; the tournament URL appears
-    // exactly once (inside the caption) and is never added anywhere else.
-    const text = getShareCaption();
-    const hasNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-
-    // No native Web Share at all → download/copy fallback (no fake share UI).
-    if (!hasNativeShare) {
-      devLog('native share unavailable → download/copy fallback');
-      shareInProgressRef.current = true;
-      try {
-        let file = shareCardRef.current;
-        if (!file) {
-          try {
-            file = await generateTournamentShareCard(getShareCardData());
-            shareCardRef.current = file;
-          } catch (err) {
-            devLog('fallback card generation failed:', err);
-            file = null;
-          }
-        }
-        await runFallbackShare(file);
-      } finally {
-        shareInProgressRef.current = false;
-      }
-      return;
-    }
-
+    if (shareInProgressRef.current) return;
     shareInProgressRef.current = true;
-    setIsSharing(true);
     try {
-      // Use the pre-warmed File when available (no async work before share → keeps
-      // user activation); otherwise generate now and await it before sharing.
-      let file = shareCardRef.current;
-      if (!file) {
-        file = await generateTournamentShareCard(getShareCardData());
-        shareCardRef.current = file;
-      }
-
-      if (!file || !(file instanceof File) || file.size === 0 || file.type !== 'image/png') {
-        // No valid image → NEVER silently share caption-only; honest fallback.
-        devLog('invalid share file:', file);
-        await runFallbackShare(null);
-        return;
-      }
-
-      const canQueryFiles = typeof navigator.canShare === 'function';
-      const canShareFiles = canQueryFiles ? navigator.canShare({ files: [file] }) : true;
-      devLog('share file:', file.name, file.type, file.size, 'bytes | canShare files:', canShareFiles);
-
-      if (canShareFiles) {
-        // The same generated File is passed directly as a real attachment — on
-        // mobile AND desktop. The OS/app picks the destination (WhatsApp, Telegram,
-        // Instagram, Messages…). No custom UI is ever shown.
-        await navigator.share({ title: tourney?.title || 'Match District Tournament', text, files: [file] });
-        return; // success or user abort — no fallback after a native share
-      }
-
-      // Browser cannot attach files → do NOT pretend the image was shared.
-      devLog('file sharing unsupported → download/copy fallback (image NOT shared)');
-      await runFallbackShare(file);
-    } catch (err) {
-      if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) {
-        // User cancelled/dismissed the native sheet — silent stop.
-        devLog('user cancelled share');
-        return;
-      }
-      devLog('share failed → download/copy fallback', err);
-      await runFallbackShare(shareCardRef.current);
+      const result = await shareTournament({
+        id: tourney?.id || tournamentId,
+        title: tourney?.title || 'Tournament on Match District',
+        orgName: orgProfile?.orgName || tourney?.orgName || '',
+        prize: prizeDisplay,
+        entry: entryDisplay,
+        format: `${formatLabel(tourney?.match_type)} · ${(tourney?.perspective || 'TPP').toUpperCase()}`,
+        slots: `${slotFilled}/${slotTotal}`,
+        url: window.location.href
+      });
+      if (result === 'copied') triggerToast('Tournament link copied');
+      else if (result === 'failed') triggerToast('Could not copy the tournament link.');
     } finally {
-      setIsSharing(false);
       shareInProgressRef.current = false;
-      setShareGenerating(false);
-    }
-  };
-
-  // Minimal, non-invasive fallback for browsers without native file sharing.
-  // It never fakes a native share and never pretends the image was shared.
-  const runFallbackShare = async (file) => {
-    if (file) {
-      try {
-        downloadFile(file, 'match-district-tournament.png');
-      } catch (err) {
-        devLog('fallback card download failed', err);
-      }
-    }
-    const copiedMessage = file
-      ? 'Native image sharing is not supported in this browser — card downloaded. The full share text (with link) was copied to your clipboard.'
-      : 'Native image sharing is not supported in this browser — the share text was copied to your clipboard.';
-    try {
-      await navigator.clipboard.writeText(getShareCaption());
-      triggerToast(copiedMessage);
-    } catch {
-      triggerToast(file
-        ? 'Native image sharing is not supported in this browser — card downloaded.'
-        : 'Sharing is not supported in this browser and the clipboard is unavailable.');
     }
   };
 
@@ -1218,34 +1107,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
 
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
-
-  // Pre-warm the shareable tournament card (1080x1536 PNG on the master template) so taps share instantly
-  useEffect(() => {
-    let cancelled = false;
-    if (!tourney) {
-      shareCardRef.current = null;
-      setShareGenerating(false);
-      return undefined;
-    }
-    setShareGenerating(true);
-    generateTournamentShareCard({
-      title: tourney.title || 'Tournament on Match District',
-      orgName: orgProfile?.orgName || tourney.orgName || '',
-      prize: prizeDisplay,
-      entry: entryDisplay,
-      format: `${formatLabel(tourney.match_type)} · ${(tourney.perspective || 'TPP').toUpperCase()}`,
-      slots: `${slotFilled}/${slotTotal}`,
-      game: tourney.game || '',
-      url: window.location.href
-    }).then((file) => {
-      if (!cancelled) shareCardRef.current = file;
-    }).catch(() => {
-      shareCardRef.current = null;
-    }).finally(() => {
-      if (!cancelled) setShareGenerating(false);
-    });
-    return () => { cancelled = true; };
-  }, [tourney, orgProfile, slotsData, registrations, prizeDisplay, entryDisplay, slotFilled, slotTotal]);
 
   const startDateStr = tourney?.startDate ? new Date(tourney.startDate) : null;
   const formattedDate = startDateStr ? formatDate(startDateStr.toISOString()) : '';
@@ -1539,28 +1400,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <button
                         onClick={handleShare}
                         aria-label="Share tournament"
-                        aria-busy={isSharing}
-                        disabled={isSharing}
                         className={`shrink-0 w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
                           isGoldTheme
                             ? 'text-[#FFE082]/60 hover:text-[#FFE082] hover:bg-[#FFE082]/10'
                             : 'text-white/50 hover:text-white/90 hover:bg-white/8'
-                        } ${isSharing ? 'opacity-60 cursor-default pointer-events-none' : ''}`}
+                        }`}
                       >
-                        {(shareGenerating || isSharing) ? (
-                          <svg className="w-[18px] h-[18px] animate-spin" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                            <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="18" cy="5" r="3" />
-                            <circle cx="6" cy="12" r="3" />
-                            <circle cx="18" cy="19" r="3" />
-                            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                          </svg>
-                        )}
+                        <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="18" cy="5" r="3" />
+                          <circle cx="6" cy="12" r="3" />
+                          <circle cx="18" cy="19" r="3" />
+                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                        </svg>
                       </button>
                   </div>
 
