@@ -10,9 +10,70 @@ const FONT_FAMILY = '"Inter","Segoe UI",system-ui,-apple-system,Roboto,"Helvetic
 const TEXT_GOLD = '#FBBF24';
 
 let shareTemplateReady = false;
+let templateLoadPromise = null;
+// IMPORTANT: the template is a same-origin/bundled Vite asset. Do NOT set
+// `crossOrigin` on it — that turns the fetch into a CORS request and many
+// dev/static servers omit Access-Control-Allow-Origin, breaking the load.
+// Same-origin images never taint the canvas, so toBlob() stays safe.
 const templateImg = new Image();
-templateImg.onload = () => { shareTemplateReady = true; };
-templateImg.src = shareTemplateUrl;
+
+/**
+ * Wait for the bundled template asset to fully load. Never resolves `true`
+ * from a failed/stalled load (naturalWidth === 0). Guards against: flaky
+ * mobile networks, dev-server races, and browsers that never fire load/error.
+ */
+function waitForTemplateLoad() {
+  return new Promise((resolve) => {
+    if (shareTemplateReady && templateImg.naturalWidth > 0) {
+      resolve(true);
+      return;
+    }
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (ok && templateImg.naturalWidth > 0) {
+        shareTemplateReady = true;
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    };
+    const onLoad = () => finish(true);
+    const onError = () => finish(false);
+    templateImg.addEventListener('load', onLoad, { once: true });
+    templateImg.addEventListener('error', onError, { once: true });
+
+    // (Re)start the load — idempotent; re-assigning src retries a failed load.
+    templateImg.src = shareTemplateUrl;
+
+    // Stall-guard: if neither event fires, fall back to cached state.
+    window.setTimeout(() => {
+      if (!settled) {
+        finish(templateImg.complete && templateImg.naturalWidth > 0);
+      }
+    }, 6000);
+
+    // Cached instant-load race: browser may have completed before listeners.
+    if (templateImg.complete && templateImg.naturalWidth > 0) {
+      finish(true);
+    }
+  });
+}
+
+export async function ensureShareTemplateReady() {
+  if (shareTemplateReady) {
+    return true;
+  }
+  if (!templateLoadPromise) {
+    templateLoadPromise = waitForTemplateLoad().then((ok) => {
+      // Do NOT cache a failed outcome — a later Retry must reload the asset.
+      if (!ok) templateLoadPromise = null;
+      return ok;
+    });
+  }
+  return templateLoadPromise;
+}
 
 /* ------------------------------------------------------------------ */
 /* Layout constants (fixed 1080×1536 coordinate system)                */
@@ -357,21 +418,27 @@ function renderURL(ctx, url) {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-export function ensureShareTemplateReady() {
-  return new Promise((resolve) => {
-    if (shareTemplateReady) return resolve(true);
-    const onLoad = () => { shareTemplateReady = true; resolve(true); };
-    const onError = () => resolve(false);
-    templateImg.addEventListener('load', onLoad, { once: true });
-    templateImg.addEventListener('error', onError, { once: true });
-    if (templateImg.complete) {
-      shareTemplateReady = true;
-      return resolve(true);
-    }
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob || blob.size === 0) {
+        reject(new Error('Canvas failed to generate image blob'));
+        return;
+      }
+      resolve(blob);
+    }, 'image/png');
   });
 }
 
-export function generateTournamentShareCard({
+const SHARE_GEN_TIMEOUT_MS = 15000;
+const devLog = (...args) => { if (import.meta.env.DEV) console.log('[Share]', ...args); };
+
+/**
+ * Internal generator — flatten template + tournament data into a validated PNG
+ * File. Never calls navigator.share(). Every stage rejects on failure so the
+ * caller can always clear its loading state.
+ */
+async function renderShareCardFile({
   title,
   orgName,
   prize,
@@ -381,45 +448,111 @@ export function generateTournamentShareCard({
   game,
   url
 }) {
+  // The template must be loaded before drawing; the canvas must stay untainted
+  // (asset is same-origin/bundled) so toBlob succeeds.
+  const ready = await ensureShareTemplateReady();
+  if (!ready || templateImg.naturalWidth === 0 || templateImg.naturalHeight === 0) {
+    throw new Error(`CARD_TEMPLATE_LOAD_FAILED: template naturalWidth=${templateImg.naturalWidth}, naturalHeight=${templateImg.naturalHeight}`);
+  }
+  devLog('stage: template ready', templateImg.naturalWidth, 'x', templateImg.naturalHeight);
+
   const canvas = document.createElement('canvas');
   canvas.width = CARD_WIDTH;
   canvas.height = CARD_HEIGHT;
   const ctx = canvas.getContext('2d');
-
-  if (shareTemplateReady && templateImg.naturalWidth > 0) {
-    ctx.drawImage(templateImg, 0, 0, CARD_WIDTH, CARD_HEIGHT);
-  } else {
-    const fb = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT);
-    fb.addColorStop(0, '#0B1020');
-    fb.addColorStop(1, '#1E3A8A');
-    ctx.fillStyle = fb;
-    ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  if (!ctx) {
+    throw new Error('CARD_CANVAS_FAILED: 2D context unavailable');
   }
 
-  renderTournamentTitle(ctx, title);
-  renderOrganizer(ctx, orgName, game);
-  renderStats(ctx, prize, entry, format, slots);
-  renderURL(ctx, url);
+  // Locked master template first, then tournament data on top.
+  ctx.drawImage(templateImg, 0, 0, CARD_WIDTH, CARD_HEIGHT);
+  devLog('stage: canvas rendered', CARD_WIDTH, 'x', CARD_HEIGHT);
 
-  return canvas.toDataURL('image/png');
+  try {
+    renderTournamentTitle(ctx, title);
+    renderOrganizer(ctx, orgName, game);
+    renderStats(ctx, prize, entry, format, slots);
+    renderURL(ctx, url);
+  } catch (err) {
+    throw new Error(`CARD_DRAW_FAILED: ${err?.message || err}`, { cause: err });
+  }
+  devLog('stage: overlay text drawn');
+
+  const blob = await canvasToBlob(canvas);
+  if (!(blob instanceof Blob) || blob.size === 0) {
+    throw new Error('CARD_TO_BLOB_FAILED: empty blob');
+  }
+  devLog('stage: blob created', blob.size, 'bytes');
+
+  const file = new File([blob], 'match-district-tournament.png', {
+    type: 'image/png',
+    lastModified: Date.now()
+  });
+
+  if (!(file instanceof File) || file.size === 0 || file.type !== 'image/png') {
+    throw new Error(`CARD_FILE_CREATION_FAILED: name=${file?.name}, type=${file?.type}, size=${file?.size}`);
+  }
+  devLog('stage: file validated', file.name, file.type, file.size, 'bytes');
+
+  return file;
 }
 
-export function dataURLToFile(dataUrl, filename) {
-  const parts = dataUrl.split(',');
-  const header = parts[0];
-  const mime = (header.match(/:(.*?);/) || ['', 'image/png'])[1];
-  const b64 = atob(parts[1]);
-  const len = b64.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = b64.charCodeAt(i);
-  return new File([bytes], filename, { type: mime });
+/**
+ * Single responsibility: flatten template + tournament data into a final PNG
+ * and return a validated real `File`. Never calls navigator.share().
+ * Hard-capped by SHARE_GEN_TIMEOUT_MS so a stuck template load / toBlob can
+ * never leave the UI showing "Preparing share card…" indefinitely.
+ */
+export function generateTournamentShareCard(data) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => {
+      reject(new Error(`Tournament share card generation timed out after ${SHARE_GEN_TIMEOUT_MS}ms`));
+    }, SHARE_GEN_TIMEOUT_MS);
+  });
+  return Promise.race([renderShareCardFile(data), timeout])
+    .finally(() => window.clearTimeout(timer));
 }
 
-export function downloadDataURL(dataUrl, filename) {
+/**
+ * Single responsibility: build the ONE canonical share caption. The tournament
+ * URL appears exactly once (it is never passed separately to navigator.share).
+ */
+export function buildTournamentShareCaption({
+  title,
+  prize,
+  entry,
+  format,
+  slots,
+  orgName,
+  url
+}) {
+  const lines = [];
+  lines.push(`🎮 ${String(title || 'Tournament on Match District').trim()}`);
+  lines.push('');
+  const pushValue = (emoji, label, value) => {
+    const v = String(value ?? '').trim();
+    if (v && v !== '—') lines.push(`${emoji} ${label}: ${v}`);
+  };
+  pushValue('🏆', 'Prize Pool', prize);
+  pushValue('💰', 'Entry Fee', entry);
+  pushValue('👥', 'Format', format);
+  pushValue('🎟️', 'Slots', slots);
+  const org = String(orgName ?? '').trim();
+  if (org) lines.push(`🏢 Organized by: ${org}`);
+  lines.push('');
+  lines.push('Join the tournament on Match District:');
+  lines.push(String(url || '').trim());
+  return lines.join('\n');
+}
+
+export function downloadFile(file, filename) {
+  const url = URL.createObjectURL(file);
   const a = document.createElement('a');
-  a.href = dataUrl;
+  a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
