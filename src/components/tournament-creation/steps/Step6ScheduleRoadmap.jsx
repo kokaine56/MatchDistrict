@@ -2,8 +2,18 @@ import { useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import RoundEditor from '../RoundEditor'
 import TimelinePreview from '../TimelinePreview'
+import { withReleaseDefaults } from '../../../utils/roomReveal'
 
-const emptyRound = { date: '', time: '', name: '', map: '', qualified: '' }
+const emptyRound = {
+  date: '',
+  time: '',
+  name: '',
+  map: '',
+  qualified: '',
+  id_password_release_mode: 'automatic',
+  id_password_release_offset_minutes: 10,
+  id_password_release_at: ''
+}
 const ROUND_GAP_MINUTES = 45
 
 function nextRoundName(prevName) {
@@ -134,7 +144,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       if (index === 0 && prev.registrationCloseDate) {
         const closeTs = new Date(prev.registrationCloseDate).getTime()
         if (thisTs <= closeTs) {
-          r[index] = { ...updated, date: '', time: '' }
+          r[index] = withReleaseDefaults({ ...updated, date: '', time: '' })
           onChange({ ...prev, roadmap: r })
           return
         }
@@ -142,7 +152,7 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       if (index > 0) {
         const prevTs = getRoundTs(r[index - 1])
         if (prevTs && thisTs <= prevTs) {
-          r[index] = { ...updated, date: '', time: '' }
+          r[index] = withReleaseDefaults({ ...updated, date: '', time: '' })
           onChange({ ...prev, roadmap: r })
           return
         }
@@ -155,9 +165,10 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       const nextTs = getRoundTs(next)
       if (nextTs && nextTs <= thisTs) {
         const reset = { ...next, date: '', time: '' }
-        r[index + 1] = reset
+        r[index + 1] = withReleaseDefaults(reset)
       }
     }
+    r[index] = withReleaseDefaults(r[index])
     onChange({ ...prev, roadmap: r })
   }, [data, onChange])
 
@@ -170,13 +181,14 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
     let preset = { ...emptyRound }
     if (last) {
       const shifted = shiftDateTime(last.date, last.time, ROUND_GAP_MINUTES)
-      preset = {
+      preset = withReleaseDefaults({
+        ...emptyRound,
         date: shifted.date,
         time: shifted.time,
         name: nextRoundName(last.name),
         map: last.map || '',
         qualified: ''
-      }
+      })
     }
 
     onChange({ ...prev, roadmap: [...list, preset] })

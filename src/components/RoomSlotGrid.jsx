@@ -149,10 +149,9 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Slot #</th>
+                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Slots</th>
                   <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Name</th>
-                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Leader</th>
-                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">Status</th>
+                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">Team Leader</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -160,25 +159,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
                   <tr key={entry.slotNumber} className="hover:bg-slate-50 transition-colors">
                     <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">Slot {entry.slotNumber}</td>
                     <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{entry.teamName}</td>
-                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{entry.captain}</td>
-                    <td className="py-2.5 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          entry.status === 'occupied'
-                            ? 'bg-red-50 text-red-600 border border-red-200'
-                            : entry.status === 'confirmed'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-amber-50 text-amber-600 border border-amber-200 animate-pulse'
-                        }`}
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            entry.status === 'occupied' ? 'bg-red-500' : entry.status === 'confirmed' ? 'bg-emerald-500' : 'bg-amber-500'
-                          }`}
-                        />
-                        {entry.status === 'occupied' ? 'Approved' : entry.status === 'confirmed' ? 'Confirmed' : 'Pending'}
-                      </span>
-                    </td>
+                    <td className="py-2.5 text-slate-600 whitespace-nowrap">{entry.captain}</td>
                   </tr>
                 ))}
               </tbody>

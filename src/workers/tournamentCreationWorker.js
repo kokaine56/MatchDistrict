@@ -100,7 +100,10 @@ self.onmessage = (e) => {
         date: dateStr,
         time: timeStr,
         map: maps[(i - 1) % maps.length],
-        qualify: qualifyText
+        qualify: qualifyText,
+        id_password_release_mode: 'automatic',
+        id_password_release_offset_minutes: 10,
+        id_password_release_at: ''
       });
     }
 
