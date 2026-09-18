@@ -272,6 +272,20 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
         </div>
       </div>
 
+      {data.rounds_published === false && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+          <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-amber-500">Rounds hidden</p>
+            <p className="text-xs text-amber-400/80 mt-1">
+              Your tournament will go live without the match schedule. Players will see &quot;Rounds will be published soon.&quot; until you publish the rounds from your tournament management dashboard.
+            </p>
+          </div>
+        </div>
+      )}
+
       {publishErrorMsg && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}

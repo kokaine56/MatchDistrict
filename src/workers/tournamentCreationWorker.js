@@ -101,9 +101,8 @@ self.onmessage = (e) => {
         time: timeStr,
         map: maps[(i - 1) % maps.length],
         qualify: qualifyText,
-        id_password_release_mode: 'automatic',
-        id_password_release_offset_minutes: 10,
-        id_password_release_at: ''
+        room_id: '',
+        room_password: ''
       });
     }
 

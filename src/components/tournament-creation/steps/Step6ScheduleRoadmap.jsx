@@ -10,9 +10,8 @@ const emptyRound = {
   name: '',
   map: '',
   qualified: '',
-  id_password_release_mode: 'automatic',
-  id_password_release_offset_minutes: 10,
-  id_password_release_at: ''
+  room_id: '',
+  room_password: ''
 }
 const ROUND_GAP_MINUTES = 45
 
@@ -46,6 +45,7 @@ export const validateStep6 = (data) => {
   if (!data) return { regOpen: 'Form data is not available' }
   const errors = {}
   const { registrationOpenDate, registrationCloseDate, roadmap } = data
+  const roundsPublishing = data.rounds_published !== false
 
   if (!registrationOpenDate) errors.regOpen = 'Registration open date is required'
   if (!registrationCloseDate) errors.regClose = 'Registration close date is required'
@@ -56,8 +56,8 @@ export const validateStep6 = (data) => {
   }
 
   if (!roadmap || roadmap.length === 0) {
-    errors.roadmap = 'At least one round is required'
-  } else {
+    if (roundsPublishing) errors.roadmap = 'At least one round is required'
+  } else if (roundsPublishing) {
     const roundErrors = []
     roadmap.forEach((r, i) => {
       const err = {}
@@ -245,6 +245,62 @@ export default function Step6ScheduleRoadmap({ data, onChange, errors, showAllEr
       animate={{ opacity: 1 }}
       className="w-full max-w-2xl mx-auto space-y-8 pb-8"
     >
+      {/* Section: Round Publication */}
+      <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 space-y-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-on-background">Round Publication</h3>
+            <p className="text-xs text-on-surface-variant/60 mt-0.5">Control when players see your tournament rounds</p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-1.5 p-1.5 rounded-xl bg-surface/60 border border-outline-variant/30">
+          <button
+            type="button"
+            onClick={() => onChange({ ...data, rounds_published: true })}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              data.rounds_published !== false
+                ? 'bg-primary text-white shadow-[0_0_16px_rgba(59,130,246,0.3)]'
+                : 'text-on-surface-variant hover:text-on-background hover:bg-surface'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            Publish Rounds
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ ...data, rounds_published: false })}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              data.rounds_published === false
+                ? 'bg-primary text-white shadow-[0_0_16px_rgba(59,130,246,0.3)]'
+                : 'text-on-surface-variant hover:text-on-background hover:bg-surface'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+              <line x1="1" y1="1" x2="23" y2="23" />
+            </svg>
+            Publish Later
+          </button>
+        </div>
+
+        <div>
+          <p className="text-xs leading-relaxed text-on-surface-variant/70">
+            {data.rounds_published === false
+              ? 'Players will see a "Rounds will be published soon." note instead of the roadmap. You can publish your rounds anytime later from your tournament management page.'
+              : 'Your rounds will be visible to players on the tournament page as soon as the tournament goes live.'}
+          </p>
+        </div>
+      </div>
+
       {/* Section: Registration Window */}
       <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 space-y-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-3">

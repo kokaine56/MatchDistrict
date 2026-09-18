@@ -45,6 +45,22 @@ function getStatus(s, isDraft) {
   return s
 }
 
+function getRoundsFromTournament(t) {
+  let timeline = t.timeline
+  if (typeof timeline === 'string') {
+    try { timeline = JSON.parse(timeline) } catch { timeline = null }
+  }
+  return Array.isArray(timeline?.roadmap) ? timeline.roadmap : []
+}
+
+function roundsReadyToPublish(t) {
+  const rounds = getRoundsFromTournament(t)
+  if (rounds.length === 0) return { ok: false, message: 'Add at least one round before publishing.' }
+  const incomplete = rounds.find((r) => !r.date || !r.time)
+  if (incomplete) return { ok: false, message: 'Every round needs a date and time before publishing.' }
+  return { ok: true }
+}
+
 function getGameIcon(game) {
   const map = {
     'bgmi': '/images/games/bgmi.png',
@@ -266,6 +282,30 @@ export default function TournamentManagement({ onNavigate }) {
           setActiveTournament(t)
           fetchRegistrations(t.id)
           break
+        case 'publish-rounds': {
+          const ready = roundsReadyToPublish(t)
+          if (!ready.ok) { showToast(ready.message, 'error'); break }
+          res = await fetch(`/api/tournaments/${t.id}`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ rounds_published: true })
+          })
+          json = await res.json()
+          if (json.success) { showToast('Rounds published'); fetchTournaments() }
+          else showToast(json.message || 'Failed to publish rounds', 'error')
+          break
+        }
+        case 'hide-rounds': {
+          res = await fetch(`/api/tournaments/${t.id}`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({ rounds_published: false })
+          })
+          json = await res.json()
+          if (json.success) { showToast('Rounds hidden'); fetchTournaments() }
+          else showToast(json.message || 'Failed to hide rounds', 'error')
+          break
+        }
       }
     } catch (err) {
       showToast('Action failed: ' + err.message, 'error')
@@ -534,6 +574,12 @@ export default function TournamentManagement({ onNavigate }) {
                                         {!t.isDraft && <MenuButton icon="users" label="Registrations" onClick={() => { setMenuOpenId(null); handleAction('registrations', t) }} />}
                                         {!t.isDraft && t.sponsors_enabled && <MenuButton icon="star" label="Sponsors" onClick={() => { setMenuOpenId(null); handleAction('sponsors', t) }} />}
                                         {!t.isDraft && <MenuButton icon="chart" label="Analytics" onClick={() => { setMenuOpenId(null); handleAction('analytics', t) }} />}
+                                        {!t.isDraft && t.status !== 'archived' && t.status !== 'completed' && t.rounds_published === false && (
+                                          <MenuButton icon="eye" label="Publish Rounds" onClick={() => { setMenuOpenId(null); handleAction('publish-rounds', t) }} />
+                                        )}
+                                        {!t.isDraft && t.status !== 'archived' && t.status !== 'completed' && t.rounds_published !== false && (
+                                          <MenuButton icon="eyeOff" label="Hide Rounds" onClick={() => { setMenuOpenId(null); handleAction('hide-rounds', t) }} />
+                                        )}
                                         <MenuButton icon="duplicate" label="Duplicate" onClick={() => { setMenuOpenId(null); handleAction('duplicate', t) }} />
                                         {!t.isDraft && t.status !== 'archived' && <MenuButton icon="archive" label="Archive" onClick={() => { setMenuOpenId(null); handleAction('archive', t) }} />}
                                         <MenuButton icon="trash" label="Delete" onClick={() => { setMenuOpenId(null); handleAction('delete', t) }} danger />
@@ -929,6 +975,7 @@ function RegistrationManager({
 function MenuButton({ icon, label, onClick, danger }) {
   const icons = {
     eye: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z',
+    eyeOff: 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18',
     edit: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     copy: 'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z',
     users: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z',

@@ -55,7 +55,31 @@ function emptyForm() {
     max_slots_per_room: '',
     unique_amount_suffix_enabled: false,
     card_color: 'white',
+    rounds_published: true,
   }
+}
+
+function roundOrderingErrors(data) {
+  const errs = {}
+  const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
+  data.roadmap.forEach((r, i) => {
+    if (!r.date || !r.time) return
+    const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
+    if (isNaN(rTs)) return
+    if (i === 0 && closeTs && rTs <= closeTs) {
+      errs.startDate = 'Round 1 must start after registration closes.'
+    }
+    if (i > 0) {
+      const prev = data.roadmap[i - 1]
+      if (prev.date && prev.time) {
+        const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
+        if (!isNaN(prevTs) && rTs <= prevTs) {
+          errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
+        }
+      }
+    }
+  })
+  return errs
 }
 
 function validateStep(step, data, planLimits, orgName, userTier, userRole) {
@@ -125,26 +149,9 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
         errs.registrationCloseDate = 'Must be after registration opens.'
       }
       if (!data.roadmap || data.roadmap.length === 0) {
-        errs.roadmap = 'At least one round is required.'
+        if (data.rounds_published !== false) errs.roadmap = 'At least one round is required.'
       } else {
-        const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
-        data.roadmap.forEach((r, i) => {
-          if (!r.date || !r.time) return
-          const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
-          if (isNaN(rTs)) return
-          if (i === 0 && closeTs && rTs <= closeTs) {
-            errs.startDate = 'Round 1 must start after registration closes.'
-          }
-          if (i > 0) {
-            const prev = data.roadmap[i - 1]
-            if (prev.date && prev.time) {
-              const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
-              if (!isNaN(prevTs) && rTs <= prevTs) {
-                errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
-              }
-            }
-          }
-        })
+        if (data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
       }
       break
     }
@@ -166,26 +173,9 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
         errs.registrationCloseDate = 'Registration close must be after registration opens.'
       }
       if (!data.roadmap || data.roadmap.length === 0) {
-        errs.roadmap = 'At least one round is required.'
+        if (data.rounds_published !== false) errs.roadmap = 'At least one round is required.'
       } else {
-        const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
-        data.roadmap.forEach((r, i) => {
-          if (!r.date || !r.time) return
-          const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
-          if (isNaN(rTs)) return
-          if (i === 0 && closeTs && rTs <= closeTs) {
-            errs.startDate = 'Round 1 must start after registration closes.'
-          }
-          if (i > 0) {
-            const prev = data.roadmap[i - 1]
-            if (prev.date && prev.time) {
-              const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
-              if (!isNaN(prevTs) && rTs <= prevTs) {
-                errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
-              }
-            }
-          }
-        })
+        if (data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
       }
       if (!data.cover_image_url) errs.cover_image_url = 'Cover image required. Please upload a banner in the Media step.'
       if (!data.slotsTotal || parseInt(data.slotsTotal) < 2) errs.slotsTotal = 'Minimum 2 slots required.'
@@ -333,6 +323,7 @@ export default function CreationWizard() {
           max_slots_per_room: t.max_slots_per_room ? String(t.max_slots_per_room) : '',
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
           card_color: t.card_color || 'white',
+          rounds_published: t.rounds_published !== false && t.rounds_published !== 'false',
         })
         setDraftId(id)
       }
@@ -428,6 +419,7 @@ export default function CreationWizard() {
         max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
         unique_amount_suffix_enabled: formData.unique_amount_suffix_enabled || false,
         card_color: formData.card_color || 'white',
+        rounds_published: formData.rounds_published !== false,
       }
 
       // Use pre-uploaded Cloudinary URL from Step9Publish if provided

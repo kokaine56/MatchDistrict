@@ -479,6 +479,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS card_color VARCHAR(50) DEFAULT 'white';
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rounds_published BOOLEAN DEFAULT true;
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
@@ -1092,6 +1093,79 @@ function hasRole(user, targetRole) {
   const roles = getUserRoles(user);
   if (roles.includes(ROLES.ADMIN)) return true;
   return roles.includes(targetRole);
+}
+
+// Strictly coerce true/false/1/0/'true'/'false' to a boolean, otherwise return fallback.
+function coerceBool(v, fallback) {
+  if (v === true || v === 1 || v === 'true') return true;
+  if (v === false || v === 0 || v === 'false') return false;
+  return fallback;
+}
+
+// ── Per-round room credentials (server-enforced reveal) ──
+const ROUND_RELEASE_OFFSET_MINUTES = 15;
+
+// Effective release timestamp = round start - 15 minutes (naive local, same convention as the app).
+function roundReleaseEpoch(round) {
+  if (!round || !round.date || !/^\d{4}-\d{2}-\d{2}$/.test(round.date) ||
+      !round.time || !/^\d{2}:\d{2}$/.test(round.time)) return null;
+  const startMs = new Date(`${round.date}T${round.time}`).getTime();
+  if (isNaN(startMs)) return null;
+  return startMs - ROUND_RELEASE_OFFSET_MINUTES * 60 * 1000;
+}
+
+// Never send unreleased / unauthorized round credentials to clients.
+// Owner (or admin) always sees values; registered teams see them only after release;
+// everyone else gets null values plus non-sensitive metadata for the UI.
+function sanitizeTimelineForUser(timelineRaw, opts = {}) {
+  if (!timelineRaw) return timelineRaw;
+  let parsed;
+  try {
+    parsed = typeof timelineRaw === 'string' ? JSON.parse(timelineRaw) : timelineRaw;
+  } catch {
+    return timelineRaw;
+  }
+  if (!parsed || typeof parsed !== 'object') return timelineRaw;
+  const isArray = Array.isArray(parsed);
+  const roadmap = isArray ? parsed : (Array.isArray(parsed.roadmap) ? parsed.roadmap : []);
+  if (roadmap.length === 0) return timelineRaw;
+  const now = Date.now();
+  const isOwner = opts.isOwner === true;
+  const isRegistered = opts.isRegistered === true;
+  const scrubbed = roadmap.map((r) => {
+    const round = { ...r };
+    const releaseEpoch = roundReleaseEpoch(round);
+    const released = releaseEpoch !== null && now >= releaseEpoch;
+    const configured = Boolean(String(round.room_id || '').trim()) || Boolean(String(round.room_password || '').trim());
+    const granted = isOwner || (isRegistered && released);
+    if (!granted) {
+      round.room_id = null;
+      round.room_password = null;
+    }
+    round.room_credentials_configured = configured;
+    round.release_available = released;
+    round.has_room_credentials = configured;
+    return round;
+  });
+  const next = isArray ? scrubbed : { ...parsed, roadmap: scrubbed };
+  return JSON.stringify(next);
+}
+
+// Does this user hold an active registration for a tournament?
+async function isRegisteredForTournament(tournamentId, userId) {
+  if (!tournamentId || !userId) return false;
+  try {
+    const result = await pool.query(
+      `SELECT 1 FROM tournament_registrations
+       WHERE tournament_id = $1 AND user_id = $2
+         AND status IN ('pending', 'pending_payment', 'approved', 'confirmed')
+       LIMIT 1`,
+      [tournamentId, userId]
+    );
+    return result.rows.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -3090,6 +3164,7 @@ const server = http.createServer(async (req, res) => {
         const totalPrize = basePrize + sponsorRevenue;
         return {
           ...r,
+          timeline: sanitizeTimelineForUser(r.timeline),
           cover_image_url: r.cover_image_url || '',
           orgName: r.orgName || r.userOrgName || r.userName || 'Match District Organizer',
           orgLogo: r.orgLogo || r.userOrgImage || '',
@@ -3147,6 +3222,17 @@ const server = http.createServer(async (req, res) => {
       delete row.userOrgName;
       delete row.userOrgImage;
       delete row.userName;
+      // Sanitize per-round credentials: owner/admin always; registered teams only after release.
+      let detailOwner = false;
+      let detailRegistered = false;
+      const detailAuth = getAuthUser(req);
+      if (detailAuth) {
+        detailOwner = detailAuth.id === row.orgId || hasRole(detailAuth, ROLES.ADMIN);
+        if (!detailOwner) {
+          detailRegistered = await isRegisteredForTournament(row.id, detailAuth.id);
+        }
+      }
+      row.timeline = sanitizeTimelineForUser(row.timeline, { isOwner: detailOwner, isRegistered: detailRegistered });
       // Compute sponsor contributions
       let sponsorRevenue = 0;
       let hasApprovedSponsors = false;
@@ -3235,10 +3321,10 @@ const server = http.createServer(async (req, res) => {
               match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
               prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url,
               lobby_start_time, mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions,
-              sponsors_enabled, max_slots_per_room, card_color
+              sponsors_enabled, max_slots_per_room, card_color, rounds_published
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
               $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55)
+              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56)
             RETURNING *`,
             [
               tournamentId, t.title, t.game, 'live', 'bg-primary', 'LIVE', now.toISOString(),
@@ -3256,7 +3342,7 @@ const server = http.createServer(async (req, res) => {
               t.mvp_enabled || false, t.mvp_amount ? parseInt(t.mvp_amount) : 0,
               t.kill_reward_enabled || false, t.kill_reward_per_kill ? parseInt(t.kill_reward_per_kill) : 0,
               t.prize_positions || '[]', t.sponsors_enabled || false, maxSlotsPerRoom,
-              t.card_color || 'white'
+              t.card_color || 'white', coerceBool(t.rounds_published, true)
             ]
           );
           const createdTournament = dbRes.rows[0];
@@ -3361,9 +3447,9 @@ const server = http.createServer(async (req, res) => {
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
             mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room,
-            unique_amount_suffix_enabled, card_color
+            unique_amount_suffix_enabled, card_color, rounds_published
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -3383,7 +3469,8 @@ const server = http.createServer(async (req, res) => {
             description = COALESCE(EXCLUDED.description, tournaments.description),
             max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room),
             unique_amount_suffix_enabled = COALESCE(EXCLUDED.unique_amount_suffix_enabled, tournaments.unique_amount_suffix_enabled),
-            card_color = COALESCE(EXCLUDED.card_color, tournaments.card_color)
+            card_color = COALESCE(EXCLUDED.card_color, tournaments.card_color),
+            rounds_published = COALESCE(EXCLUDED.rounds_published, tournaments.rounds_published)
           RETURNING *`,
           [
             t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -3441,7 +3528,8 @@ const server = http.createServer(async (req, res) => {
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : false,
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
             t.unique_amount_suffix_enabled || false,
-            t.card_color || 'white'
+            t.card_color || 'white',
+            coerceBool(t.rounds_published, true)
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${t.id}" created in Supabase PostgreSQL.\n`);
@@ -3462,6 +3550,78 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: true, tournament: createdTournament }));
       } catch (err) {
         console.warn('⚠️ [MATCH DISTRICT DB] Supabase create tournament failed:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7g. Supabase Update Tournament Service
+  // 7g-0. PUT /api/tournaments/:id/rounds/:index/credentials — organizer manages per-round room credentials (must precede generic PUT)
+  const roundCredsMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/(\d+)\/credentials$/);
+  if (roundCredsMatch && req.method === 'PUT') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+          return;
+        }
+        const tId = decodeURIComponent(roundCredsMatch[1]);
+        const roundIndex = parseInt(roundCredsMatch[2], 10);
+
+        const existRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
+        if (existRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        const existing = existRes.rows[0];
+        if (!hasRole(authUser, ROLES.ADMIN) && existing.orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+          return;
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const roomId = typeof payload.room_id === 'string' ? payload.room_id.trim() : '';
+        const roomPassword = typeof payload.room_password === 'string' ? payload.room_password.trim() : '';
+        for (const v of [roomId, roomPassword]) {
+          if (v.length > 80) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Room ID / password must be at most 80 characters.' }));
+            return;
+          }
+          if (v && /[\u0000-\u001f]/.test(v)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'Room ID / password contains invalid characters.' }));
+            return;
+          }
+        }
+
+        let parsed = {};
+        try { parsed = existing.timeline ? JSON.parse(existing.timeline) : {}; } catch { parsed = {}; }
+        if (!parsed || typeof parsed !== 'object') parsed = {};
+        const existingArr = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.roadmap) ? parsed.roadmap : []);
+        if (!Array.isArray(existingArr) || roundIndex < 0 || roundIndex >= existingArr.length) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ROUND_NOT_FOUND', message: 'Round not found.' }));
+          return;
+        }
+        const updatedRound = { ...(existingArr[roundIndex] || {}), room_id: roomId, room_password: roomPassword };
+        existingArr[roundIndex] = updatedRound;
+        const updatedTimeline = Array.isArray(parsed) ? existingArr : { ...parsed, roadmap: existingArr };
+        await pool.query(
+          'UPDATE tournaments SET timeline = $1, version = version + 1 WHERE id = $2',
+          [JSON.stringify(updatedTimeline), tId]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, round: updatedRound }));
+      } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
@@ -3565,8 +3725,9 @@ const server = http.createServer(async (req, res) => {
               sponsors_enabled = COALESCE($47, sponsors_enabled),
               max_slots_per_room = COALESCE($48, max_slots_per_room),
               unique_amount_suffix_enabled = COALESCE($49, unique_amount_suffix_enabled),
-              card_color = COALESCE($50, card_color)
-            WHERE id = $51 RETURNING *`,
+              card_color = COALESCE($50, card_color),
+              rounds_published = COALESCE($51, rounds_published)
+            WHERE id = $52 RETURNING *`,
             [
               t.title || null,
               t.game || null,
@@ -3616,7 +3777,9 @@ const server = http.createServer(async (req, res) => {
               t.prize_positions || null,
               t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
               t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
-              t.unique_amount_suffix_enabled || false,
+              t.unique_amount_suffix_enabled !== undefined ? !!t.unique_amount_suffix_enabled : null,
+              t.card_color || null,
+              t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null,
               id
             ]
           );
@@ -3795,7 +3958,8 @@ const server = http.createServer(async (req, res) => {
             sponsors_enabled = COALESCE($51, sponsors_enabled),
             max_slots_per_room = COALESCE($52, max_slots_per_room),
             unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled),
-            card_color = COALESCE($54, card_color)
+            card_color = COALESCE($54, card_color),
+            rounds_published = COALESCE($56, rounds_published)
            WHERE id = $55 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
@@ -3850,9 +4014,10 @@ const server = http.createServer(async (req, res) => {
             t.prize_positions !== undefined ? t.prize_positions : null,
             t.sponsors_enabled !== undefined ? t.sponsors_enabled : null,
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
-            t.unique_amount_suffix_enabled || false,
+            t.unique_amount_suffix_enabled !== undefined ? !!t.unique_amount_suffix_enabled : null,
             t.card_color || null,
-            id
+            id,
+            t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${id}" updated in Supabase PostgreSQL.\n`);
@@ -4019,7 +4184,7 @@ const server = http.createServer(async (req, res) => {
           prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd,
           prize_split_mvp, description, cover_image_url, lobby_start_time,
           mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill,
-          prize_positions, sponsors_enabled
+          prize_positions, sponsors_enabled, rounds_published
         ) SELECT
           $1, title, game, 'draft', 'bg-primary', 'DRAFT', '', prize, entry, '0',
           false, "orgName", "orgLogo", "orgHandle", "orgMotto",
@@ -4030,7 +4195,7 @@ const server = http.createServer(async (req, res) => {
           prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd,
           prize_split_mvp, description, cover_image_url, lobby_start_time,
           mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill,
-          prize_positions, sponsors_enabled
+          prize_positions, sponsors_enabled, rounds_published
         FROM tournaments WHERE id = $3 RETURNING *`,
         [newId, authUser.id, srcId]
       );
@@ -5969,17 +6134,24 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     try {
       const tId = roadmapGetMatch[1];
-      const dbRes = await pool.query('SELECT timeline FROM tournaments WHERE id = $1', [tId]);
+      const dbRes = await pool.query('SELECT timeline, "orgId" FROM tournaments WHERE id = $1', [tId]);
       if (dbRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      const raw = dbRes.rows[0].timeline;
+      const rowRoadmap = dbRes.rows[0];
+      const authUser = getAuthUser(req);
+      let owner = false;
+      if (authUser) {
+        owner = authUser.id === rowRoadmap.orgId || hasRole(authUser, ROLES.ADMIN);
+      }
+      const raw = rowRoadmap.timeline;
       const parsed = raw ? JSON.parse(raw) : {};
       const roadmap = Array.isArray(parsed) ? parsed : (parsed.roadmap || []);
+      const scrubbed = sanitizeTimelineForUser(JSON.stringify({ roadmap }), { isOwner: owner });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, roadmap }));
+      res.end(JSON.stringify({ success: true, roadmap: scrubbed ? JSON.parse(scrubbed).roadmap : roadmap }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));

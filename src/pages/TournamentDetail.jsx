@@ -19,6 +19,7 @@ import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
+import { isSystemAdmin } from '../utils/iamRoles.js';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -241,7 +242,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       .channel(`tournament-detail-${tournamentId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tournaments' }, (payload) => {
         if (payload.eventType === 'INSERT') setTournamentsList(prev => prev.some(t => t.id === payload.new.id) ? prev : [...prev, payload.new]);
-        else if (payload.eventType === 'UPDATE') { setTournamentsList(prev => prev.map(t => t.id === payload.new.id ? payload.new : t)); if (payload.new.id === tournamentId) setTournamentRow(payload.new); }
+        else if (payload.eventType === 'UPDATE') {
+          if (payload.new.id === tournamentId) loadTournament();
+          else setTournamentsList(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
+        }
         else if (payload.eventType === 'DELETE') setTournamentsList(prev => prev.filter(t => t.id !== payload.old.id));
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tournament_registrations', filter: `tournament_id=eq.${tournamentId}` }, (payload) => {
@@ -268,9 +272,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         }
       });
     return () => { supabase.removeChannel(channel); };
-  }, [tournamentId, fetchRegistrations, fetchSlots]);
+  }, [tournamentId, fetchRegistrations, fetchSlots, loadTournament]);
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
+  const isTournamentOwner = useMemo(
+    () => Boolean(currentUser && tourney && (currentUser.id === tourney.orgId || isSystemAdmin(currentUser))),
+    [currentUser, tourney]
+  );
   const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
 
   // Fetch organizer profile + follower count when tourney loads
@@ -455,7 +463,31 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return status === 'approved' || status === 'confirmed';
   }, [myRoster]);
 
-  const triggerToast = (msg) => { setToastMessage(msg); setShowToast(true); setTimeout(() => setShowToast(false), 4000); };
+  const triggerToast = useCallback((msg) => { setToastMessage(msg); setShowToast(true); setTimeout(() => setShowToast(false), 4000); }, []);
+
+  const handleSaveRoundCredentials = useCallback(async (roundIndex, roomId, roomPassword) => {
+    if (!tournamentId || roundIndex == null) return;
+    try {
+      const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/${roundIndex}/credentials`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ room_id: roomId || '', room_password: roomPassword || '' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.success) {
+        triggerToast('Room credentials saved');
+        setTournamentRow(null);
+        loadTournament();
+      } else {
+        triggerToast(data.message || data.error || 'Could not save room credentials');
+      }
+    } catch {
+      triggerToast('Could not save room credentials');
+    }
+  }, [tournamentId, loadTournament, triggerToast]);
 
   const handleRateHost = (ratingValue) => {
     setUserRating(ratingValue);
@@ -1467,7 +1499,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               )
             )}
             {activeTab === 'roadmap' && (
-              <TournamentRoadmap roadmap={parsedTimeline.roadmap} isGoldTheme={isGoldTheme} />
+              <TournamentRoadmap
+                roadmap={parsedTimeline.roadmap}
+                isGoldTheme={isGoldTheme}
+                roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
+                isOwner={isTournamentOwner}
+                onSaveCredentials={handleSaveRoundCredentials}
+              />
             )}
             {activeTab === 'rules' && (
               <div className="max-w-2xl space-y-3">

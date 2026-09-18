@@ -1,8 +1,7 @@
 import { formatTime12hIST } from './timeFormat'
 
-export const DEFAULT_RELEASE_OFFSET_MINUTES = 10
+export const DEFAULT_RELEASE_OFFSET_MINUTES = 15
 const ROUND_LIVE_WINDOW_MS = 60 * 60 * 1000
-const RELEASE_AT_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/
 
 function pad2(n) { return String(n).padStart(2, '0') }
 
@@ -34,80 +33,26 @@ export function subtractMinutesNaive(dateStr, timeStr, minutes) {
   }
 }
 
-export function splitReleaseAt(at) {
-  if (!at || typeof at !== 'string') return { date: '', time: '' }
-  const idx = at.indexOf('T')
-  if (idx < 0) return { date: '', time: '' }
-  const date = at.slice(0, idx)
-  const time = at.slice(idx + 1)
-  if (!parseYMD(date) || !/^\d{2}:\d{2}$/.test(time)) return { date: '', time: '' }
-  return { date, time }
-}
-
-export function normalizeReleaseConfig(round = {}) {
-  const offset = Number(round.id_password_release_offset_minutes)
-  return {
-    mode: round.id_password_release_mode === 'custom' ? 'custom' : 'automatic',
-    offsetMinutes: Number.isInteger(offset) && offset > 0 ? offset : DEFAULT_RELEASE_OFFSET_MINUTES,
-    releaseAt: RELEASE_AT_REGEX.test(round.id_password_release_at || '') ? round.id_password_release_at : '',
-  }
-}
-
-export function computeReleaseAt(round = {}) {
-  const cfg = normalizeReleaseConfig(round)
-  if (!round.date || !round.time) return ''
-  const { date, time } = subtractMinutesNaive(round.date, round.time, cfg.offsetMinutes)
-  if (!date || !time) return ''
-  return `${date}T${time}`
-}
-
+// Effective release is always derived: round start minus the fixed offset.
 export function getRoundRelease(round = {}) {
-  const cfg = normalizeReleaseConfig(round)
-  if (cfg.mode === 'custom' && cfg.releaseAt) {
-    const { date, time } = splitReleaseAt(cfg.releaseAt)
-    if (date && time) {
-      return { mode: 'custom', offsetMinutes: cfg.offsetMinutes, date, time, at: cfg.releaseAt }
-    }
+  const offsetMinutes = DEFAULT_RELEASE_OFFSET_MINUTES
+  if (!round.date || !round.time) {
+    return { mode: 'automatic', offsetMinutes, date: '', time: '', at: '' }
   }
-  const { date, time } = subtractMinutesNaive(round.date, round.time, cfg.offsetMinutes)
-  return { mode: 'automatic', offsetMinutes: cfg.offsetMinutes, date, time, at: date && time ? `${date}T${time}` : '' }
+  const { date, time } = subtractMinutesNaive(round.date, round.time, offsetMinutes)
+  return { mode: 'automatic', offsetMinutes, date, time, at: date && time ? `${date}T${time}` : '' }
 }
 
 export function withReleaseDefaults(round = {}) {
-  const cfg = normalizeReleaseConfig(round)
   const out = {
     ...round,
-    id_password_release_mode: cfg.mode,
-    id_password_release_offset_minutes: cfg.offsetMinutes,
-    id_password_release_at: round.id_password_release_at || '',
+    room_id: typeof round.room_id === 'string' ? round.room_id : '',
+    room_password: typeof round.room_password === 'string' ? round.room_password : '',
   }
-  if (cfg.mode === 'automatic') {
-    out.id_password_release_at = computeReleaseAt(out) || ''
-  }
+  delete out.id_password_release_mode
+  delete out.id_password_release_offset_minutes
+  delete out.id_password_release_at
   return out
-}
-
-export function setReleaseMode(round = {}, mode) {
-  const cfg = normalizeReleaseConfig(round)
-  if (mode === 'custom') {
-    const existing = RELEASE_AT_REGEX.test(round.id_password_release_at || '') ? round.id_password_release_at : ''
-    return {
-      ...round,
-      id_password_release_mode: 'custom',
-      id_password_release_offset_minutes: cfg.offsetMinutes,
-      id_password_release_at: existing || computeReleaseAt(round) || '',
-    }
-  }
-  const normalized = withReleaseDefaults({ ...round, id_password_release_mode: 'automatic' })
-  return normalized
-}
-
-export function setReleaseAt(round = {}, releaseAt) {
-  return {
-    ...round,
-    id_password_release_at: RELEASE_AT_REGEX.test(releaseAt || '') ? releaseAt : '',
-    id_password_release_mode: 'custom',
-  }
 }
 
 function formatShortDate(dateStr) {
@@ -121,7 +66,7 @@ export function formatRevealLabel(round = {}) {
   const r = getRoundRelease(round)
   if (!r.date || !r.time) return ''
   const timeLabel = formatTime12hIST(r.time)
-  if (r.date && round.date && r.date !== round.date) {
+  if (round.date && r.date !== round.date) {
     const shortDate = formatShortDate(r.date)
     return shortDate ? `${shortDate} · ${timeLabel}` : timeLabel
   }
