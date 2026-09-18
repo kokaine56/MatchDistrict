@@ -1,7 +1,13 @@
 import { formatTime12hIST } from './timeFormat'
 
-export const DEFAULT_RELEASE_OFFSET_MINUTES = 15
+export const ID_PASS_RELEASE_OFFSETS = [15, 10, 5]
+export const DEFAULT_ID_PASS_RELEASE_OFFSET_MINUTES = 15
 const ROUND_LIVE_WINDOW_MS = 60 * 60 * 1000
+
+export function normalizeReleaseOffset(value) {
+  const n = parseInt(value, 10)
+  return ID_PASS_RELEASE_OFFSETS.includes(n) ? n : DEFAULT_ID_PASS_RELEASE_OFFSET_MINUTES
+}
 
 function pad2(n) { return String(n).padStart(2, '0') }
 
@@ -33,14 +39,13 @@ export function subtractMinutesNaive(dateStr, timeStr, minutes) {
   }
 }
 
-// Effective release is always derived: round start minus the fixed offset.
 export function getRoundRelease(round = {}) {
-  const offsetMinutes = DEFAULT_RELEASE_OFFSET_MINUTES
+  const offsetMinutes = normalizeReleaseOffset(round.id_pass_release_offset_minutes)
   if (!round.date || !round.time) {
-    return { mode: 'automatic', offsetMinutes, date: '', time: '', at: '' }
+    return { offsetMinutes, date: '', time: '', at: '' }
   }
   const { date, time } = subtractMinutesNaive(round.date, round.time, offsetMinutes)
-  return { mode: 'automatic', offsetMinutes, date, time, at: date && time ? `${date}T${time}` : '' }
+  return { offsetMinutes, date, time, at: date && time ? `${date}T${time}` : '' }
 }
 
 export function withReleaseDefaults(round = {}) {
@@ -48,6 +53,7 @@ export function withReleaseDefaults(round = {}) {
     ...round,
     room_id: typeof round.room_id === 'string' ? round.room_id : '',
     room_password: typeof round.room_password === 'string' ? round.room_password : '',
+    id_pass_release_offset_minutes: normalizeReleaseOffset(round.id_pass_release_offset_minutes),
   }
   delete out.id_password_release_mode
   delete out.id_password_release_offset_minutes

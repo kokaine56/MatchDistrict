@@ -102,7 +102,8 @@ self.onmessage = (e) => {
         map: maps[(i - 1) % maps.length],
         qualify: qualifyText,
         room_id: '',
-        room_password: ''
+        room_password: '',
+        id_pass_release_offset_minutes: 15
       });
     }
 

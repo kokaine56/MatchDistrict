@@ -219,7 +219,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     if (!tournamentId) { setIsTournamentsLoading(false); return; }
     setIsTournamentsLoading(true);
     setLoadError(null);
-    const { ok, data, error } = await fetchJsonWithRetry(`/api/tournaments/${tournamentId}`);
+    // Authenticated fetch so the server can grant the organizer (or an eligible
+    // registered participant) per-round ID-Pass credentials. Without the JWT the
+    // server scrubs credentials and even the organizer would see an empty state.
+    const token = await getAuthToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const { ok, data, error } = await fetchJsonWithRetry(`/api/tournaments/${tournamentId}`, { headers });
     if (ok && data?.success && data.tournament) setTournamentRow(data.tournament);
     else { setTournamentRow(null); setLoadError(error?.message || data?.message || 'Failed to load tournament'); }
     setIsTournamentsLoading(false);
@@ -465,7 +470,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const triggerToast = useCallback((msg) => { setToastMessage(msg); setShowToast(true); setTimeout(() => setShowToast(false), 4000); }, []);
 
-  const handleSaveRoundCredentials = useCallback(async (roundIndex, roomId, roomPassword) => {
+  const handleSaveRoundCredentials = useCallback(async (roundIndex, roomId, roomPassword, offsetMinutes) => {
     if (!tournamentId || roundIndex == null) return;
     try {
       const token = await getAuthToken();
@@ -474,7 +479,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const res = await fetch(`/api/tournaments/${tournamentId}/rounds/${roundIndex}/credentials`, {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ room_id: roomId || '', room_password: roomPassword || '' }),
+        body: JSON.stringify({ room_id: roomId || '', room_password: roomPassword || '', id_pass_release_offset_minutes: offsetMinutes }),
       });
       const data = await res.json().catch(() => ({}));
       if (data.success) {

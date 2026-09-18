@@ -11,7 +11,8 @@ const emptyRound = {
   map: '',
   qualified: '',
   room_id: '',
-  room_password: ''
+  room_password: '',
+  id_pass_release_offset_minutes: 15
 }
 const ROUND_GAP_MINUTES = 45
 

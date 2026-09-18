@@ -2,6 +2,8 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { formatTime12hIST } from '../utils/timeFormat'
 import {
+  ID_PASS_RELEASE_OFFSETS,
+  normalizeReleaseOffset,
   withReleaseDefaults,
   getRoundRelease,
   formatRevealLabel,
@@ -100,7 +102,7 @@ function UsersIcon() {
 function KeyIcon() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-      <path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+      <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
     </svg>
   )
 }
@@ -186,9 +188,21 @@ function CopyButton({ value, accent }) {
 
 function IdPassEditor({ initial, onSave, onCancel, isGoldTheme }) {
   const C = palette(isGoldTheme)
-  const [values, setValues] = useState({ room_id: initial?.room_id || '', room_password: initial?.room_password || '' })
+  const [values, setValues] = useState({
+    room_id: initial?.room_id || '',
+    room_password: initial?.room_password || '',
+  })
+  const [offset, setOffset] = useState(() => normalizeReleaseOffset(initial?.id_pass_release_offset_minutes))
+
+  const previewLabel = initial?.date && initial?.time
+    ? formatRevealLabel({ date: initial.date, time: initial.time, id_pass_release_offset_minutes: offset })
+    : ''
+
   return (
     <div className="space-y-2.5">
+      <p className={`text-[12px] font-bold ${C.value}`}>
+        {initial?.room_id || initial?.room_password ? 'Edit ID-Pass' : 'Add ID-Pass'}
+      </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         <div>
           <label className={`block text-[10px] font-semibold ${C.label} mb-1`}>Room ID</label>
@@ -213,10 +227,35 @@ function IdPassEditor({ initial, onSave, onCancel, isGoldTheme }) {
           />
         </div>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`text-[10px] font-semibold ${C.label}`}>ID-Pass Release</span>
+        <div className="flex gap-1">
+          {ID_PASS_RELEASE_OFFSETS.map((off) => (
+            <button
+              key={off}
+              type="button"
+              onClick={() => setOffset(off)}
+              aria-pressed={offset === off}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                offset === off
+                  ? 'border-primary/40 bg-primary/15 text-primary'
+                  : `border-outline-variant/30 bg-surface/50 ${C.sub} hover:bg-surface`
+              }`}
+            >
+              {off} min
+            </button>
+          ))}
+        </div>
+      </div>
+      {previewLabel && (
+        <p className={`text-[10px] ${C.sub}`}>
+          Available to participants at: <span className="font-semibold text-primary">{previewLabel}</span>
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => onSave(values.room_id.trim(), values.room_password.trim())}
+          onClick={() => onSave(values.room_id.trim(), values.room_password.trim(), offset)}
           className="px-3.5 py-2 rounded-lg bg-primary text-white text-xs font-bold hover:bg-primary/90 transition-all shadow-[0_0_14px_rgba(59,130,246,0.3)]">
           Save
         </button>
@@ -234,53 +273,77 @@ function IdPassEditor({ initial, onSave, onCancel, isGoldTheme }) {
 function IdPassSection({ item, isGoldTheme, isOwner, onSaveCredentials }) {
   const C = palette(isGoldTheme)
   const { round, releaseLabel, configured, released, visibleValues } = item
+  const offset = normalizeReleaseOffset(round.id_pass_release_offset_minutes)
   const [editing, setEditing] = useState(false)
 
   const valuesPresent = (round.room_id && round.room_id.trim()) || (round.room_password && round.room_password.trim())
+
+  // Participant pre-release / availability state — the ONLY message participants
+  // receive before release. Never reveals whether the organizer has entered creds.
+  const renderAvailability = () => (
+    <div className={`flex items-start gap-2 min-w-0 ${C.title}`}>
+      <span className={`${C.accent} shrink-0 mt-0.5`}><KeyIcon /></span>
+      <div className="min-w-0">
+        <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
+        <p className="text-[13px] font-semibold leading-snug mt-0.5">
+          {releaseLabel ? `Available at ${releaseLabel}` : '—'}
+        </p>
+        <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>
+          Credentials will appear here when they become available.
+        </p>
+      </div>
+    </div>
+  )
+
+  // State A — organizer, credentials not entered yet. The organizer needs to know
+  // whether they have entered the credentials; participants never see this state.
+  const renderOwnerEmpty = () => (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className={`flex items-start gap-2 min-w-0 ${C.title}`}>
+          <span className={`${C.accent} shrink-0 mt-0.5`}><KeyIcon /></span>
+          <div className="min-w-0">
+            <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
+            <p className="text-[13px] font-semibold leading-snug mt-0.5">Not added yet</p>
+            <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>
+              {releaseLabel
+                ? `Credentials become available to participants at ${releaseLabel}`
+                : 'Add credentials to share them with registered participants before match start.'}
+            </p>
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-all shadow-[0_0_12px_rgba(59,130,246,0.3)]"
+        aria-label="Add room ID and password"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+        Add ID-Pass
+      </button>
+    </div>
+  )
 
   const renderLocked = () => (
     <div className={`flex items-start gap-2 min-w-0 ${C.title}`}>
       <span className={`${C.accent} shrink-0 mt-0.5`}><KeyIcon /></span>
       <div className="min-w-0">
         <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
-        <p className="text-[13px] font-semibold leading-snug mt-0.5">Locked</p>
-        <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>Available to registered teams</p>
+        <p className="text-[13px] font-semibold leading-snug mt-0.5">Available to registered teams</p>
       </div>
     </div>
   )
 
-  const renderPending = () => (
-    <div className={`flex items-start gap-2 min-w-0 ${C.title}`}>
-      <span className={`${C.accent} shrink-0 mt-0.5`}><KeyIcon /></span>
-      <div className="min-w-0">
-        <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
-        <p className="text-[13px] font-semibold leading-snug mt-0.5">
-          {releaseLabel ? `Available from ${releaseLabel}` : '—'}
-        </p>
-        <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>Unlocks 15 minutes before the match</p>
-      </div>
-    </div>
-  )
-
-  const renderEmpty = () => (
-    <div className={`flex items-start gap-2 min-w-0 ${C.title}`}>
-      <span className={`${C.accent} shrink-0 mt-0.5`}><KeyIcon /></span>
-      <div className="min-w-0">
-        <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
-        <p className="text-[13px] font-semibold leading-snug mt-0.5">Not added yet</p>
-        <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>Unlocks 15 minutes before the match</p>
-      </div>
-    </div>
-  )
-
+  // States B & D — organizer (immediate) or granted participant (post-release) view.
   const renderValue = () => {
     if (editing) {
       return (
         <IdPassEditor
-          initial={{ room_id: round.room_id, room_password: round.room_password }}
+          initial={{ room_id: round.room_id, room_password: round.room_password, date: round.date, time: round.time, id_pass_release_offset_minutes: offset }}
           isGoldTheme={isGoldTheme}
           onCancel={() => setEditing(false)}
-          onSave={(roomId, roomPassword) => onSaveCredentials(roomId, roomPassword)}
+          onSave={(roomId, roomPassword, newOffset) => onSaveCredentials(roomId, roomPassword, newOffset)}
         />
       )
     }
@@ -291,8 +354,21 @@ function IdPassSection({ item, isGoldTheme, isOwner, onSaveCredentials }) {
           <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <div className="min-w-0">
               <p className={`text-[10px] font-semibold ${C.label} leading-tight`}>ID-Pass</p>
-              <p className="text-[13px] font-semibold leading-snug mt-0.5">Room ID &amp; Password</p>
-              <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>Copy the credentials below to join the lobby</p>
+              {isOwner ? (
+                <>
+                  <p className={`text-[13px] font-semibold leading-snug mt-0.5 ${C.value}`}>
+                    {releaseLabel ? `Available to participants at ${releaseLabel}` : '—'}
+                  </p>
+                  <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>
+                    Releases {offset} minutes before the match
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[13px] font-semibold leading-snug mt-0.5">Room ID &amp; Password</p>
+                  <p className={`text-[10px] ${C.sub} leading-snug mt-0.5`}>Copy the credentials below to join the lobby</p>
+                </>
+              )}
             </div>
             {isOwner && (
               <button
@@ -329,30 +405,26 @@ function IdPassSection({ item, isGoldTheme, isOwner, onSaveCredentials }) {
 
   let content
   if (visibleValues && valuesPresent) {
+    // Owner (immediate access) or eligible registered participant (post-release).
     content = renderValue()
   } else if (isOwner) {
+    // State A — organizer always sees status + can add/edit immediately.
     content = editing
-      ? <IdPassEditor initial={{ room_id: round.room_id || '', room_password: round.room_password || '' }} isGoldTheme={isGoldTheme} onCancel={() => setEditing(false)} onSave={(roomId, roomPassword) => onSaveCredentials(roomId, roomPassword)} />
-      : (
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          {renderEmpty()}
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            className="shrink-0 self-start inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-[11px] font-bold hover:bg-primary/90 transition-all shadow-[0_0_12px_rgba(59,130,246,0.3)]"
-            aria-label="Add room ID and password"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            Add ID-Pass
-          </button>
-        </div>
+      ? (
+        <IdPassEditor
+          initial={{ room_id: round.room_id || '', room_password: round.room_password || '', date: round.date, time: round.time, id_pass_release_offset_minutes: offset }}
+          isGoldTheme={isGoldTheme}
+          onCancel={() => setEditing(false)}
+          onSave={(roomId, roomPassword, newOffset) => onSaveCredentials(roomId, roomPassword, newOffset)}
+        />
       )
-  } else if (released || round.release_available) {
-    content = renderLocked()
-  } else if (configured) {
-    content = renderPending()
+      : renderOwnerEmpty()
+  } else if (released) {
+    // Released but not granted (unregistered / ineligible visitor): never show values.
+    content = configured ? renderLocked() : renderAvailability()
   } else {
-    content = renderEmpty()
+    // State C — registered participant before release: availability only, no state leak.
+    content = renderAvailability()
   }
 
   return (
@@ -454,7 +526,7 @@ export default function TournamentRoadmap({ roadmap = [], isGoldTheme = false, r
         isGoldTheme={isGoldTheme}
         isOwner={isOwner}
         onSaveCredentials={onSaveCredentials
-          ? (roomId, roomPassword) => onSaveCredentials(idx, roomId, roomPassword)
+          ? (roomId, roomPassword, offsetMinutes) => onSaveCredentials(idx, roomId, roomPassword, offsetMinutes)
           : null}
       />
     </div>

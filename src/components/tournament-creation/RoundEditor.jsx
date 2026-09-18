@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { OptimizedInput } from '../OptimizedInput'
 import { useTheme } from '../../ThemeContext'
-import { formatRevealLabel } from '../../utils/roomReveal'
+import { formatRevealLabel, normalizeReleaseOffset, ID_PASS_RELEASE_OFFSETS } from '../../utils/roomReveal'
 
 const BGMI_MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Karakin', 'Nusa', 'Rondo']
 
@@ -19,6 +19,7 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
   }
 
   const autoPreview = round.date && round.time ? formatRevealLabel(round) : ''
+  const releaseOffset = normalizeReleaseOffset(round.id_pass_release_offset_minutes)
 
   return (
     <motion.div
@@ -152,7 +153,7 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
             <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            Room credentials are revealed automatically 15 minutes before the match.
+            Room credentials are revealed automatically {releaseOffset} minutes before the match.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
@@ -174,6 +175,26 @@ export default function RoundEditor({ round, index, onChange, onDelete, onMoveUp
                 maxLength={80}
                 className="w-full px-3 py-2.5 rounded-xl bg-surface/80 text-sm text-on-background placeholder-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all shadow-inner"
               />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2.5">
+            <span className="text-[10px] font-semibold text-on-surface-variant">Release</span>
+            <div className="flex gap-1">
+              {ID_PASS_RELEASE_OFFSETS.map((off) => (
+                <button
+                  key={off}
+                  type="button"
+                  onClick={() => onChange({ ...round, id_pass_release_offset_minutes: off })}
+                  aria-pressed={releaseOffset === off}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                    releaseOffset === off
+                      ? 'border-primary/40 bg-primary/15 text-primary'
+                      : 'border-outline-variant/30 bg-surface/60 text-on-surface-variant hover:bg-surface'
+                  }`}
+                >
+                  {off} min
+                </button>
+              ))}
             </div>
           </div>
           <div className={`flex items-center gap-1.5 mt-2.5 text-[10px] font-medium ${

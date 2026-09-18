@@ -1103,20 +1103,30 @@ function coerceBool(v, fallback) {
 }
 
 // ── Per-round room credentials (server-enforced reveal) ──
-const ROUND_RELEASE_OFFSET_MINUTES = 15;
+const ID_PASS_RELEASE_OFFSETS = [15, 10, 5];
+const DEFAULT_ID_PASS_RELEASE_OFFSET_MINUTES = 15;
 
-// Effective release timestamp = round start - 15 minutes (naive local, same convention as the app).
-function roundReleaseEpoch(round) {
+function normalizeReleaseOffset(value) {
+  const n = parseInt(value, 10);
+  return ID_PASS_RELEASE_OFFSETS.includes(n) ? n : DEFAULT_ID_PASS_RELEASE_OFFSET_MINUTES;
+}
+
+// Effective release timestamp = round start minus the per-round release offset (naive local, same convention as the app).
+function roundReleaseEpoch(round, offsetMinutes) {
   if (!round || !round.date || !/^\d{4}-\d{2}-\d{2}$/.test(round.date) ||
       !round.time || !/^\d{2}:\d{2}$/.test(round.time)) return null;
   const startMs = new Date(`${round.date}T${round.time}`).getTime();
   if (isNaN(startMs)) return null;
-  return startMs - ROUND_RELEASE_OFFSET_MINUTES * 60 * 1000;
+  return startMs - normalizeReleaseOffset(offsetMinutes) * 60 * 1000;
 }
 
 // Never send unreleased / unauthorized round credentials to clients.
-// Owner (or admin) always sees values; registered teams see them only after release;
-// everyone else gets null values plus non-sensitive metadata for the UI.
+// Owner (or admin) ALWAYS gets the actual values immediately — the release time
+// is purely a participant-visibility rule and never gates the organizer.
+// Registered/eligible participants get values only when: round published, the
+// user is an auth user holding an eligible registration, and server time >=
+// the per-round release time. For everyone else the sensitive keys are OMITTED
+// entirely (not nulled) so they never leave the server.
 function sanitizeTimelineForUser(timelineRaw, opts = {}) {
   if (!timelineRaw) return timelineRaw;
   let parsed;
@@ -1132,19 +1142,32 @@ function sanitizeTimelineForUser(timelineRaw, opts = {}) {
   const now = Date.now();
   const isOwner = opts.isOwner === true;
   const isRegistered = opts.isRegistered === true;
+  const isPublished = opts.published !== false;
   const scrubbed = roadmap.map((r) => {
     const round = { ...r };
-    const releaseEpoch = roundReleaseEpoch(round);
+    const offsetMinutes = normalizeReleaseOffset(round.id_pass_release_offset_minutes);
+    round.id_pass_release_offset_minutes = offsetMinutes;
+    const releaseEpoch = roundReleaseEpoch(round, offsetMinutes);
     const released = releaseEpoch !== null && now >= releaseEpoch;
     const configured = Boolean(String(round.room_id || '').trim()) || Boolean(String(round.room_password || '').trim());
-    const granted = isOwner || (isRegistered && released);
+    // Organizer access is immediate. Participants need: published round + eligible
+    // registration + release time reached. Unregistered / ineligible / public users
+    // never receive credentials regardless of time.
+    const granted = isOwner || (isRegistered && released && isPublished);
     if (!granted) {
-      round.room_id = null;
-      round.room_password = null;
+      delete round.room_id;
+      delete round.room_password;
+      delete round.has_room_credentials;
     }
-    round.room_credentials_configured = configured;
+    // Time/schedule metadata is safe for all clients (never the credential values).
     round.release_available = released;
-    round.has_room_credentials = configured;
+    // "configured" reveals whether the organizer has entered credentials — send it
+    // only when it cannot leak scheduling state: to the owner, or after release.
+    if (isOwner || released) {
+      round.room_credentials_configured = configured;
+    } else {
+      delete round.room_credentials_configured;
+    }
     return round;
   });
   const next = isArray ? scrubbed : { ...parsed, roadmap: scrubbed };
@@ -3232,7 +3255,7 @@ const server = http.createServer(async (req, res) => {
           detailRegistered = await isRegisteredForTournament(row.id, detailAuth.id);
         }
       }
-      row.timeline = sanitizeTimelineForUser(row.timeline, { isOwner: detailOwner, isRegistered: detailRegistered });
+      row.timeline = sanitizeTimelineForUser(row.timeline, { isOwner: detailOwner, isRegistered: detailRegistered, published: row.rounds_published !== false });
       // Compute sponsor contributions
       let sponsorRevenue = 0;
       let hasApprovedSponsors = false;
@@ -3590,6 +3613,12 @@ const server = http.createServer(async (req, res) => {
         const payload = JSON.parse(body || '{}');
         const roomId = typeof payload.room_id === 'string' ? payload.room_id.trim() : '';
         const roomPassword = typeof payload.room_password === 'string' ? payload.room_password.trim() : '';
+        const releaseOffset = payload.id_pass_release_offset_minutes;
+        if (releaseOffset !== undefined && releaseOffset !== null && !ID_PASS_RELEASE_OFFSETS.includes(parseInt(releaseOffset, 10))) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'ID-Pass release timing must be 15, 10, or 5 minutes before the match.' }));
+          return;
+        }
         for (const v of [roomId, roomPassword]) {
           if (v.length > 80) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -3612,7 +3641,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'ROUND_NOT_FOUND', message: 'Round not found.' }));
           return;
         }
-        const updatedRound = { ...(existingArr[roundIndex] || {}), room_id: roomId, room_password: roomPassword };
+        const updatedRound = { ...(existingArr[roundIndex] || {}), room_id: roomId, room_password: roomPassword, id_pass_release_offset_minutes: normalizeReleaseOffset(releaseOffset) };
         existingArr[roundIndex] = updatedRound;
         const updatedTimeline = Array.isArray(parsed) ? existingArr : { ...parsed, roadmap: existingArr };
         await pool.query(
@@ -6134,7 +6163,7 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     try {
       const tId = roadmapGetMatch[1];
-      const dbRes = await pool.query('SELECT timeline, "orgId" FROM tournaments WHERE id = $1', [tId]);
+      const dbRes = await pool.query('SELECT timeline, "orgId", "rounds_published" FROM tournaments WHERE id = $1', [tId]);
       if (dbRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -6143,13 +6172,19 @@ const server = http.createServer(async (req, res) => {
       const rowRoadmap = dbRes.rows[0];
       const authUser = getAuthUser(req);
       let owner = false;
+      let isRegistered = false;
       if (authUser) {
         owner = authUser.id === rowRoadmap.orgId || hasRole(authUser, ROLES.ADMIN);
+        if (!owner) isRegistered = await isRegisteredForTournament(tId, authUser.id);
       }
       const raw = rowRoadmap.timeline;
       const parsed = raw ? JSON.parse(raw) : {};
       const roadmap = Array.isArray(parsed) ? parsed : (parsed.roadmap || []);
-      const scrubbed = sanitizeTimelineForUser(JSON.stringify({ roadmap }), { isOwner: owner });
+      const scrubbed = sanitizeTimelineForUser(JSON.stringify({ roadmap }), {
+        isOwner: owner,
+        isRegistered,
+        published: rowRoadmap.rounds_published !== false,
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, roadmap: scrubbed ? JSON.parse(scrubbed).roadmap : roadmap }));
     } catch (err) {
