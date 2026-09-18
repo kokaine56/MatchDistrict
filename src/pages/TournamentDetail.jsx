@@ -100,6 +100,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [mySponsorContribs, setMySponsorContribs] = useState([]);
   const shareInProgressRef = useRef(false);
   const fileInputRef = useRef(null);
+  // Tracks when the native file-picker is open so the backdrop click-to-close
+  // does NOT fire closeSponsorModal when the picker dialog dismisses.
+  const isPickingFile = useRef(false);
 
   // Custom states for premium sponsors cards interaction
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -636,6 +639,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   };
 
   const closeSponsorModal = () => {
+    // If the native file-picker is still active, a pointer/click event that
+    // dismissed the picker will bubble up to the backdrop — ignore it so we
+    // don't accidentally reset all screenshot state.
+    if (isPickingFile.current) return;
     if (sponsorSubmitting) return;
     setShowSponsorForm(false);
     setSponsorSuccess(false);
@@ -648,6 +655,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     if (fileInputRef.current) fileInputRef.current.value = '';
     setSelectedTier(null);
     setSponsorStep(1);
+  };
+
+  // Opens the hidden file input while guarding the backdrop against the
+  // pointer event that fires when the native picker dialog closes.
+  const openFilePicker = () => {
+    isPickingFile.current = true;
+    fileInputRef.current?.click();
+    // The 'change' / 'cancel' event on the input fires asynchronously after
+    // the picker closes; clear the guard shortly after so normal backdrop
+    // clicks work again.  600 ms is enough on all tested browsers.
+    setTimeout(() => { isPickingFile.current = false; }, 600);
   };
 
   const handleShare = async () => {
@@ -1974,104 +1992,141 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {/* STEP 3: Proof & Submit */}
                     {sponsorStep === 3 && (
                       <div className="space-y-4">
+                        {/* Single consolidated error alert — no duplicate */}
                         {sponsorError && (
                           <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2">
                             <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0 mt-px">error</span>
-                            <div className="min-w-0">
-                              {sponsorError.toLowerCase().includes('screenshot') && (
-                                <p className="text-[11px] font-bold text-red-800 leading-tight">Payment screenshot required</p>
-                              )}
-                              <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
-                            </div>
+                            <p className="text-xs font-semibold text-red-700 leading-snug min-w-0">{sponsorError}</p>
                           </div>
                         )}
+
+                        {/* ── PAYMENT SCREENSHOT CARD ── */}
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Payment Screenshot</label>
-                          {sponsorError && (
-                            <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 mb-2 flex items-start gap-2">
-                              <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0 mt-px">error</span>
-                              <div className="min-w-0">
-                                {sponsorError.toLowerCase().includes('screenshot') && (
-                                  <p className="text-[11px] font-bold text-red-800 leading-tight">Payment screenshot required</p>
-                                )}
-                                <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
-                              </div>
-                            </div>
-                          )}
+
                           {!sponsorScreenshot ? (
-                            /* STATE 1 — EMPTY */
-                            <button type="button" onClick={() => fileInputRef.current?.click()}
-                              className="w-full border-2 border-dashed border-slate-300 rounded-xl px-4 py-6 text-center hover:border-blue-400 transition-colors cursor-pointer">
-                              <span className="material-symbols-outlined text-3xl text-slate-300 block mx-auto">image</span>
-                              <p className="text-xs font-semibold text-slate-600 mt-1.5">Select payment screenshot</p>
-                              <p className="text-[10px] text-slate-400 mt-0.5">JPG, PNG or WebP · max 10MB</p>
+                            /* STATE 1 — EMPTY: tap to open file picker */
+                            <button
+                              type="button"
+                              id="sponsor-select-screenshot-btn"
+                              onClick={openFilePicker}
+                              className="w-full border-2 border-dashed border-slate-300 rounded-xl px-4 py-8 text-center hover:border-blue-400 hover:bg-blue-50/40 active:scale-[0.99] transition-all cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-4xl text-slate-300 block mx-auto mb-1">add_photo_alternate</span>
+                              <p className="text-xs font-semibold text-slate-600 mt-1">Select payment screenshot</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">JPG, PNG or WebP · max 10 MB</p>
                             </button>
                           ) : (
-                            /* STATES 2–5 — SELECTED / UPLOADING / UPLOADED / FAILED */
-                            <div className="rounded-xl border border-slate-200 overflow-hidden">
-                              <img src={sponsorScreenshotPreview || ''} alt="Payment screenshot preview" className="max-h-36 w-full object-contain bg-slate-50" />
-                              <div className="px-3.5 pt-2.5 pb-3 space-y-2.5">
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="text-[11px] text-slate-600 max-w-[130px] truncate">{sponsorScreenshot.name || 'Screenshot'}</p>
-                                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sponsorUploading || sponsorSubmitting}
-                                    className="shrink-0 text-[11px] font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50">
-                                    Change Image
+                            /* STATES 2-5: preview card */
+                            <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                              {/* Preview image */}
+                              <div className="relative bg-slate-50">
+                                <img
+                                  src={sponsorScreenshotPreview || ''}
+                                  alt="Payment screenshot preview"
+                                  className="max-h-40 w-full object-contain"
+                                />
+                                {/* Change image pill — top-right corner */}
+                                {!sponsorUploading && !sponsorSubmitting && (
+                                  <button
+                                    type="button"
+                                    id="sponsor-change-screenshot-btn"
+                                    onClick={openFilePicker}
+                                    className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white text-[10px] font-bold px-2.5 py-1 rounded-full transition-colors"
+                                  >
+                                    Change
                                   </button>
-                                </div>
+                                )}
+                              </div>
+
+                              {/* Status row */}
+                              <div className="px-3.5 py-3">
+                                {/* File name */}
+                                <p className="text-[11px] text-slate-500 truncate mb-2">{sponsorScreenshot?.name || 'Screenshot'}</p>
+
                                 {sponsorUploading ? (
                                   /* STATE 3 — UPLOADING */
-                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <span className="w-4 h-4 shrink-0 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                                      <p className="text-[11px] font-semibold text-blue-700">Uploading screenshot...</p>
-                                    </div>
-                                    <span className="text-[11px] font-bold text-blue-400 shrink-0">Uploading...</span>
+                                  <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2.5">
+                                    <span className="w-4 h-4 shrink-0 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-[11px] font-semibold text-blue-700">Uploading screenshot…</p>
                                   </div>
                                 ) : sponsorUploadedUrl ? (
-                                  /* STATE 4 — UPLOADED */
-                                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+                                  /* STATE 4 — UPLOADED ✓ */
+                                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5">
                                     <span className="material-symbols-outlined text-emerald-600 text-[18px] shrink-0">check_circle</span>
-                                    <p className="text-[11px] font-bold text-emerald-700">Screenshot uploaded</p>
+                                    <p className="text-[11px] font-bold text-emerald-700">Screenshot uploaded successfully</p>
                                   </div>
                                 ) : sponsorUploadFailed ? (
                                   /* STATE 5 — FAILED */
-                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2.5">
                                     <div className="flex items-center gap-2 min-w-0">
-                                      <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0">error</span>
-                                      <p className="text-[11px] font-bold text-red-700">Upload failed</p>
+                                      <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0">error_outline</span>
+                                      <p className="text-[11px] font-semibold text-red-700">Upload failed. Please retry.</p>
                                     </div>
-                                    <button type="button" onClick={(e) => uploadSponsorScreenshot(e)}
-                                      className="shrink-0 text-[11px] font-bold text-red-600 hover:text-red-700">
-                                      Retry Upload
+                                    <button
+                                      type="button"
+                                      id="sponsor-retry-upload-btn"
+                                      onClick={uploadSponsorScreenshot}
+                                      className="shrink-0 text-[11px] font-bold text-white bg-red-500 hover:bg-red-600 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                      Retry
                                     </button>
                                   </div>
                                 ) : (
-                                  /* STATE 2 — SELECTED (not yet uploaded) */
-                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
-                                    <p className="text-[11px] font-medium text-slate-600 min-w-0">Selected — ready to upload</p>
-                                    <button type="button" onClick={(e) => uploadSponsorScreenshot(e)}
-                                      className="shrink-0 text-[11px] font-bold text-blue-700 hover:text-blue-800 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-50"
-                                      disabled={sponsorUploading || sponsorSubmitting}>
-                                      Upload Screenshot
-                                    </button>
-                                  </div>
+                                  /* STATE 2 — SELECTED, not yet uploaded */
+                                  <button
+                                    type="button"
+                                    id="sponsor-upload-screenshot-btn"
+                                    onClick={uploadSponsorScreenshot}
+                                    disabled={sponsorUploading || sponsorSubmitting}
+                                    className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-blue-300 text-white text-[13px] font-bold py-2.5 rounded-lg shadow-sm transition-all min-h-[44px]"
+                                  >
+                                    <span className="material-symbols-outlined text-[16px]">cloud_upload</span>
+                                    Upload Screenshot
+                                  </button>
                                 )}
                               </div>
                             </div>
                           )}
-                          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-                            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; handleSponsorScreenshotFile(f); }} />
+
+                          {/* Hidden native file input — never triggers form submit */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            className="hidden"
+                            onChange={e => {
+                              // Capture the file BEFORE resetting the input value
+                              const f = e.target.files?.[0];
+                              // Reset so the same file can be re-selected if needed
+                              e.target.value = '';
+                              // Clear the isPickingFile guard now that we have the result
+                              isPickingFile.current = false;
+                              handleSponsorScreenshotFile(f);
+                            }}
+                          />
                         </div>
+
+                        {/* ── UPI TRANSACTION ID ── */}
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">UPI Transaction ID *</label>
-                          <input type="text" value={sponsorForm.transaction_id} onChange={e => setSponsorForm(f => ({ ...f, transaction_id: e.target.value }))}
+                          <input
+                            type="text"
+                            value={sponsorForm.transaction_id}
+                            onChange={e => setSponsorForm(f => ({ ...f, transaction_id: e.target.value }))}
                             placeholder="e.g. UPI0123456789"
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400" />
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400"
+                          />
                         </div>
+
+                        {/* ── PAYMENT APP ── */}
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Payment App</label>
-                          <select value={sponsorForm.payment_app} onChange={e => setSponsorForm(f => ({ ...f, payment_app: e.target.value }))}
-                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+                          <select
+                            value={sponsorForm.payment_app}
+                            onChange={e => setSponsorForm(f => ({ ...f, payment_app: e.target.value }))}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                          >
                             <option value="">Select app</option>
                             <option value="Google Pay">Google Pay</option>
                             <option value="PhonePe">PhonePe</option>
@@ -2110,25 +2165,46 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       </div>
                     )}
                     {sponsorStep === 3 && (
-                      <div className="space-y-2">
+                      <div className="space-y-2.5">
+                        {/* Helper hint when not all preconditions are met */}
                         {!(sponsorUploadedUrl && sponsorForm.transaction_id.trim() && sponsorForm.payment_app) && !sponsorSubmitting && (
                           <p className="text-[10px] text-slate-400 text-center leading-snug">
                             {!sponsorUploadedUrl
-                              ? (sponsorUploadFailed ? 'Upload failed. Retry to continue.' : 'Upload your screenshot to continue.')
+                              ? (sponsorUploadFailed ? 'Upload failed — retry before submitting.' : !sponsorScreenshot ? 'Select & upload your payment screenshot to continue.' : 'Upload your screenshot before submitting.')
                               : !sponsorForm.transaction_id.trim()
                                 ? 'Enter your UPI transaction ID to continue.'
                                 : 'Select the payment app you used to continue.'}
                           </p>
                         )}
-                        <div className="flex gap-3">
-                          <button type="button" onClick={() => setSponsorStep(2)} disabled={sponsorSubmitting}
-                            className="w-24 shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[44px] disabled:opacity-60">
+                        {/*
+                          Footer action row:
+                          • Back button: fixed compact width, secondary style
+                          • Submit Contribution: grows to fill remaining space, primary CTA
+                          At ≤340px the row wraps so Submit sits above Back.
+                        */}
+                        <div className="flex flex-wrap-reverse gap-2.5">
+                          <button
+                            type="button"
+                            id="sponsor-back-btn-step3"
+                            onClick={() => setSponsorStep(2)}
+                            disabled={sponsorSubmitting}
+                            className="flex-1 min-w-[80px] max-w-[100px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[48px] disabled:opacity-60"
+                          >
                             Back
                           </button>
-                          <button type="button" onClick={handleSponsorContribute}
+                          <button
+                            type="button"
+                            id="sponsor-submit-contribution-btn"
+                            onClick={handleSponsorContribute}
                             disabled={sponsorSubmitting || sponsorUploading || !sponsorUploadedUrl || !sponsorForm.transaction_id.trim() || !sponsorForm.payment_app}
-                            className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px] shadow-sm disabled:shadow-none">
-                            {sponsorSubmitting ? 'Submitting...' : 'Submit Contribution'}
+                            className="flex-[3] min-w-[160px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[48px] shadow-md shadow-blue-600/20 disabled:shadow-none"
+                          >
+                            {sponsorSubmitting ? (
+                              <span className="flex items-center justify-center gap-2">
+                                <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+                                Submitting…
+                              </span>
+                            ) : 'Submit Contribution'}
                           </button>
                         </div>
                       </div>
