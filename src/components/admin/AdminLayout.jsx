@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
   { id: 'devices', label: 'Payment Verifier', icon: 'qr_code_scanner' },
   { id: 'leaderboard', label: 'Leaderboard', icon: 'leaderboard' },
+  { id: 'sponsorships', label: 'Sponsorships', icon: 'volunteer_activism', route: '/admin/sponsorships', badgeKey: 'sponsors' },
 ]
 
 export default function AdminLayout({
@@ -47,6 +48,7 @@ export default function AdminLayout({
     if (!badges) return null
     if (item.id === 'kyc') return badges.kyc
     if (item.id === 'upgrades') return badges.upgrades
+    if (item.id === 'sponsorships') return badges.sponsors
     return null
   }
 

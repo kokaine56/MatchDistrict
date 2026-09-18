@@ -244,11 +244,17 @@ async function getOrganizerUsage(pool, userId) {
   );
   const draftCount = parseInt(draftRes.rows[0].cnt) || 0;
 
-  const sponsorRes = await pool.query(
-    'SELECT COUNT(*) as cnt FROM sponsor_requests WHERE organizer_id = $1',
-    [userId]
-  );
-  const sponsorRequestCount = parseInt(sponsorRes.rows[0].cnt) || 0;
+  let sponsorRequestCount = 0;
+  try {
+    const sponsorRes = await pool.query(
+      'SELECT COUNT(*) as cnt FROM sponsor_requests WHERE organizer_id = $1',
+      [userId]
+    );
+    sponsorRequestCount = parseInt(sponsorRes.rows[0].cnt) || 0;
+  } catch (sponsorErr) {
+    // sponsor_requests may not exist on fresh/partial databases — treat as zero usage
+    sponsorRequestCount = 0;
+  }
 
   const adminRes = await pool.query(
     "SELECT COUNT(*) as cnt FROM staff_members WHERE organizer_id = $1 AND status = 'active'",

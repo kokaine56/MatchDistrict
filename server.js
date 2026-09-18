@@ -642,8 +642,24 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create indexes:', idxErr.message);
     }
 
-    // CREATE sponsor & extension tables
+    // CREATE sponsor & extension tables (each statement isolated so one failure never skips the others —
+    // the old atomic block copied PK-FK only after sponsor_requests was created and failed, leaving no sponsor tables at all)
     try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS sponsor_requests (
+          id VARCHAR(50) PRIMARY KEY,
+          organizer_id VARCHAR(50),
+          tournament_id VARCHAR(50),
+          prize_pool_amount INTEGER DEFAULT 0,
+          sponsor_type VARCHAR(50) DEFAULT 'prize_pool',
+          description TEXT,
+          status VARCHAR(50) DEFAULT 'pending',
+          admin_notes TEXT,
+          admin_id VARCHAR(50),
+          reviewed_at TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
       await client.query(`
         CREATE TABLE IF NOT EXISTS sponsor_list (
           id VARCHAR(50) PRIMARY KEY,
@@ -656,10 +672,12 @@ async function initDb() {
           is_active BOOLEAN DEFAULT true,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
+      `);
+      await client.query(`
         CREATE TABLE IF NOT EXISTS sponsor_contributions (
           id VARCHAR(50) PRIMARY KEY,
           tournament_id VARCHAR(50) NOT NULL,
+          user_id VARCHAR(50),
           contributor_name VARCHAR(255) NOT NULL,
           contributor_email VARCHAR(255),
           amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
@@ -669,15 +687,28 @@ async function initDb() {
           admin_notes TEXT,
           admin_id VARCHAR(50),
           reviewed_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          transaction_id VARCHAR(255),
+          payment_app VARCHAR(50)
         );
-        CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_tournament ON sponsor_contributions(tournament_id);
+        -- Live DBs created before the user_id column exists: CREATE TABLE IF NOT EXISTS is a no-op,
+        -- so migrate the missing columns explicitly before building the indexes on them.
+        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS user_id VARCHAR(50);
         ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
         ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
+        CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_tournament ON sponsor_contributions(tournament_id);
+        CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_user ON sponsor_contributions(user_id);
       `);
-      console.log('📦 [MATCH DISTRICT DB] Sponsor, links, forms & admin log tables initialized.');
+      // Idempotency guard — a UPI transaction ID belongs to one payment → one sponsorship submission.
+      // (own try/catch: a pre-existing duplicate in prod fails the CREATE; the endpoint pre-check still blocks dupes)
+      try {
+        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_sponsor_contributions_transaction ON sponsor_contributions(transaction_id) WHERE transaction_id IS NOT NULL AND transaction_id <> ''`);
+      } catch (uqErr) {
+        console.warn('⚠️ [MATCH DISTRICT DB] Could not create unique index on sponsor_contributions.transaction_id:', uqErr.message);
+      }
+      console.log('📦 [MATCH DISTRICT DB] Sponsor tables initialized (sponsor_requests / sponsor_list / sponsor_contributions).');
     } catch (extErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create extension tables:', extErr.message);
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create sponsor extension tables:', extErr.message);
     }
 
     // CREATE terms_acceptance_log table for legal proof of consent
@@ -9300,37 +9331,99 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const tournamentId = contribMatch[1];
-        const payload = JSON.parse(body);
-        if (!payload.contributor_name || !payload.amount || parseInt(payload.amount) <= 0) {
+        // Server derives identity from the JWT when present — the client-supplied `userId`/`isGuest` is never trusted
+        const authUser = getAuthUser(req);
+        const payload = JSON.parse(body || '{}');
+        const contributorName = typeof payload.contributor_name === 'string' ? payload.contributor_name.trim() : '';
+        const contributorEmail = (typeof payload.contributor_email === 'string' ? payload.contributor_email.trim() : '') || null;
+        const transactionId = (typeof payload.transaction_id === 'string' ? payload.transaction_id.trim() : '') || null;
+        const paymentApp = typeof payload.payment_app === 'string' ? payload.payment_app.trim() : '';
+        const screenshotUrl = typeof payload.screenshot_url === 'string' ? payload.screenshot_url.trim() : '';
+        const message = (typeof payload.message === 'string' ? payload.message.trim() : '') || null;
+        const amount = parseInt(payload.amount, 10);
+
+        if (!contributorName || !(amount > 0)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Name and valid amount are required.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Your name and a valid contribution amount are required.' }));
           return;
         }
-        // Check tournament exists and sponsors are enabled
-        const tRes = await pool.query('SELECT id, sponsors_enabled FROM tournaments WHERE id = $1', [tournamentId]);
+        if (!transactionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TRANSACTION_ID_REQUIRED', message: 'UPI Transaction ID is required.' }));
+          return;
+        }
+        if (!paymentApp || !['Google Pay', 'PhonePe', 'Paytm', 'BHIM', 'Other'].includes(paymentApp)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PAYMENT_APP_INVALID', message: 'Please select a payment app.' }));
+          return;
+        }
+        if (!screenshotUrl || !/^https?:\/\/.+/.test(screenshotUrl)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SCREENSHOT_REQUIRED', message: 'A payment screenshot is required. Please upload the UPI payment screenshot.' }));
+          return;
+        }
+        // Tournament must exist. Public spot-sponsorships are platform-run: they are always accepted for review
+        // (no `sponsors_enabled` hard-block — that flag only gates the organizer-managed sponsor sections).
+        const tRes = await pool.query('SELECT id FROM tournaments WHERE id = $1', [tournamentId]);
         if (tRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (!tRes.rows[0].sponsors_enabled) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'SPONSORS_DISABLED', message: 'Sponsor contributions are not enabled for this tournament.' }));
+        // Duplicate protection — one UPI transaction ID maps to one sponsorship submission
+        const dupRes = await pool.query("SELECT id FROM sponsor_contributions WHERE transaction_id = $1 AND transaction_id <> '' LIMIT 1", [transactionId]);
+        if (dupRes.rows.length > 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TRANSACTION_ALREADY_SUBMITTED', message: 'This transaction has already been submitted.' }));
           return;
         }
         const contribId = 'SC-' + crypto.randomBytes(6).toString('hex').toUpperCase();
         await pool.query(
-          `INSERT INTO sponsor_contributions (id, tournament_id, contributor_name, contributor_email, amount, message, screenshot_url, transaction_id, payment_app, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')`,
-          [contribId, tournamentId, payload.contributor_name, payload.contributor_email || null, parseInt(payload.amount), payload.message || null, payload.screenshot_url || null, payload.transaction_id || null, payload.payment_app || null]
+          `INSERT INTO sponsor_contributions (id, tournament_id, user_id, contributor_name, contributor_email, amount, message, screenshot_url, transaction_id, payment_app, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending')`,
+          [contribId, tournamentId, authUser ? authUser.id : null, contributorName, contributorEmail, amount, message, screenshotUrl, transactionId, paymentApp]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, id: contribId, message: 'Contribution submitted for review!' }));
+        res.end(JSON.stringify({ success: true, id: contribId, status: 'pending', message: 'Contribution submitted! Awaiting admin verification.' }));
+      } catch (err) {
+        // Unique-index race (two simultaneous submits of the same txn id)
+        if (String(err.code) === '23505') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TRANSACTION_ALREADY_SUBMITTED', message: 'This transaction has already been submitted.' }));
+          return;
+        }
+        console.error('[SPONSOR CONTRIBUTE]', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SUBMIT_FAILED', message: 'Unable to submit your contribution right now. Please try again.' }));
+      }
+    });
+    return;
+  }
+
+  // ── SPONSOR: Current user's submissions for a tournament (authenticated) ─
+  const mySponsorMatch = req.url.match(/^\/api\/tournament\/([^/]+)\/sponsor\/my$/);
+  if (mySponsorMatch && req.method === 'GET') {
+    (async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+          return;
+        }
+        const tournamentId = mySponsorMatch[1];
+        const dbRes = await pool.query(
+          `SELECT id, amount, status, transaction_id, payment_app, admin_notes, created_at
+           FROM sponsor_contributions
+           WHERE tournament_id = $1 AND user_id = $2
+           ORDER BY created_at DESC`, [tournamentId, authUser.id]);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, contributions: dbRes.rows }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
-    });
+    })();
     return;
   }
 
@@ -9424,11 +9517,18 @@ const server = http.createServer(async (req, res) => {
         }
         const contrib = cRes.rows[0];
 
-      // Approve the contribution
-      await pool.query(
-        `UPDATE sponsor_contributions SET status = 'approved', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3`,
+      // Approve the contribution (pending → approved only; guards against double-click double-append)
+      const upRes = await pool.query(
+        `UPDATE sponsor_contributions SET status = 'approved', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3 AND status = 'pending'`,
         [authUser.id, adminNotes || null, contributionId]
       );
+      if (upRes.rowCount === 0) {
+        const cur = await pool.query('SELECT status FROM sponsor_contributions WHERE id = $1', [contributionId]);
+        const already = cur.rows[0]?.status;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: already === 'approved' ? 'Contribution was already approved.' : 'This contribution has already been reviewed and cannot be approved.' }));
+        return;
+      }
 
       // Append approved contribution to sponsors_data JSON column
       // (prize_pool_amount stays as base — total is computed dynamically)
@@ -9486,10 +9586,17 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT' }));
           return;
         }
-        await pool.query(
-          `UPDATE sponsor_contributions SET status = 'rejected', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3`,
+        const upRes = await pool.query(
+          `UPDATE sponsor_contributions SET status = 'rejected', admin_id = $1, admin_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE id = $3 AND status = 'pending'`,
           [authUser.id, adminNotes || null, contributionId]
         );
+        if (upRes.rowCount === 0) {
+          const cur = await pool.query('SELECT status FROM sponsor_contributions WHERE id = $1', [contributionId]);
+          const already = cur.rows[0]?.status;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: already === 'rejected' ? 'Contribution was already rejected.' : 'This contribution has already been reviewed and cannot be rejected.' }));
+          return;
+        }
 
         const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
         await pool.query(

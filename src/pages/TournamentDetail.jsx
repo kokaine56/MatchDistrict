@@ -91,6 +91,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
   const [selectedTier, setSelectedTier] = useState(null);
   const [sponsorStep, setSponsorStep] = useState(1);
+  const [sponsorError, setSponsorError] = useState('');
+  const [sponsorSuccess, setSponsorSuccess] = useState(false);
+  const [mySponsorContribs, setMySponsorContribs] = useState([]);
   const shareInProgressRef = useRef(false);
 
   // Custom states for premium sponsors cards interaction
@@ -248,7 +251,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tournaments' }, (payload) => {
         if (payload.eventType === 'INSERT') setTournamentsList(prev => prev.some(t => t.id === payload.new.id) ? prev : [...prev, payload.new]);
         else if (payload.eventType === 'UPDATE') {
-          if (payload.new.id === tournamentId) loadTournament();
+          if (payload.new.id === tournamentId) { loadTournament(); fetchSponsors(); }
           else setTournamentsList(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
         }
         else if (payload.eventType === 'DELETE') setTournamentsList(prev => prev.filter(t => t.id !== payload.old.id));
@@ -277,7 +280,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         }
       });
     return () => { supabase.removeChannel(channel); };
-  }, [tournamentId, fetchRegistrations, fetchSlots, loadTournament]);
+  }, [tournamentId, fetchRegistrations, fetchSlots, loadTournament, fetchSponsors]);
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
   const isTournamentOwner = useMemo(
@@ -297,13 +300,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   }, [tourney?.orgId]);
 
   // Fetch approved sponsor data for public wall
-  useEffect(() => {
+  const fetchSponsors = useCallback(async () => {
     if (!tournamentId) return;
-    fetch(`/api/tournament/${tournamentId}/sponsors/public`)
-      .then(r => r.json()).then(d => {
-        if (d.success) { setSponsorList(d.sponsors || []); setTotalSponsorAmount(d.totalContributions || 0); }
-      }).catch(() => {});
+    try {
+      const res = await fetch(`/api/tournament/${tournamentId}/sponsors/public`);
+      const d = await res.json().catch(() => ({}));
+      if (d.success) { setSponsorList(d.sponsors || []); setTotalSponsorAmount(d.totalContributions || 0); }
+    } catch { /* non-blocking: public sponsor wall fetch errors are ignored */ }
   }, [tournamentId]);
+
+  useEffect(() => { fetchSponsors(); }, [fetchSponsors]);
+
+  // Fetch the current user's own submissions for this tournament (status banner)
+  useEffect(() => {
+    if (!tournamentId || !currentUser) { setMySponsorContribs([]); return; }
+    let cancelled = false;
+    getAuthToken().then(token => {
+      if (!token || cancelled) return;
+      fetch(`/api/tournament/${tournamentId}/sponsor/my`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => { if (!cancelled && d.success) setMySponsorContribs(d.contributions || []); }).catch(() => {});
+    });
+    return () => { cancelled = true; };
+  }, [tournamentId, currentUser]);
 
   // Main countdown timer
   useEffect(() => {
@@ -505,32 +523,74 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const handleSponsorContribute = async (e) => {
     e.preventDefault();
-    if (!sponsorForm.name.trim() || !sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { triggerToast('Please enter your name and a valid contribution amount.'); return; }
-    if (!sponsorForm.transaction_id.trim()) { triggerToast('Please enter your UPI transaction ID for verification.'); return; }
+    setSponsorError('');
+    if (!sponsorForm.name.trim()) { setSponsorError('Please enter your name.'); return; }
+    if (!sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { setSponsorError('Please enter a valid contribution amount.'); return; }
+    if (!sponsorScreenshot) { setSponsorError('Please upload your UPI payment screenshot.'); return; }
+    if (!sponsorForm.transaction_id.trim()) { setSponsorError('Please enter your UPI transaction ID.'); return; }
+    if (!sponsorForm.payment_app) { setSponsorError('Please select the payment app you used.'); return; }
     setSponsorSubmitting(true);
     try {
+      // 1) Upload the payment screenshot (fail keeps the form intact for retry)
       let screenshot_url = '';
       if (sponsorScreenshot) {
-        const uploaded = await uploadImage(sponsorScreenshot);
-        if (uploaded && typeof uploaded === 'string') screenshot_url = uploaded;
+        try {
+          const uploaded = await uploadImage(sponsorScreenshot);
+          if (uploaded && typeof uploaded === 'string') screenshot_url = uploaded;
+        } catch {
+          setSponsorSubmitting(false);
+          setSponsorError('Could not upload your payment screenshot. Please check your connection and try again.');
+          return;
+        }
       }
+      if (!screenshot_url) {
+        setSponsorSubmitting(false);
+        setSponsorError('Could not upload your payment screenshot. Please try again.');
+        return;
+      }
+      // 2) Submit to the server (auth header only when signed in — server derives identity itself)
+      const token = currentUser ? ((await getAuthToken()) || '') : '';
       const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({
           contributor_name: sponsorForm.name.trim(),
           contributor_email: sponsorForm.email.trim() || undefined,
           amount: parseInt(sponsorForm.amount),
           message: sponsorForm.message.trim() || undefined,
           transaction_id: sponsorForm.transaction_id.trim(),
-          payment_app: sponsorForm.payment_app || undefined,
-          screenshot_url: screenshot_url || undefined,
-          ...(currentUser ? { userId: currentUser.id } : { isGuest: true })
+          payment_app: sponsorForm.payment_app,
+          screenshot_url
         })
       });
-      const data = await res.json();
-      if (data.success) { triggerToast('Contribution submitted for admin review!'); setShowSponsorForm(false); setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' }); setSponsorScreenshot(null); setSelectedTier(null); setSponsorStep(1); }
-      else triggerToast(data.message || 'Failed to submit contribution.');
-    } catch (e) { triggerToast('Network error submitting contribution.'); } finally { setSponsorSubmitting(false); }
+      const data = await res.json().catch(() => ({}));
+      if (data.success && data.status === 'pending') {
+        setSponsorSuccess(true);
+        fetchSponsors();
+        const myToken = await getAuthToken();
+        if (myToken && currentUser) {
+          fetch(`/api/tournament/${tournamentId}/sponsor/my`, { headers: { Authorization: `Bearer ${myToken}` } })
+            .then(r => r.json()).then(d => { if (d.success) setMySponsorContribs(d.contributions || []); }).catch(() => {});
+        }
+      } else {
+        setSponsorError(data.message || 'Failed to submit contribution. Please try again.');
+      }
+    } catch {
+      setSponsorError('Network error submitting contribution. Please try again.');
+    } finally {
+      setSponsorSubmitting(false);
+    }
+  };
+
+  const closeSponsorModal = () => {
+    if (sponsorSubmitting) return;
+    setShowSponsorForm(false);
+    setSponsorSuccess(false);
+    setSponsorError('');
+    setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
+    setSponsorScreenshot(null);
+    setSelectedTier(null);
+    setSponsorStep(1);
   };
 
   const handleShare = async () => {
@@ -1585,16 +1645,39 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             )}
             {activeTab === 'sponsors' && (
               <div className="w-full max-w-7xl">
-                <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4 mb-6">
                   <div className="text-left">
                     <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">Tournament Sponsors</h3>
                     <p className="text-xs text-slate-400 mt-1">Premium corporate and community contributions directly backing the prize pool.</p>
                   </div>
-                  <button onClick={() => setShowSponsorForm(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-xl text-xs transition-all tracking-wide shadow-md shadow-blue-600/10">
+                  <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    whileHover={{ y: -2 }}
+                    onClick={() => { setSponsorSuccess(false); setSponsorError(''); setShowSponsorForm(true); }}
+                    className="group inline-flex items-center justify-center gap-2 self-start sm:self-auto bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-bold text-xs tracking-wide px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/25 transition-all min-h-[44px]"
+                    aria-label="Become a sponsor of this tournament">
+                    <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
                     Become a Sponsor
-                  </button>
+                    <span className="material-symbols-outlined text-[16px] transition-transform duration-300 group-hover:translate-x-0.5">chevron_right</span>
+                  </motion.button>
                 </div>
+
+                {/* Current user's own submission status */}
+                {mySponsorContribs.length > 0 && (
+                  <div className="mb-5 space-y-2">
+                    {mySponsorContribs.map(c => (
+                      <div key={c.id} className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                        <div>
+                          <p className="text-xs font-bold text-white">Your contribution — ₹{Number(c.amount).toLocaleString('en-IN')}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{c.transaction_id ? `Txn: ${c.transaction_id}` : 'Submitted via UPI'}</p>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] uppercase tracking-wider ${c.status === 'approved' ? 'bg-emerald-500/15 text-emerald-400' : c.status === 'rejected' ? 'bg-red-500/15 text-red-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                          {c.status === 'pending' ? 'Pending verification' : c.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {sponsorList.length > 0 ? (
                   <div className="w-full max-w-7xl">
@@ -1639,8 +1722,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     })()}
                   </div>
                 ) : (
-                  <div className="p-6 bg-white/5 border border-white/10 rounded-2xl text-slate-400 text-sm font-medium text-center">
-                    No sponsors yet for this tournament. Be the first to sponsor!
+                  <div className="px-6 py-10 bg-white/5 border border-dashed border-white/15 rounded-2xl text-center flex flex-col items-center gap-3">
+                    <span className="material-symbols-outlined text-4xl text-slate-500">handshake</span>
+                    <p className="text-sm text-slate-300 font-semibold">No sponsors yet for this tournament.</p>
+                    <p className="text-xs text-slate-500 max-w-sm leading-relaxed">Be the first backer — every contribution goes straight into the prize pool.</p>
                   </div>
                 )}
               </div>
@@ -1691,169 +1776,254 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         )}
       </AnimatePresence>
       {/* SPONSOR FORM MODAL */}
-      {showSponsorForm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-          onClick={() => setShowSponsorForm(false)}
-          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl"
-            onClick={e => e.stopPropagation()}>
-            {/* Header */}
-            <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-5 py-4 flex items-center justify-between rounded-t-2xl">
-              <div>
-                <h3 className="text-base font-black text-slate-900">Sponsor This Tournament</h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">Step {sponsorStep} of 3</p>
-              </div>
-              <button onClick={() => setShowSponsorForm(false)}
-                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-                <span className="material-symbols-outlined text-lg">close</span>
-              </button>
-            </div>
+      <AnimatePresence>
+        {showSponsorForm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4"
+            onClick={closeSponsorModal}
+            style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}>
+            <motion.div initial={{ y: 48, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 48, opacity: 0, scale: 0.98 }} transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+              className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md flex flex-col max-h-[94vh] sm:max-h-[92vh] shadow-2xl"
+              onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Sponsor this tournament">
 
-            <div className="p-5 space-y-5">
-              {/* Step indicator */}
-              <div className="flex gap-2">
-                {[1, 2, 3].map(s => (
-                  <div key={s} className={`flex-1 h-1.5 rounded-full transition-colors ${sponsorStep >= s ? 'bg-blue-600' : 'bg-slate-200'}`} />
-                ))}
-              </div>
-
-              {/* STEP 1: Name, Amount, Message */}
-              {sponsorStep === 1 && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Your Name *</label>
-                    <input type="text" value={sponsorForm.name}
-                      onChange={e => { if (!currentUser) setSponsorForm(f => ({ ...f, name: e.target.value })); }}
-                      readOnly={!!currentUser}
-                      placeholder="Enter your name"
-                      className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400 ${currentUser ? 'bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed' : 'bg-white border-slate-300 text-slate-900'}`} />
-                    {currentUser && <p className="text-[10px] text-blue-600 font-medium mt-0.5">Autofilled from your account</p>}
+              {sponsorSuccess ? (
+                /* SUCCESS STATE */
+                <div className="flex flex-col items-center text-center gap-4 px-6 sm:px-8 py-8">
+                  <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-emerald-600 text-[32px]">verified</span>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Email</label>
-                    <input type="email" value={sponsorForm.email}
-                      onChange={e => { if (!currentUser) setSponsorForm(f => ({ ...f, email: e.target.value })); }}
-                      readOnly={!!currentUser}
-                      placeholder="your@email.com"
-                      className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400 ${currentUser ? 'bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed' : 'bg-white border-slate-300 text-slate-900'}`} />
+                    <h3 className="text-lg font-black text-slate-900">Contribution Submitted!</h3>
+                    <p className="text-[13px] text-slate-500 mt-1.5 leading-relaxed">
+                      Your sponsorship of <span className="font-bold text-slate-900">₹{parseInt(sponsorForm.amount || 0).toLocaleString('en-IN')}</span> is now pending admin verification.
+                    </p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Contribution Amount (₹) *</label>
-                    <input type="number" min="1" value={sponsorForm.amount} onChange={e => setSponsorForm(f => ({ ...f, amount: e.target.value }))}
-                      placeholder="Enter amount"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400" />
+                  <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-left">
+                    <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">schedule</span>
+                    <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
+                      Once approved, your name will appear on the tournament's public sponsor wall.
+                    </p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Message (optional)</label>
-                    <textarea value={sponsorForm.message} onChange={e => setSponsorForm(f => ({ ...f, message: e.target.value }))}
-                      placeholder="Write a message for the tournament..."
-                      rows={2}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400 resize-none" />
-                  </div>
-                  <button onClick={() => {
-                    if (!sponsorForm.name.trim()) { triggerToast('Please enter your name.'); return; }
-                    if (!sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { triggerToast('Please enter a valid amount.'); return; }
-                    setSponsorStep(2);
-                  }}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all">
-                    Next — Payment
+                  <button type="button" onClick={closeSponsorModal}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
+                    Done
                   </button>
                 </div>
-              )}
+              ) : (
+                <>
+                  {/* Header */}
+                  <div className="sticky top-0 z-10 bg-white border-b border-slate-200 px-4 sm:px-5 py-3.5 flex items-center justify-between rounded-t-2xl">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-[18px]">volunteer_activism</span>
+                      </span>
+                      <div>
+                        <h3 className="text-sm font-black text-slate-900 leading-tight">Sponsor This Tournament</h3>
+                        <p className="text-[10px] text-slate-500 pt-0.5">Step {sponsorStep} of 3</p>
+                      </div>
+                    </div>
+                    <button onClick={closeSponsorModal}
+                      className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors" aria-label="Close">
+                      <span className="material-symbols-outlined text-lg">close</span>
+                    </button>
+                  </div>
 
-              {/* STEP 2: UPI Payment */}
-              {sponsorStep === 2 && (
-                <div className="space-y-4">
-                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-                    <p className="text-xs font-bold text-blue-800 uppercase tracking-wider">Pay via UPI</p>
-                    <p className="text-sm text-slate-700">
-                      Send <span className="font-black text-slate-900">₹{parseInt(sponsorForm.amount || 0).toLocaleString('en-IN')}</span> to:
-                    </p>
-                    <div className="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between">
-                      <span className="text-sm font-mono font-bold text-slate-900">matchdistrict@upi</span>
-                      <button onClick={() => { navigator.clipboard.writeText('matchdistrict@upi'); triggerToast('UPI ID copied!'); }}
-                        className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg transition-colors">
-                        Copy
+                  {/* Step pills + label */}
+                  <div className="px-4 sm:px-5 pt-4">
+                    <div className="flex gap-1.5">
+                      {[
+                        { n: 1, label: 'Your Details' },
+                        { n: 2, label: 'UPI Payment' },
+                        { n: 3, label: 'Proof & Submit' }
+                      ].map(s => (
+                        <div key={s.n} className="flex-1">
+                          <div className={`h-1 rounded-full transition-colors ${sponsorStep >= s.n ? 'bg-blue-600' : 'bg-slate-200'}`} />
+                          <p className={`text-[9px] font-bold uppercase tracking-wider mt-1 ${sponsorStep >= s.n ? 'text-blue-600' : 'text-slate-400'}`}>{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Scrollable body */}
+                  <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
+                    {/* STEP 1: Your Details */}
+                    {sponsorStep === 1 && (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Your Name *</label>
+                          <input type="text" value={sponsorForm.name}
+                            onChange={e => { if (!currentUser) setSponsorForm(f => ({ ...f, name: e.target.value })); }}
+                            readOnly={!!currentUser}
+                            placeholder="Enter your name"
+                            className={`w-full px-3.5 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400 ${currentUser ? 'bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed' : 'bg-white border-slate-300 text-slate-900'}`} />
+                          {currentUser && <p className="text-[10px] text-blue-600 font-medium mt-1">Autofilled from your account</p>}
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Contribution Amount (₹) *</label>
+                          <div className="grid grid-cols-4 gap-2 mb-2">
+                            {['50', '100', '250', '500'].map(t => (
+                              <button key={t} type="button"
+                                onClick={() => setSponsorForm(f => ({ ...f, amount: t }))}
+                                className={`py-2 rounded-lg text-xs font-bold border transition-all ${sponsorForm.amount === t ? 'bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-600/20' : 'bg-white border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600'}`}>
+                                ₹{t}
+                              </button>
+                            ))}
+                          </div>
+                          <input type="number" min="1" value={sponsorForm.amount} onChange={e => setSponsorForm(f => ({ ...f, amount: e.target.value }))}
+                            placeholder="Or enter a custom amount"
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Message (optional)</label>
+                          <textarea value={sponsorForm.message} onChange={e => setSponsorForm(f => ({ ...f, message: e.target.value }))}
+                            placeholder="Write a message for the tournament..."
+                            rows={2}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400 resize-none" />
+                        </div>
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Your contribution goes directly into the tournament prize pool and appears on the public sponsor wall once verified.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* STEP 2: UPI Payment */}
+                    {sponsorStep === 2 && (
+                      <div className="space-y-4">
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2.5">
+                          <p className="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="material-symbols-outlined text-[16px]">qr_code</span> Pay via UPI
+                          </p>
+                          <p className="text-sm text-slate-700">
+                            Send <span className="font-black text-slate-900">₹{parseInt(sponsorForm.amount || 0).toLocaleString('en-IN')}</span> to:
+                          </p>
+                          <div className="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-2">
+                            <span className="text-sm font-mono font-bold text-slate-900 truncate">matchdistrict@upi</span>
+                            <button type="button" onClick={() => { navigator.clipboard.writeText('matchdistrict@upi').catch(() => {}); triggerToast('UPI ID copied!'); }}
+                              className="shrink-0 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1.5 rounded-lg transition-colors">
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-500">Account Holder: Match District</p>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5">
+                          <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">info</span>
+                          <p className="text-[11px] text-amber-800 font-semibold leading-relaxed">
+                            After payment, proceed to upload your transaction screenshot and ID for verification.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* STEP 3: Proof & Submit */}
+                    {sponsorStep === 3 && (
+                      <div className="space-y-4">
+                        {sponsorError && (
+                          <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2">
+                            <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0">error</span>
+                            <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
+                          </div>
+                        )}
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Payment Screenshot</label>
+                          <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
+                            onClick={() => document.getElementById('sponsor-screenshot-input')?.click()}>
+                            {sponsorScreenshot ? (
+                              <div className="space-y-2">
+                                <img src={URL.createObjectURL(sponsorScreenshot)} alt="Payment screenshot preview" className="max-h-32 mx-auto rounded-lg object-contain" />
+                                <div className="flex items-center justify-center gap-2">
+                                  <p className="text-[11px] text-slate-500">Tap to change</p>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); setSponsorScreenshot(null); }}
+                                    className="text-[11px] text-red-500 font-semibold hover:underline">
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="py-4">
+                                <span className="material-symbols-outlined text-3xl text-slate-300">image</span>
+                                <p className="text-xs text-slate-500 mt-1">Tap to upload screenshot</p>
+                                <p className="text-[10px] text-slate-400 mt-0.5">JPEG, PNG, or WebP · max 10MB</p>
+                              </div>
+                            )}
+                            <input id="sponsor-screenshot-input" type="file" accept="image/jpeg,image/png,image/webp"
+                              className="hidden"
+                              onChange={e => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                if (f.size > 10 * 1024 * 1024) { triggerToast('File must be under 10MB.'); return; }
+                                setSponsorScreenshot(f);
+                                if (sponsorError === 'Please upload your UPI payment screenshot.') setSponsorError('');
+                              }} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">UPI Transaction ID *</label>
+                          <input type="text" value={sponsorForm.transaction_id} onChange={e => setSponsorForm(f => ({ ...f, transaction_id: e.target.value }))}
+                            placeholder="e.g. UPI0123456789"
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Payment App</label>
+                          <select value={sponsorForm.payment_app} onChange={e => setSponsorForm(f => ({ ...f, payment_app: e.target.value }))}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
+                            <option value="">Select app</option>
+                            <option value="Google Pay">Google Pay</option>
+                            <option value="PhonePe">PhonePe</option>
+                            <option value="Paytm">Paytm</option>
+                            <option value="BHIM">BHIM</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sticky footer — always reachable on mobile */}
+                  <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 px-4 sm:px-5 py-3 rounded-b-2xl">
+                    {sponsorStep === 1 && (
+                      <button type="button" onClick={() => {
+                        setSponsorError('');
+                        if (!sponsorForm.name.trim()) { triggerToast('Please enter your name.'); return; }
+                        if (!sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { triggerToast('Please enter a valid amount.'); return; }
+                        setSponsorStep(2);
+                      }}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
+                        Next — Payment
                       </button>
-                    </div>
-                    <p className="text-[11px] text-slate-500">Account Holder: Match District</p>
+                    )}
+                    {sponsorStep === 2 && (
+                      <div className="flex gap-3">
+                        <button type="button" onClick={() => setSponsorStep(1)}
+                          className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[44px]">
+                          Back
+                        </button>
+                        <button type="button" onClick={() => { setSponsorError(''); setSponsorStep(3); }}
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
+                          I've Paid — Next
+                        </button>
+                      </div>
+                    )}
+                    {sponsorStep === 3 && (
+                      <div className="flex gap-3">
+                        <button type="button" onClick={() => setSponsorStep(2)} disabled={sponsorSubmitting}
+                          className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[44px] disabled:opacity-60">
+                          Back
+                        </button>
+                        <button type="button" onClick={handleSponsorContribute} disabled={sponsorSubmitting}
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
+                          {sponsorSubmitting ? 'Submitting…' : 'Submit Contribution'}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                    <p className="text-[11px] text-amber-800 font-semibold flex items-center gap-1.5">
-                      <span className="material-symbols-outlined text-[16px]">info</span>
-                      After payment, proceed to upload your transaction screenshot and ID.
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => setSponsorStep(1)}
-                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors">
-                      Back
-                    </button>
-                    <button onClick={() => setSponsorStep(3)}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all">
-                      I've Paid — Next
-                    </button>
-                  </div>
-                </div>
+                </>
               )}
-
-              {/* STEP 3: Upload Proof */}
-              {sponsorStep === 3 && (
-                <form onSubmit={handleSponsorContribute} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Payment Screenshot</label>
-                    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
-                      onClick={() => document.getElementById('sponsor-screenshot-input')?.click()}>
-                      {sponsorScreenshot ? (
-                        <div className="space-y-2">
-                          <img src={URL.createObjectURL(sponsorScreenshot)} alt="Preview" className="max-h-32 mx-auto rounded-lg object-contain" />
-                          <p className="text-[11px] text-slate-500">Click to change</p>
-                        </div>
-                      ) : (
-                        <div className="py-4">
-                          <span className="material-symbols-outlined text-3xl text-slate-300">image</span>
-                          <p className="text-xs text-slate-500 mt-1">Tap to upload screenshot</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">JPEG, PNG, or WebP</p>
-                        </div>
-                      )}
-                      <input id="sponsor-screenshot-input" type="file" accept="image/jpeg,image/png,image/webp"
-                        className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f && f.size <= 10 * 1024 * 1024) setSponsorScreenshot(f); else triggerToast('File must be under 10MB.'); }} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">UPI Transaction ID *</label>
-                    <input type="text" value={sponsorForm.transaction_id} onChange={e => setSponsorForm(f => ({ ...f, transaction_id: e.target.value }))}
-                      placeholder="e.g. UPI0123456789"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 placeholder:text-slate-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Payment App</label>
-                    <select value={sponsorForm.payment_app} onChange={e => setSponsorForm(f => ({ ...f, payment_app: e.target.value }))}
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500">
-                      <option value="">Select app</option>
-                      <option value="Google Pay">Google Pay</option>
-                      <option value="PhonePe">PhonePe</option>
-                      <option value="Paytm">Paytm</option>
-                      <option value="BHIM">BHIM</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <button type="button" onClick={() => setSponsorStep(2)}
-                      className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors">
-                      Back
-                    </button>
-                    <button type="submit" disabled={sponsorSubmitting}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl text-sm transition-all">
-                      {sponsorSubmitting ? 'Submitting...' : 'Submit Contribution'}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

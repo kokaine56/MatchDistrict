@@ -27,6 +27,7 @@ export default function AdminDashboard({ onNavigate }) {
 
   // API Data States
   const [kycApplications, setKycApplications] = useState([])
+  const [sponsorContributions, setSponsorContributions] = useState([])
   const [usersList, setUsersList] = useState([])
   const [tournamentsList, setTournamentsList] = useState([])
   const [tournamentsLoading, setTournamentsLoading] = useState(false)
@@ -142,6 +143,11 @@ export default function AdminDashboard({ onNavigate }) {
   const fetchKycApplications = async () => {
     const { ok, data } = await fetchJsonWithRetry('/api/org/applications', { headers: await getHeaders() })
     if (ok && data?.success) setKycApplications(data.applications || [])
+  }
+
+  const fetchSponsorContributions = async () => {
+    const { ok, data } = await fetchJsonWithRetry('/api/admin/sponsor/contributions', { headers: await getHeaders() })
+    if (ok && data?.success) setSponsorContributions(data.contributions || [])
   }
 
   const fetchUsers = async () => {
@@ -302,6 +308,7 @@ export default function AdminDashboard({ onNavigate }) {
 
   const loadAllAdminData = useCallback(() => {
     fetchKycApplications()
+    fetchSponsorContributions()
     fetchUsers()
     fetchTournaments()
     fetchFinancials()
@@ -513,6 +520,7 @@ export default function AdminDashboard({ onNavigate }) {
       currentUser={currentUser}
       badges={{
         kyc: kycApplications.filter(a => a.status === 'pending').length,
+        sponsors: sponsorContributions.filter(c => c.status === 'pending').length,
       }}
       activeTournament={activeTournament}
       onBackTournament={() => { setActiveTournament(null); setRegistrationData([]); }}
