@@ -89,12 +89,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
   const [sponsorSubmitting, setSponsorSubmitting] = useState(false);
   const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
+  const [sponsorScreenshotPreview, setSponsorScreenshotPreview] = useState(null);
+  const [sponsorUploading, setSponsorUploading] = useState(false);
+  const [sponsorUploadedUrl, setSponsorUploadedUrl] = useState('');
+  const [sponsorUploadFailed, setSponsorUploadFailed] = useState(false);
   const [selectedTier, setSelectedTier] = useState(null);
   const [sponsorStep, setSponsorStep] = useState(1);
   const [sponsorError, setSponsorError] = useState('');
   const [sponsorSuccess, setSponsorSuccess] = useState(false);
   const [mySponsorContribs, setMySponsorContribs] = useState([]);
   const shareInProgressRef = useRef(false);
+  const fileInputRef = useRef(null);
 
   // Custom states for premium sponsors cards interaction
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -244,6 +249,18 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useRefetchOnFocus(loadTournament, !!tournamentId);
   useRefetchOnFocus(loadTournamentsList);
 
+  // Fetch approved sponsor data for public wall
+  const fetchSponsors = useCallback(async () => {
+    if (!tournamentId) return;
+    try {
+      const res = await fetch(`/api/tournament/${tournamentId}/sponsors/public`);
+      const d = await res.json().catch(() => ({}));
+      if (d.success) { setSponsorList(d.sponsors || []); setTotalSponsorAmount(d.totalContributions || 0); }
+    } catch { /* non-blocking: public sponsor wall fetch errors are ignored */ }
+  }, [tournamentId]);
+
+  useEffect(() => { fetchSponsors(); }, [fetchSponsors]);
+
   useEffect(() => {
     if (!tournamentId) return;
     const channel = supabase
@@ -298,18 +315,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     fetch(`/api/org/followers/${orgId}`)
       .then(r => r.json()).then(d => { if (d?.count !== undefined) setFollowerCount(d.count); }).catch(() => {});
   }, [tourney?.orgId]);
-
-  // Fetch approved sponsor data for public wall
-  const fetchSponsors = useCallback(async () => {
-    if (!tournamentId) return;
-    try {
-      const res = await fetch(`/api/tournament/${tournamentId}/sponsors/public`);
-      const d = await res.json().catch(() => ({}));
-      if (d.success) { setSponsorList(d.sponsors || []); setTotalSponsorAmount(d.totalContributions || 0); }
-    } catch { /* non-blocking: public sponsor wall fetch errors are ignored */ }
-  }, [tournamentId]);
-
-  useEffect(() => { fetchSponsors(); }, [fetchSponsors]);
 
   // Fetch the current user's own submissions for this tournament (status banner)
   useEffect(() => {
@@ -521,34 +526,82 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     triggerToast(`Thanks for rating this host ${ratingValue} stars!`);
   };
 
+  const validateSponsorScreenshot = (file) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) { setSponsorError('Please upload a JPG, PNG, or WebP image under 10MB.'); return false; }
+    if (file.size > 10 * 1024 * 1024) { setSponsorError('Image is too large. Please upload an image under 10MB.'); return false; }
+    return true;
+  };
+
+  const handleSponsorScreenshotFile = (file) => {
+    setSponsorError('');
+    if (!file) return;
+    if (!validateSponsorScreenshot(file)) return;
+    // Selecting a new image replaces the previous File AND resets upload status:
+    // the local File must be re-uploaded before Submit becomes valid again.
+    setSponsorScreenshot(file);
+    setSponsorUploadedUrl('');
+    setSponsorUploadFailed(false);
+    setSponsorScreenshotPreview(null);
+    const reader = new FileReader();
+    reader.onload = (e) => setSponsorScreenshotPreview(e.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  // Explicit separate upload action — uploads ONLY the selected screenshot.
+  // It never submits the sponsorship, never navigates, and never refreshes.
+  const uploadSponsorScreenshot = async (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    setSponsorError('');
+    if (!sponsorScreenshot) { setSponsorError('Please select a payment screenshot first.'); return; }
+    if (!validateSponsorScreenshot(sponsorScreenshot)) return;
+    if (sponsorUploading || sponsorSubmitting) return;
+    setSponsorUploading(true);
+    setSponsorUploadFailed(false);
+    try {
+      const uploaded = await uploadImage(sponsorScreenshot);
+      if (uploaded && typeof uploaded === 'string') {
+        setSponsorUploadedUrl(uploaded);
+      } else {
+        setSponsorUploadFailed(true);
+        setSponsorError('Screenshot upload failed. Please try again.');
+      }
+    } catch {
+      setSponsorUploadFailed(true);
+      setSponsorError('Screenshot upload failed. Please try again.');
+    } finally {
+      setSponsorUploading(false);
+    }
+  };
+
+  const removeSponsorScreenshot = () => {
+    setSponsorScreenshot(null);
+    setSponsorScreenshotPreview(null);
+    setSponsorUploadedUrl('');
+    setSponsorUploadFailed(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setSponsorError('');
+  };
+
   const handleSponsorContribute = async (e) => {
     e.preventDefault();
     setSponsorError('');
-    if (!sponsorForm.name.trim()) { setSponsorError('Please enter your name.'); return; }
-    if (!sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { setSponsorError('Please enter a valid contribution amount.'); return; }
-    if (!sponsorScreenshot) { setSponsorError('Please upload your UPI payment screenshot.'); return; }
+    // Condition 1: a successfully uploaded screenshot URL must exist — a local File is NOT enough.
+    if (!sponsorUploadedUrl) {
+      if (!sponsorScreenshot) { setSponsorError('Please upload your UPI payment screenshot.'); return; }
+      if (sponsorUploadFailed) { setSponsorError('Screenshot upload failed. Please try again.'); return; }
+      setSponsorError('Please upload the selected screenshot before submitting.');
+      return;
+    }
     if (!sponsorForm.transaction_id.trim()) { setSponsorError('Please enter your UPI transaction ID.'); return; }
     if (!sponsorForm.payment_app) { setSponsorError('Please select the payment app you used.'); return; }
+    if (!sponsorForm.amount || parseInt(sponsorForm.amount) <= 0) { setSponsorError('Please enter a valid contribution amount.'); return; }
+    if (!currentUser) { setSponsorError('Please sign in to submit a sponsorship contribution.'); return; }
+    if (!tournamentId) { setSponsorError('This tournament could not be found.'); return; }
+    if (sponsorSubmitting) return;
     setSponsorSubmitting(true);
     try {
-      // 1) Upload the payment screenshot (fail keeps the form intact for retry)
-      let screenshot_url = '';
-      if (sponsorScreenshot) {
-        try {
-          const uploaded = await uploadImage(sponsorScreenshot);
-          if (uploaded && typeof uploaded === 'string') screenshot_url = uploaded;
-        } catch {
-          setSponsorSubmitting(false);
-          setSponsorError('Could not upload your payment screenshot. Please check your connection and try again.');
-          return;
-        }
-      }
-      if (!screenshot_url) {
-        setSponsorSubmitting(false);
-        setSponsorError('Could not upload your payment screenshot. Please try again.');
-        return;
-      }
-      // 2) Submit to the server (auth header only when signed in — server derives identity itself)
+      // 2) Submit to the server using the already-uploaded screenshot URL (no upload here).
       const token = currentUser ? ((await getAuthToken()) || '') : '';
       const res = await fetch(`/api/tournament/${tournamentId}/sponsor/contribute`, {
         method: 'POST',
@@ -560,7 +613,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           message: sponsorForm.message.trim() || undefined,
           transaction_id: sponsorForm.transaction_id.trim(),
           payment_app: sponsorForm.payment_app,
-          screenshot_url
+          screenshot_url: sponsorUploadedUrl
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -573,10 +626,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             .then(r => r.json()).then(d => { if (d.success) setMySponsorContribs(d.contributions || []); }).catch(() => {});
         }
       } else {
-        setSponsorError(data.message || 'Failed to submit contribution. Please try again.');
+        setSponsorError(data.message || 'Contribution could not be submitted. Please try again.');
       }
     } catch {
-      setSponsorError('Network error submitting contribution. Please try again.');
+      setSponsorError('Contribution could not be submitted. Please try again.');
     } finally {
       setSponsorSubmitting(false);
     }
@@ -589,6 +642,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     setSponsorError('');
     setSponsorForm({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
     setSponsorScreenshot(null);
+    setSponsorScreenshotPreview(null);
+    setSponsorUploadedUrl('');
+    setSponsorUploadFailed(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setSelectedTier(null);
     setSponsorStep(1);
   };
@@ -1793,16 +1850,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     <span className="material-symbols-outlined text-emerald-600 text-[32px]">verified</span>
                   </div>
                   <div>
-                    <h3 className="text-lg font-black text-slate-900">Contribution Submitted!</h3>
+                    <h3 className="text-lg font-black text-slate-900">Contribution Submitted</h3>
                     <p className="text-[13px] text-slate-500 mt-1.5 leading-relaxed">
-                      Your sponsorship of <span className="font-bold text-slate-900">₹{parseInt(sponsorForm.amount || 0).toLocaleString('en-IN')}</span> is now pending admin verification.
+                      Your sponsorship contribution has been submitted for admin verification.
                     </p>
                   </div>
-                  <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-2.5 text-left">
+                  <div className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-center justify-center gap-2.5 text-left">
                     <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">schedule</span>
-                    <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
-                      Once approved, your name will appear on the tournament's public sponsor wall.
-                    </p>
+                    <p className="text-xs font-bold text-amber-800">Status: Pending Verification</p>
                   </div>
                   <button type="button" onClick={closeSponsorModal}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
@@ -1920,43 +1975,92 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     {sponsorStep === 3 && (
                       <div className="space-y-4">
                         {sponsorError && (
-                          <div className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2">
-                            <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0">error</span>
-                            <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
+                          <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 flex items-start gap-2">
+                            <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0 mt-px">error</span>
+                            <div className="min-w-0">
+                              {sponsorError.toLowerCase().includes('screenshot') && (
+                                <p className="text-[11px] font-bold text-red-800 leading-tight">Payment screenshot required</p>
+                              )}
+                              <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
+                            </div>
                           </div>
                         )}
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">Payment Screenshot</label>
-                          <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-blue-400 transition-colors cursor-pointer"
-                            onClick={() => document.getElementById('sponsor-screenshot-input')?.click()}>
-                            {sponsorScreenshot ? (
-                              <div className="space-y-2">
-                                <img src={URL.createObjectURL(sponsorScreenshot)} alt="Payment screenshot preview" className="max-h-32 mx-auto rounded-lg object-contain" />
-                                <div className="flex items-center justify-center gap-2">
-                                  <p className="text-[11px] text-slate-500">Tap to change</p>
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); setSponsorScreenshot(null); }}
-                                    className="text-[11px] text-red-500 font-semibold hover:underline">
-                                    Remove
+                          {sponsorError && (
+                            <div role="alert" className="bg-red-50 border border-red-200 rounded-xl px-3.5 py-2.5 mb-2 flex items-start gap-2">
+                              <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0 mt-px">error</span>
+                              <div className="min-w-0">
+                                {sponsorError.toLowerCase().includes('screenshot') && (
+                                  <p className="text-[11px] font-bold text-red-800 leading-tight">Payment screenshot required</p>
+                                )}
+                                <p className="text-xs font-semibold text-red-700 leading-snug">{sponsorError}</p>
+                              </div>
+                            </div>
+                          )}
+                          {!sponsorScreenshot ? (
+                            /* STATE 1 — EMPTY */
+                            <button type="button" onClick={() => fileInputRef.current?.click()}
+                              className="w-full border-2 border-dashed border-slate-300 rounded-xl px-4 py-6 text-center hover:border-blue-400 transition-colors cursor-pointer">
+                              <span className="material-symbols-outlined text-3xl text-slate-300 block mx-auto">image</span>
+                              <p className="text-xs font-semibold text-slate-600 mt-1.5">Select payment screenshot</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">JPG, PNG or WebP · max 10MB</p>
+                            </button>
+                          ) : (
+                            /* STATES 2–5 — SELECTED / UPLOADING / UPLOADED / FAILED */
+                            <div className="rounded-xl border border-slate-200 overflow-hidden">
+                              <img src={sponsorScreenshotPreview || ''} alt="Payment screenshot preview" className="max-h-36 w-full object-contain bg-slate-50" />
+                              <div className="px-3.5 pt-2.5 pb-3 space-y-2.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-[11px] text-slate-600 max-w-[130px] truncate">{sponsorScreenshot.name || 'Screenshot'}</p>
+                                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={sponsorUploading || sponsorSubmitting}
+                                    className="shrink-0 text-[11px] font-bold text-blue-600 hover:text-blue-700 disabled:opacity-50">
+                                    Change Image
                                   </button>
                                 </div>
+                                {sponsorUploading ? (
+                                  /* STATE 3 — UPLOADING */
+                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="w-4 h-4 shrink-0 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                                      <p className="text-[11px] font-semibold text-blue-700">Uploading screenshot...</p>
+                                    </div>
+                                    <span className="text-[11px] font-bold text-blue-400 shrink-0">Uploading...</span>
+                                  </div>
+                                ) : sponsorUploadedUrl ? (
+                                  /* STATE 4 — UPLOADED */
+                                  <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+                                    <span className="material-symbols-outlined text-emerald-600 text-[18px] shrink-0">check_circle</span>
+                                    <p className="text-[11px] font-bold text-emerald-700">Screenshot uploaded</p>
+                                  </div>
+                                ) : sponsorUploadFailed ? (
+                                  /* STATE 5 — FAILED */
+                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="material-symbols-outlined text-red-500 text-[18px] shrink-0">error</span>
+                                      <p className="text-[11px] font-bold text-red-700">Upload failed</p>
+                                    </div>
+                                    <button type="button" onClick={(e) => uploadSponsorScreenshot(e)}
+                                      className="shrink-0 text-[11px] font-bold text-red-600 hover:text-red-700">
+                                      Retry Upload
+                                    </button>
+                                  </div>
+                                ) : (
+                                  /* STATE 2 — SELECTED (not yet uploaded) */
+                                  <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
+                                    <p className="text-[11px] font-medium text-slate-600 min-w-0">Selected — ready to upload</p>
+                                    <button type="button" onClick={(e) => uploadSponsorScreenshot(e)}
+                                      className="shrink-0 text-[11px] font-bold text-blue-700 hover:text-blue-800 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                                      disabled={sponsorUploading || sponsorSubmitting}>
+                                      Upload Screenshot
+                                    </button>
+                                  </div>
+                                )}
                               </div>
-                            ) : (
-                              <div className="py-4">
-                                <span className="material-symbols-outlined text-3xl text-slate-300">image</span>
-                                <p className="text-xs text-slate-500 mt-1">Tap to upload screenshot</p>
-                                <p className="text-[10px] text-slate-400 mt-0.5">JPEG, PNG, or WebP · max 10MB</p>
-                              </div>
-                            )}
-                            <input id="sponsor-screenshot-input" type="file" accept="image/jpeg,image/png,image/webp"
-                              className="hidden"
-                              onChange={e => {
-                                const f = e.target.files?.[0];
-                                if (!f) return;
-                                if (f.size > 10 * 1024 * 1024) { triggerToast('File must be under 10MB.'); return; }
-                                setSponsorScreenshot(f);
-                                if (sponsorError === 'Please upload your UPI payment screenshot.') setSponsorError('');
-                              }} />
-                          </div>
+                            </div>
+                          )}
+                          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; handleSponsorScreenshotFile(f); }} />
                         </div>
                         <div>
                           <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wide">UPI Transaction ID *</label>
@@ -2006,15 +2110,27 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                       </div>
                     )}
                     {sponsorStep === 3 && (
-                      <div className="flex gap-3">
-                        <button type="button" onClick={() => setSponsorStep(2)} disabled={sponsorSubmitting}
-                          className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[44px] disabled:opacity-60">
-                          Back
-                        </button>
-                        <button type="button" onClick={handleSponsorContribute} disabled={sponsorSubmitting}
-                          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px]">
-                          {sponsorSubmitting ? 'Submitting…' : 'Submit Contribution'}
-                        </button>
+                      <div className="space-y-2">
+                        {!(sponsorUploadedUrl && sponsorForm.transaction_id.trim() && sponsorForm.payment_app) && !sponsorSubmitting && (
+                          <p className="text-[10px] text-slate-400 text-center leading-snug">
+                            {!sponsorUploadedUrl
+                              ? (sponsorUploadFailed ? 'Upload failed. Retry to continue.' : 'Upload your screenshot to continue.')
+                              : !sponsorForm.transaction_id.trim()
+                                ? 'Enter your UPI transaction ID to continue.'
+                                : 'Select the payment app you used to continue.'}
+                          </p>
+                        )}
+                        <div className="flex gap-3">
+                          <button type="button" onClick={() => setSponsorStep(2)} disabled={sponsorSubmitting}
+                            className="w-24 shrink-0 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl text-sm transition-colors min-h-[44px] disabled:opacity-60">
+                            Back
+                          </button>
+                          <button type="button" onClick={handleSponsorContribute}
+                            disabled={sponsorSubmitting || sponsorUploading || !sponsorUploadedUrl || !sponsorForm.transaction_id.trim() || !sponsorForm.payment_app}
+                            className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold py-3 rounded-xl text-sm transition-all min-h-[44px] shadow-sm disabled:shadow-none">
+                            {sponsorSubmitting ? 'Submitting...' : 'Submit Contribution'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
