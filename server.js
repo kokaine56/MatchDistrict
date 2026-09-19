@@ -150,6 +150,9 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
+// Sponsorship feature flag — gated until production-ready. Flip `ENABLE_SPONSORSHIP=true` to activate the full flow.
+const SPONSORSHIP_ENABLED = process.env.ENABLE_SPONSORSHIP === 'true';
+
 // Initialize Resend
 if (!RESEND_API_KEY) {
   console.warn('⚠️ [RESEND] RESEND_API_KEY is not set. Email sending will be disabled.');
@@ -9087,6 +9090,11 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
+        if (!SPONSORSHIP_ENABLED) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SPONSORSHIP_DISABLED', message: 'Sponsorship feature is currently unavailable.' }));
+          return;
+        }
         const authUser = getAuthUser(req);
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -9323,6 +9331,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── SPONSOR: Feature availability (public) ───────────────────────────────
+  if (req.url === '/api/sponsorship/status' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, enabled: SPONSORSHIP_ENABLED }));
+    return;
+  }
+
   // ── SPONSOR: Submit public contribution ──────────────────────────────────
   const contribMatch = req.url.match(/^\/api\/tournament\/([^/]+)\/sponsor\/contribute$/);
   if (contribMatch && req.method === 'POST') {
@@ -9330,6 +9345,11 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
+        if (!SPONSORSHIP_ENABLED) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SPONSORSHIP_DISABLED', message: 'Sponsorship feature is currently unavailable.' }));
+          return;
+        }
         const tournamentId = contribMatch[1];
         // Server derives identity from the JWT when present — the client-supplied `userId`/`isGuest` is never trusted
         const authUser = getAuthUser(req);

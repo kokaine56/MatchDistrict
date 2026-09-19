@@ -86,6 +86,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [sponsorList, setSponsorList] = useState([]);
   const [totalSponsorAmount, setTotalSponsorAmount] = useState(0);
   const [showSponsorForm, setShowSponsorForm] = useState(false);
+  const [showSponsorComingSoon, setShowSponsorComingSoon] = useState(false);
+  const [sponsorshipEnabled, setSponsorshipEnabled] = useState(() => import.meta.env.ENABLE_SPONSORSHIP !== 'false');
   const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
   const [sponsorSubmitting, setSponsorSubmitting] = useState(false);
   const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
@@ -330,6 +332,16 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     });
     return () => { cancelled = true; };
   }, [tournamentId, currentUser]);
+
+  // Sponsorship availability — follow the server's authoritative feature flag
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/sponsorship/status')
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d && typeof d.enabled === 'boolean') setSponsorshipEnabled(d.enabled); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Main countdown timer
   useEffect(() => {
@@ -1720,15 +1732,28 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             )}
             {activeTab === 'sponsors' && (
               <div className="w-full max-w-7xl">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4 mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:items-center justify-between gap-3 border-b border-white/5 pb-4 mb-6">
                   <div className="text-left">
-                    <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">Tournament Sponsors</h3>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-wider">Tournament Sponsors</h3>
+                      {sponsorshipEnabled === false && (
+                        <span className="inline-flex items-center justify-center px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 whitespace-nowrap">
+                          <span className="text-[10px] font-bold tracking-widest uppercase text-blue-500">Coming Soon</span>
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-400 mt-1">Premium corporate and community contributions directly backing the prize pool.</p>
                   </div>
                   <motion.button
                     whileTap={{ scale: 0.97 }}
                     whileHover={{ y: -2 }}
-                    onClick={() => { setSponsorSuccess(false); setSponsorError(''); setShowSponsorForm(true); }}
+                    onClick={() => {
+                      if (sponsorshipEnabled === false) {
+                        setShowSponsorComingSoon(true);
+                        return;
+                      }
+                      setSponsorSuccess(false); setSponsorError(''); setShowSponsorForm(true);
+                    }}
                     className="group inline-flex items-center justify-center gap-2 self-start sm:self-auto bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-bold text-xs tracking-wide px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/25 transition-all min-h-[44px]"
                     aria-label="Become a sponsor of this tournament">
                     <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
@@ -1799,8 +1824,16 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 ) : (
                   <div className="px-6 py-10 bg-white/5 border border-dashed border-white/15 rounded-2xl text-center flex flex-col items-center gap-3">
                     <span className="material-symbols-outlined text-4xl text-slate-500">handshake</span>
-                    <p className="text-sm text-slate-300 font-semibold">No sponsors yet for this tournament.</p>
-                    <p className="text-xs text-slate-500 max-w-sm leading-relaxed">Be the first backer — every contribution goes straight into the prize pool.</p>
+                    <p className="text-sm text-slate-300 font-semibold">
+                      {sponsorshipEnabled === false
+                        ? 'Sponsorships are coming soon.'
+                        : 'No sponsors yet for this tournament.'}
+                    </p>
+                    <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
+                      {sponsorshipEnabled === false
+                        ? 'Support this tournament through sponsorship. Sponsorships are coming soon.'
+                        : 'Be the first backer — every contribution goes straight into the prize pool.'}
+                    </p>
                   </div>
                 )}
               </div>
@@ -2041,8 +2074,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
                               {/* Status row */}
                               <div className="px-3.5 py-3">
-                                {/* File name */}
-                                <p className="text-[11px] text-slate-500 truncate mb-2">{sponsorScreenshot?.name || 'Screenshot'}</p>
+                                {/* File name + actions */}
+                                <div className="flex items-center justify-between gap-2 mb-2">
+                                  <p className="text-[11px] text-slate-500 truncate min-w-0">{sponsorScreenshot?.name || 'Screenshot'}</p>
+                                  <button
+                                    type="button"
+                                    id="sponsor-remove-screenshot-btn"
+                                    onClick={removeSponsorScreenshot}
+                                    disabled={sponsorUploading || sponsorSubmitting}
+                                    className="shrink-0 text-[11px] font-semibold text-red-500 hover:text-red-600 disabled:opacity-50"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
 
                                 {sponsorUploading ? (
                                   /* STATE 3 — UPLOADING */
@@ -2212,6 +2256,65 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   </div>
                 </>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* COMING SOON MODAL */}
+      <AnimatePresence>
+        {showSponsorComingSoon && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-5"
+            onClick={() => setShowSponsorComingSoon(false)}
+            style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+          >
+            <motion.div
+              initial={{ y: 20, opacity: 0, scale: 0.95 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 20, opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="bg-white border border-slate-200 rounded-2xl w-full max-w-[400px] shadow-xl relative overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sponsor-coming-soon-title"
+            >
+              {/* Close Button */}
+              <button
+                onClick={() => setShowSponsorComingSoon(false)}
+                className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                aria-label="Close modal"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+
+              <div className="flex flex-col items-center text-center px-6 pt-10 pb-8">
+                {/* Icon */}
+                <div className="w-14 h-14 rounded-full bg-blue-50 flex items-center justify-center mb-5">
+                  <span className="material-symbols-outlined text-[28px] text-blue-600">volunteer_activism</span>
+                </div>
+
+                {/* Content */}
+                <h3 id="sponsor-coming-soon-title" className="text-lg font-black text-slate-900 mb-2.5">
+                  Sponsorship Coming Soon
+                </h3>
+                <p className="text-[13px] text-slate-500 leading-relaxed max-w-[280px] mx-auto">
+                  We're preparing the sponsorship feature for Match District. You'll soon be able to support tournaments and contribute directly to their prize pools.
+                </p>
+
+                {/* Primary Button */}
+                <button
+                  onClick={() => setShowSponsorComingSoon(false)}
+                  className="w-full mt-7 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl text-sm transition-all"
+                >
+                  Got it
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
