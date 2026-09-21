@@ -54,7 +54,6 @@ const emptyPresetForm = () => ({
   captain_uid: '',
   players: [{ ign: '', uid: '' }, { ign: '', uid: '' }, { ign: '', uid: '' }],
   substitutes: [{ ign: '', uid: '' }, { ign: '', uid: '' }],
-  is_default: false,
 })
 
 const parseRosterJson = (value) => {
@@ -107,7 +106,6 @@ const presetToForm = (preset) => {
     captain_uid: c.captain_uid,
     players: pad(c.players, 3),
     substitutes: pad(c.substitutes, 2),
-    is_default: !!c.is_default,
   };
 }
 
@@ -130,8 +128,14 @@ const buildPresetPayload = (form) => ({
   captain_uid: form.captain_uid.trim(),
   players: form.players.filter(p => p.ign.trim() || p.uid.trim()),
   substitutes: form.substitutes.filter(s => s.ign.trim() || s.uid.trim()),
-  is_default: form.is_default,
 })
+
+const mergePresetMutation = (prev, written) => {
+  const exists = prev.some(p => p.id === written.id);
+  return exists
+    ? prev.map(p => p.id === written.id ? written : p)
+    : [written, ...prev];
+}
 
 const getProfileBio = (user, fallback = '') => user?.orgBio ?? user?.experience ?? user?.bio ?? fallback ?? ''
 
@@ -1646,7 +1650,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
       });
       const data = await res.json();
       if (data.success) {
-        setPresets(prev => [data.preset, ...prev]);
+        setPresets(prev => mergePresetMutation(prev, data.preset));
         setPresetForm(emptyPresetForm());
         setIsCreatingPreset(false);
         setDetailsOpenId(null);
@@ -1687,38 +1691,11 @@ function Profile({ onNavigate, selectedUserProfile }) {
       });
       const data = await res.json();
       if (data.success) {
-        setPresets(prev => prev.map(p => p.id === presetId ? data.preset : p));
+        setPresets(prev => mergePresetMutation(prev, data.preset));
         setIsEditingPreset(null);
         setDetailsOpenId(null);
         setEditForm(emptyPresetForm());
         triggerToast('Team preset updated successfully!');
-      } else {
-        triggerToast(data.message || 'Failed to update preset.');
-      }
-    } catch (err) {
-      console.error(err);
-      triggerToast('Error updating preset.');
-    }
-  };
-
-  const handleSetDefaultPreset = async (preset) => {
-    const nextDefault = !preset.is_default;
-    const form = presetToForm(preset);
-    form.is_default = nextDefault;
-    const token = await getAuthToken();
-    try {
-      const res = await fetch(`/api/team-presets/${preset.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(buildPresetPayload(form))
-      });
-      const data = await res.json();
-      if (data.success) {
-        setPresets(prev => prev.map(p => p.id === preset.id ? data.preset : p));
-        triggerToast(nextDefault ? 'Set as default squad for this game.' : 'Default squad removed.');
       } else {
         triggerToast(data.message || 'Failed to update preset.');
       }
@@ -2865,11 +2842,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         </div>
                       </div>
 
-                      {/* Default toggle */}
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input type="checkbox" checked={presetForm.is_default} onChange={e => setPresetForm({ ...presetForm, is_default: e.target.checked })} className="accent-secondary w-4 h-4 rounded" />
-                        <span className="font-body-sm text-[11px] text-on-background">Set as default squad for {presetForm.game || 'BGMI'}</span>
-                      </label>
 
                       {/* Actions */}
                       <div className="flex justify-end gap-2 pt-1 border-t border-outline-variant/20">
@@ -2963,10 +2935,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           </div>
                         </div>
 
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input type="checkbox" checked={editForm.is_default} onChange={e => setEditForm({ ...editForm, is_default: e.target.checked })} className="accent-primary w-4 h-4 rounded" />
-                          <span className="font-body-sm text-[11px] text-on-background">Set as default squad for {editForm.game || 'BGMI'}</span>
-                        </label>
 
                         <div className="flex justify-end gap-2 pt-1 border-t border-outline-variant/20">
                           <button type="button" onClick={() => setIsEditingPreset(null)} className="px-4 py-2 bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/40 rounded-lg font-headline-md text-xs font-semibold transition-colors">Cancel</button>
@@ -3079,14 +3047,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 )}
 
                                 {/* Actions */}
-                                <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-                                  <button
-                                    onClick={() => handleSetDefaultPreset(preset)}
-                                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-headline-md text-[10px] font-bold transition-colors ${preset.is_default ? 'text-amber-400 bg-amber-400/10' : 'text-on-surface-variant hover:bg-surface-variant'}`}
-                                  >
-                                    <span className="material-symbols-outlined text-sm">{preset.is_default ? 'star' : 'star_outline'}</span>
-                                    {preset.is_default ? 'Default squad' : 'Set as default'}
-                                  </button>
+                                <div className="flex items-center justify-end gap-2 pt-1 flex-wrap">
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => handleEditStart(preset)}
@@ -3129,9 +3090,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">{preset.team_name}</span>
-                                {preset.is_default && (
-                                  <span className="material-symbols-outlined text-sm text-amber-400 shrink-0" title="Default squad">star</span>
-                                )}
+
                               </div>
                               {preset.preset_name && preset.preset_name !== preset.team_name && (
                                 <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">{preset.preset_name}</p>
