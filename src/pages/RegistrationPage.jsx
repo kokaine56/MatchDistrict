@@ -6,12 +6,25 @@ import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { uploadImage } from '../utils/cloudinaryUpload.js'
-import gameBgmi from '../assets/supported_games/bgmi.png'
-import gameFreeFire from '../assets/supported_games/freefire.png'
-import gameCodm from '../assets/supported_games/codm.png'
-import gameValorant from '../assets/supported_games/valorant.png'
+import GameIcon from '../components/GameIcon'
+import { normalizeGameName } from '../utils/gameUtils.js'
 
 const PAYMENT_APPS = ['PhonePe', 'Google Pay', 'Paytm', 'BHIM', 'Other']
+
+const rosterOf = (value) => {
+  if (Array.isArray(value)) {
+    return value.filter(s => s && (s.ign || s.uid)).map(s => ({ ign: s.ign || '', uid: s.uid || '' }))
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value)
+      if (Array.isArray(parsed)) return rosterOf(parsed)
+    } catch {
+      return []
+    }
+  }
+  return []
+}
 
 function RegistrationPage({ onNavigate }) {
   const { id } = useParams()
@@ -33,6 +46,8 @@ function RegistrationPage({ onNavigate }) {
     players: [{ ign: '', uid: '' }, { ign: '', uid: '' }, { ign: '', uid: '' }],
     substitutes: [{ ign: '', uid: '' }, { ign: '', uid: '' }],
   })
+  const [savedPresets, setSavedPresets] = useState([])
+  const [presetRosterWarning, setPresetRosterWarning] = useState('')
   const [errors, setErrors] = useState({})
   const [touched, setTouched] = useState({})
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -74,6 +89,63 @@ function RegistrationPage({ onNavigate }) {
       captainIgn: prev.captainIgn || currentUser.gamerTag || currentUser.name || '',
     }))
   }, [currentUser, tourney])
+
+  // Fetch the user's saved squad presets (Teams & Squads feature) for auto-fill
+  useEffect(() => {
+    if (!currentUser) return
+    let cancelled = false
+    getAuthToken().then(token => {
+      if (!token) return
+      return fetch('/api/team-presets', { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => res.json())
+        .then(data => {
+          if (!cancelled && data.success && data.presets) setSavedPresets(data.presets)
+        })
+        .catch(() => {})
+    })
+    return () => { cancelled = true }
+  }, [currentUser])
+
+  const PRESET_ROSTER_SIZE = 3
+
+  const matchingPresets = useMemo(() => {
+    if (!tourney?.game) return []
+    const game = normalizeGameName(tourney.game).toLowerCase()
+    if (!game) return []
+    return (savedPresets || [])
+      .filter(p => normalizeGameName(p.game).toLowerCase() === game)
+      .map(p => ({
+        ...p,
+        rosterCount: rosterOf(p.players).length,
+        rosterComplete: rosterOf(p.players).length >= PRESET_ROSTER_SIZE,
+      }))
+      .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))
+  }, [savedPresets, tourney])
+
+  const applyPreset = (preset) => {
+    const playersRaw = rosterOf(preset.players)
+    const subsRaw = rosterOf(preset.substitutes)
+    if (playersRaw.length < PRESET_ROSTER_SIZE) {
+      setPresetRosterWarning('Not enough players in this squad for this tournament.')
+      return
+    }
+    setPresetRosterWarning('')
+    const pad = (list, n) => {
+      const out = list.slice(0, n).map(s => ({ ign: s.ign, uid: s.uid }))
+      while (out.length < n) out.push({ ign: '', uid: '' })
+      return out
+    }
+    setForm(prev => ({
+      ...prev,
+      teamName: preset.team_name || prev.teamName,
+      captainIgn: preset.captain || prev.captainIgn,
+      captainUid: preset.captain_uid || prev.captainUid,
+      players: pad(playersRaw, 3),
+      substitutes: pad(subsRaw, 2),
+    }))
+    setErrors({})
+    setTouched({})
+  }
 
   // Reset modal state when entering payment step
   useEffect(() => {
@@ -725,14 +797,6 @@ function RegistrationPage({ onNavigate }) {
     );
   }
 
-  const _gameKey = (tourney.game || '').toLowerCase().trim()
-  const gameIconSrc =
-    _gameKey === 'bgmi' || _gameKey === 'battlegrounds mobile india' ? gameBgmi
-    : _gameKey === 'free fire' ? gameFreeFire
-    : _gameKey === 'codm' || _gameKey === 'cod mobile' ? gameCodm
-    : _gameKey === 'valorant' ? gameValorant
-    : null
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -748,9 +812,7 @@ function RegistrationPage({ onNavigate }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          {gameIconSrc && (
-            <img src={gameIconSrc} alt={tourney.game} className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-md" />
-          )}
+          <GameIcon game={tourney.game} size={32} rounded="rounded-lg" className="shrink-0 shadow-md" />
           <div>
             <h1 className="text-xl font-black leading-tight">Register Team</h1>
             <p className="text-sm text-white/40 leading-tight">{tourney.title}</p>
@@ -773,6 +835,44 @@ function RegistrationPage({ onNavigate }) {
             {/* Team Information */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Team Information</h2>
+
+              {matchingPresets.length > 0 && (
+                <>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-primary/10 border border-primary/30 rounded-xl p-3.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="material-symbols-outlined text-primary text-base">bookmark_add</span>
+                    <span className="text-[10px] font-bold text-white/80 uppercase tracking-wider">Use a saved squad</span>
+                  </div>
+                  <select
+                    value=""
+                    onChange={e => {
+                      const preset = matchingPresets.find(p => p.id === e.target.value)
+                      if (preset) applyPreset(preset)
+                    }}
+                    className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
+                  >
+                    <option value="" disabled>Select a squad to auto-fill…</option>
+                    {matchingPresets.map(p => (
+                      <option key={p.id} value={p.id} disabled={!p.rosterComplete}>
+                        {p.preset_name || p.team_name}{p.is_default ? ' (default)' : ''}
+                        {!p.rosterComplete ? ' (not enough players)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {matchingPresets.some(p => !p.rosterComplete) && !presetRosterWarning && (
+                  <p className="text-[10px] text-amber-400/90">
+                    Some saved squads have too few players for this tournament and are disabled.
+                  </p>
+                )}
+                {presetRosterWarning && (
+                  <p className="text-[10px] text-amber-400/90">
+                    {presetRosterWarning} Add more players, or enter the squad manually.
+                  </p>
+                )}
+                </>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
                 <input

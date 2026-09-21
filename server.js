@@ -614,6 +614,32 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournament_registrations v2:', alterReg2Err.message);
     }
 
+    // ENSURE team_presets table exists with all columns (saved teams & squads)
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS team_presets (
+          id VARCHAR(50) PRIMARY KEY,
+          user_id VARCHAR(50) NOT NULL,
+          team_name VARCHAR(255) NOT NULL,
+          captain VARCHAR(255),
+          members TEXT DEFAULT '[]',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      await client.query(`
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS preset_name VARCHAR(255);
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS game VARCHAR(100) DEFAULT 'BGMI';
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS captain_uid VARCHAR(100);
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS players TEXT DEFAULT '[]';
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS substitutes TEXT DEFAULT '[]';
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
+        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+      `).catch(() => {});
+      console.log('📦 [MATCH DISTRICT DB] team_presets table ensured.');
+    } catch (presetErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create/verify team_presets:', presetErr.message);
+    }
+
     // CREATE INDEX on registration_sessions for fast expiry queries
     try {
       await client.query(`
@@ -2229,6 +2255,86 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Team-preset payload helpers (local to the request handler)
+  const GAME_ALIASES = {
+    bgmi: 'BGMI',
+    'battlegrounds mobile india': 'BGMI',
+    codm: 'CODM',
+    'cod mobile': 'CODM',
+    'call of duty mobile': 'CODM',
+    'free fire': 'Free Fire',
+    freefire: 'Free Fire',
+    valorant: 'Valorant',
+    cs2: 'CS2',
+    'counter-strike 2': 'CS2',
+  };
+  const normalizeGameName = (value) => {
+    const key = (value || '').trim().toLowerCase();
+    return GAME_ALIASES[key] || (typeof value === 'string' ? value.trim() : '');
+  };
+  const normalizeRosterList = (value) => {
+    const list = Array.isArray(value) ? value : [];
+    return list
+      .map((item) => {
+        if (item && typeof item === 'object') {
+          return {
+            ign: typeof item.ign === 'string' ? item.ign.trim() : '',
+            uid: typeof item.uid === 'string' ? item.uid.trim() : '',
+          };
+        }
+        if (typeof item === 'string') return { ign: item.trim(), uid: '' };
+        return { ign: '', uid: '' };
+      })
+      .filter((item) => item.ign !== '' || item.uid !== '');
+  };
+
+  const validatePresetPayload = (data) => {
+    if (!data || typeof data !== 'object') {
+      return { error: 'INVALID_INPUT', message: 'Invalid preset payload.' };
+    }
+    const teamName = typeof data.team_name === 'string' ? data.team_name.trim() : '';
+    const captain = typeof data.captain === 'string' ? data.captain.trim() : '';
+    const captainUid = typeof data.captain_uid === 'string' ? data.captain_uid.trim() : '';
+    let game = typeof data.game === 'string' && data.game.trim() ? data.game.trim() : 'BGMI';
+    game = normalizeGameName(game) || 'BGMI';
+    if (game.length > 50) game = game.slice(0, 50);
+    if (!teamName || teamName.length > 16) {
+      return { error: 'INVALID_INPUT', message: 'Team name must be between 1 and 16 characters.' };
+    }
+    if (!captain) {
+      return { error: 'INVALID_INPUT', message: 'Captain IGN is required.' };
+    }
+    if (captainUid && !/^\d+$/.test(captainUid)) {
+      return { error: 'INVALID_INPUT', message: 'Captain UID must contain numbers only.' };
+    }
+    const players = normalizeRosterList(data.players).slice(0, 3);
+    const substitutes = normalizeRosterList(data.substitutes).slice(0, 2);
+    for (const slot of [...players, ...substitutes]) {
+      if (slot.uid && !/^\d+$/.test(slot.uid)) {
+        return { error: 'INVALID_INPUT', message: 'Player UIDs must contain numbers only.' };
+      }
+      if (slot.ign.length > 30 || slot.uid.length > 30) {
+        return { error: 'INVALID_INPUT', message: 'Player IGN/UID values are too long.' };
+      }
+    }
+    let presetName = typeof data.preset_name === 'string' && data.preset_name.trim()
+      ? data.preset_name.trim()
+      : teamName;
+    if (presetName.length > 50) presetName = presetName.slice(0, 50);
+    return {
+      preset: {
+        presetName,
+        game,
+        teamName,
+        captain,
+        captainUid,
+        players,
+        substitutes,
+        isDefault: !!data.is_default,
+      },
+    };
+  };
+
   // 3c. GET /api/team-presets Service
   if (req.url === '/api/team-presets' && req.method === 'GET') {
     try {
@@ -2238,7 +2344,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
-      const dbRes = await pool.query('SELECT * FROM team_presets WHERE user_id = $1 ORDER BY created_at DESC', [authUser.id]);
+      const dbRes = await pool.query('SELECT * FROM team_presets WHERE user_id = $1 ORDER BY is_default DESC, created_at DESC', [authUser.id]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, presets: dbRes.rows }));
     } catch (err) {
@@ -2261,11 +2367,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const data = JSON.parse(body);
-        if (!data.team_name || !data.captain) {
+        const parsed = validatePresetPayload(data);
+        if (parsed.error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Team name and captain tag are required.' }));
+          res.end(JSON.stringify({ success: false, error: parsed.error, message: parsed.message }));
           return;
         }
+        const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
 
         // Limit check: max 4 presets
         const countRes = await pool.query('SELECT COUNT(*) FROM team_presets WHERE user_id = $1', [authUser.id]);
@@ -2276,24 +2384,31 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Duplicate check: team_name (case-insensitive)
+        // Duplicate check: team_name (case-insensitive, per user + game)
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1 AND LOWER(team_name) = LOWER($2)',
-          [authUser.id, data.team_name.trim()]
+          'SELECT * FROM team_presets WHERE user_id = $1 AND game = $2 AND LOWER(team_name) = LOWER($3)',
+          [authUser.id, game, teamName]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'DUPLICATE_PRESET', message: 'A preset with this team name already exists.' }));
+          res.end(JSON.stringify({ success: false, error: 'DUPLICATE_PRESET', message: 'A preset with this team name already exists for ' + game + '.' }));
           return;
         }
 
+        // Only one default preset per game
+        if (isDefault) {
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1 AND game = $2', [authUser.id, game]);
+        }
+
         const presetId = 'PRST-' + Date.now().toString().slice(-6);
-        const membersStr = data.members ? (typeof data.members === 'string' ? data.members : JSON.stringify(data.members)) : '[]';
+        const membersStr = JSON.stringify(players.map(p => p.ign).filter(Boolean));
+        const playersStr = JSON.stringify(players);
+        const subsStr = JSON.stringify(substitutes);
 
         const dbRes = await pool.query(
-          `INSERT INTO team_presets (id, user_id, team_name, captain, members)
-           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-          [presetId, authUser.id, data.team_name.trim(), data.captain.trim(), membersStr]
+          `INSERT INTO team_presets (id, user_id, preset_name, game, team_name, captain, captain_uid, members, players, substitutes, is_default)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+          [presetId, authUser.id, presetName, game, teamName, captain, captainUid || null, membersStr, playersStr, subsStr, isDefault]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, preset: dbRes.rows[0] }));
@@ -2350,11 +2465,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const data = JSON.parse(body);
-        if (!data.team_name || !data.captain) {
+        const parsed = validatePresetPayload(data);
+        if (parsed.error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Team name and captain tag are required.' }));
+          res.end(JSON.stringify({ success: false, error: parsed.error, message: parsed.message }));
           return;
         }
+        const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
 
         const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1', [id]);
         if (existRes.rows.length === 0) {
@@ -2368,24 +2485,31 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Duplicate check: team_name (case-insensitive) excluding current preset
+        // Duplicate check: team_name (case-insensitive, per user + game) excluding current preset
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1 AND LOWER(team_name) = LOWER($2) AND id <> $3',
-          [authUser.id, data.team_name.trim(), id]
+          'SELECT * FROM team_presets WHERE user_id = $1 AND game = $2 AND LOWER(team_name) = LOWER($3) AND id <> $4',
+          [authUser.id, game, teamName, id]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'DUPLICATE_PRESET', message: 'A preset with this team name already exists.' }));
+          res.end(JSON.stringify({ success: false, error: 'DUPLICATE_PRESET', message: 'A preset with this team name already exists for ' + game + '.' }));
           return;
         }
 
-        const membersStr = data.members ? (typeof data.members === 'string' ? data.members : JSON.stringify(data.members)) : '[]';
+        // Only one default preset per game
+        if (isDefault) {
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1 AND game = $2', [authUser.id, game]);
+        }
+
+        const membersStr = JSON.stringify(players.map(p => p.ign).filter(Boolean));
+        const playersStr = JSON.stringify(players);
+        const subsStr = JSON.stringify(substitutes);
 
         const dbRes = await pool.query(
           `UPDATE team_presets 
-           SET team_name = $1, captain = $2, members = $3
-           WHERE id = $4 RETURNING *`,
-          [data.team_name.trim(), data.captain.trim(), membersStr, id]
+           SET preset_name = $1, game = $2, team_name = $3, captain = $4, captain_uid = $5, members = $6, players = $7, substitutes = $8, is_default = $9, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $10 RETURNING *`,
+          [presetName, game, teamName, captain, captainUid || null, membersStr, playersStr, subsStr, isDefault, id]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, preset: dbRes.rows[0] }));

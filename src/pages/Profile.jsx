@@ -20,6 +20,10 @@ import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/cloudinaryUpload'
 import VerificationBadge from '../components/VerificationBadge.jsx'
 import { formatDate } from '../utils/timeFormat'
+import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
+import GameIcon from '../components/GameIcon'
+
+const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
 const tabContentVariants = {
   initial: { opacity: 0, y: 15 },
@@ -41,6 +45,93 @@ const statsCardVariants = {
   hidden: { opacity: 0, y: 12, scale: 0.97 },
   show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 300, damping: 25 } }
 }
+
+const emptyPresetForm = () => ({
+  preset_name: '',
+  game: 'BGMI',
+  team_name: '',
+  captain: '',
+  captain_uid: '',
+  players: [{ ign: '', uid: '' }, { ign: '', uid: '' }, { ign: '', uid: '' }],
+  substitutes: [{ ign: '', uid: '' }, { ign: '', uid: '' }],
+  is_default: false,
+})
+
+const parseRosterJson = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+const normalizeSlot = (item) => {
+  if (!item || typeof item !== 'object') return null;
+  const ign = typeof item.ign === 'string' ? item.ign.trim() : typeof item === 'string' ? item.trim() : '';
+  const uid = typeof item.uid === 'string' ? item.uid.trim() : '';
+  return { ign, uid };
+}
+
+const consolidatePreset = (preset) => {
+  const players = parseRosterJson(preset.players).map(normalizeSlot).filter(Boolean);
+  const substitutes = parseRosterJson(preset.substitutes).map(normalizeSlot).filter(Boolean);
+  const legacyMembers = parseRosterJson(preset.members).map(normalizeSlot).filter(Boolean);
+  const mergedPlayers = players.length > 0 ? players : legacyMembers;
+  return {
+    ...preset,
+    preset_name: preset.preset_name || preset.team_name || 'Untitled Squad',
+    game: preset.game || 'BGMI',
+    captain_uid: preset.captain_uid || '',
+    players: mergedPlayers,
+    substitutes,
+  };
+}
+
+const presetToForm = (preset) => {
+  const c = consolidatePreset(preset);
+  const pad = (list, n) => {
+    const out = (list || []).slice(0, n).map(item => ({ ign: item.ign || '', uid: item.uid || '' }));
+    while (out.length < n) out.push({ ign: '', uid: '' });
+    return out;
+  };
+  return {
+    preset_name: c.preset_name === c.team_name ? '' : c.preset_name,
+    game: c.game,
+    team_name: c.team_name,
+    captain: c.captain || '',
+    captain_uid: c.captain_uid,
+    players: pad(c.players, 3),
+    substitutes: pad(c.substitutes, 2),
+    is_default: !!c.is_default,
+  };
+}
+
+const validatePresetForm = (form) => {
+  if (!form.team_name.trim()) return 'Team name is required.';
+  if (form.team_name.trim().length > 16) return 'Team name must be between 1 and 16 characters.';
+  if (!form.captain.trim()) return 'Captain IGN is required.';
+  if (form.captain_uid.trim() && !/^\d+$/.test(form.captain_uid.trim())) return 'Captain UID must contain numbers only.';
+  for (const slot of [...form.players, ...form.substitutes]) {
+    if (slot.uid.trim() && !/^\d+$/.test(slot.uid.trim())) return `UIDs must contain numbers only (${slot.ign.trim() || 'player'}).`;
+  }
+  return null;
+}
+
+const buildPresetPayload = (form) => ({
+  preset_name: form.preset_name.trim(),
+  game: form.game || 'BGMI',
+  team_name: form.team_name.trim(),
+  captain: form.captain.trim(),
+  captain_uid: form.captain_uid.trim(),
+  players: form.players.filter(p => p.ign.trim() || p.uid.trim()),
+  substitutes: form.substitutes.filter(s => s.ign.trim() || s.uid.trim()),
+  is_default: form.is_default,
+})
 
 const getProfileBio = (user, fallback = '') => user?.orgBio ?? user?.experience ?? user?.bio ?? fallback ?? ''
 
@@ -324,15 +415,17 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   // Preset Create Form States
   const [isCreatingPreset, setIsCreatingPreset] = useState(false)
-  const [presetTeamName, setPresetTeamName] = useState('')
-  const [presetCaptain, setPresetCaptain] = useState('')
-  const [presetMembers, setPresetMembers] = useState(['', '', '']) // Players 2, 3, 4
+  const [presetForm, setPresetForm] = useState(emptyPresetForm())
 
   // Preset Edit Form States
   const [isEditingPreset, setIsEditingPreset] = useState(null) // presetId
-  const [editTeamName, setEditTeamName] = useState('')
-  const [editCaptain, setEditCaptain] = useState('')
-  const [editMembers, setEditMembers] = useState(['', '', ''])
+  const [detailsOpenId, setDetailsOpenId] = useState(null) // presetId
+  const [editForm, setEditForm] = useState(emptyPresetForm())
+
+  // Presets game filter + delete confirmation
+  const [presetGameFilter, setPresetGameFilter] = useState('All')
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [presetsLoading, setPresetsLoading] = useState(true)
 
   // Tournament status filters
   const [tournamentFilter, setTournamentFilter] = useState('all')
@@ -1200,6 +1293,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
           .catch(e => console.error("Error fetching wallet transactions:", e)));
 
         // Fetch team presets
+        setPresetsLoading(true);
         getAuthToken().then(t => fetch('/api/team-presets', {
           headers: {
             'Authorization': `Bearer ${t}`
@@ -1211,7 +1305,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
               setPresets(data.presets);
             }
           })
-          .catch(e => console.error("Error fetching team presets:", e)));
+          .catch(e => console.error("Error fetching team presets:", e))
+          .finally(() => setPresetsLoading(false)));
       } catch(e) {
         console.error(e)
       }
@@ -1474,10 +1569,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }
 
   // --- PLAYER DATA (dynamic only, no mock fallbacks) ---
-  const trophies = []
-  const upcomingMatches = []
-  const playerActivityFeed = []
-
   const playerTournamentsList = useMemo(() => {
     return userRegistrations.map(reg => {
       const t = tournamentsList.find(tourney => tourney.id === reg.tournament_id);
@@ -1510,11 +1601,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
       } catch (e) {
         parsedMembers = [];
       }
+      const roster = [reg.captain, ...(parsedMembers || []).map(m => (m && typeof m === 'object' ? (m.ign || m.uid || '') : m))].filter(Boolean);
       return {
         name: reg.team_name,
         tag: `Captain: ${reg.captain} | Tournament: ${tourney ? tourney.title : 'Unknown'}`,
         status: reg.status === 'approved' ? 'Active' : reg.status === 'waitlisted' ? 'Waitlisted' : 'Pending',
-        members: [reg.captain, ...(parsedMembers || [])]
+        members: roster
       };
     });
   }, [userRegistrations, tournamentsList]);
@@ -1524,12 +1616,14 @@ function Profile({ onNavigate, selectedUserProfile }) {
   // --- PRESET CRUD OPERATIONS ---
   const handleCreatePreset = async (e) => {
     e.preventDefault();
-    if (!presetTeamName.trim() || !presetCaptain.trim()) {
-      triggerToast('Team name and Captain tag are required.');
+    const error = validatePresetForm(presetForm);
+    if (error) {
+      triggerToast(error);
       return;
     }
 
-    const duplicate = presets.some(p => p.team_name.toLowerCase() === presetTeamName.trim().toLowerCase());
+    const duplicate = presets.some(p => (p.game || 'BGMI') === (presetForm.game || 'BGMI')
+      && p.team_name.toLowerCase() === presetForm.team_name.trim().toLowerCase());
     if (duplicate) {
       triggerToast('A preset with this team name already exists.');
       return;
@@ -1548,19 +1642,14 @@ function Profile({ onNavigate, selectedUserProfile }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          team_name: presetTeamName.trim(),
-          captain: presetCaptain.trim(),
-          members: presetMembers.filter(m => m.trim() !== '')
-        })
+        body: JSON.stringify(buildPresetPayload(presetForm))
       });
       const data = await res.json();
       if (data.success) {
         setPresets(prev => [data.preset, ...prev]);
-        setPresetTeamName('');
-        setPresetCaptain('');
-        setPresetMembers(['', '', '']);
+        setPresetForm(emptyPresetForm());
         setIsCreatingPreset(false);
+        setDetailsOpenId(null);
         triggerToast('Team preset saved successfully!');
       } else {
         triggerToast(data.message || 'Failed to save team preset.');
@@ -1571,13 +1660,16 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
   };
 
-  const handleUpdatePreset = async (presetId, teamName, captain, members) => {
-    if (!teamName.trim() || !captain.trim()) {
-      triggerToast('Team name and Captain tag are required.');
+  const handleUpdatePreset = async (presetId) => {
+    const error = validatePresetForm(editForm);
+    if (error) {
+      triggerToast(error);
       return;
     }
 
-    const duplicate = presets.some(p => p.id !== presetId && p.team_name.toLowerCase() === teamName.trim().toLowerCase());
+    const duplicate = presets.some(p => p.id !== presetId
+      && (p.game || 'BGMI') === (editForm.game || 'BGMI')
+      && p.team_name.toLowerCase() === editForm.team_name.trim().toLowerCase());
     if (duplicate) {
       triggerToast('A preset with this team name already exists.');
       return;
@@ -1591,16 +1683,14 @@ function Profile({ onNavigate, selectedUserProfile }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          team_name: teamName.trim(),
-          captain: captain.trim(),
-          members: members.filter(m => m.trim() !== '')
-        })
+        body: JSON.stringify(buildPresetPayload(editForm))
       });
       const data = await res.json();
       if (data.success) {
         setPresets(prev => prev.map(p => p.id === presetId ? data.preset : p));
         setIsEditingPreset(null);
+        setDetailsOpenId(null);
+        setEditForm(emptyPresetForm());
         triggerToast('Team preset updated successfully!');
       } else {
         triggerToast(data.message || 'Failed to update preset.');
@@ -1609,6 +1699,40 @@ function Profile({ onNavigate, selectedUserProfile }) {
       console.error(err);
       triggerToast('Error updating preset.');
     }
+  };
+
+  const handleSetDefaultPreset = async (preset) => {
+    const nextDefault = !preset.is_default;
+    const form = presetToForm(preset);
+    form.is_default = nextDefault;
+    const token = await getAuthToken();
+    try {
+      const res = await fetch(`/api/team-presets/${preset.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(buildPresetPayload(form))
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPresets(prev => prev.map(p => p.id === preset.id ? data.preset : p));
+        triggerToast(nextDefault ? 'Set as default squad for this game.' : 'Default squad removed.');
+      } else {
+        triggerToast(data.message || 'Failed to update preset.');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast('Error updating preset.');
+    }
+  };
+
+  const handleEditStart = (preset) => {
+    setEditForm(presetToForm(preset));
+    setIsEditingPreset(preset.id);
+    setIsCreatingPreset(false);
+    setDetailsOpenId(null);
   };
 
   const handleDeletePreset = async (presetId) => {
@@ -1623,6 +1747,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
       const data = await res.json();
       if (data.success) {
         setPresets(prev => prev.filter(p => p.id !== presetId));
+        setDeleteConfirmId(null);
+        setDetailsOpenId(null);
         triggerToast('Preset deleted successfully.');
       } else {
         triggerToast('Failed to delete preset.');
@@ -1637,6 +1763,17 @@ function Profile({ onNavigate, selectedUserProfile }) {
     await signOut();
     onNavigate && onNavigate('home');
   }
+
+  // --- DERIVED VALUES (overview + teams) ---
+  const overviewMatchesCount = userRegistrations.length
+  const overviewTournamentsCount = useMemo(
+    () => new Set(userRegistrations.map(r => r.tournament_id)).size,
+    [userRegistrations]
+  )
+  const filteredPresets = useMemo(() => {
+    const all = presets.map(p => consolidatePreset(p))
+    return presetGameFilter === 'All' ? all : all.filter(p => (p.game || 'BGMI') === presetGameFilter)
+  }, [presets, presetGameFilter])
 
   return (
     <>
@@ -2424,277 +2561,96 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
           {isOwnProfile && (
             <div className="pb-4 md:pb-0 pt-4 sm:pt-6">
               <AnimatePresence mode="wait">
-                {/* Tab Content */}
-                {/* Tab 1: Overview */}
-              {activeTab === 'overview' && (
-                <motion.div
-                  key="overview"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  className="space-y-6 sm:space-y-8"
-                >
-                  {/* Responsive 4-Column Card Grid (Staggered Children) */}
+                {/* ===== TAB 1: OVERVIEW ===== */}
+                {activeTab === 'overview' && (
                   <motion.div
-                    variants={statsContainerVariants}
-                    initial="hidden"
-                    animate="show"
-                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
+                    key="overview"
+                    variants={tabContentVariants}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    className="space-y-5"
                   >
-                    {/* 1. Total Matches Card */}
+                    {/* Section header */}
+                    <div>
+                      <h3 className="font-headline-md text-sm font-bold text-on-background">Overview</h3>
+                      <p className="font-body-sm text-[11px] text-on-surface-variant mt-0.5">Your registration activity on Match District.</p>
+                    </div>
+
+                    {/* Two stat cards side-by-side */}
                     <motion.div
-                      variants={statsCardVariants}
-                      whileHover={{ y: -4, scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      className="glass-card no-transition p-4 sm:p-5 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm flex flex-col justify-between space-y-4 hover:border-primary/25"
+                      variants={statsContainerVariants}
+                      initial="hidden"
+                      animate="show"
+                      className="grid grid-cols-2 gap-4"
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider block">Total Matches</span>
-                          <span className="text-xl sm:text-2xl font-black text-on-background block">
-                            {userRegistrations.length * 3 + 12}
-                          </span>
+                      {/* Registered Matches */}
+                      <motion.div
+                        variants={statsCardVariants}
+                        className="glass-card p-5 rounded-2xl border border-outline-variant/35 bg-surface-container-low/50 shadow-sm space-y-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-label-caps text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">Registered Matches</span>
+                          <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+                            <span className="material-symbols-outlined text-[16px]">leaderboard</span>
+                          </div>
                         </div>
-                        <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/25 flex items-center justify-center text-primary shrink-0">
-                          <span className="material-symbols-outlined text-lg">leaderboard</span>
+                        <div className="font-black text-3xl sm:text-4xl text-on-background leading-none">
+                          {overviewMatchesCount}
                         </div>
-                      </div>
-                      <div className="pt-2 border-t border-outline-variant/20 grid grid-cols-3 gap-1 text-[9px] font-bold text-on-surface-variant">
-                        <div>
-                          <span className="block text-primary">VAL: {userRegistrations.length * 2 + 5}</span>
+                        <p className="font-body-sm text-[10px] text-on-surface-variant leading-relaxed">
+                          Total tournament entries registered.
+                        </p>
+                      </motion.div>
+
+                      {/* Registered Tournaments */}
+                      <motion.div
+                        variants={statsCardVariants}
+                        className="glass-card p-5 rounded-2xl border border-outline-variant/35 bg-surface-container-low/50 shadow-sm space-y-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-label-caps text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">Tournaments</span>
+                          <div className="w-8 h-8 rounded-lg bg-secondary/10 border border-secondary/20 flex items-center justify-center text-secondary shrink-0">
+                            <span className="material-symbols-outlined text-[16px]">emoji_events</span>
+                          </div>
                         </div>
-                        <div>
-                          <span className="block text-secondary">BGMI: {userRegistrations.length + 3}</span>
+                        <div className="font-black text-3xl sm:text-4xl text-on-background leading-none">
+                          {overviewTournamentsCount}
                         </div>
-                        <div>
-                          <span className="block text-rose-400">CS2: 4</span>
-                        </div>
-                      </div>
+                        <p className="font-body-sm text-[10px] text-on-surface-variant leading-relaxed">
+                          Unique events you've entered.
+                        </p>
+                      </motion.div>
                     </motion.div>
 
-                    {/* 2. Win Rate Card */}
-                    <motion.div
-                      variants={statsCardVariants}
-                      whileHover={{ y: -4, scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      className="glass-card no-transition p-4 sm:p-5 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm flex flex-col justify-between space-y-3 hover:border-primary/25"
-                    >
-                      <div className="flex justify-between items-center">
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider block">Win Rate</span>
-                          <span className="text-xl sm:text-2xl font-black text-on-background block">68.4%</span>
-                        </div>
-                        {/* Mini Circular Gauge */}
-                        <div className="relative w-10 h-10 flex items-center justify-center shrink-0">
-                          <svg className="w-full h-full transform -rotate-90">
-                            <circle cx="20" cy="20" r="16" fill="transparent" stroke="rgba(var(--primary), 0.1)" strokeWidth="3" />
-                            <circle cx="20" cy="20" r="16" fill="transparent" stroke="rgb(var(--primary))" strokeWidth="3" strokeDasharray={100} strokeDashoffset={100 - 68} strokeLinecap="round" />
-                          </svg>
-                          <span className="absolute text-[8px] font-black text-on-background">68%</span>
+                    {/* Divider info note */}
+                    {overviewMatchesCount === 0 && (
+                      <div className="glass-card p-5 rounded-2xl border border-outline-variant/25 bg-surface/30 flex items-center gap-3">
+                        <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">info</span>
+                        <div>
+                          <p className="font-body-sm text-xs text-on-surface-variant">You haven't registered for any tournaments yet.</p>
+                          <button onClick={() => onNavigate && onNavigate('tournaments')} className="font-headline-md text-[11px] font-bold text-primary hover:underline mt-0.5">Browse tournaments &rarr;</button>
                         </div>
                       </div>
-                      <div className="pt-1.5 border-t border-outline-variant/20 flex justify-between text-[9px] font-bold text-on-surface-variant">
-                        <span>Wins: {userRegistrations.length * 2 + 6}</span>
-                        <span>Losses: {userRegistrations.length + 2}</span>
-                      </div>
-                    </motion.div>
+                    )}
 
-                    {/* 3. Teams Joined Card */}
-                    <motion.div
-                      variants={statsCardVariants}
-                      whileHover={{ y: -4, scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      className="glass-card no-transition p-4 sm:p-5 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm flex flex-col justify-between space-y-4 hover:border-primary/25"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider block">Teams Joined</span>
-                          <span className="text-xl sm:text-2xl font-black text-on-background block">
-                            {presets.length || 2} Active
-                          </span>
+                    {/* Quick link to registrations list */}
+                    {overviewMatchesCount > 0 && (
+                      <div className="glass-card p-4 rounded-2xl border border-outline-variant/25 bg-surface/30 flex items-center gap-3">
+                        <span className="material-symbols-outlined text-xl text-on-surface-variant/60">list_alt</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-body-sm text-[11px] text-on-surface-variant">View all your tournament registrations and their statuses.</p>
                         </div>
-                        <div className="w-9 h-9 rounded-lg bg-secondary/10 border border-secondary/25 flex items-center justify-center text-secondary shrink-0">
-                          <span className="material-symbols-outlined text-lg">group</span>
-                        </div>
-                      </div>
-                      <div className="pt-2 border-t border-outline-variant/20">
-                        <button onClick={() => setActiveTab('teams')} className="text-primary hover:underline text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 min-h-[44px]">
-                          Manage Squads <span className="material-symbols-outlined text-[10px]">arrow_forward</span>
+                        <button
+                          onClick={() => setActiveTab('tournaments')}
+                          className="px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg font-headline-md text-[10px] font-bold transition-all shrink-0"
+                        >
+                          View
                         </button>
                       </div>
-                    </motion.div>
-
-                    {/* 4. Earnings Card */}
-                    <motion.div
-                      variants={statsCardVariants}
-                      whileHover={{ y: -4, scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      className="glass-card no-transition p-4 sm:p-5 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm flex flex-col justify-between space-y-4 hover:border-primary/25"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-on-surface-variant uppercase tracking-wider block">Total Winnings</span>
-                          <span className="text-xl sm:text-2xl font-black text-secondary block font-prize-display">
-                            {(() => {
-                              const totalEarnings = walletTransactions
-                                .filter(tx => tx.type === 'credit')
-                                .reduce((sum, tx) => sum + Number(tx.amount.replace(/[^\d]/g, '')), 0) || 85000;
-                              return `₹${totalEarnings.toLocaleString('en-IN')}`;
-                            })()}
-                          </span>
-                        </div>
-                        <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400 shrink-0">
-                          <span className="material-symbols-outlined text-lg">payments</span>
-                        </div>
-                      </div>
-                      <div className="pt-2 border-t border-outline-variant/20 flex justify-between items-center text-[9px] font-bold text-on-surface-variant">
-                        <span>Vault Secured</span>
-                        <button onClick={() => setActiveTab('wallet')} className="text-secondary hover:underline min-h-[44px] flex items-center">
-                          View Wallet
-                        </button>
-                      </div>
-                    </motion.div>
+                    )}
                   </motion.div>
-
-                  {/* Main content body (Upcoming Matches + Connected Accounts) */}
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-                    {/* Left 2 Columns: Upcoming Matches */}
-                    <div className="lg:col-span-2 space-y-6">
-                      <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-                        <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
-                          <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                            <span className="material-symbols-outlined text-primary text-xl">schedule</span> Upcoming Matches
-                          </h3>
-                        </div>
-                        {playerTournamentsList.filter(t => t.status === 'live' || t.status === 'upcoming').length === 0 ? (
-                          <div className="text-center py-12 space-y-3 bg-surface-variant/20 rounded-xl border border-outline-variant/10">
-                            <span className="material-symbols-outlined text-3xl text-on-surface-variant">schedule</span>
-                            <p className="font-body-sm text-xs text-on-surface-variant">No upcoming matches scheduled.</p>
-                            <button onClick={() => onNavigate && onNavigate('tournaments')} className="px-4 min-h-[44px] bg-primary hover:bg-primary/95 text-white font-headline-md text-xs font-bold rounded-xl transition-all shadow-md">
-                              Find Tournaments
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {playerTournamentsList.filter(t => t.status === 'live' || t.status === 'upcoming').map((match, idx) => (
-                              <div key={idx} className="glass-card p-3.5 sm:p-4 rounded-xl border border-outline-variant/30 bg-surface-container-highest/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm hover:border-primary/20 transition-all">
-                                <div className="space-y-0.5">
-                                  <div className="flex items-center gap-2">
-                                    <span className="px-2 py-0.5 rounded bg-primary/20 text-primary font-label-caps text-[8px] font-bold uppercase tracking-wider">{match.game}</span>
-                                    <span className="font-label-caps text-[9px] text-error font-bold uppercase animate-pulse flex items-center gap-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-error inline-block"></span> {match.status === 'live' ? 'MATCH LIVE' : 'UPCOMING'}
-                                    </span>
-                                  </div>
-                                  <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background pt-0.5">{match.title}</h4>
-                                  <div className="font-body-sm text-[10px] text-on-surface-variant">Date: {match.date} | Entry: {match.entry}</div>
-                                </div>
-                                <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end">
-                                  <button onClick={() => onNavigate && onNavigate('tournament-detail', match.id)} className="px-3.5 min-h-[44px] bg-primary hover:bg-primary/95 text-white text-[10px] font-bold uppercase rounded-lg shadow-sm transition-all">
-                                    Lobby Info
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Trophies & Achievements Showcase */}
-                      <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-                        <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
-                          <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                            <span className="material-symbols-outlined text-amber-400 text-xl">trophy</span> Trophies &amp; Achievements ({trophies.length})
-                          </h3>
-                        </div>
-                        {trophies.length === 0 ? (
-                          <div className="text-center py-8 space-y-2 bg-surface-variant/20 rounded-xl border border-outline-variant/10">
-                            <span className="material-symbols-outlined text-3xl text-on-surface-variant">emoji_events</span>
-                            <p className="font-body-sm text-xs text-on-surface-variant">No trophies earned yet. Win matches to fill your trophy room!</p>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {trophies.map((trophy, idx) => (
-                              <div key={idx} className="glass-card p-3 rounded-xl border border-outline-variant/30 bg-surface-container-highest flex items-center gap-3">
-                                <div className={`w-9 h-9 rounded-lg bg-surface flex items-center justify-center ${trophy.color} border border-outline-variant/30 shrink-0`}>
-                                  <span className="material-symbols-outlined text-lg">{trophy.icon}</span>
-                                </div>
-                                <div className="space-y-0.5 min-w-0 flex-1">
-                                  <h4 className="font-headline-md text-xs font-semibold text-on-background truncate">{trophy.title}</h4>
-                                  <span className="text-[9px] text-on-surface-variant block">{trophy.place} | {trophy.game}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right Column: Connected Game IDs & Timeline */}
-                    <div className="space-y-6">
-                      {/* Connected Game IDs */}
-                      <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-                        <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-                          <span className="material-symbols-outlined text-secondary text-xl">smart_toy</span> Connected Game IDs
-                        </h3>
-                        <div className="space-y-2.5">
-                          {[
-                            { label: 'Riot ID (Valorant)', value: playerData.riotId, icon: 'shield' },
-                            { label: 'BGMI Character ID', value: playerData.bgmiId, icon: 'phone_iphone' },
-                            { label: 'Steam ID (CS2)', value: playerData.steamId, icon: 'desktop_windows' },
-                            { label: 'Discord Tag', value: playerData.discordTag, icon: 'forum' }
-                          ].map((item, idx) => (
-                            <div key={idx} className="glass-card p-3 rounded-xl bg-surface-variant/40 border border-outline-variant/25 flex items-center justify-between gap-2 shadow-sm hover:border-primary/20 transition-all">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <span className="material-symbols-outlined text-primary text-lg shrink-0">{item.icon}</span>
-                                <div className="min-w-0">
-                                  <div className="font-label-caps text-[8px] sm:text-[9px] text-on-surface-variant uppercase tracking-wider">{item.label}</div>
-                                  <div className="font-headline-md text-xs font-bold text-on-background truncate">{item.value || 'Not Connected'}</div>
-                                </div>
-                              </div>
-                              <button onClick={() => triggerToast(`Copied ${item.label} to clipboard!`)} className="p-1.5 rounded-lg hover:bg-surface-variant text-on-surface-variant hover:text-on-background transition-colors shrink-0" title="Copy ID">
-                                <span className="material-symbols-outlined text-sm">content_copy</span>
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Activity Timeline */}
-                      <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-                        <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-                          <span className="material-symbols-outlined text-primary text-xl">history</span> Activity Timeline
-                        </h3>
-                        {playerActivityFeed.length === 0 ? (
-                          <div className="relative pl-4 border-l-2 border-outline-variant/40 space-y-4 py-1">
-                            {[
-                              { text: 'Registered for Valorant Underworld Cup', time: '2 hours ago' },
-                              { text: 'Joined Titan Esports Roster', time: '1 day ago' },
-                              { text: 'Withdrew ₹5,000 Winnings', time: '3 days ago' }
-                            ].map((activity, idx) => (
-                              <div key={idx} className="relative space-y-0.5">
-                                <div className="absolute -left-[21px] top-1 w-2 h-2 rounded-full bg-primary border border-surface shadow-[0_0_5px_rgba(37,99,235,0.5)]"></div>
-                                <h4 className="font-headline-md text-xs font-semibold text-on-background leading-relaxed">{activity.text}</h4>
-                                <div className="font-body-sm text-[10px] text-on-surface-variant">{activity.time}</div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="relative pl-4 border-l-2 border-outline-variant/40 space-y-5">
-                            {playerActivityFeed.map((activity, idx) => (
-                              <div key={idx} className="relative space-y-0.5">
-                                <div className="absolute -left-[23px] top-0.5 w-2.5 h-2.5 rounded-full bg-primary border-2 border-background ring-4 ring-primary/20"></div>
-                                <h4 className="font-headline-md text-xs font-semibold text-on-background leading-relaxed">{activity.text}</h4>
-                                <div className="font-body-sm text-[10px] text-on-surface-variant">{activity.time}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
+                )}
 
               {/* Tab 2: My Tournaments */}
               {activeTab === 'tournaments' && (
@@ -2773,7 +2729,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 </motion.div>
               )}
 
-              {/* Tab 3: Teams & Squads */}
+              {/* ===== TAB 3: TEAMS & SQUADS ===== */}
               {activeTab === 'teams' && (
                 <motion.div
                   key="teams"
@@ -2781,305 +2737,420 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  className="space-y-6 sm:space-y-8"
+                  className="space-y-5"
                 >
-                  
-                  {/* Saved Team Presets Section */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-6">
-                    <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
-                      <div className="min-w-0">
-                        <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                          <span className="material-symbols-outlined text-secondary text-xl">bookmark_added</span> Saved Team Presets
-                        </h3>
-                        <p className="font-body-sm text-[10px] text-on-surface-variant mt-0.5">Manage up to 4 squad configurations ({presets.length}/4 used)</p>
-                      </div>
-                      
-                      {presets.length < 4 && !isCreatingPreset && (
-                        <button 
-                          onClick={() => {
-                            setPresetTeamName('');
-                            setPresetCaptain(currentUser?.gamerTag || '');
-                            setPresetMembers(['', '', '']);
-                            setIsCreatingPreset(true);
-                            setIsEditingPreset(null);
-                          }}
-                          className="flex items-center gap-1 min-h-[44px] px-3 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all active:scale-95 shadow-sm shrink-0"
-                        >
-                          <span className="material-symbols-outlined text-sm font-bold">add</span> Add Preset
-                        </button>
-                      )}
+                  {/* Header row */}
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-headline-md text-sm font-bold text-on-background flex items-center gap-2">
+                        <span className="material-symbols-outlined text-secondary text-base">groups_2</span>
+                        Teams &amp; Squads
+                      </h3>
+                      <p className="font-body-sm text-[10px] text-on-surface-variant mt-0.5">
+                        Save up to 4 squad presets and reuse them during tournament registration.
+                      </p>
                     </div>
+                    {presets.length < 4 && !isCreatingPreset && (
+                      <button
+                        onClick={() => { setPresetForm(emptyPresetForm()); setIsCreatingPreset(true); setIsEditingPreset(null); setDetailsOpenId(null); }}
+                        className="flex items-center gap-1.5 px-4 py-2.5 bg-secondary hover:bg-secondary/90 text-on-primary rounded-xl font-headline-md text-[11px] font-bold transition-all shadow-sm shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-sm">add</span>
+                        New Squad
+                      </button>
+                    )}
+                  </div>
 
-                    {/* Inline Create Preset Form */}
-                    {isCreatingPreset && (
-                      <form onSubmit={handleCreatePreset} className="bg-surface-container-highest p-4 sm:p-5 rounded-xl border border-outline-variant/50 space-y-4 shadow-md animate-in slide-in-from-top-3 duration-200">
-                        <h4 className="font-headline-md text-xs sm:text-sm font-bold text-secondary uppercase tracking-wider flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-base">group_add</span> Create New Preset
+                  {/* Game filter chips */}
+                  {presets.length > 0 && (
+                    <div className="flex gap-1.5 flex-wrap">
+                      {['All', ...PRESET_GAME_OPTIONS].map((game) => {
+                        const count = game === 'All' ? presets.length : presets.filter(p => (p.game || 'BGMI') === game).length;
+                        if (game !== 'All' && count === 0) return null;
+                        return (
+                          <button
+                            key={game}
+                            onClick={() => setPresetGameFilter(game)}
+                            className={`px-3 py-1.5 rounded-lg border font-headline-md text-[10px] font-bold uppercase tracking-wider transition-all ${presetGameFilter === game ? 'bg-primary text-white border-primary' : 'bg-surface-container text-on-surface-variant border-outline-variant/30 hover:text-on-background'}`}
+                          >
+                            {game}{count > 0 ? ` (${count})` : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* INLINE CREATE FORM */}
+                  {isCreatingPreset && (
+                    <form onSubmit={handleCreatePreset} className="glass-card p-4 sm:p-5 rounded-2xl border border-secondary/40 bg-surface-container-highest/70 space-y-5 shadow-md animate-in slide-in-from-top-3 duration-200">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-headline-md text-xs font-bold text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-sm">group_add</span> Create Squad
                         </h4>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <button type="button" onClick={() => setIsCreatingPreset(false)} className="p-1 rounded-lg hover:bg-surface-variant text-on-surface-variant transition-colors">
+                          <span className="material-symbols-outlined text-base">close</span>
+                        </button>
+                      </div>
+
+                      {/* Preset name + game */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Squad Label <span className="normal-case text-on-surface-variant/60 lowercase">(optional)</span></label>
+                          <input type="text" value={presetForm.preset_name} onChange={e => setPresetForm({ ...presetForm, preset_name: e.target.value })} placeholder="e.g. Main Roster" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
+                          <select value={presetForm.game} onChange={e => setPresetForm({ ...presetForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors">
+                            {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Team name */}
+                      <div className="space-y-1">
+                        <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Team Name * <span className="normal-case text-on-surface-variant/60">(max 16 chars)</span></label>
+                        <input type="text" value={presetForm.team_name} onChange={e => setPresetForm({ ...presetForm, team_name: e.target.value })} placeholder="e.g. Team Hercules" maxLength={16} required className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                      </div>
+
+                      {/* Captain */}
+                      <div>
+                        <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Captain / Player 1 *</label>
+                        <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1">
-                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Team Name *</label>
-                            <input 
-                              type="text"
-                              value={presetTeamName}
-                              onChange={(e) => setPresetTeamName(e.target.value)}
-                              placeholder="e.g. Soul Seekers"
-                              required
-                              className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors"
-                            />
+                            <label className="text-[9px] text-on-surface-variant">IGN *</label>
+                            <input type="text" value={presetForm.captain} onChange={e => setPresetForm({ ...presetForm, captain: e.target.value })} placeholder="In-game name" required className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
                           </div>
-                          
                           <div className="space-y-1">
-                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Captain GamerTag *</label>
-                            <input 
-                              type="text"
-                              value={presetCaptain}
-                              onChange={(e) => setPresetCaptain(e.target.value)}
-                              placeholder="e.g. Viper#1337"
-                              required
-                              className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors"
-                            />
+                            <label className="text-[9px] text-on-surface-variant">UID</label>
+                            <input type="text" value={presetForm.captain_uid} onChange={e => setPresetForm({ ...presetForm, captain_uid: e.target.value.replace(/\D/g, '') })} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Players 2–4 */}
+                      <div>
+                        <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Players 2-4</label>
+                        <div className="space-y-2">
+                          {presetForm.players.map((p, pIdx) => (
+                            <div key={pIdx} className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-on-surface-variant">Player {pIdx + 2} IGN</label>
+                                <input type="text" value={p.ign} onChange={e => { const u = [...presetForm.players]; u[pIdx] = { ...u[pIdx], ign: e.target.value }; setPresetForm({ ...presetForm, players: u }); }} placeholder="IGN" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-on-surface-variant">UID</label>
+                                <input type="text" value={p.uid} onChange={e => { const u = [...presetForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, players: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Substitutes */}
+                      <div>
+                        <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Substitutes <span className="normal-case text-on-surface-variant/60">(optional)</span></label>
+                        <div className="space-y-2">
+                          {presetForm.substitutes.map((s, sIdx) => (
+                            <div key={sIdx} className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-on-surface-variant">Sub {sIdx + 1} IGN</label>
+                                <input type="text" value={s.ign} onChange={e => { const u = [...presetForm.substitutes]; u[sIdx] = { ...u[sIdx], ign: e.target.value }; setPresetForm({ ...presetForm, substitutes: u }); }} placeholder="IGN" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-on-surface-variant">UID</label>
+                                <input type="text" value={s.uid} onChange={e => { const u = [...presetForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, substitutes: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Default toggle */}
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input type="checkbox" checked={presetForm.is_default} onChange={e => setPresetForm({ ...presetForm, is_default: e.target.checked })} className="accent-secondary w-4 h-4 rounded" />
+                        <span className="font-body-sm text-[11px] text-on-background">Set as default squad for {presetForm.game || 'BGMI'}</span>
+                      </label>
+
+                      {/* Actions */}
+                      <div className="flex justify-end gap-2 pt-1 border-t border-outline-variant/20">
+                        <button type="button" onClick={() => setIsCreatingPreset(false)} className="px-4 py-2 bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/40 rounded-lg font-headline-md text-xs font-semibold transition-colors">Cancel</button>
+                        <button type="submit" className="px-5 py-2 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm">Save Squad</button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* INLINE EDIT FORM */}
+                  {isEditingPreset && (() => {
+                    const current = presets.find(p => p.id === isEditingPreset);
+                    if (!current) return null;
+                    return (
+                      <form onSubmit={e => { e.preventDefault(); handleUpdatePreset(current.id); }} className="glass-card p-4 sm:p-5 rounded-2xl border border-primary/40 bg-surface-container-highest/70 space-y-5 shadow-md animate-in slide-in-from-top-3 duration-200">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-headline-md text-xs font-bold text-primary flex items-center gap-2">
+                            <GameIcon game={current.game || 'BGMI'} size={28} rounded="rounded-lg" />
+                            <span className="normal-case">Edit {current.team_name}</span>
+                          </h4>
+                          <button type="button" onClick={() => setIsEditingPreset(null)} className="p-1 rounded-lg hover:bg-surface-variant text-on-surface-variant transition-colors">
+                            <span className="material-symbols-outlined text-base">close</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Squad Label</label>
+                            <input type="text" value={editForm.preset_name} onChange={e => setEditForm({ ...editForm, preset_name: e.target.value })} placeholder="e.g. Main Roster" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors" />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
+                            <select value={editForm.game} onChange={e => setEditForm({ ...editForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors">
+                              {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                            </select>
                           </div>
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">Squad Members (GamerTags)</label>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            {presetMembers.map((m, mIdx) => (
-                              <div key={mIdx} className="space-y-1">
-                                <label className="text-[9px] text-on-surface-variant font-medium">Player {mIdx + 2}</label>
-                                <input 
-                                  type="text"
-                                  value={m}
-                                  onChange={(e) => {
-                                    const updated = [...presetMembers];
-                                    updated[mIdx] = e.target.value;
-                                    setPresetMembers(updated);
-                                  }}
-                                  placeholder={`Player ${mIdx + 2} Tag`}
-                                  className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors"
-                                />
+                        <div className="space-y-1">
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Team Name *</label>
+                          <input type="text" value={editForm.team_name} onChange={e => setEditForm({ ...editForm, team_name: e.target.value })} maxLength={16} required className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors" />
+                        </div>
+
+                        <div>
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Captain / Player 1 *</label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-on-surface-variant">IGN *</label>
+                              <input type="text" value={editForm.captain} onChange={e => setEditForm({ ...editForm, captain: e.target.value })} required className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-on-surface-variant">UID</label>
+                              <input type="text" value={editForm.captain_uid} onChange={e => setEditForm({ ...editForm, captain_uid: e.target.value.replace(/\D/g, '') })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Players 2-4</label>
+                          <div className="space-y-2">
+                            {editForm.players.map((p, pIdx) => (
+                              <div key={pIdx} className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-on-surface-variant">Player {pIdx + 2} IGN</label>
+                                  <input type="text" value={p.ign} onChange={e => { const u = [...editForm.players]; u[pIdx] = { ...u[pIdx], ign: e.target.value }; setEditForm({ ...editForm, players: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-on-surface-variant">UID</label>
+                                  <input type="text" value={p.uid} onChange={e => { const u = [...editForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, players: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                </div>
                               </div>
                             ))}
                           </div>
                         </div>
 
-                        <div className="flex justify-end gap-2.5 pt-2 border-t border-outline-variant/20">
-                          <button 
-                            type="button" 
-                            onClick={() => setIsCreatingPreset(false)}
-                            className="py-2 px-4 bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/40 rounded-lg font-headline-md text-xs font-semibold shadow-sm transition-colors"
-                          >
-                            Cancel
-                          </button>
-                          <button 
-                            type="submit"
-                            className="py-2 px-5 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm"
-                          >
-                            Save Preset
-                          </button>
+                        <div>
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block mb-2">Substitutes <span className="normal-case text-on-surface-variant/60">(optional)</span></label>
+                          <div className="space-y-2">
+                            {editForm.substitutes.map((s, sIdx) => (
+                              <div key={sIdx} className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-on-surface-variant">Sub {sIdx + 1} IGN</label>
+                                  <input type="text" value={s.ign} onChange={e => { const u = [...editForm.substitutes]; u[sIdx] = { ...u[sIdx], ign: e.target.value }; setEditForm({ ...editForm, substitutes: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-on-surface-variant">UID</label>
+                                  <input type="text" value={s.uid} onChange={e => { const u = [...editForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, substitutes: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input type="checkbox" checked={editForm.is_default} onChange={e => setEditForm({ ...editForm, is_default: e.target.checked })} className="accent-primary w-4 h-4 rounded" />
+                          <span className="font-body-sm text-[11px] text-on-background">Set as default squad for {editForm.game || 'BGMI'}</span>
+                        </label>
+
+                        <div className="flex justify-end gap-2 pt-1 border-t border-outline-variant/20">
+                          <button type="button" onClick={() => setIsEditingPreset(null)} className="px-4 py-2 bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/40 rounded-lg font-headline-md text-xs font-semibold transition-colors">Cancel</button>
+                          <button type="submit" className="px-5 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm">Save Changes</button>
                         </div>
                       </form>
-                    )}
+                    );
+                  })()}
 
-                    {/* Presets Grid */}
-                    {presets.length === 0 ? (
-                      <div className="text-center py-12 space-y-4 bg-surface-variant/10 rounded-xl border border-outline-variant/15 p-6">
-                        <div className="w-12 h-12 rounded-full bg-secondary/10 border border-secondary/20 flex items-center justify-center mx-auto text-secondary">
-                          <span className="material-symbols-outlined text-2xl">bookmark_add</span>
-                        </div>
-                        <div className="space-y-1">
-                          <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background">No Saved Presets</h4>
-                          <p className="font-body-sm text-[11px] text-on-surface-variant max-w-xs mx-auto leading-relaxed">Save up to 4 squad configurations for one-click checkout and roster registrations.</p>
-                        </div>
-                        {!isCreatingPreset && (
-                          <button 
-                            onClick={() => setIsCreatingPreset(true)}
-                            className="px-5 min-h-[44px] bg-secondary hover:bg-secondary/90 text-on-primary rounded-xl font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 mx-auto"
-                          >
-                            <span className="material-symbols-outlined text-sm">add</span> Create Squad Preset
-                          </button>
-                        )}
+                  {/* PRESET CARDS */}
+                  {presetsLoading && presets.length === 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {[0, 1].map(i => (
+                        <div key={i} className="bg-surface-container-highest/55 rounded-2xl border border-outline-variant/25 h-36 animate-pulse" />
+                      ))}
+                    </div>
+                  ) : filteredPresets.length === 0 ? (
+                    /* Empty state */
+                    <div className="glass-card p-10 rounded-2xl border border-outline-variant/20 bg-surface/30 flex flex-col items-center gap-4 text-center">
+                      <div className="w-12 h-12 rounded-full bg-secondary/10 border border-secondary/20 flex items-center justify-center text-secondary">
+                        <span className="material-symbols-outlined text-2xl">bookmark_add</span>
                       </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {presets.map((preset) => {
-                          const isEditing = isEditingPreset === preset.id;
-                          let parsedMembers = [];
-                          try {
-                            parsedMembers = typeof preset.members === 'string' ? JSON.parse(preset.members) : preset.members;
-                          } catch(e) {
-                            parsedMembers = [];
-                          }
-                          
-                          while (parsedMembers.length < 3) {
-                            parsedMembers.push('');
-                          }
+                      <div className="space-y-1">
+                        <h4 className="font-headline-md text-sm font-bold text-on-background">
+                          {presetGameFilter === 'All' ? 'No squads saved yet' : `No ${presetGameFilter} squads`}
+                        </h4>
+                        <p className="font-body-sm text-[11px] text-on-surface-variant max-w-xs leading-relaxed">
+                          Save your team once and auto-fill any tournament registration with one click.
+                        </p>
+                      </div>
+                      {presets.length < 4 && !isCreatingPreset && (
+                        <button
+                          onClick={() => { setPresetForm({ ...emptyPresetForm(), game: presetGameFilter !== 'All' ? presetGameFilter : 'BGMI' }); setIsCreatingPreset(true); setIsEditingPreset(null); setDetailsOpenId(null); }}
+                          className="px-5 py-2.5 bg-secondary hover:bg-secondary/90 text-on-primary rounded-xl font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                        >
+                          <span className="material-symbols-outlined text-sm">add</span> Create Team / Squad
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {filteredPresets.filter(p => p.id !== isEditingPreset).map((preset) => {
+                        const game = preset.game || 'BGMI';
+                        const playerList = (preset.players || []).filter(s => s.ign || s.uid);
+                        const subList = (preset.substitutes || []).filter(s => s.ign || s.uid);
+                        const isDetails = detailsOpenId === preset.id;
 
-                          if (isEditing) {
-                            return (
-                              <div key={preset.id} className="bg-surface-container-highest p-4 rounded-xl border border-secondary/50 space-y-4 shadow-lg animate-in fade-in duration-200">
-                                <h4 className="font-headline-md text-xs sm:text-sm font-bold text-secondary uppercase tracking-wider flex items-center gap-1">
-                                  <span className="material-symbols-outlined text-base">edit</span> Edit Preset
-                                </h4>
-                                
-                                <div className="space-y-3">
-                                  <div className="space-y-1">
-                                    <label className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Team Name</label>
-                                    <input 
-                                      type="text"
-                                      value={editTeamName}
-                                      onChange={(e) => setEditTeamName(e.target.value)}
-                                      className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-1.5 text-xs text-on-background focus:outline-none focus:border-secondary"
-                                    />
+                        if (isDetails) {
+                          return (
+                            <div key={`details-${preset.id}`} className="sm:col-span-2 glass-card rounded-2xl border border-primary/40 bg-surface-container-highest/50 overflow-hidden shadow-md">
+                              {/* Details header */}
+                              <div className="p-4 sm:p-5 pb-0 flex items-center gap-3">
+                                <GameIcon game={game} size={44} rounded="rounded-xl" />
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">
+                                    {preset.team_name}
+                                  </h4>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    {preset.preset_name && preset.preset_name !== preset.team_name && (
+                                      <span className="text-[10px] text-on-surface-variant truncate">{preset.preset_name}</span>
+                                    )}
+                                    <span className="text-[10px] text-on-surface-variant">· {game}</span>
                                   </div>
-                                  
-                                  <div className="space-y-1">
-                                    <label className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">Captain GamerTag</label>
-                                    <input 
-                                      type="text"
-                                      value={editCaptain}
-                                      onChange={(e) => setEditCaptain(e.target.value)}
-                                      className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-1.5 text-xs text-on-background focus:outline-none focus:border-secondary"
-                                    />
-                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => setDetailsOpenId(null)}
+                                  className="p-1.5 rounded-lg hover:bg-surface-variant text-on-surface-variant transition-colors"
+                                  aria-label="Close details"
+                                >
+                                  <span className="material-symbols-outlined text-base">close</span>
+                                </button>
+                              </div>
 
-                                  <div className="space-y-1.5">
-                                    <label className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider block font-medium">Squad Members</label>
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                      {editMembers.map((memberVal, mIdx) => (
-                                        <div key={mIdx} className="space-y-0.5">
-                                          <span className="text-[8px] text-on-surface-variant">Player {mIdx + 2}</span>
-                                          <input 
-                                            type="text"
-                                            value={memberVal}
-                                            onChange={(e) => {
-                                              const updated = [...editMembers];
-                                              updated[mIdx] = e.target.value;
-                                              setEditMembers(updated);
-                                            }}
-                                            className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2 py-1.5 text-[11px] text-on-background focus:outline-none focus:border-secondary"
-                                          />
-                                        </div>
+                              {/* Details body */}
+                              <div className="p-4 sm:p-5 space-y-3">
+                                <div className="rounded-xl bg-surface-container-low border border-outline-variant/20 px-3 py-2.5 space-y-1.5">
+                                  <div className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold">Captain</div>
+                                  <div className="text-xs text-on-background font-semibold flex items-center gap-2 flex-wrap">
+                                    {preset.captain || '—'}
+                                    {preset.captain_uid && <span className="font-body-sm text-[10px] text-on-surface-variant font-normal">UID {preset.captain_uid}</span>}
+                                  </div>
+                                </div>
+
+                                {playerList.length > 0 && (
+                                  <div className="rounded-xl bg-surface-container-low border border-outline-variant/20 px-3 py-2.5 space-y-1.5">
+                                    <div className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold">Players</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {playerList.map((slot, sIdx) => (
+                                        <span key={sIdx} className="px-2 py-1 rounded-md bg-surface-container border border-outline-variant/20 text-[10px] text-on-background font-medium leading-none">
+                                          {slot.ign || `Player ${sIdx + 2}`}
+                                          {slot.uid && <span className="text-on-surface-variant/60"> · {slot.uid}</span>}
+                                        </span>
                                       ))}
                                     </div>
                                   </div>
-                                </div>
+                                )}
 
-                                <div className="flex justify-end gap-2 pt-2 border-t border-outline-variant/10">
-                                  <button 
-                                    type="button"
-                                    onClick={() => setIsEditingPreset(null)}
-                                    className="py-1.5 px-3 bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/40 rounded-lg font-headline-md text-[10px] font-semibold"
-                                  >
-                                    Cancel
-                                  </button>
-                                  <button 
-                                    type="button"
-                                    onClick={() => handleUpdatePreset(preset.id, editTeamName, editCaptain, editMembers)}
-                                    className="py-1.5 px-4 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-[10px] font-bold"
-                                  >
-                                    Save Changes
-                                  </button>
-                                </div>
-                              </div>
-                            )
-                          }
+                                {subList.length > 0 && (
+                                  <div className="rounded-xl bg-surface-container-low border border-outline-variant/20 px-3 py-2.5 space-y-1.5">
+                                    <div className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold">Substitutes</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {subList.map((slot, sIdx) => (
+                                        <span key={sIdx} className="px-2 py-1 rounded-md bg-surface-variant/30 border border-dashed border-outline-variant/25 text-[10px] text-on-surface-variant font-medium leading-none">
+                                          {slot.ign || `S${sIdx + 1}`}
+                                          {slot.uid && <span className="opacity-60"> · {slot.uid}</span>}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
 
-                          return (
-                            <div key={preset.id} className="bg-surface-container-highest/65 p-4 rounded-xl border border-outline-variant/30 flex flex-col justify-between gap-3 shadow-sm hover:border-outline-variant/60 transition-all">
-                              <div>
-                                <div className="flex justify-between items-center gap-2">
-                                  <h4 className="font-headline-md text-sm font-bold text-on-background tracking-tight truncate">{preset.team_name}</h4>
-                                  <div className="flex gap-1.5 shrink-0">
-                                    <button 
-                                      onClick={() => {
-                                        setEditTeamName(preset.team_name);
-                                        setEditCaptain(preset.captain);
-                                        setEditMembers(parsedMembers);
-                                        setIsEditingPreset(preset.id);
-                                        setIsCreatingPreset(false);
-                                      }}
-                                      className="p-1 rounded hover:bg-surface-variant text-on-surface-variant hover:text-on-background transition-colors"
-                                      title="Edit preset"
+                                {/* Actions */}
+                                <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+                                  <button
+                                    onClick={() => handleSetDefaultPreset(preset)}
+                                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-headline-md text-[10px] font-bold transition-colors ${preset.is_default ? 'text-amber-400 bg-amber-400/10' : 'text-on-surface-variant hover:bg-surface-variant'}`}
+                                  >
+                                    <span className="material-symbols-outlined text-sm">{preset.is_default ? 'star' : 'star_outline'}</span>
+                                    {preset.is_default ? 'Default squad' : 'Set as default'}
+                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditStart(preset)}
+                                      className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/30 font-headline-md text-[10px] font-bold flex items-center gap-1 transition-colors"
                                     >
-                                      <span className="material-symbols-outlined text-sm">edit</span>
+                                      <span className="material-symbols-outlined text-sm">edit</span> Edit
                                     </button>
-                                    <button 
-                                      onClick={() => handleDeletePreset(preset.id)}
-                                      className="p-1 rounded hover:bg-rose-500/20 hover:text-rose-400 text-on-surface-variant transition-colors"
-                                      title="Delete preset"
+                                    <button
+                                      onClick={() => setDeleteConfirmId(deleteConfirmId === preset.id ? null : preset.id)}
+                                      className={`px-3 py-1.5 rounded-lg font-headline-md text-[10px] font-bold flex items-center gap-1 transition-colors ${deleteConfirmId === preset.id ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30' : 'bg-surface-container hover:bg-surface-variant text-on-surface-variant border border-outline-variant/30 hover:text-rose-400'}`}
                                     >
-                                      <span className="material-symbols-outlined text-sm">delete</span>
+                                      <span className="material-symbols-outlined text-sm">delete</span> Delete
                                     </button>
                                   </div>
                                 </div>
-                                <div className="text-[10px] text-on-surface-variant font-medium pt-1">
-                                  Captain: <strong className="text-on-background font-medium">{preset.captain}</strong>
-                                </div>
-                                {parsedMembers.filter(m => m !== '').length > 0 && (
-                                  <div className="text-[9px] text-on-surface-variant/80 font-medium pt-1 truncate">
-                                    Members: {parsedMembers.filter(m => m !== '').join(', ')}
+
+                                {/* Delete confirm */}
+                                {deleteConfirmId === preset.id && (
+                                  <div className="flex items-center justify-between gap-2 px-3 py-2.5 bg-rose-500/8 border border-rose-500/20 rounded-xl">
+                                    <span className="font-body-sm text-[10px] text-rose-400">Delete preset? Past registrations are unaffected.</span>
+                                    <div className="flex gap-1.5 shrink-0">
+                                      <button onClick={() => setDeleteConfirmId(null)} className="px-2.5 py-1 rounded-lg bg-surface-container text-on-background border border-outline-variant/30 text-[9px] font-bold">Keep</button>
+                                      <button onClick={() => handleDeletePreset(preset.id)} className="px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-600 text-white text-[9px] font-bold">Delete</button>
+                                    </div>
                                   </div>
                                 )}
                               </div>
                             </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
+                          );
+                        }
 
-                  {/* Registered Teams rosters display */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-                      <span className="material-symbols-outlined text-primary text-xl">groups</span> Active Rosters History ({teamMembers.length})
-                    </h3>
-                    
-                    {teamMembers.length === 0 ? (
-                      <div className="text-center py-12 space-y-4 bg-surface-variant/10 rounded-xl border border-outline-variant/15 p-6">
-                        <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
-                          <span className="material-symbols-outlined text-2xl animate-pulse">groups</span>
-                        </div>
-                        <div className="space-y-1">
-                          <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background">No Active Rosters</h4>
-                          <p className="font-body-sm text-[11px] text-on-surface-variant max-w-xs mx-auto leading-relaxed">You aren't registered in any active tournament squad. Coordinate with your team and join an arena!</p>
-                        </div>
-                        <button 
-                          onClick={() => onNavigate && onNavigate('tournaments')}
-                          className="px-5 py-2 bg-primary hover:bg-primary/95 text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-md flex items-center gap-1.5 mx-auto"
-                        >
-                          <span className="material-symbols-outlined text-sm">sports_esports</span> Join a Tournament
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {teamMembers.map((team, idx) => (
-                          <div key={idx} className="bg-surface-container-highest/60 p-4 rounded-xl border border-outline-variant/30 flex flex-col justify-between gap-3 shadow-sm">
-                            <div className="space-y-1.5">
-                              <div className="flex justify-between items-center gap-2">
-                                <h4 className="font-headline-md text-sm sm:text-base font-bold text-on-background tracking-tight truncate">{team.name}</h4>
-                                <span className={`px-2 py-0.5 rounded font-label-caps text-[8px] font-bold uppercase tracking-wider shrink-0 ${team.status === 'Active' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-primary/20 text-primary border border-primary/30'}`}>{team.status}</span>
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => setDetailsOpenId(preset.id)}
+                            className="text-left w-full h-full glass-card rounded-2xl border border-outline-variant/25 bg-surface-container-highest/50 overflow-hidden shadow-sm transition-all flex items-center gap-3 p-4 hover:border-outline-variant/50 group"
+                          >
+                            <GameIcon game={game} size={40} rounded="rounded-xl" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">{preset.team_name}</span>
+                                {preset.is_default && (
+                                  <span className="material-symbols-outlined text-sm text-amber-400 shrink-0" title="Default squad">star</span>
+                                )}
                               </div>
-                              <p className="font-body-sm text-[10px] text-on-surface-variant/80 font-medium truncate">{team.tag}</p>
-                              
-                              <div className="pt-2 border-t border-outline-variant/20 space-y-1">
-                                <div className="font-label-caps text-[8px] text-on-surface-variant font-bold uppercase">Roster Members</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {team.members.map((m, mIdx) => (
-                                    <span key={mIdx} className="px-2 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-[10px] text-on-background font-medium">{m}</span>
-                                  ))}
-                                </div>
-                              </div>
+                              {preset.preset_name && preset.preset_name !== preset.team_name && (
+                                <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">{preset.preset_name}</p>
+                              )}
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                            <span className="material-symbols-outlined text-lg text-on-surface-variant/70 group-hover:text-primary transition-colors shrink-0">chevron_right</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Bottom create CTA if at limit */}
+                  {presets.length >= 4 && (
+                    <p className="font-body-sm text-[10px] text-on-surface-variant text-center">Maximum of 4 presets reached. Delete one to create a new squad.</p>
+                  )}
                 </motion.div>
               )}
+
 
               {/* Tab 4: Wallet & Payouts */}
               {activeTab === 'wallet' && (
@@ -3823,7 +3894,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
             <button onClick={() => onNavigate && onNavigate('home')} className="font-headline-md text-[16px] font-extrabold text-primary tracking-tight hover:opacity-85 transition-opacity">
               Match District
             </button>
-            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">© 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
+            <p className="font-body-sm text-[10px] text-on-surface-variant opacity-60">&copy; 2024 MATCH DISTRICT. ALL RIGHTS RESERVED.</p>
           </div>
         </div>
       </footer>
