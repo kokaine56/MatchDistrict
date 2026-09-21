@@ -5,32 +5,12 @@ import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
 import TournamentCard from '../components/TournamentCard'
-import SponsoredStar from '../components/SponsoredStar'
-import VerificationBadge from '../components/VerificationBadge'
-import gameBgmi from '../assets/supported_games/bgmi.png'
-import gameFreeFire from '../assets/supported_games/freefire.png'
-import gameCodm from '../assets/supported_games/codm.png'
-import gameValorant from '../assets/supported_games/valorant.png'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const STATUS_OPTIONS = ['All', 'Upcoming', 'Registrations Open', 'Registration Closed', 'Live']
 const GAME_OPTIONS = ['All Games', 'BGMI', 'Valorant', 'Free Fire', 'COD Mobile']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
-const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
-
-const formatINR = (val) => {
-  const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
-  return isNaN(n) ? (val || 'TBA') : `\u20B9${n.toLocaleString('en-IN')}`
-}
-
-const GAME_ICON_MAP = {
-  bgmi: gameBgmi,
-  'free fire': gameFreeFire,
-  codm: gameCodm,
-  'cod mobile': gameCodm,
-  valorant: gameValorant,
-}
 
 function Tournaments({ onNavigate }) {
   const [dbTournaments, setDbTournaments] = useState([]);
@@ -562,68 +542,8 @@ function Tournaments({ onNavigate }) {
 
           <AnimatePresence mode="popLayout">
             {filteredTournaments.length > 0 ? (
-              statusFilter === 'Live' ? (
-                <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-auto" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
-                  {filteredTournaments.map(t => {
-                    const modeLabel = [t.match_type === 'solo' ? 'Solo' : t.match_type === 'duo' ? 'Duo' : 'Squad', t.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
-                    return (
-                      <motion.div
-                        key={`live-${t.id}`}
-                        layout
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        onClick={() => onNavigate && onNavigate('tournament-detail', t.id)}
-                        whileHover={{ y: -2, scale: 1.01 }}
-                        whileTap={{ scale: 0.99 }}
-                        className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center border border-outline-variant/30 shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low hover:border-outline-variant/60 cursor-pointer w-fit shrink-0"
-                      >
-                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
-                          {(() => {
-                            const gameKey = (t.game || '').toLowerCase()
-                            const gameIcon = GAME_ICON_MAP[gameKey]
-                            return gameIcon ? (
-                              <img alt={t.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
-                            ) : (
-                              <img alt={t.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={t.bannerUrl || t.cover_image_url || FALLBACK_IMG} />
-                            )
-                          })()}
-                        </div>
-
-                        <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
-                          <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
-                            {t.title}
-                          </h3>
-
-                          <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
-                            <span className="truncate max-w-[120px] sm:max-w-[150px]">{t.orgName || 'Match District Organizer'}</span>
-                            <VerificationBadge tier={['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro'} size="sm" />
-                          </div>
-
-                          <div className="flex items-center gap-1">
-                            <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
-                            <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(t.prize || t.prizePool)}</span>
-                            {(t.hasApprovedSponsors || t.totalSponsorContributions > 0) && <SponsoredStar size={12} />}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse uppercase tracking-wider">
-                              LIVE MATCH
-                            </span>
-                            <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
-                              {modeLabel}
-                            </span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
-                  {/* ── SCROLL VIEWPORT ── */}
-                  <div
+              <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
+                <div
                   className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-auto"
                   style={{
                     overflowX: 'auto',
@@ -632,49 +552,47 @@ function Tournaments({ onNavigate }) {
                     touchAction: 'pan-x pan-y',
                     width: '100%',
                   }}
+                >
+                  <motion.div
+                    className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
+                    style={{ width: 'max-content' }}
                   >
-                    {/* ── INNER TRACK ── */}
-                    <motion.div
-                      className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
-                      style={{ width: 'max-content' }}
-                    >
-                      {filteredTournaments.map((t, idx) => (
-                        <div
-                          key={`explore-${t.id}`}
-                          className="snap-start first:ml-3"
-                          style={{ flexShrink: 0, minWidth: '150px' }}
-                        >
-                          <TournamentCard
-                            id={t.id}
-                            title={t.title}
-                            game={t.game}
-                            status={t.status}
-                            badgeTextColor="text-white"
-                            imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
-                            imgAlt={t.title}
-                            prizePool={t.prize}
-                            entryFee={t.entry}
-                            matchType={t.match_type}
-                            perspective={t.perspective}
-                            slotsTotal={t.slotsTotal}
-                            slotsFilled={t.slotsFilled}
-                            entryFeeAmount={t.entryFeeAmount}
-                            orgName={t.orgName}
-                            orgTier={t.orgTier}
-                            onNavigate={onNavigate}
-                            registrationOpenDate={t.registrationOpenDate}
-                            registrationCloseDate={t.registrationCloseDate}
-                            startDate={t.startDate}
-                            hasSponsors={t.hasApprovedSponsors}
-                            sponsoredAmount={t.totalSponsorContributions}
-                            cardColor={t.card_color || t.cardColor || t.theme || 'white'}
-                          />
-                        </div>
-                      ))}
-                    </motion.div>
-                  </div>
+                    {filteredTournaments.map((t, idx) => (
+                      <div
+                        key={`explore-${t.id}`}
+                        className="snap-start first:ml-3"
+                        style={{ flexShrink: 0, minWidth: '150px' }}
+                      >
+                        <TournamentCard
+                          id={t.id}
+                          title={t.title}
+                          game={t.game}
+                          status={t.status}
+                          badgeTextColor="text-white"
+                          imgSrc={t.cover_image_url || t.coverImage || t.bannerUrl}
+                          imgAlt={t.title}
+                          prizePool={t.prize}
+                          entryFee={t.entry}
+                          matchType={t.match_type}
+                          perspective={t.perspective}
+                          slotsTotal={t.slotsTotal}
+                          slotsFilled={t.slotsFilled}
+                          entryFeeAmount={t.entryFeeAmount}
+                          orgName={t.orgName}
+                          orgTier={t.orgTier}
+                          onNavigate={onNavigate}
+                          registrationOpenDate={t.registrationOpenDate}
+                          registrationCloseDate={t.registrationCloseDate}
+                          startDate={t.startDate}
+                          hasSponsors={t.hasApprovedSponsors}
+                          sponsoredAmount={t.totalSponsorContributions}
+                          cardColor={t.card_color || t.cardColor || t.theme || 'white'}
+                        />
+                      </div>
+                    ))}
+                  </motion.div>
                 </div>
-              )
+              </div>
             ) : (
               <motion.div
                 animate={{ opacity: 1, scale: 1 }}

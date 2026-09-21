@@ -7,33 +7,15 @@ import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
 import OrganizerShowcase from '../components/OrganizerShowcase'
 import TournamentCard from '../components/TournamentCard'
-import SponsoredStar from '../components/SponsoredStar'
-import VerificationBadge from '../components/VerificationBadge'
 import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
 import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
 import sponsorAsus from '../assets/sponsors/sponsor_asus.png'
 import sponsorLenovo from '../assets/sponsors/sponsor_lenovo.png'
 import sponsorNvidia from '../assets/sponsors/sponsor_nvidia.png'
 import sponsorValorant from '../assets/sponsors/sponsor_valorant.png'
-import gameBgmi from '../assets/supported_games/bgmi.png'
-import gameFreeFire from '../assets/supported_games/freefire.png'
-import gameCodm from '../assets/supported_games/codm.png'
-import gameValorant from '../assets/supported_games/valorant.png'
 import SupportedGames from '../components/SupportedGames'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
-const formatINR = (val) => {
-  const n = parseInt(String(val || '').replace(/[^0-9]/g, ''), 10)
-  return isNaN(n) ? (val || 'TBA') : `₹${n.toLocaleString('en-IN')}`
-}
-
-const GAME_ICON_MAP = {
-  bgmi: gameBgmi,
-  'free fire': gameFreeFire,
-  codm: gameCodm,
-  'cod mobile': gameCodm,
-  valorant: gameValorant,
-}
 
 function Homepage({ onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -273,61 +255,42 @@ function Homepage({ onNavigate }) {
                     </p>
                   </div>
                 ) : (
-                  <div className="flex flex-row gap-3 overflow-x-auto pb-2 scrollbar-hide !touch-auto" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
-                    {liveMatches.map((match, idx) => {
-                      const modeLabel = [match.match_type === 'solo' ? 'Solo' : match.match_type === 'duo' ? 'Duo' : 'Squad', match.perspective === 'fpp' ? 'FPP' : 'TPP'].filter(Boolean).join(' • ')
-                      return (
-                        <motion.div
-                          key={idx}
-                          onClick={() => onNavigate && onNavigate('tournament-detail', match.id)}
-                          layout
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3 }}
-                          whileHover={{ y: -2, scale: 1.01 }}
-                          whileTap={{ scale: 0.99 }}
-                          className="p-2.5 sm:p-3 rounded-xl flex gap-3 items-center shadow-md bg-surface-container-low/60 group hover:bg-surface-container-low cursor-pointer w-fit shrink-0"
-                        >
-                          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-surface-container-high shadow-inner">
-                            {(() => {
-                              const gameKey = (match.game || '').toLowerCase()
-                              const gameIcon = GAME_ICON_MAP[gameKey]
-                              return gameIcon ? (
-                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={gameIcon} />
-                              ) : (
-                                <img alt={match.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" src={match.bannerUrl || match.cover_image_url || DEFAULT_BANNER} />
-                              )
-                            })()}
+                  <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
+                    <div
+                      className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-auto"
+                      style={{ overflowX: 'auto', overflowY: 'visible', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', width: '100%' }}
+                    >
+                      <div className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-sm md:pl-lg" style={{ width: 'max-content' }}>
+                        {liveMatches.map((match) => (
+                          <div key={match.id} className="snap-start first:ml-3" style={{ flexShrink: 0, minWidth: '150px' }}>
+                            <TournamentCard
+                              id={match.id}
+                              title={match.title}
+                              game={match.game}
+                              status={match.status}
+                              badgeTextColor="text-white"
+                              imgSrc={match.cover_image_url || match.bannerUrl || DEFAULT_BANNER}
+                              imgAlt={match.title}
+                              prizePool={match.prize}
+                              entryFee={match.entry}
+                              matchType={match.match_type || match.matchType || 'Squad'}
+                              perspective={match.perspective || 'TPP'}
+                              slotsTotal={match.slotsTotal}
+                              slotsFilled={match.slotsFilled}
+                              entryFeeAmount={match.entry_fee_amount}
+                              orgName={match.orgName || 'Match District Organizer'}
+                              orgTier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'}
+                              onNavigate={onNavigate}
+                              hasSponsors={match.hasApprovedSponsors || false}
+                              registrationOpenDate={match.registrationOpenDate}
+                              registrationCloseDate={match.registrationCloseDate}
+                              startDate={match.startDate}
+                              cardColor={match.card_color || match.cardColor || match.theme || 'white'}
+                            />
                           </div>
-
-                          <div className="flex flex-col justify-center flex-grow min-w-0 py-0.5 gap-1">
-                            <h3 className="text-sm sm:text-base font-bold text-on-background leading-snug line-clamp-2">
-                              {match.title}
-                            </h3>
-
-                            <div className="flex items-center gap-1 text-[11px] sm:text-xs text-on-surface-variant/80">
-                              <span className="truncate max-w-[120px] sm:max-w-[150px]">{match.orgName || 'Match District Organizer'}</span>
-                              <VerificationBadge tier={['pro', 'elite', 'basic'].includes((match.orgTier || '').toLowerCase()) ? match.orgTier : 'Pro'} size="sm" />
-                            </div>
-
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-on-surface-variant/60 uppercase tracking-wider font-medium">Prize:</span>
-                              <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400">{formatINR(match.prize || match.prizePool)}</span>
-                              {(match.hasApprovedSponsors || match.totalSponsorContributions > 0) && <SponsoredStar size={12} />}
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse uppercase tracking-wider">
-                                LIVE MATCH
-                              </span>
-                              <span className="text-[10px] text-on-surface-variant/50 font-medium uppercase tracking-wider">
-                                {modeLabel}
-                              </span>
-                            </div>
-                          </div>
-                        </motion.div>
-                      )
-                    })}
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
               </motion.div>

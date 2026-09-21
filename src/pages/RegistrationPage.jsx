@@ -5,6 +5,10 @@ import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { uploadImage } from '../utils/cloudinaryUpload.js'
+import gameBgmi from '../assets/supported_games/bgmi.png'
+import gameFreeFire from '../assets/supported_games/freefire.png'
+import gameCodm from '../assets/supported_games/codm.png'
+import gameValorant from '../assets/supported_games/valorant.png'
 
 const PAYMENT_APPS = ['PhonePe', 'Google Pay', 'Paytm', 'BHIM', 'Other']
 
@@ -130,8 +134,7 @@ function RegistrationPage({ onNavigate }) {
     const errs = {}
     if (!form.teamName.trim()) errs.teamName = 'Team name is required'
     else if (form.teamName.trim().length > 16) errs.teamName = 'Max 16 characters'
-    if (!form.email.trim()) errs.email = 'Email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Invalid email'
+    // email is auto-populated from authenticated user — no visible field, no validation needed
     if (!form.phone.trim()) errs.phone = 'Phone is required'
     else if (form.phone.replace(/\D/g, '').length !== 10) errs.phone = 'Must be 10 digits'
     if (!form.captainIgn.trim()) errs.captainIgn = 'Captain IGN is required'
@@ -571,10 +574,18 @@ function RegistrationPage({ onNavigate }) {
         </div>
 
         {/* Mobile Sticky Bar */}
-        <div className="fixed bottom-0 left-0 right-0 sm:hidden bg-[#07080C]/95 backdrop-blur-xl border-t border-white/10 p-4 flex items-center gap-3">
+        <div
+          className="fixed bottom-0 left-0 right-0 sm:hidden z-30 px-4 pt-3 flex items-center gap-3 rounded-t-2xl border-t border-white/60 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]"
+          style={{
+            background: 'rgba(255, 255, 255, 0.84)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
+          }}
+        >
           <button
             onClick={() => setStep('form')}
-            className="flex-1 bg-white/10 text-white font-bold py-3 rounded-xl hover:bg-white/20 transition-colors"
+            className="flex-1 bg-black/5 hover:bg-black/10 border border-black/10 text-slate-800 font-semibold py-2.5 rounded-xl transition-colors text-sm"
           >
             Back
           </button>
@@ -589,7 +600,7 @@ function RegistrationPage({ onNavigate }) {
               setShowConfirmModal(true)
             }}
             disabled={paymentSubmitting}
-            className="flex-1 bg-primary text-white font-bold py-3 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="flex-1 bg-primary text-white font-bold py-2.5 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-md shadow-primary/25"
           >
             {paymentSubmitting ? (
               <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Submitting</>
@@ -683,42 +694,34 @@ function RegistrationPage({ onNavigate }) {
     );
   }
 
+  const _gameKey = (tourney.game || '').toLowerCase().trim()
+  const gameIconSrc =
+    _gameKey === 'bgmi' || _gameKey === 'battlegrounds mobile india' ? gameBgmi
+    : _gameKey === 'free fire' ? gameFreeFire
+    : _gameKey === 'codm' || _gameKey === 'cod mobile' ? gameCodm
+    : _gameKey === 'valorant' ? gameValorant
+    : null
+
   return (
     <div className="min-h-screen bg-[#07080C] text-white relative">
-      <div className="max-w-2xl mx-auto px-4 py-8 pb-32">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-28">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-white/5 rounded-xl transition-colors">
+        <div className="flex items-center gap-3 mb-8">
+          <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-white/5 rounded-xl transition-colors shrink-0">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
+          {gameIconSrc && (
+            <img src={gameIconSrc} alt={tourney.game} className="w-8 h-8 rounded-lg object-cover shrink-0 shadow-md" />
+          )}
           <div>
-            <h1 className="text-xl font-black">Register Team</h1>
-            <p className="text-sm text-white/40">{tourney.title}</p>
+            <h1 className="text-xl font-black leading-tight">Register Team</h1>
+            <p className="text-sm text-white/40 leading-tight">{tourney.title}</p>
           </div>
         </div>
 
-        {/* Tournament Summary Card */}
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-6 flex items-center gap-4">
-          <div className="w-16 h-20 rounded-lg overflow-hidden shrink-0 bg-white/10">
-            {tourney.cover_image_url && (
-              <img src={tourney.cover_image_url} className="w-full h-full object-cover" alt="" />
-            )}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/25">
-                {tourney.game}
-              </span>
-              <span className="text-[10px] text-white/40">{tourney.match_type} &bull; {(tourney.perspective || 'TPP').toUpperCase()}</span>
-            </div>
-            <div className="flex items-center gap-4 text-xs">
-              <span className="text-green-400 font-bold">{entryDisplay === 'Free' ? 'Free Entry' : `Entry: ${entryDisplay}`}</span>
-              <span className="text-white/40">{tourney.slotsTotal || 0} slots</span>
-            </div>
-          </div>
-        </div>
+
 
         {serverError && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 text-red-400 text-sm">
@@ -727,34 +730,25 @@ function RegistrationPage({ onNavigate }) {
         )}
 
         <form onSubmit={handleRegisterTeam} className="space-y-6">
-          {/* Team Information */}
-          <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
-            <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Team Information</h2>
-            <div>
-              <label className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
-              <input
-                type="text"
-                value={form.teamName}
-                onChange={e => updateField('teamName', e.target.value)}
-                onBlur={() => setTouched(prev => ({ ...prev, teamName: true }))}
-                maxLength={16}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
-                placeholder="Enter your team name"
-              />
-              {errors.teamName && <p className="text-red-400 text-xs mt-1">{errors.teamName}</p>}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {/* Desktop: Team Info + Captain side-by-side; Mobile: stacked */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Team Information */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
+              <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Team Information</h2>
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">Email *</label>
+                <label className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
                 <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => updateField('email', e.target.value)}
-                  onBlur={() => setTouched(prev => ({ ...prev, email: true }))}
+                  type="text"
+                  value={form.teamName}
+                  onChange={e => updateField('teamName', e.target.value)}
+                  onBlur={() => setTouched(prev => ({ ...prev, teamName: true }))}
+                  maxLength={16}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
-                  placeholder="your@email.com"
+                  placeholder="Enter your team name"
                 />
-                {errors.email && <p className="text-red-400 text-xs mt-1">{errors.email}</p>}
+                {errors.teamName && <p className="text-red-400 text-xs mt-1">{errors.teamName}</p>}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-white/60 mb-1.5">Phone *</label>
@@ -769,12 +763,10 @@ function RegistrationPage({ onNavigate }) {
                 {errors.phone && <p className="text-red-400 text-xs mt-1">{errors.phone}</p>}
               </div>
             </div>
-          </div>
 
-          {/* Captain */}
-          <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
-            <h2 className="text-sm font-bold text-amber-400/80 uppercase tracking-wider">Captain</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Captain */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
+              <h2 className="text-sm font-bold text-amber-400/80 uppercase tracking-wider">Captain</h2>
               <div>
                 <label className="block text-xs font-semibold text-white/60 mb-1.5">IGN *</label>
                 <input
@@ -800,6 +792,7 @@ function RegistrationPage({ onNavigate }) {
                 {errors.captainUid && <p className="text-red-400 text-xs mt-1">{errors.captainUid}</p>}
               </div>
             </div>
+
           </div>
 
           {/* Players */}
@@ -875,28 +868,43 @@ function RegistrationPage({ onNavigate }) {
             </div>
           </div>
 
-          {/* Desktop Submit */}
-          <div className="hidden sm:block">
+          {/* Desktop Submit — Cancel + primary action, right-aligned */}
+          <div className="hidden sm:flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/70 text-sm font-semibold hover:bg-white/10 hover:text-white transition-all"
+            >
+              Cancel
+            </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full bg-primary text-white font-bold py-3.5 px-6 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="px-6 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isSubmitting ? (
                 <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Submitting...</>
               ) : (
-                <>{isPaid ? 'Proceed to Payment' : 'Register Team'} {isPaid ? `• ₹${entryFee.toLocaleString('en-IN')}` : ''}</>
+                <>{isPaid ? 'Proceed to Payment' : 'Register Team'}{isPaid ? ` • ₹${entryFee.toLocaleString('en-IN')}` : ''}</>
               )}
             </button>
           </div>
         </form>
       </div>
 
-      {/* Mobile Sticky Bar */}
-      <div className="fixed bottom-0 left-0 right-0 sm:hidden bg-[#07080C]/95 backdrop-blur-xl border-t border-white/10 p-4 flex items-center gap-3">
+      {/* Mobile Sticky Bar — clean frosted-glass treatment */}
+      <div
+        className="fixed bottom-0 left-0 right-0 sm:hidden z-30 px-4 pt-3 flex items-center gap-3 rounded-t-2xl border-t border-white/60 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]"
+        style={{
+          background: 'rgba(255, 255, 255, 0.84)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
+        }}
+      >
         <button
           onClick={() => navigate(-1)}
-          className="flex-1 bg-white/10 text-white font-bold py-3 rounded-xl hover:bg-white/20 transition-colors"
+          className="flex-1 bg-black/5 hover:bg-black/10 border border-black/10 text-slate-800 font-semibold py-2.5 rounded-xl transition-colors text-sm"
         >
           Cancel
         </button>
@@ -904,7 +912,7 @@ function RegistrationPage({ onNavigate }) {
           type="button"
           onClick={handleRegisterTeam}
           disabled={isSubmitting}
-          className="flex-1 bg-primary text-white font-bold py-3 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-[2] bg-primary text-white font-bold py-2.5 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-md shadow-primary/25"
         >
           {isSubmitting ? (
             <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Submitting</>

@@ -293,6 +293,30 @@ function WalletPassCard({
         {/* Layer C: Cover image */}
         <div className="absolute inset-0 rounded-2xl overflow-hidden border border-outline-variant/30 bg-surface-container-low z-20 pointer-events-none !touch-auto">
           <img src={imgSrc || FALLBACK_IMG} alt={title} className="w-full h-full object-cover !touch-auto" />
+
+          {/* LIVE Badge — top-right corner overlay, only shown when tournament is live */}
+          {lifecycleStatus === 'live' && (
+            <div
+              className="absolute top-2 right-2 z-30 flex items-center gap-1 px-1.5 py-0.5 rounded-full pointer-events-none select-none"
+              style={{
+                background: 'rgba(30,5,5,0.82)',
+                border: '1px solid rgba(239,68,68,0.45)',
+                boxShadow: '0 0 10px 2px rgba(239,68,68,0.35), inset 0 0 6px rgba(239,68,68,0.1)',
+              }}
+            >
+              <motion.span
+                animate={{ opacity: [0.55, 1, 0.55] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+                className="block w-[5px] h-[5px] rounded-full bg-rose-500 shadow-[0_0_5px_rgba(239,68,68,0.9)] shrink-0"
+              />
+              <span
+                className="text-[8px] font-extrabold uppercase tracking-widest leading-none"
+                style={{ color: '#f87171' }}
+              >
+                LIVE
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -478,70 +502,6 @@ function TournamentCardBase({
     displayBadgeText,
     displayBadgeBg,
     badgeTextColor
-  }
-
-  if (isLive && !forceWalletCard) {
-    return (
-      <motion.div
-        whileHover={{ y: -4, scale: 1.01 }}
-        whileTap={{ scale: 0.99 }}
-        className={`relative flex flex-row bg-surface rounded-2xl border border-outline-variant/20 shadow-md overflow-hidden shrink-0 h-[200px] transition-[width] duration-300 ease-in-out ${isExpanded ? 'w-[320px]' : 'w-[150px]'} sm:w-full sm:max-w-[400px] md:max-w-[320px]`}
-        style={{ touchAction: 'pan-x pan-y' }}
-      >
-        <div
-          onClick={handleCardClick}
-          className="relative w-[150px] h-[200px] shrink-0 cursor-pointer"
-        >
-          {isPreview && !imgSrc ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container border border-dashed border-outline-variant/40 m-2 rounded-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-outline-variant mb-1">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                <circle cx="8.5" cy="8.5" r="1.5"/>
-                <polyline points="21 15 16 10 5 21"/>
-              </svg>
-              <span className="text-[7px] text-outline-variant font-medium uppercase tracking-wider text-center px-1 leading-tight">No Cover<br/>Image</span>
-            </div>
-          ) : fallbackFailed ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-800">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant mb-1">
-                <path d="M6 12H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-                <path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/>
-                <path d="M8 14h8"/>
-                <path d="M8 17h5"/>
-              </svg>
-              <span className="text-[8px] text-on-surface-variant font-medium uppercase tracking-wider">Image Unavailable</span>
-            </div>
-          ) : (
-            <img
-              loading="lazy"
-              decoding="async"
-              className="absolute inset-0 w-full h-full object-cover !touch-auto"
-              alt={imgAlt || title}
-              src={imgError ? FALLBACK_IMG : (imgSrc || FALLBACK_IMG)}
-              onError={handleImgError}
-            />
-          )}
-
-          {isSponsored ? (
-            <div className="absolute bottom-2 left-2 p-1.5 rounded-full bg-amber-500 shadow-sm select-none">
-              <SponsoredStar size={12} />
-            </div>
-          ) : game ? (
-            <div className="absolute bottom-2 left-2 select-none">
-              {game.toLowerCase() === 'bgmi' ? (
-                <img src={gameBgmi} alt={game} className="w-6 h-6 sm:w-8 sm:h-8 rounded-md shadow-sm object-cover bg-surface !touch-auto" />
-              ) : (
-                <span className="px-1.5 py-0.5 rounded-md bg-surface/80 text-[7px] sm:text-[8px] font-bold text-on-surface-variant border border-outline-variant/30 uppercase tracking-wider">Coming Soon</span>
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`flex flex-col justify-between h-[200px] overflow-hidden transition-[width,opacity,padding] duration-300 ease-in-out ${isExpanded ? 'w-[170px] opacity-100 p-2' : 'w-0 opacity-0 p-0'} sm:w-auto sm:flex-1 sm:opacity-100 sm:p-2 md:w-[170px] md:max-w-[170px]`}>
-          <InfoContent {...infoProps} />
-        </div>
-      </motion.div>
-    )
   }
 
   return (
