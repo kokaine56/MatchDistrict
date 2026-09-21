@@ -260,21 +260,24 @@ function getRoomSlots(allSlots, roomNumber, rooms) {
 
 /**
  * Return only the occupied slots for a given room.
- * Each entry includes the re-based slot number, team name, and captain.
+ * Each entry includes the re-based slot number, team name, captain, the raw
+ * slot status, and whether the registration's payment is verified.
  * @param {Array<any>} allSlots
  * @param {number} roomNumber
  * @param {Array<{ slotStart: number, slotEnd: number }>} rooms
- * @returns {Array<{ slotNumber: number, teamName: string, captain: string, status: string }>}
+ * @returns {Array<{ slotNumber: number, teamName: string, captain: string, status: string, paymentVerified: boolean }>}
  */
 function getOccupiedRoomSlots(allSlots, roomNumber, rooms) {
   const roomSlots = getRoomSlots(allSlots, roomNumber, rooms);
   return roomSlots
-    .filter((s) => s.status === 'occupied' || s.status === 'confirmed')
+    .filter((s) => s.status === 'occupied' || s.status === 'confirmed' || s.status === 'pending')
     .map((s) => ({
       slotNumber: s.number,
       teamName: s.teamName || '—',
       captain: s.captain || '—',
       status: s.status,
+      paymentVerified:
+        s.paymentVerified === true || s.status === 'occupied' || s.status === 'confirmed',
     }));
 }
 

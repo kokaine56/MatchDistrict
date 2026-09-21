@@ -5867,8 +5867,13 @@ const server = http.createServer(async (req, res) => {
         ? parseInt(tRes.rows[0].max_slots_per_room)
         : null;
 
+      // Authoritative payment/registration verification statuses
+      // (mirrors workers/slotManagerWorker.js).
+      const VERIFIED_REG_STATUSES = ['approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
+      const ACTIVE_REG_STATUSES = ['pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
+
       const regsRes = await pool.query(
-        'SELECT id, team_name, captain, status, slot_number FROM tournament_registrations WHERE tournament_id = $1',
+        'SELECT id, team_name, captain, status, slot_number FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC',
         [id]
       );
       const regs = regsRes.rows;
@@ -5877,12 +5882,14 @@ const server = http.createServer(async (req, res) => {
       for (let i = 1; i <= slotsTotal; i++) {
         const booked = regs.find(r => r.slot_number === i);
         if (booked) {
+          const verified = VERIFIED_REG_STATUSES.includes(booked.status);
           slots.push({
             number: i,
-            status: booked.status === 'approved' ? 'occupied' : (booked.status === 'confirmed' || booked.status === 'VERIFIED_BY_HOST') ? 'confirmed' : 'pending',
+            status: verified ? (booked.status === 'approved' ? 'occupied' : 'confirmed') : 'pending',
             teamName: booked.team_name,
             captain: booked.captain,
-            registrationId: booked.id
+            registrationId: booked.id,
+            paymentVerified: verified
           });
         } else {
           slots.push({
@@ -5890,9 +5897,30 @@ const server = http.createServer(async (req, res) => {
             status: 'available',
             teamName: null,
             captain: null,
-            registrationId: null
+            registrationId: null,
+            paymentVerified: null
           });
         }
+      }
+
+      // Surface active registrations that have not yet been assigned a physical
+      // slot number (e.g. still awaiting payment verification). Reserve the next
+      // free slot numbers so they remain visible in the room registration table.
+      const takenSlots = new Set(slots.filter(s => s.registrationId).map(s => s.number));
+      let reserveCursor = 1;
+      for (const reg of regs) {
+        if (!ACTIVE_REG_STATUSES.includes(reg.status)) continue;
+        if (VERIFIED_REG_STATUSES.includes(reg.status)) continue;
+        if (reg.slot_number !== null && reg.slot_number !== undefined) continue;
+        while (reserveCursor <= slotsTotal && takenSlots.has(reserveCursor)) reserveCursor++;
+        if (reserveCursor > slotsTotal) break;
+        const reserved = slots[reserveCursor - 1];
+        reserved.status = 'pending';
+        reserved.teamName = reg.team_name;
+        reserved.captain = reg.captain;
+        reserved.registrationId = reg.id;
+        reserved.paymentVerified = false;
+        takenSlots.add(reserveCursor);
       }
 
       const roomCeilings = { solo: 100, duo: 50, squad: 25 };

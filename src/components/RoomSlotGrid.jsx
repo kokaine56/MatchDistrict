@@ -30,8 +30,13 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
     return getOccupiedRoomSlots(slotsData.slots, currentRoom, roomMeta.rooms);
   }, [slotsData, currentRoom, roomMeta]);
 
+  // Only a confirmed registration occupies a slot. Registrations that are still
+  // awaiting payment verification stay visible in the table below but their slot
+  // remains available (green) on the map.
   const availableCount = useMemo(() => {
-    return currentRoomSlots.filter((s) => s.status === 'available').length;
+    return currentRoomSlots.filter(
+      (s) => s.status === 'available' || s.status === 'pending'
+    ).length;
   }, [currentRoomSlots]);
 
   const filledCount = useMemo(() => {
@@ -39,6 +44,10 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
       (s) => s.status === 'occupied' || s.status === 'confirmed'
     ).length;
   }, [currentRoomSlots]);
+
+  const confirmedCount = useMemo(() => {
+    return occupiedSlots.filter((entry) => entry.paymentVerified).length;
+  }, [occupiedSlots]);
 
   if (!slotsData || !roomMeta || roomMeta.totalRooms === 0) {
     return (
@@ -151,7 +160,8 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
                 <tr className="border-b border-slate-200">
                   <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Slots</th>
                   <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Name</th>
-                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">Team Leader</th>
+                  <th className="text-left py-2.5 pr-4 font-bold text-slate-500 uppercase tracking-wider">Team Leader</th>
+                  <th className="text-left py-2.5 font-bold text-slate-500 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -159,7 +169,10 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
                   <tr key={entry.slotNumber} className="hover:bg-slate-50 transition-colors">
                     <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">Slot {entry.slotNumber}</td>
                     <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{entry.teamName}</td>
-                    <td className="py-2.5 text-slate-600 whitespace-nowrap">{entry.captain}</td>
+                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{entry.captain}</td>
+                    <td className={`py-2.5 font-semibold whitespace-nowrap ${entry.paymentVerified ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {entry.paymentVerified ? 'Confirmed' : 'Not confirmed'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -169,7 +182,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
 
         {occupiedSlots.length > 0 && (
           <div className="mt-3 text-[11px] text-slate-400 font-medium">
-            Showing {occupiedSlots.length} of {currentRoomDef?.slotsInRoom || 0} slots occupied in this room.
+            Showing {confirmedCount} of {currentRoomDef?.slotsInRoom || 0} slots occupied in this room.
           </div>
         )}
 
