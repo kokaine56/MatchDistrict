@@ -11,6 +11,88 @@ import { normalizeGameName } from '../utils/gameUtils.js'
 
 const PAYMENT_APPS = ['PhonePe', 'Google Pay', 'Paytm', 'BHIM', 'Other']
 
+const INPUT_BASE =
+  'w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none transition-colors'
+
+const inputCls = (invalid) =>
+  `${INPUT_BASE} ${invalid ? 'border-red-500/70 bg-red-500/5 focus:border-red-500' : 'border-white/10 focus:border-primary/50'}`
+
+// Visual/form order — the order these appear on the page determines the
+// "first invalid field" scroll/focus target.
+const ALL_FIELDS = [
+  'teamName', 'phone', 'captainIgn', 'captainUid',
+  'player_0_ign', 'player_0_uid',
+  'player_1_ign', 'player_1_uid',
+  'player_2_ign', 'player_2_uid',
+  'sub_0_ign', 'sub_0_uid',
+  'sub_1_ign', 'sub_1_uid',
+]
+
+const getFieldError = (field, f) => {
+  switch (field) {
+    case 'teamName':
+      if (!f.teamName.trim()) return 'Team name is required'
+      if (f.teamName.trim().length > 16) return 'Team name must be 16 characters or fewer'
+      return ''
+    case 'phone':
+      if (!f.phone.trim()) return 'Phone is required'
+      if (f.phone.replace(/\D/g, '').length !== 10) return 'Phone must be 10 digits'
+      return ''
+    case 'captainIgn':
+      return f.captainIgn.trim() ? '' : 'Captain IGN is required'
+    case 'captainUid':
+      if (!f.captainUid.trim()) return 'Captain UID is required'
+      if (!/^\d+$/.test(f.captainUid)) return 'Captain UID must be numbers only'
+      return ''
+    default:
+      break
+  }
+
+  const pIgn = field.match(/^player_(\d+)_ign$/)
+  if (pIgn) {
+    const i = Number(pIgn[1])
+    return f.players[i] && f.players[i].ign.trim() ? '' : `Player ${i + 2} IGN is required`
+  }
+  const pUid = field.match(/^player_(\d+)_uid$/)
+  if (pUid) {
+    const i = Number(pUid[1])
+    if (!f.players[i]) return ''
+    if (!f.players[i].uid.trim()) return `Player ${i + 2} UID is required`
+    if (!/^\d+$/.test(f.players[i].uid)) return `Player ${i + 2} UID must be numbers only`
+    return ''
+  }
+  const sIgn = field.match(/^sub_(\d+)_ign$/)
+  if (sIgn) {
+    const i = Number(sIgn[1])
+    if (!f.substitutes[i]) return ''
+    if (f.substitutes[i].uid.trim() && !f.substitutes[i].ign.trim()) return `Sub ${i + 1} IGN is required`
+    return ''
+  }
+  const sUid = field.match(/^sub_(\d+)_uid$/)
+  if (sUid) {
+    const i = Number(sUid[1])
+    if (!f.substitutes[i]) return ''
+    if (f.substitutes[i].ign.trim() && !f.substitutes[i].uid.trim()) return `Sub ${i + 1} UID is required`
+    if (f.substitutes[i].uid.trim() && !/^\d+$/.test(f.substitutes[i].uid)) return `Sub ${i + 1} UID must be numbers only`
+    return ''
+  }
+  return ''
+}
+
+const validateForm = (f) => {
+  const errs = {}
+  for (const key of ALL_FIELDS) {
+    const msg = getFieldError(key, f)
+    if (msg) errs[key] = msg
+  }
+  return errs
+}
+
+const FieldError = ({ id, message }) =>
+  message ? (
+    <p id={id} role="alert" className="text-red-400 text-xs mt-1">{message}</p>
+  ) : null
+
 const rosterOf = (value) => {
   if (Array.isArray(value)) {
     return value.filter(s => s && (s.ign || s.uid)).map(s => ({ ign: s.ign || '', uid: s.uid || '' }))
@@ -135,15 +217,18 @@ function RegistrationPage({ onNavigate }) {
       while (out.length < n) out.push({ ign: '', uid: '' })
       return out
     }
-    setForm(prev => ({
-      ...prev,
-      teamName: preset.team_name || prev.teamName,
-      captainIgn: preset.captain || prev.captainIgn,
-      captainUid: preset.captain_uid || prev.captainUid,
-      players: pad(playersRaw, 3),
-      substitutes: pad(subsRaw, 2),
-    }))
-    setErrors({})
+    setForm(prev => {
+      const next = {
+        ...prev,
+        teamName: preset.team_name || prev.teamName,
+        captainIgn: preset.captain || prev.captainIgn,
+        captainUid: preset.captain_uid || prev.captainUid,
+        players: pad(playersRaw, 3),
+        substitutes: pad(subsRaw, 2),
+      }
+      setErrors(validateForm(next))
+      return next
+    })
     setTouched({})
   }
 
@@ -183,61 +268,64 @@ function RegistrationPage({ onNavigate }) {
   }, [currentUser, tourney, id, navigate])
 
   const updateField = (field, value) => {
-    setForm(prev => ({ ...prev, [field]: value }))
-    if (errors[field]) setErrors(prev => ({ ...prev, [field]: '' }))
+    const next = { ...form, [field]: value }
+    setForm(next)
+    const msg = getFieldError(field, next)
+    setErrors(prev => (prev[field] === msg ? prev : { ...prev, [field]: msg }))
   }
 
   const updatePlayer = (index, field, value) => {
-    setForm(prev => {
-      const players = [...prev.players]
-      players[index] = { ...players[index], [field]: value }
-      return { ...prev, players }
+    const players = form.players.map((p, i) => (i === index ? { ...p, [field]: value } : p))
+    const next = { ...form, players }
+    setForm(next)
+    const a = `player_${index}_ign`
+    const b = `player_${index}_uid`
+    setErrors(prev => {
+      const updates = { [a]: getFieldError(a, next), [b]: getFieldError(b, next) }
+      return prev[a] === updates[a] && prev[b] === updates[b] ? prev : { ...prev, ...updates }
     })
   }
 
   const updateSub = (index, field, value) => {
-    setForm(prev => {
-      const subs = [...prev.substitutes]
-      subs[index] = { ...subs[index], [field]: value }
-      return { ...prev, substitutes: subs }
+    const substitutes = form.substitutes.map((s, i) => (i === index ? { ...s, [field]: value } : s))
+    const next = { ...form, substitutes }
+    setForm(next)
+    const a = `sub_${index}_ign`
+    const b = `sub_${index}_uid`
+    setErrors(prev => {
+      const updates = { [a]: getFieldError(a, next), [b]: getFieldError(b, next) }
+      return prev[a] === updates[a] && prev[b] === updates[b] ? prev : { ...prev, ...updates }
     })
   }
 
   const validate = () => {
-    const errs = {}
-    if (!form.teamName.trim()) errs.teamName = 'Team name is required'
-    else if (form.teamName.trim().length > 16) errs.teamName = 'Max 16 characters'
     // email is auto-populated from authenticated user — no visible field, no validation needed
-    if (!form.phone.trim()) errs.phone = 'Phone is required'
-    else if (form.phone.replace(/\D/g, '').length !== 10) errs.phone = 'Must be 10 digits'
-    if (!form.captainIgn.trim()) errs.captainIgn = 'Captain IGN is required'
-    if (!form.captainUid.trim()) errs.captainUid = 'Captain UID is required'
-    else if (!/^\d+$/.test(form.captainUid)) errs.captainUid = 'Numbers only'
-
-    form.players.forEach((p, i) => {
-      if (!p.ign.trim()) errs[`player_${i}_ign`] = 'Required'
-      if (!p.uid.trim()) errs[`player_${i}_uid`] = 'Required'
-      else if (!/^\d+$/.test(p.uid)) errs[`player_${i}_uid`] = 'Numbers only'
-    })
-
-    form.substitutes.forEach((s, i) => {
-      if (s.ign.trim() || s.uid.trim()) {
-        if (!s.ign.trim()) errs[`sub_${i}_ign`] = 'Required if filling sub'
-        if (!s.uid.trim()) errs[`sub_${i}_uid`] = 'Required if filling sub'
-        else if (!/^\d+$/.test(s.uid)) errs[`sub_${i}_uid`] = 'Numbers only'
-      }
-    })
-
+    const errs = validateForm(form)
     setErrors(errs)
-    return Object.keys(errs).length === 0
+    return errs
+  }
+
+  const scrollAndFocusFirstInvalid = (errs) => {
+    const firstKey = ALL_FIELDS.find(key => errs[key])
+    if (!firstKey) return
+    const el = document.querySelector(`[data-field="${firstKey}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.setTimeout(() => {
+      try {
+        el.focus({ preventScroll: true })
+      } catch {
+        el.focus()
+      }
+    }, 80)
   }
 
   const handleRegisterTeam = async (e) => {
     e.preventDefault()
     setServerError('')
-    if (!validate()) {
-      const firstErr = document.querySelector('[data-error]')
-      if (firstErr) firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const errs = validate()
+    if (Object.keys(errs).length) {
+      requestAnimationFrame(() => scrollAndFocusFirstInvalid(errs))
       return
     }
     setIsSubmitting(true)
@@ -874,29 +962,37 @@ function RegistrationPage({ onNavigate }) {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
+                <label htmlFor="reg-teamName" className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
                 <input
                   type="text"
+                  id="reg-teamName"
+                  data-field="teamName"
                   value={form.teamName}
                   onChange={e => updateField('teamName', e.target.value)}
                   onBlur={() => setTouched(prev => ({ ...prev, teamName: true }))}
                   maxLength={16}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                  aria-invalid={errors.teamName ? true : undefined}
+                  aria-describedby={errors.teamName ? 'err-teamName' : undefined}
+                  className={inputCls(Boolean(errors.teamName))}
                   placeholder="Enter your team name"
                 />
-                {errors.teamName && <p className="text-red-400 text-xs mt-1">{errors.teamName}</p>}
+                <FieldError id="err-teamName" message={errors.teamName} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">Phone *</label>
+                <label htmlFor="reg-phone" className="block text-xs font-semibold text-white/60 mb-1.5">Phone *</label>
                 <input
                   type="tel"
+                  id="reg-phone"
+                  data-field="phone"
                   value={form.phone}
                   onChange={e => updateField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
                   onBlur={() => setTouched(prev => ({ ...prev, phone: true }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                  aria-invalid={errors.phone ? true : undefined}
+                  aria-describedby={errors.phone ? 'err-phone' : undefined}
+                  className={inputCls(Boolean(errors.phone))}
                   placeholder="9876543210"
                 />
-                {errors.phone && <p className="text-red-400 text-xs mt-1">{errors.phone}</p>}
+                <FieldError id="err-phone" message={errors.phone} />
               </div>
             </div>
 
@@ -904,28 +1000,36 @@ function RegistrationPage({ onNavigate }) {
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-amber-400/80 uppercase tracking-wider">Captain</h2>
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">IGN *</label>
+                <label htmlFor="reg-captainIgn" className="block text-xs font-semibold text-white/60 mb-1.5">IGN *</label>
                 <input
                   type="text"
+                  id="reg-captainIgn"
+                  data-field="captainIgn"
                   value={form.captainIgn}
                   onChange={e => updateField('captainIgn', e.target.value)}
                   onBlur={() => setTouched(prev => ({ ...prev, captainIgn: true }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                  aria-invalid={errors.captainIgn ? true : undefined}
+                  aria-describedby={errors.captainIgn ? 'err-captainIgn' : undefined}
+                  className={inputCls(Boolean(errors.captainIgn))}
                   placeholder="In-game name"
                 />
-                {errors.captainIgn && <p className="text-red-400 text-xs mt-1">{errors.captainIgn}</p>}
+                <FieldError id="err-captainIgn" message={errors.captainIgn} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">UID *</label>
+                <label htmlFor="reg-captainUid" className="block text-xs font-semibold text-white/60 mb-1.5">UID *</label>
                 <input
                   type="text"
+                  id="reg-captainUid"
+                  data-field="captainUid"
                   value={form.captainUid}
                   onChange={e => updateField('captainUid', e.target.value.replace(/\D/g, ''))}
                   onBlur={() => setTouched(prev => ({ ...prev, captainUid: true }))}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                  aria-invalid={errors.captainUid ? true : undefined}
+                  aria-describedby={errors.captainUid ? 'err-captainUid' : undefined}
+                  className={inputCls(Boolean(errors.captainUid))}
                   placeholder="Game UID"
                 />
-                {errors.captainUid && <p className="text-red-400 text-xs mt-1">{errors.captainUid}</p>}
+                <FieldError id="err-captainUid" message={errors.captainUid} />
               </div>
             </div>
 
@@ -935,28 +1039,36 @@ function RegistrationPage({ onNavigate }) {
           <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
             <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Players</h2>
             {form.players.map((player, i) => (
-              <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-white/5 rounded-xl" data-error={errors[`player_${i}_ign`] || errors[`player_${i}_uid`] ? true : undefined}>
+              <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-white/5 rounded-xl">
                 <div>
-                  <label className="block text-xs font-semibold text-white/60 mb-1.5">Player {i + 2} IGN *</label>
+                  <label htmlFor={`reg-player_${i}_ign`} className="block text-xs font-semibold text-white/60 mb-1.5">Player {i + 2} IGN *</label>
                   <input
                     type="text"
+                    id={`reg-player_${i}_ign`}
+                    data-field={`player_${i}_ign`}
                     value={player.ign}
                     onChange={e => updatePlayer(i, 'ign', e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                    aria-invalid={errors[`player_${i}_ign`] ? true : undefined}
+                    aria-describedby={errors[`player_${i}_ign`] ? `err-player_${i}_ign` : undefined}
+                    className={inputCls(Boolean(errors[`player_${i}_ign`]))}
                     placeholder="In-game name"
                   />
-                  {errors[`player_${i}_ign`] && <p className="text-red-400 text-xs mt-1">{errors[`player_${i}_ign`]}</p>}
+                  <FieldError id={`err-player_${i}_ign`} message={errors[`player_${i}_ign`]} />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-white/60 mb-1.5">Player {i + 2} UID *</label>
+                  <label htmlFor={`reg-player_${i}_uid`} className="block text-xs font-semibold text-white/60 mb-1.5">Player {i + 2} UID *</label>
                   <input
                     type="text"
+                    id={`reg-player_${i}_uid`}
+                    data-field={`player_${i}_uid`}
                     value={player.uid}
                     onChange={e => updatePlayer(i, 'uid', e.target.value.replace(/\D/g, ''))}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                    aria-invalid={errors[`player_${i}_uid`] ? true : undefined}
+                    aria-describedby={errors[`player_${i}_uid`] ? `err-player_${i}_uid` : undefined}
+                    className={inputCls(Boolean(errors[`player_${i}_uid`]))}
                     placeholder="Game UID"
                   />
-                  {errors[`player_${i}_uid`] && <p className="text-red-400 text-xs mt-1">{errors[`player_${i}_uid`]}</p>}
+                  <FieldError id={`err-player_${i}_uid`} message={errors[`player_${i}_uid`]} />
                 </div>
               </div>
             ))}
@@ -968,26 +1080,34 @@ function RegistrationPage({ onNavigate }) {
             {form.substitutes.map((sub, i) => (
               <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-white/5 rounded-xl">
                 <div>
-                  <label className="block text-xs font-semibold text-white/60 mb-1.5">Sub {i + 1} IGN</label>
+                  <label htmlFor={`reg-sub_${i}_ign`} className="block text-xs font-semibold text-white/60 mb-1.5">Sub {i + 1} IGN</label>
                   <input
                     type="text"
+                    id={`reg-sub_${i}_ign`}
+                    data-field={`sub_${i}_ign`}
                     value={sub.ign}
                     onChange={e => updateSub(i, 'ign', e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                    aria-invalid={errors[`sub_${i}_ign`] ? true : undefined}
+                    aria-describedby={errors[`sub_${i}_ign`] ? `err-sub_${i}_ign` : undefined}
+                    className={inputCls(Boolean(errors[`sub_${i}_ign`]))}
                     placeholder="In-game name"
                   />
-                  {errors[`sub_${i}_ign`] && <p className="text-red-400 text-xs mt-1">{errors[`sub_${i}_ign`]}</p>}
+                  <FieldError id={`err-sub_${i}_ign`} message={errors[`sub_${i}_ign`]} />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-white/60 mb-1.5">Sub {i + 1} UID</label>
+                  <label htmlFor={`reg-sub_${i}_uid`} className="block text-xs font-semibold text-white/60 mb-1.5">Sub {i + 1} UID</label>
                   <input
                     type="text"
+                    id={`reg-sub_${i}_uid`}
+                    data-field={`sub_${i}_uid`}
                     value={sub.uid}
                     onChange={e => updateSub(i, 'uid', e.target.value.replace(/\D/g, ''))}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
+                    aria-invalid={errors[`sub_${i}_uid`] ? true : undefined}
+                    aria-describedby={errors[`sub_${i}_uid`] ? `err-sub_${i}_uid` : undefined}
+                    className={inputCls(Boolean(errors[`sub_${i}_uid`]))}
                     placeholder="Game UID"
                   />
-                  {errors[`sub_${i}_uid`] && <p className="text-red-400 text-xs mt-1">{errors[`sub_${i}_uid`]}</p>}
+                  <FieldError id={`err-sub_${i}_uid`} message={errors[`sub_${i}_uid`]} />
                 </div>
               </div>
             ))}
