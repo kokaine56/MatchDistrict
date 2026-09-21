@@ -109,6 +109,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   // Custom states for premium sponsors cards interaction
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [frozenCards, setFrozenCards] = useState({});
+  const [isNavigatingToRegister, setIsNavigatingToRegister] = useState(false);
 
   const getCardType = (amt) => {
     if (amt >= 1000) return 'OBSIDIAN_ELITE';
@@ -945,7 +946,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     ? 'text-[13px] sm:text-sm text-[#374151] leading-relaxed whitespace-pre-wrap font-medium'
     : 'text-[13px] sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap';
 
-  if (isTournamentsLoading) return <LoadingScreen message="Loading Tournament Coordinates..." />;
+  if (isTournamentsLoading) return <LoadingScreen message="Loading tournament..." />;
 
   return (
     <div className={`min-h-screen text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-amber-500/30 selection:text-white transition-colors duration-500 ${
@@ -1208,17 +1209,31 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   }
                   return (
                     <button
-                      onClick={() => navigate(`/tournaments/${tourney.id}/register`)}
+                      onClick={() => {
+                        if (isNavigatingToRegister) return;
+                        setIsNavigatingToRegister(true);
+                        navigate(`/tournaments/${tourney.id}/register`);
+                      }}
+                      disabled={isNavigatingToRegister}
                       className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${
                         isGoldTheme
                           ? 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-[0_4px_16px_rgba(80,50,0,0.5)] hover:shadow-[0_6px_24px_rgba(255,193,7,0.6)]'
                           : 'bg-primary hover:bg-primary/90 text-white shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_24px_rgba(59,130,246,0.4)]'
-                      }`}
+                      } ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
                     >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                      </svg>
-                      Join Now
+                      {isNavigatingToRegister ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          <span>Loading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                          </svg>
+                          <span>Join Now</span>
+                        </>
+                      )}
                     </button>
                   );
                 })()}

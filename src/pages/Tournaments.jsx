@@ -180,7 +180,7 @@ function Tournaments({ onNavigate }) {
   };
 
   if (isLoading) {
-    return <LoadingScreen message="Loading Tournaments..." />;
+    return <LoadingScreen message="Loading tournaments..." />;
   }
 
   return (

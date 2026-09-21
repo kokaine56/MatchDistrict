@@ -90,7 +90,7 @@ function Archive({ onNavigate }) {
   }, [tournamentsByYear.sortedYears, selectedYear])
 
   if (authLoading || isLoading) {
-    return <LoadingScreen message="Loading Archive..." />
+    return <LoadingScreen message="Loading archive..." />
   }
 
   if (!currentUser) return null

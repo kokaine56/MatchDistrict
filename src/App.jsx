@@ -74,21 +74,45 @@ const PAGE_URL_MAP = {
 // Pages that share the persistent top Header
 const HEADER_PAGES = new Set(['/', '/tournaments', '/about', '/help', '/privacypolicy', '/terms', '/archive'])
 
-const LoadingArena = () => <LoadingScreen message="Loading District..." />
+const getRouteLoadingMessage = (pathname = '') => {
+  if (pathname.includes('/register')) return 'Loading registration page...'
+  if (pathname.startsWith('/tournaments/')) return 'Loading tournament...'
+  if (pathname === '/tournaments') return 'Loading tournaments...'
+  if (pathname === '/profile') return 'Loading profile...'
+  if (pathname === '/my-tournaments') return 'Loading your tournaments...'
+  if (pathname === '/create-tournament') return 'Loading tournament creator...'
+  if (pathname === '/manage/tournaments') return 'Loading tournament manager...'
+  if (pathname.startsWith('/admin')) return 'Loading dashboard...'
+  if (pathname === '/organisers') return 'Loading organizers...'
+  if (pathname.startsWith('/org/')) return 'Loading organization...'
+  if (pathname === '/become-organizer' || pathname === '/organizer-form') return 'Loading organizer portal...'
+  if (pathname === '/about') return 'Loading about page...'
+  if (pathname === '/help') return 'Loading help & support...'
+  if (pathname === '/privacypolicy') return 'Loading privacy policy...'
+  if (pathname === '/terms') return 'Loading terms of service...'
+  if (pathname === '/archive') return 'Loading archive...'
+  return 'Loading District...'
+}
+
+const LoadingArena = ({ message }) => {
+  const location = useLocation()
+  const msg = message || getRouteLoadingMessage(location?.pathname)
+  return <LoadingScreen message={msg} />
+}
 
 // -------------------------------------------------------------------
-// Page Transition Wrapper Component
+// Page Transition Wrapper Component — Subtle & responsive
 // -------------------------------------------------------------------
 const pageVariants = {
-  initial: { opacity: 0, y: 20, scale: 0.98 },
-  animate: { opacity: 1, y: 0, scale: 1 },
-  exit: { opacity: 0, y: 20, scale: 0.98 }
+  initial: { opacity: 0, y: 6 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0 }
 }
 
 const pageTransition = {
   type: 'tween',
-  ease: 'easeInOut',
-  duration: 0.4
+  ease: 'easeOut',
+  duration: 0.22
 }
 
 function PageTransition({ children }) {
