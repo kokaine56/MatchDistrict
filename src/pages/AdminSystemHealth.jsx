@@ -225,7 +225,7 @@ export default function AdminSystemHealth() {
 
             {activeTab === 'security' && (
               <div className="space-y-6">
-                <div className="flex justify-between items-center bg-white dark:bg-[#0F1729] rounded-2xl border border-slate-200 dark:border-outline-variant/20 p-5 shadow-sm">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white dark:bg-[#0F1729] rounded-2xl border border-slate-200 dark:border-outline-variant/20 p-5 shadow-sm">
                   <div>
                     <h3 className="font-semibold text-slate-900 dark:text-white">Security & Secret Exposure</h3>
                     <p className="text-sm text-slate-500 dark:text-white/40">Automated scanning for leaked credentials and weak configs.</p>
@@ -233,7 +233,7 @@ export default function AdminSystemHealth() {
                   <button 
                     onClick={handleRunSecurityScan} 
                     disabled={scanning}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+                    className="flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 shrink-0"
                   >
                     {scanning ? <span className="material-symbols-outlined animate-spin text-sm">sync</span> : <span className="material-symbols-outlined text-sm">security</span>}
                     {scanning ? 'Scanning...' : 'Run Scan Now'}

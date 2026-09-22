@@ -24,9 +24,32 @@ const FILTER_STATUSES = {
   Rejected: ['rejected', 'cancelled', 'expired'],
 }
 
-function getStatusGroup(regStatus) {
-  const config = REG_STATUS_CONFIG[regStatus]
-  return config ? config.group : 'Rejected'
+// Mirrors the server's authoritative active-registration set (server.js).
+// An active (non-terminal) registration is the current/valid record for a
+// tournament; historical rejected/cancelled/expired rows only pick the tab
+// when no active record exists.
+const ACTIVE_REG_STATUSES = [
+  'pending',
+  'pending_payment',
+  'PENDING_PAYMENT_VERIFICATION',
+  'approved',
+  'confirmed',
+  'VERIFIED_BY_HOST',
+  'verified_by_host',
+]
+
+function latestTimestamp(reg) {
+  const raw = reg.updated_at || reg.created_at || 0
+  return new Date(raw).getTime() || 0
+}
+
+// Determines one authoritative registration among the history rows for a
+// tournament: an active-status record always wins; otherwise the newest
+// historical record is kept.
+function pickCurrentRegistration(records) {
+  const active = records.filter(r => ACTIVE_REG_STATUSES.includes((r.status || '').toLowerCase()))
+  const pool = active.length > 0 ? active : records
+  return [...pool].sort((a, b) => latestTimestamp(b) - latestTimestamp(a))[0]
 }
 
 const containerVariants = {
@@ -87,14 +110,31 @@ export default function MyTournaments({ onNavigate }) {
     const tourMap = {}
     allTournaments.forEach(t => { tourMap[t.id] = t })
 
-    return registrations.map(reg => {
-      const t = tourMap[reg.tournament_id]
-      if (!t) return null
+    // Group raw registration rows by the canonical tournament id, then pick
+    // exactly one current/authoritative record per tournament so a tournament
+    // can never render more than once (registration history is preserved in
+    // the DB, it just never produces duplicate cards).
+    const regGroups = new Map()
+    for (const reg of registrations) {
+      const tid = reg.tournament_id
+      if (tid == null) {
+        console.warn('[MyTournaments] registration record missing tournament_id:', reg.id || reg.created_at || '(unknown)')
+        continue
+      }
+      if (!regGroups.has(tid)) regGroups.set(tid, [])
+      regGroups.get(tid).push(reg)
+    }
 
+    const cards = []
+    for (const [tid, group] of regGroups) {
+      const t = tourMap[tid]
+      if (!t) continue
+
+      const reg = pickCurrentRegistration(group)
       const regStatus = (reg.status || 'pending').toLowerCase()
       const config = REG_STATUS_CONFIG[regStatus] || REG_STATUS_CONFIG.pending
 
-      return {
+      cards.push({
         id: t.id,
         title: t.title,
         game: t.game,
@@ -114,8 +154,9 @@ export default function MyTournaments({ onNavigate }) {
         buttonText: config.btnText,
         buttonClassName: config.btnClassName || '',
         regStatus,
-      }
-    }).filter(Boolean)
+      })
+    }
+    return cards
   }, [registrations, allTournaments])
 
   const filteredData = useMemo(() => {
