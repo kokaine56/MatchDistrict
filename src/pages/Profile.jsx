@@ -2722,31 +2722,30 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   exit="exit"
                   className="space-y-3"
                 >
-                  {/* ── Header row: title + compact segmented filter ── */}
-                  <div className="glass-card px-4 py-3 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <h3 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight shrink-0">
-                      <span className="material-symbols-outlined text-primary" style={{fontSize:'18px'}}>emoji_events</span>
-                      My Tournament Registrations
-                      {playerTournamentsList.length > 0 && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[9px] font-bold">{playerTournamentsList.length}</span>
-                      )}
-                    </h3>
-                    {/* Compact segmented filter chips */}
-                    <div className="flex items-center gap-0.5 bg-surface-container-highest/60 p-0.5 rounded-lg border border-outline-variant/20 self-start sm:self-auto overflow-x-auto scrollbar-none shrink-0">
+                  {/* ── Header row: title + subtitle + pill filters ── */}
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2">
+                    <div>
+                      <h3 className="font-headline-md text-lg font-bold text-on-background tracking-tight">
+                        My Tournament Registrations
+                      </h3>
+                      <p className="text-[11px] text-on-surface-variant mt-0.5">
+                        View and manage all tournaments you have registered for.
+                      </p>
+                    </div>
+                    {/* Compact Segmented Filter Chips */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 sm:pb-0 shrink-0">
                       {['all', 'live', 'upcoming', 'completed'].map((filter) => {
-                        const count = filter === 'all' ? playerTournamentsList.length : playerTournamentsList.filter(t => t.status === filter).length;
                         return (
                           <button
                             key={filter}
                             onClick={() => { setTournamentFilter(filter); setSelectedCalDate(null); }}
-                            className={`relative px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
+                            className={`px-3.5 py-1.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap shadow-sm border ${
                               tournamentFilter === filter
-                                ? 'bg-primary text-on-primary shadow-sm'
-                                : 'text-on-surface-variant hover:text-on-background'
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-surface border-outline-variant/30 text-on-surface-variant hover:text-on-background hover:bg-surface-variant/50'
                             }`}
                           >
-                            {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
-                            {filter === 'live' && count > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
+                            {filter}
                           </button>
                         );
                       })}
@@ -2755,7 +2754,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
 
                   {playerTournamentsList.length === 0 ? (
                     /* ── Empty state ── */
-                    <div className="glass-card text-center py-14 space-y-4 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 backdrop-blur-md p-6">
+                    <div className="glass-card text-center py-14 space-y-4 rounded-2xl border border-outline-variant/15 bg-surface p-6">
                       <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
                         <span className="material-symbols-outlined text-3xl">emoji_events</span>
                       </div>
@@ -2772,23 +2771,23 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                     </div>
                   ) : (
                     /* ── Main content: two-column grid (calendar + cards) ── */
-                    <div className="grid grid-cols-1 md:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] gap-3 items-start">
+                    <div className="grid grid-cols-1 md:grid-cols-[minmax(280px,320px)_minmax(0,1fr)] gap-4 items-start">
 
                       {/* ── Mini Calendar ── */}
-                      <div className="glass-card rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md p-3.5 w-full shrink-0 self-start">
+                      <div className="glass-card rounded-2xl border border-outline-variant/30 bg-surface p-5 w-full shrink-0 self-start shadow-sm">
                         {/* Month nav */}
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center justify-center gap-5 mb-4">
                           <button
                             onClick={() => setCalendarMonth(prev => {
                               const d = new Date(prev.year, prev.month - 1);
                               return { year: d.getFullYear(), month: d.getMonth() };
                             })}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            className="text-on-surface-variant hover:text-on-background transition-colors flex items-center"
                             aria-label="Previous month"
                           >
-                            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>chevron_left</span>
+                            <span className="material-symbols-outlined" style={{fontSize:'18px'}}>chevron_left</span>
                           </button>
-                          <span className="text-[11px] font-bold text-on-background font-headline-md uppercase tracking-widest">
+                          <span className="text-sm font-black text-on-background font-headline-md tracking-wide">
                             {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                           </span>
                           <button
@@ -2796,10 +2795,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               const d = new Date(prev.year, prev.month + 1);
                               return { year: d.getFullYear(), month: d.getMonth() };
                             })}
-                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            className="text-on-surface-variant hover:text-on-background transition-colors flex items-center"
                             aria-label="Next month"
                           >
-                            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>chevron_right</span>
+                            <span className="material-symbols-outlined" style={{fontSize:'18px'}}>chevron_right</span>
                           </button>
                         </div>
                         {/* Day labels */}
@@ -2845,37 +2844,28 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                     }}
                                     aria-pressed={isSelected}
                                     aria-label={ariaLabel}
-                                    className={`relative aspect-square flex items-center justify-center transition-colors rounded-lg ${hasTournament ? 'cursor-pointer hover:bg-surface-variant/30' : 'cursor-default'}`}
+                                    className={`relative aspect-square flex items-center justify-center transition-colors rounded-lg ${hasTournament ? 'cursor-pointer hover:bg-surface-variant/40' : 'cursor-default'}`}
                                   >
                                     {/* TODAY: filled primary circle (shows even when selected) */}
                                     {isToday && (
-                                      <span className="absolute inset-[3px] rounded-full bg-primary" />
+                                      <span className="absolute inset-[4px] rounded-full bg-primary" />
                                     )}
-                                    {/* SELECTED: primary ring outline (layered on top of today fill) */}
+                                    {/* SELECTED: primary ring outline (rounded square) */}
                                     {isSelected && (
-                                      <span className="absolute inset-[2px] rounded-lg ring-2 ring-primary ring-inset pointer-events-none" />
+                                      <span className="absolute inset-[2px] rounded-lg ring-2 ring-primary pointer-events-none" />
                                     )}
-                                    {/* TOURNAMENT only: amber ring (not today, not selected) */}
-                                    {hasTournament && !isToday && !isSelected && (
-                                      <span className="absolute inset-[3px] rounded-full ring-[1.5px] ring-amber-400/80 pointer-events-none" />
+                                    {/* TOURNAMENT: amber ring (always a circle) */}
+                                    {hasTournament && !isToday && (
+                                      <span className="absolute inset-[3px] rounded-full ring-[1.5px] ring-amber-400/90 pointer-events-none" />
                                     )}
-                                    {/* TOURNAMENT + TODAY: amber outer ring (visible outside the filled circle) */}
-                                    {hasTournament && isToday && !isSelected && (
-                                      <span className="absolute inset-[1px] rounded-lg ring-[1.5px] ring-amber-400/60 pointer-events-none" />
-                                    )}
-                                    {/* TOURNAMENT + SELECTED: subtle amber outer glow */}
-                                    {hasTournament && isSelected && (
-                                      <span className="absolute inset-0 rounded-lg ring-[1px] ring-amber-400/50 pointer-events-none" />
-                                    )}
-                                    {/* Date number — priority: today (white on blue) > selected (primary) > tournament (amber) > default */}
+                                    
+                                    {/* Date number */}
                                     <span className={`relative z-10 text-[11px] leading-none select-none transition-colors ${
                                       isToday
                                         ? 'text-white font-bold'
-                                        : isSelected
-                                          ? 'text-primary font-bold'
-                                          : hasTournament
-                                            ? 'text-amber-400 font-bold'
-                                            : 'text-on-surface-variant/55 font-medium'
+                                        : (isSelected || hasTournament)
+                                          ? 'text-on-background font-semibold'
+                                          : 'text-on-surface-variant/60 font-medium'
                                     }`}>
                                       {day}
                                     </span>
@@ -2886,24 +2876,25 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           );
                         })()}
                         {/* Legend */}
-                        <div className="mt-3 pt-2.5 border-t border-outline-variant/20 grid grid-cols-3 gap-x-2 gap-y-1">
+                        <div className="mt-4 pt-3 border-t border-outline-variant/20 grid grid-cols-3 gap-1.5 justify-items-center">
+                          {/* Selected */}
                           <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 rounded flex items-center justify-center shrink-0">
-                              <span className="w-3 h-3 rounded ring-2 ring-primary" />
+                            <span className="w-4 h-4 flex items-center justify-center shrink-0">
+                              <span className="w-3.5 h-3.5 rounded-[4px] ring-2 ring-primary" />
                             </span>
-                            <span className="text-[8px] text-on-surface-variant leading-tight">Selected</span>
+                            <span className="text-[9px] text-on-surface-variant leading-tight">Selected</span>
                           </div>
+                          {/* Today */}
                           <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
-                              <span className="text-[7px] text-white font-bold leading-none">T</span>
-                            </span>
-                            <span className="text-[8px] text-on-surface-variant leading-tight">Today</span>
+                            <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0" />
+                            <span className="text-[9px] text-on-surface-variant leading-tight">Today</span>
                           </div>
+                          {/* Tournament */}
                           <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 rounded flex items-center justify-center shrink-0">
-                              <span className="w-3 h-3 rounded-full ring-[1.5px] ring-amber-400/80" />
+                            <span className="w-4 h-4 flex items-center justify-center shrink-0">
+                              <span className="w-3.5 h-3.5 rounded-full ring-[1.5px] ring-amber-400/90" />
                             </span>
-                            <span className="text-[8px] text-on-surface-variant leading-tight">Tournament</span>
+                            <span className="text-[9px] text-on-surface-variant leading-tight">Tournament</span>
                           </div>
                         </div>
                       </div>
@@ -2918,21 +2909,21 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           const label = dateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
                           const count = filteredPlayerTournaments.length;
                           return (
-                            <div className="glass-card px-3.5 py-2.5 rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md flex items-center justify-between gap-3">
+                            <div className="px-1 flex items-center justify-between gap-3 pb-1 border-b border-outline-variant/20 mb-1">
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="material-symbols-outlined text-primary shrink-0" style={{fontSize:'15px'}}>calendar_month</span>
-                                <span className="text-[11px] font-bold text-on-background truncate">Tournaments on {label}</span>
+                                <span className="material-symbols-outlined text-primary shrink-0" style={{fontSize:'16px'}}>calendar_month</span>
+                                <span className="text-[13px] font-bold text-on-background truncate">Tournaments on {label}</span>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
-                                <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary text-[9px] font-bold border border-primary/20">
+                                <span className="text-on-surface-variant text-[10px] font-medium">
                                   {count} {count === 1 ? 'Tournament' : 'Tournaments'}
                                 </span>
                                 <button
                                   onClick={() => setSelectedCalDate(null)}
-                                  className="text-on-surface-variant hover:text-on-background transition-colors"
+                                  className="text-on-surface-variant hover:text-on-background transition-colors flex items-center justify-center"
                                   aria-label="Clear date selection"
                                 >
-                                  <span className="material-symbols-outlined" style={{fontSize:'14px'}}>close</span>
+                                  <span className="material-symbols-outlined" style={{fontSize:'16px'}}>cancel</span>
                                 </button>
                               </div>
                             </div>
@@ -2961,100 +2952,126 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             )}
                           </div>
                         ) : (
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             {filteredPlayerTournaments.map((t) => {
                               const regApproved = t.result === 'Approved & Registered';
                               const regRejected = t.result === 'Rejected';
                               const regPayment = t.result === 'Payment Pending';
                               const regWait = t.result === 'Waitlisted';
+                              
                               const regStatusColor = regApproved
-                                ? 'text-emerald-400'
-                                : regRejected ? 'text-rose-400'
-                                : regPayment ? 'text-amber-400'
-                                : regWait ? 'text-sky-400'
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : regRejected ? 'text-rose-700 dark:text-rose-400'
+                                : regPayment ? 'text-amber-700 dark:text-amber-400'
+                                : regWait ? 'text-sky-700 dark:text-sky-400'
                                 : 'text-primary';
                               const regStatusBg = regApproved
-                                ? 'bg-emerald-400/10 border-emerald-400/25'
-                                : regRejected ? 'bg-rose-400/10 border-rose-400/25'
-                                : regPayment ? 'bg-amber-400/10 border-amber-400/25'
-                                : regWait ? 'bg-sky-400/10 border-sky-400/25'
+                                ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-400/10 dark:border-emerald-400/25'
+                                : regRejected ? 'bg-rose-50 border-rose-200 dark:bg-rose-400/10 dark:border-rose-400/25'
+                                : regPayment ? 'bg-amber-50 border-amber-200 dark:bg-amber-400/10 dark:border-amber-400/25'
+                                : regWait ? 'bg-sky-50 border-sky-200 dark:bg-sky-400/10 dark:border-sky-400/25'
                                 : 'bg-primary/10 border-primary/25';
+                              const regStatusIcon = regApproved ? 'check_circle' : regRejected ? 'cancel' : regPayment ? 'pending' : regWait ? 'hourglass_empty' : 'info';
+
                               const statusPill = getTournamentStatusPill(t.status);
+                              const isLive = statusPill.label === 'LIVE';
+
                               return (
                                 <div
                                   key={t.regId || t.id}
-                                  className="glass-card w-full rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md hover:border-primary/35 hover:shadow-md transition-all overflow-hidden"
+                                  className="glass-card w-full rounded-2xl border border-outline-variant/30 bg-surface p-2.5 sm:p-3 hover:border-primary/40 hover:shadow-md transition-all flex flex-row gap-3 sm:gap-4 items-stretch"
                                 >
-                                  <div className="flex items-stretch w-full">
-                                    {/* Poster — fixed width thumbnail, full card height */}
-                                    <div className="relative w-[80px] sm:w-[96px] md:w-[108px] shrink-0 self-stretch min-h-[118px] bg-surface-container-highest overflow-hidden">
-                                      <RegCardPoster poster={t.poster} game={t.game} title={t.title} />
-                                      {/* Tournament status pill overlaid on poster */}
-                                      <div className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider flex items-center gap-0.5 shadow-sm ${statusPill.cls}`}>
-                                        {statusPill.live && <span className="w-1 h-1 rounded-full bg-white animate-pulse" />}
-                                        {statusPill.label}
-                                      </div>
+                                  {/* Poster — vertical on mobile, wide on desktop */}
+                                  <div className="relative w-[90px] sm:w-[160px] md:w-[220px] shrink-0 bg-surface-container-highest overflow-hidden rounded-xl">
+                                    <RegCardPoster poster={t.poster} game={t.game} title={t.title} />
+                                    {/* Game badge embedded in poster (top left) */}
+                                    <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-1 py-0.5 sm:px-1.5 rounded bg-primary text-white font-label-caps text-[8px] sm:text-[9px] font-bold flex items-center gap-1 shadow-sm">
+                                      <GameIcon game={t.game} size={10} rounded="rounded-[2px]" />
+                                      {t.game}
                                     </div>
+                                  </div>
 
-                                    {/* Content area — must fill all remaining width */}
-                                    <div className="flex-1 min-w-0 p-2.5 sm:p-3 flex flex-col gap-1.5 justify-between">
-                                      {/* Row 1: game badge + slot + reg status (top right) */}
-                                      <div className="flex items-start justify-between gap-2 flex-wrap">
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                          <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-primary/15 text-primary font-label-caps text-[8px] font-bold">
+                                  {/* Content area */}
+                                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5 sm:py-1">
+                                    <div className="space-y-1.5 sm:space-y-2">
+                                      {/* Top Row: Game + Slot (Left) & Reg Status (Right) */}
+                                      <div className="flex items-start justify-between gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
+                                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                          <span className="inline-flex items-center gap-1 px-1 py-0.5 sm:px-1.5 rounded bg-primary/15 text-primary font-label-caps text-[8px] sm:text-[9px] font-bold">
                                             <GameIcon game={t.game} size={10} rounded="rounded-[3px]" />
-                                            {t.game}
+                                            <span className="hidden sm:inline">{t.game}</span>
                                           </span>
                                           {t.slotNumber && (
-                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-surface-variant/60 text-on-surface-variant font-label-caps text-[8px]">
-                                              <span className="material-symbols-outlined" style={{fontSize:'9px'}}>tag</span>
-                                              Slot #{t.slotNumber}
+                                            <span className="inline-flex items-center gap-0.5 text-on-surface-variant font-label-caps text-[9px] sm:text-[10px] font-medium">
+                                              # Slot {t.slotNumber}
                                             </span>
                                           )}
                                         </div>
-                                        {/* Registration status — compact badge */}
-                                        <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wider ${regStatusColor} ${regStatusBg}`}>
-                                          {t.result}
-                                        </span>
+                                        
+                                        {/* Reg status pill */}
+                                        <div className={`shrink-0 flex items-center gap-1 px-2 py-1 rounded-full border text-[9px] font-bold uppercase tracking-wider ${regStatusColor} ${regStatusBg}`}>
+                                          <span className="material-symbols-outlined" style={{fontSize:'12px'}}>{regStatusIcon}</span>
+                                          <span>
+                                            <span className="hidden lg:inline text-[7px] text-on-surface-variant/70 mr-1">REG. STATUS</span>
+                                            {t.result}
+                                          </span>
+                                        </div>
                                       </div>
 
-                                      {/* Row 2: Tournament name + organizer */}
+                                      {/* Title + org */}
                                       <div className="min-w-0">
-                                        <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background line-clamp-1 leading-snug">{t.title}</h4>
-                                        {t.orgName && <p className="text-[9px] text-on-surface-variant/65 truncate mt-0.5">by {t.orgName}</p>}
+                                        <h4 className="font-headline-md text-sm sm:text-base font-bold text-on-background line-clamp-1 leading-snug">{t.title}</h4>
+                                        {t.orgName && <p className="text-[11px] text-on-surface-variant/80 truncate mt-0.5">by {t.orgName}</p>}
+                                      </div>
+                                    </div>
+
+                                    {/* Bottom Info Row & View Button */}
+                                    <div className="flex items-end justify-between gap-4 mt-3">
+                                      <div className="flex flex-col gap-2">
+                                        {/* Meta row 1: date, prize, team */}
+                                        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-on-surface-variant">
+                                          <span className="inline-flex items-center gap-1 shrink-0">
+                                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>calendar_today</span>
+                                            {t.dateFormatted}
+                                          </span>
+                                          {t.prize && t.prize !== 'TBA' && t.prize !== 'TBD' && (
+                                            <span className="inline-flex items-center gap-1 text-amber-500 font-bold shrink-0">
+                                              <span className="material-symbols-outlined" style={{fontSize:'14px'}}>emoji_events</span>
+                                              {t.prize}
+                                            </span>
+                                          )}
+                                          {t.teamName && (
+                                            <span className="inline-flex items-center gap-1 min-w-0">
+                                              <span className="material-symbols-outlined shrink-0" style={{fontSize:'14px'}}>groups</span>
+                                              <span className="truncate max-w-[120px] sm:max-w-[180px]">{t.teamName}</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                        
+                                        {/* Meta row 2: Tourney status, time */}
+                                        <div className="flex items-center gap-2">
+                                          <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm ${
+                                            isLive ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-primary/10 text-primary border border-primary/20'
+                                          }`}>
+                                            {isLive && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
+                                            {statusPill.label}
+                                          </div>
+                                          {/* Mock time placeholder since we don't have it in data directly */}
+                                          <span className="inline-flex items-center gap-1 text-[11px] text-on-surface-variant/80">
+                                            <span className="material-symbols-outlined" style={{fontSize:'13px'}}>schedule</span>
+                                            6:00 PM
+                                          </span>
+                                        </div>
                                       </div>
 
-                                      {/* Row 3: date, prize pool, team name */}
-                                      <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[9px] text-on-surface-variant">
-                                        <span className="inline-flex items-center gap-1 shrink-0">
-                                          <span className="material-symbols-outlined" style={{fontSize:'10px'}}>calendar_today</span>
-                                          {t.dateFormatted}
-                                        </span>
-                                        {t.prize && t.prize !== 'TBA' && t.prize !== 'TBD' && (
-                                          <span className="inline-flex items-center gap-1 text-amber-400 font-semibold shrink-0">
-                                            <span className="material-symbols-outlined" style={{fontSize:'10px'}}>workspace_premium</span>
-                                            {t.prize}
-                                          </span>
-                                        )}
-                                        {t.teamName && (
-                                          <span className="inline-flex items-center gap-1 min-w-0">
-                                            <span className="material-symbols-outlined shrink-0" style={{fontSize:'10px'}}>groups</span>
-                                            <span className="truncate max-w-[100px] sm:max-w-[180px]">{t.teamName}</span>
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {/* Row 4: View button */}
-                                      <div className="flex items-center justify-end pt-1 border-t border-outline-variant/15">
-                                        <button
-                                          onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
-                                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white text-[9px] font-bold transition-all shadow-sm"
-                                          aria-label={`View ${t.title}`}
-                                        >
-                                          View
-                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>arrow_forward</span>
-                                        </button>
-                                      </div>
+                                      <button
+                                        onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
+                                        className="shrink-0 inline-flex items-center gap-1.5 px-4 sm:px-5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl bg-primary hover:bg-primary/90 text-white text-[10px] sm:text-xs font-bold transition-all shadow-sm"
+                                        aria-label={`View ${t.title}`}
+                                      >
+                                        View
+                                        <span className="material-symbols-outlined" style={{fontSize:'12px'}}>arrow_forward</span>
+                                      </button>
                                     </div>
                                   </div>
                                 </div>
