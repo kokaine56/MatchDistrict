@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
-
+import { emailConfig } from '../config/email.js';
 function HelpSupport({ onNavigate }) {
   const { currentUser, signOut } = useUser();
 
@@ -192,7 +192,7 @@ function HelpSupport({ onNavigate }) {
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-slate-900">Email</h4>
-                  <a href="mailto:support@matchdistrict.com" className="text-sm text-blue-600 hover:underline font-medium">support@matchdistrict.com</a>
+                  <a href={`mailto:${emailConfig.support}`} className="text-sm text-blue-600 hover:underline font-medium">{emailConfig.support}</a>
                 </div>
               </div>
 

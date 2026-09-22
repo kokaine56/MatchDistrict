@@ -6,7 +6,7 @@ import { DEFAULT_AVATAR } from '../utils/defaults.js'
 import { useTheme } from '../ThemeContext.jsx'
 import Header from '../components/Header.jsx'
 import { supabase } from '../utils/supabaseClient'
-
+import { emailConfig } from '../config/email.js'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
@@ -170,7 +170,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // Check TOTP status when admin username is detected
   const checkAdminTotpStatus = useCallback(async (emailValue) => {
-    const isAdmin = emailValue.toLowerCase() === 'admin' || emailValue.toLowerCase() === 'matchdistrict.in@gmail.com'
+    const isAdmin = emailValue.toLowerCase() === 'admin' || emailValue.toLowerCase() === (emailConfig.admin || '').toLowerCase()
     if (!isAdmin) {
       setIsAdminLogin(false)
       setAdminTotpNotConfigured(false)
@@ -494,7 +494,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     if (!isLoginFormValid) return
 
     const isEmailAdmin = (loginForm.email || '').toLowerCase() === 'admin' || 
-                          (loginForm.email || '').toLowerCase() === 'matchdistrict.in@gmail.com'
+                          (loginForm.email || '').toLowerCase() === (emailConfig.admin || '').toLowerCase()
 
     // Admin TOTP login flow
     if (isEmailAdmin) {

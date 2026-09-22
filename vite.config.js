@@ -31,7 +31,7 @@ export default defineConfig({
       'Referrer-Policy': 'strict-origin-when-cross-origin',
     }
   },
-  envPrefix: ['APP_', 'API_', 'SOCKET_', 'AUTH_', 'OTP_', 'ADMIN_', 'JWT_', 'ENABLE_', 'ANALYTICS_', 'DATABASE_', 'SUPABASE_', 'VITE_'],
+  envPrefix: ['APP_', 'ENABLE_', 'SUPABASE_', 'VITE_'],
   build: {
     chunkSizeWarningLimit: 1500,
     rollupOptions: {

@@ -1,46 +1,58 @@
+import { getAuthToken } from './getAuthToken';
+
 export async function uploadImage(image) {
-  const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
-  const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
+  let fileToUpload = image;
+  let fileData = '';
 
-  if (!cloudName || !uploadPreset) {
-    throw new Error('VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET must be set in the environment.')
-  }
-
-  let fileToUpload = image
-
+  // Convert File/Blob or URLs to base64 or raw URL string
   if (typeof fileToUpload === 'string') {
-    if (fileToUpload.startsWith('blob:')) {
-      const resp = await fetch(fileToUpload)
-      fileToUpload = await resp.blob()
-    } else if (fileToUpload.startsWith('http')) {
-      const resp = await fetch(fileToUpload)
-      fileToUpload = await resp.blob()
-    } else if (fileToUpload.startsWith('data:')) {
-      const resp = await fetch(fileToUpload)
-      fileToUpload = await resp.blob()
+    if (fileToUpload.startsWith('data:') || fileToUpload.startsWith('http')) {
+      fileData = fileToUpload;
+    } else if (fileToUpload.startsWith('blob:')) {
+      const resp = await fetch(fileToUpload);
+      const blob = await resp.blob();
+      fileData = await blobToDataURL(blob);
+    } else {
+      fileData = fileToUpload;
     }
+  } else if (fileToUpload instanceof Blob || fileToUpload instanceof File) {
+    fileData = await blobToDataURL(fileToUpload);
+  } else {
+    throw new Error('Unsupported image format provided for upload.');
   }
-
-  const formData = new FormData()
-  formData.append('file', fileToUpload)
-  formData.append('upload_preset', uploadPreset)
 
   try {
-    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-      method: 'POST',
-      body: formData,
-    })
+    const token = getAuthToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
 
-    const data = await response.json()
+    const response = await fetch('/api/media/upload', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ file: fileData }),
+    });
+
+    const data = await response.json();
 
     if (response.ok && data.secure_url) {
-      return data.secure_url
+      return data.secure_url;
     } else {
-      console.error('[CloudinaryUpload] API Error response:', data)
-      throw new Error(data.error?.message || 'Cloudinary upload failed')
+      console.error('[MediaUpload] API Error response:', data);
+      throw new Error(data.error?.message || data.message || 'Media upload failed');
     }
   } catch (error) {
-    console.error('[CloudinaryUpload] Network/Request failure:', error)
-    throw error
+    console.error('[MediaUpload] Network/Request failure:', error);
+    throw error;
   }
+}
+
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read blob as Base64'));
+    reader.readAsDataURL(blob);
+  });
 }

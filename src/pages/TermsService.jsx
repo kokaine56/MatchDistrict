@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
-
+import { emailConfig } from '../config/email.js';
 function TermsService({ onNavigate }) {
   const { currentUser, signOut } = useUser();
 
@@ -579,7 +579,7 @@ function TermsService({ onNavigate }) {
               </div>
               <div className="flex flex-col sm:flex-row gap-3 pt-1 max-w-xs mx-auto">
                 <button
-                  onClick={() => window.open('mailto:support@matchdistrict.com')}
+                  onClick={() => window.open(`mailto:${emailConfig.support}`)}
                   className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-[0.98]"
                 >
                   Contact Support

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
-
+import { emailConfig } from '../config/email.js';
 function PrivacyPolicy({ onNavigate }) {
   const { currentUser, signOut } = useUser();
 
@@ -510,7 +510,7 @@ function PrivacyPolicy({ onNavigate }) {
                 <div className="p-4 rounded-lg bg-slate-50 border border-slate-100 space-y-2">
                   <p className="font-semibold text-slate-800">Match District Support Team</p>
                   {(() => {
-                    const email = import.meta.env.VITE_PRIVACY_EMAIL;
+                    const email = emailConfig.privacy;
                     return (
                       <p className="text-sm text-slate-600">
                         Email: <a href={`mailto:${email}`} className="text-blue-600 hover:text-blue-700 font-medium transition-colors">{email}</a>
@@ -682,7 +682,7 @@ function PrivacyPolicy({ onNavigate }) {
                     <div className="space-y-1">
                       <h3 className="text-sm font-bold text-slate-900">Disputes</h3>
                       <p className="text-sm text-slate-600 leading-relaxed">
-                        For any payment disputes or refund requests, please contact our support team immediately at {import.meta.env.VITE_PRIVACY_EMAIL}.
+                        For any payment disputes or refund requests, please contact our support team immediately at {emailConfig.privacy}.
                       </p>
                     </div>
                   </div>
@@ -754,7 +754,7 @@ function PrivacyPolicy({ onNavigate }) {
           </div>
           <div className="flex flex-col sm:flex-row gap-3 pt-1 max-w-xs mx-auto">
             <button
-              onClick={() => window.open(`mailto:${import.meta.env.VITE_PRIVACY_EMAIL}`)}
+              onClick={() => window.open(`mailto:${emailConfig.privacy}`)}
               className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-[0.98]"
             >
               Contact Support

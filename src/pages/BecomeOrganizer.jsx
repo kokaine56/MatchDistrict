@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Header from '../components/Header.jsx';
 import { useUser } from '../UserContext.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
-
+import { emailConfig } from '../config/email.js';
 function BecomeOrganizer({ onNavigate }) {
   const { currentUser } = useUser();
   const [activeFaq, setActiveFaq] = useState(null);
@@ -73,7 +73,7 @@ function BecomeOrganizer({ onNavigate }) {
     { q: 'What verification documents are required?', a: 'We accept Aadhaar Card, PAN Card, Driving License, Voter ID, or Passport. Make sure files are clear and names match your application.' },
     { q: 'Can beginners apply to host tournaments?', a: 'Yes, we support organizers of all tiers. Select "Beginner" so our platform success team can help guide your first bracket.' },
     { q: 'What exclusive benefits are included?', a: 'Verified hosts receive direct homepage feature listings, bracket automated sync, customized form builders, and secure prize management.' },
-    { q: 'How can I contact host support?', a: 'Reach our team via the Help & Support page or email us directly at organizers@matchdistrict.com.' }
+    { q: 'How can I contact host support?', a: `Reach our team via the Help & Support page or email us directly at ${emailConfig.organizer}.` }
   ];
 
   const renderPendingView = () => (

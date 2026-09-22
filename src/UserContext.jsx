@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './utils/supabaseClient';
 import { getAuthToken } from './utils/getAuthToken';
-
+import { emailConfig } from './config/email.js';
 export const UserContext = createContext();
 
 function clearBrowserAuthState() {
@@ -110,7 +110,7 @@ export function UserProvider({ children }) {
         if (!active) return;
         
         // Preserve admin state across auth events (admin users may not have Supabase auth sessions)
-        if (userRef.current?.role === 'admin' || userRef.current?.id === 'ADM-001' || (import.meta.env.ADMIN_EMAIL && userRef.current?.email === import.meta.env.ADMIN_EMAIL)) {
+        if (userRef.current?.role === 'admin' || userRef.current?.id === 'ADM-001' || (emailConfig.admin && userRef.current?.email === emailConfig.admin)) {
           setLoading(false);
           return;
         }

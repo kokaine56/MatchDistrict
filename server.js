@@ -116,11 +116,16 @@ if (!process.env.SUPABASE_ANON_KEY) {
 }
 
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
-  console.warn('⚠️ [WARNING] ADMIN_EMAIL or ADMIN_PASSWORD is not set. Using default administrative credentials.');
+  console.error("❌ CRITICAL: ADMIN_EMAIL or ADMIN_PASSWORD environment variable is missing.");
+  process.exit(1);
 }
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const JWT_SECRET = process.env.JWT_SECRET || 'matchdistrict_super_secure_jwt_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("❌ CRITICAL: JWT_SECRET environment variable is missing.");
+  process.exit(1);
+}
 
 // Encryption helper functions for browser persistent session
 const ENCRYPTION_KEY = crypto.scryptSync(JWT_SECRET, 'md-salt-string', 32);
@@ -146,10 +151,12 @@ function decryptSessionData(text) {
 }
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Match District <auth@matchdistrict.in>';
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ahgokqbjrpeotqzwilts.supabase.co';
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
+const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
 // Sponsorship feature flag — gated until production-ready. Flip `ENABLE_SPONSORSHIP=true` to activate the full flow.
 const SPONSORSHIP_ENABLED = process.env.ENABLE_SPONSORSHIP === 'true';
 
@@ -874,7 +881,7 @@ async function initDb() {
     // Seed admin user if not present
     try {
       const adminEmail = process.env.ADMIN_EMAIL || ROOT_ADMIN_EMAIL;
-      const adminPassword = process.env.ADMIN_PASSWORD || '101010';
+      const adminPassword = process.env.ADMIN_PASSWORD;
       const checkAdmin = await client.query('SELECT * FROM users WHERE email = $1', [adminEmail]);
       if (checkAdmin.rows.length === 0) {
         const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
@@ -1119,7 +1126,11 @@ const ROLES = Object.freeze({
 // This hardcoded constant ensures the root admin account can NEVER be demoted,
 // even if the ADMIN_EMAIL env variable is accidentally cleared or misconfigured.
 // The primary guard uses env.ADMIN_EMAIL; this constant acts as the failsafe.
-const ROOT_ADMIN_EMAIL = 'matchdistrict.in@gmail.com';
+const ROOT_ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+if (!ROOT_ADMIN_EMAIL) {
+  console.error("❌ CRITICAL: ADMIN_EMAIL environment variable is missing.");
+  process.exit(1);
+}
 
 const ROLE_HIERARCHY = Object.freeze({
   [ROLES.USER]:               1,
@@ -1506,6 +1517,65 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(200);
     res.end();
+    return;
+  }
+
+  // --- SECURE MEDIA PROXY ---
+  if (urlPath === '/api/media/upload' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', async () => {
+      try {
+        if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Server missing media proxy configuration' }));
+          return;
+        }
+
+        const data = JSON.parse(body);
+        if (!data.file) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'No file data provided' }));
+          return;
+        }
+
+        // Authenticate request (ensure a user is logged in before allowing uploads)
+        // If the upload needs to be public for registration, we skip auth for this specific endpoint.
+        // Given current usage (registration, org page, profile), we will allow it but validate structure.
+
+        const timestamp = Math.floor(Date.now() / 1000);
+        const signatureString = `timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
+        const signature = crypto.createHash('sha1').update(signatureString).digest('hex');
+
+        const cloudinaryParams = new URLSearchParams();
+        cloudinaryParams.append('file', data.file);
+        cloudinaryParams.append('api_key', CLOUDINARY_API_KEY);
+        cloudinaryParams.append('timestamp', timestamp);
+        cloudinaryParams.append('signature', signature);
+
+        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+
+        const cloudinaryResponse = await fetch(cloudinaryUrl, {
+          method: 'POST',
+          body: cloudinaryParams,
+        });
+
+        const cloudinaryData = await cloudinaryResponse.json();
+
+        if (cloudinaryResponse.ok && cloudinaryData.secure_url) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, secure_url: cloudinaryData.secure_url }));
+        } else {
+          console.error('[MediaProxy] Cloudinary Error:', cloudinaryData);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'Upstream upload failed' }));
+        }
+      } catch (err) {
+        console.error('[MediaProxy] Exception:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: 'Internal Server Error' }));
+      }
+    });
     return;
   }
 
