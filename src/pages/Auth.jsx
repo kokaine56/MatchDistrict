@@ -1514,9 +1514,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                               <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
                             )}
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="font-bold text-[15px] sm:text-base text-slate-900 dark:text-white truncate">{account.name}</p>
+                          <div className="flex-1 min-w-0 pr-11 sm:pr-12">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate min-w-0">{account.name}</p>
                               {isAccountActive(account.id) && (
                                 <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1524,9 +1524,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                                 </span>
                               )}
                             </div>
-                            <p className="text-sm text-on-surface-variant truncate mt-0.5">{account.email}</p>
+                            <p className="text-[13px] leading-snug text-on-surface-variant truncate mt-0.5 min-w-0">{account.email}</p>
                             {account.lastUsed && (
-                              <p className="text-[11px] text-on-surface-variant/50 mt-0.5">Last used {formatLastUsed(account.lastUsed)}</p>
+                              <p className="text-[11px] leading-snug text-on-surface-variant/50 mt-0.5 min-w-0">Last used {formatLastUsed(account.lastUsed)}</p>
                             )}
                           </div>
                         </button>
