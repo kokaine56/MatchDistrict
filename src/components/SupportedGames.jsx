@@ -5,7 +5,7 @@ import gameCodm from '../assets/supported_games/codm.png'
 import gameValorant from '../assets/supported_games/valorant.png'
 
 const GAMES = [
-  { name: 'BGMI', img: gameBgmi, active: true, count: '8.7K Tournaments' },
+  { name: 'BGMI', img: gameBgmi, active: true },
   { name: 'Free Fire', img: gameFreeFire, active: false },
   { name: 'COD Mobile', img: gameCodm, active: false },
   { name: 'Valorant', img: gameValorant, active: false },
@@ -18,7 +18,9 @@ function GameCard({ game }) {
     <motion.div
       whileHover={{ y: -6 }}
       transition={{ duration: 0.25, ease: 'easeOut' }}
-      className="group relative flex flex-col items-center rounded-[18px] bg-white p-3 sm:p-4 cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_32px_rgba(0,0,0,0.12)] transition-shadow"
+      className={`group relative flex flex-col items-center rounded-[18px] bg-white p-3 sm:p-4 h-full cursor-pointer shadow-[0_2px_12px_rgba(0,0,0,0.06)] hover:shadow-[0_12px_32px_rgba(0,0,0,0.12)] transition-shadow ${
+        game.active ? 'justify-center' : ''
+      }`}
     >
       <div className={`relative w-[72px] h-[72px] sm:w-[88px] sm:h-[88px] rounded-[20px] overflow-hidden ${
         game.active
