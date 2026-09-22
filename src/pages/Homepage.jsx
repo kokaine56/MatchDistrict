@@ -17,6 +17,10 @@ import SupportedGames from '../components/SupportedGames'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 
+// Player testimonials temporarily hidden. Flip to true to re-enable.
+const SHOW_FEEDBACKS = false
+
+
 function Homepage({ onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isFeedbackPaused, setIsFeedbackPaused] = useState(false)
@@ -225,7 +229,7 @@ function Homepage({ onNavigate }) {
               <SupportedGames />
 
               {/* Player Feedbacks Marquee (Desktop View) */}
-              {renderFeedbacksMarquee("hidden lg:block overflow-hidden pt-1 hardware-clip")}
+              {SHOW_FEEDBACKS && renderFeedbacksMarquee("hidden lg:block overflow-hidden pt-1 hardware-clip")}
 
               {/* Live Matches */}
               <motion.div 
@@ -295,7 +299,7 @@ function Homepage({ onNavigate }) {
                 )}
               </motion.div>
               {/* Player Feedbacks Marquee (Mobile View) */}
-              {renderFeedbacksMarquee("block lg:hidden overflow-hidden pt-1 hardware-clip")}
+              {SHOW_FEEDBACKS && renderFeedbacksMarquee("block lg:hidden overflow-hidden pt-1 hardware-clip")}
             </div>
           </div>
         </section>
