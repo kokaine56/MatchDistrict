@@ -46,6 +46,8 @@ const statsCardVariants = {
   show: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 300, damping: 25 } }
 }
 
+const SUCCESSFUL_REG_STATUSES = ['pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host']
+
 const emptyPresetForm = () => ({
   preset_name: '',
   game: 'BGMI',
@@ -274,6 +276,11 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [currentUserFromContext, setCurrentUserFromContext] = useCurrentUser()
   const { signOut } = useUser()
 
+  // Guard ref: prevents the data-fetch useEffect from re-running when it updates
+  // currentUserFromContext internally (which would cause presetsLoading to flip
+  // back to true and create the Teams & Squads empty-state flicker).
+  const lastFetchedUserId = React.useRef(null);
+
   const isOwnProfile = useMemo(() => {
     const loggedIn = currentUserFromContext
     if (!loggedIn) return false
@@ -433,6 +440,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   // Tournament status filters
   const [tournamentFilter, setTournamentFilter] = useState('all')
+
+  // Calendar state for tournament date view
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [selectedCalDate, setSelectedCalDate] = useState(null);
 
   const triggerToast = (msg) => {
     setToastMessage(msg)
@@ -1128,6 +1142,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }, [currentUserFromContext])
 
   useEffect(() => {
+    // Skip if we've already fetched for this exact user — prevents the loop where
+    // setCurrentUserFromContext() inside this effect re-triggers it and causes
+    // presetsLoading to flicker back to true (Teams & Squads empty-state flash).
+    const incomingUserId = currentUserFromContext?.id || selectedUserProfile?.id || null;
+    if (incomingUserId && incomingUserId === lastFetchedUserId.current) return;
+    if (incomingUserId) lastFetchedUserId.current = incomingUserId;
+
     async function fetchTournaments() {
       const token = await getAuthToken();
       try {
@@ -1574,27 +1595,75 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   // --- PLAYER DATA (dynamic only, no mock fallbacks) ---
   const playerTournamentsList = useMemo(() => {
-    return userRegistrations.map(reg => {
-      const t = tournamentsList.find(tourney => tourney.id === reg.tournament_id);
-      if (!t) return null;
-      return {
-        id: t.id,
-        title: t.title,
-        game: t.game,
-        status: t.status || 'upcoming',
-        badgeBg: t.status === 'live' ? 'bg-error' : t.status === 'completed' ? 'bg-surface-container-highest text-on-surface-variant' : 'bg-primary',
-        badgeText: t.status ? t.status.toUpperCase() : 'UPCOMING',
-        date: t.startDate ? formatDate(t.startDate) : 'TBD',
-        prize: t.prize,
-        entry: t.entry,
-        result: reg.status === 'approved' ? 'Approved & Registered' : reg.status === 'waitlisted' ? 'Waitlisted' : reg.status === 'rejected' ? 'Rejected' : 'Awaiting Approval'
-      };
-    }).filter(Boolean);
+    // Deduplicate by tournament_id — only take the latest registration per tournament
+    const seen = new Set();
+    return userRegistrations
+      .filter(reg => {
+        if (seen.has(reg.tournament_id)) return false;
+        seen.add(reg.tournament_id);
+        return true;
+      })
+      .map(reg => {
+        const t = tournamentsList.find(tourney => tourney.id === reg.tournament_id);
+        if (!t) return null;
+        const regStatusRaw = reg.status || 'pending';
+        let result = 'Awaiting Approval';
+        if (regStatusRaw === 'approved' || regStatusRaw === 'confirmed' || regStatusRaw === 'CONFIRMED' || regStatusRaw === 'VERIFIED_BY_HOST' || regStatusRaw === 'verified_by_host') result = 'Approved & Registered';
+        else if (regStatusRaw === 'waitlisted') result = 'Waitlisted';
+        else if (regStatusRaw === 'rejected' || regStatusRaw === 'PAYMENT_REJECTED') result = 'Rejected';
+        else if (regStatusRaw === 'pending_payment' || regStatusRaw === 'PENDING_PAYMENT_VERIFICATION') result = 'Payment Pending';
+        return {
+          id: t.id,
+          regId: reg.id,
+          title: t.title,
+          game: t.game,
+          status: t.status || 'upcoming',
+          startDate: t.startDate || null,
+          dateFormatted: t.startDate ? formatDate(t.startDate) : 'TBD',
+          prize: t.prize || 'TBA',
+          entry: t.entry || 'Free',
+          orgName: t.orgName || '',
+          bannerUrl: t.bannerUrl || t.banner || null,
+          logoUrl: t.logoUrl || null,
+          slotsTotal: t.slotsTotal || 0,
+          slotsFilled: t.slotsFilled || 0,
+          registrationCloseDate: t.registrationCloseDate || null,
+          regStatus: regStatusRaw,
+          result,
+          teamName: reg.team_name || '',
+          captain: reg.captain || '',
+          slotNumber: reg.slot_number || null,
+        };
+      }).filter(Boolean);
   }, [userRegistrations, tournamentsList]);
 
-  const filteredPlayerTournaments = tournamentFilter === 'all' 
-    ? playerTournamentsList 
-    : playerTournamentsList.filter(t => t.status === tournamentFilter)
+  // Calendar: set of date keys 'YYYY-M-D' for all registered tournaments
+  const tournamentDateSet = useMemo(() => {
+    const s = new Set();
+    playerTournamentsList.forEach(t => {
+      if (t.startDate) {
+        const d = new Date(t.startDate);
+        if (!isNaN(d.getTime())) {
+          s.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+        }
+      }
+    });
+    return s;
+  }, [playerTournamentsList]);
+
+  const filteredPlayerTournaments = useMemo(() => {
+    let list = tournamentFilter === 'all'
+      ? playerTournamentsList
+      : playerTournamentsList.filter(t => t.status === tournamentFilter);
+    if (selectedCalDate) {
+      list = list.filter(t => {
+        if (!t.startDate) return false;
+        const d = new Date(t.startDate);
+        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` === selectedCalDate;
+      });
+    }
+    return list;
+  }, [playerTournamentsList, tournamentFilter, selectedCalDate]);
 
   const teamMembers = useMemo(() => {
     return userRegistrations.map(reg => {
@@ -1742,11 +1811,15 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }
 
   // --- DERIVED VALUES (overview + teams) ---
-  const overviewMatchesCount = userRegistrations.length
-  const overviewTournamentsCount = useMemo(
-    () => new Set(userRegistrations.map(r => r.tournament_id)).size,
-    [userRegistrations]
-  )
+  const overviewMatchesCount = useMemo(() => {
+    const successfulIds = new Set(
+      userRegistrations
+        .filter(r => r && SUCCESSFUL_REG_STATUSES.includes(r.status))
+        .map(r => r.tournament_id)
+        .filter(Boolean)
+    )
+    return successfulIds.size
+  }, [userRegistrations])
   const filteredPresets = useMemo(() => {
     const all = presets.map(p => consolidatePreset(p))
     return presetGameFilter === 'All' ? all : all.filter(p => (p.game || 'BGMI') === presetGameFilter)
@@ -2554,12 +2627,12 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       <p className="font-body-sm text-[11px] text-on-surface-variant mt-0.5">Your registration activity on Match District.</p>
                     </div>
 
-                    {/* Two stat cards side-by-side */}
+                    {/* Stat card */}
                     <motion.div
                       variants={statsContainerVariants}
                       initial="hidden"
                       animate="show"
-                      className="grid grid-cols-2 gap-4"
+                      className="w-full"
                     >
                       {/* Registered Matches */}
                       <motion.div
@@ -2577,25 +2650,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         </div>
                         <p className="font-body-sm text-[10px] text-on-surface-variant leading-relaxed">
                           Total tournament entries registered.
-                        </p>
-                      </motion.div>
-
-                      {/* Registered Tournaments */}
-                      <motion.div
-                        variants={statsCardVariants}
-                        className="glass-card p-5 rounded-2xl border border-outline-variant/35 bg-surface-container-low/50 shadow-sm space-y-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-label-caps text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">Tournaments</span>
-                          <div className="w-8 h-8 rounded-lg bg-secondary/10 border border-secondary/20 flex items-center justify-center text-secondary shrink-0">
-                            <span className="material-symbols-outlined text-[16px]">emoji_events</span>
-                          </div>
-                        </div>
-                        <div className="font-black text-3xl sm:text-4xl text-on-background leading-none">
-                          {overviewTournamentsCount}
-                        </div>
-                        <p className="font-body-sm text-[10px] text-on-surface-variant leading-relaxed">
-                          Unique events you've entered.
                         </p>
                       </motion.div>
                     </motion.div>
@@ -2629,7 +2683,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   </motion.div>
                 )}
 
-              {/* Tab 2: My Tournaments */}
+              {/* Tab 2: My Tournaments — Redesigned */}
               {activeTab === 'tournaments' && (
                 <motion.div
                   key="tournaments"
@@ -2637,70 +2691,275 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4"
+                  className="space-y-3"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant/30 pb-4">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                      <span className="material-symbols-outlined text-primary text-xl">sports_esports</span> Roster Registrations
+                  {/* ── Header row: title + compact segmented filter ── */}
+                  <div className="glass-card px-4 py-3 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <h3 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight shrink-0">
+                      <span className="material-symbols-outlined text-primary" style={{fontSize:'18px'}}>sports_esports</span>
+                      Roster Registrations
+                      {playerTournamentsList.length > 0 && (
+                        <span className="ml-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[9px] font-bold">{playerTournamentsList.length}</span>
+                      )}
                     </h3>
-                    <div className="flex items-center gap-1 bg-surface-container p-1 rounded-lg border border-outline-variant/30">
-                      {['all', 'live', 'upcoming', 'completed'].map((filter) => (
-                        <button
-                          key={filter}
-                          onClick={() => setTournamentFilter(filter)}
-                          className={`px-3 min-h-[44px] rounded-md font-headline-md text-[10px] font-bold uppercase tracking-wider transition-all ${tournamentFilter === filter ? 'bg-primary text-on-primary' : 'text-on-surface-variant hover:text-on-background'}`}
-                        >
-                          {filter}
-                        </button>
-                      ))}
+                    {/* Compact segmented filter chips */}
+                    <div className="flex items-center gap-0.5 bg-surface-container-highest/60 p-0.5 rounded-lg border border-outline-variant/20 self-start sm:self-auto overflow-x-auto max-w-full scrollbar-none">
+                      {['all', 'live', 'upcoming', 'completed'].map((filter) => {
+                        const count = filter === 'all' ? playerTournamentsList.length : playerTournamentsList.filter(t => t.status === filter).length;
+                        return (
+                          <button
+                            key={filter}
+                            onClick={() => { setTournamentFilter(filter); setSelectedCalDate(null); }}
+                            className={`relative px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
+                              tournamentFilter === filter
+                                ? 'bg-primary text-on-primary shadow-sm'
+                                : 'text-on-surface-variant hover:text-on-background'
+                            }`}
+                          >
+                            {filter}
+                            {filter === 'live' && count > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {filteredPlayerTournaments.length === 0 ? (
-                    <div className="text-center py-16 space-y-4 bg-surface-variant/10 rounded-2xl border border-outline-variant/15 p-6 animate-in fade-in duration-300">
-                      <div className="w-16 h-16 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
-                        <span className="material-symbols-outlined text-3xl animate-pulse">sports_esports</span>
+                  {playerTournamentsList.length === 0 ? (
+                    /* ── Empty state ── */
+                    <div className="glass-card text-center py-14 space-y-4 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 backdrop-blur-md p-6">
+                      <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
+                        <span className="material-symbols-outlined text-3xl">sports_esports</span>
                       </div>
                       <div className="space-y-1">
-                        <h4 className="font-headline-md text-sm sm:text-base font-black text-on-background">No Tournament Registrations</h4>
+                        <h4 className="font-headline-md text-sm font-black text-on-background">No Tournament Registrations</h4>
                         <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">You haven't signed up for any competitive events yet. Browse active tournaments to kickstart your journey!</p>
                       </div>
-                      <button 
+                      <button
                         onClick={() => onNavigate && onNavigate('tournaments')}
-                        className="px-6 min-h-[44px] bg-primary hover:bg-primary/95 text-white font-headline-md text-xs font-bold rounded-xl transition-all shadow-md inline-flex items-center gap-1.5 mx-auto"
+                        className="px-5 py-2 bg-primary hover:bg-primary/90 text-white font-headline-md text-xs font-bold rounded-lg transition-all shadow-sm inline-flex items-center gap-1.5 mx-auto"
                       >
                         <span className="material-symbols-outlined text-sm">explore</span> Explore Tournaments
                       </button>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {filteredPlayerTournaments.map((t, idx) => (
-                        <div key={idx} className="bg-surface-container-highest p-4 rounded-xl border border-outline-variant/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm hover:border-primary/40 transition-all">
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="px-2 py-0.5 rounded bg-primary/20 text-primary font-label-caps text-[9px] font-bold">{t.game}</span>
-                              <span className={`px-2 py-0.5 rounded font-label-caps text-[9px] font-bold tracking-wider ${t.badgeBg}`}>{t.badgeText}</span>
-                              <span className="font-body-sm text-[11px] text-on-surface-variant ml-0">{t.date}</span>
-                            </div>
-                            <h4 className="font-headline-md text-sm sm:text-base font-bold text-on-background truncate">{t.title}</h4>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
-                              <span>Entry: <strong className="text-on-background font-medium">{t.entry}</strong></span>
-                              <span>•</span>
-                              <span>Total Rewards: <strong className="text-secondary font-semibold">{t.prize}</strong></span>
-                            </div>
-                          </div>
+                    /* ── Main content: calendar + cards ── */
+                    <div className="flex flex-col md:flex-row gap-3 items-start">
 
-                          <div className="flex items-center justify-between md:justify-end gap-4 border-t md:border-t-0 border-outline-variant/30 pt-3 md:pt-0 shrink-0">
-                            <div className="text-left md:text-right">
-                              <div className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider">Registration Status</div>
-                              <div className={`font-headline-md text-xs font-semibold ${t.result === 'Approved & Registered' ? 'text-emerald-400' : t.result === 'Rejected' ? 'text-rose-400' : 'text-primary'}`}>{t.result}</div>
+                      {/* ── Mini Calendar ── */}
+                      <div className="glass-card rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md p-3 w-full md:w-[220px] shrink-0">
+                        {/* Month nav */}
+                        <div className="flex items-center justify-between mb-2.5">
+                          <button
+                            onClick={() => setCalendarMonth(prev => {
+                              const d = new Date(prev.year, prev.month - 1);
+                              return { year: d.getFullYear(), month: d.getMonth() };
+                            })}
+                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            aria-label="Previous month"
+                          >
+                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>chevron_left</span>
+                          </button>
+                          <span className="text-[11px] font-bold text-on-background font-headline-md uppercase tracking-wider">
+                            {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                          </span>
+                          <button
+                            onClick={() => setCalendarMonth(prev => {
+                              const d = new Date(prev.year, prev.month + 1);
+                              return { year: d.getFullYear(), month: d.getMonth() };
+                            })}
+                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            aria-label="Next month"
+                          >
+                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>chevron_right</span>
+                          </button>
+                        </div>
+                        {/* Day labels */}
+                        <div className="grid grid-cols-7 mb-1">
+                          {['S','M','T','W','T','F','S'].map((d, i) => (
+                            <div key={i} className="text-center text-[9px] font-bold text-on-surface-variant/50 uppercase py-0.5">{d}</div>
+                          ))}
+                        </div>
+                        {/* Calendar grid */}
+                        {(() => {
+                          const today = new Date();
+                          const firstDay = new Date(calendarMonth.year, calendarMonth.month, 1).getDay();
+                          const daysInMonth = new Date(calendarMonth.year, calendarMonth.month + 1, 0).getDate();
+                          const cells = [];
+                          for (let i = 0; i < firstDay; i++) cells.push(null);
+                          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                          // pad to complete last row
+                          while (cells.length % 7 !== 0) cells.push(null);
+                          const dateKey = (d) => `${calendarMonth.year}-${calendarMonth.month}-${d}`;
+                          return (
+                            <div className="grid grid-cols-7 gap-0.5">
+                              {cells.map((day, idx) => {
+                                if (!day) return <div key={idx} />;
+                                const key = dateKey(day);
+                                const hasTournament = tournamentDateSet.has(key);
+                                const isToday = today.getFullYear() === calendarMonth.year && today.getMonth() === calendarMonth.month && today.getDate() === day;
+                                const isSelected = selectedCalDate === key;
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => {
+                                      if (!hasTournament) return;
+                                      setSelectedCalDate(prev => prev === key ? null : key);
+                                    }}
+                                    className={`relative w-full aspect-square flex items-center justify-center rounded text-[10px] font-medium transition-all ${
+                                      isSelected
+                                        ? 'bg-primary text-on-primary font-bold shadow-sm'
+                                        : hasTournament
+                                          ? 'bg-primary/15 text-primary font-bold ring-1 ring-primary/30 hover:bg-primary/25 cursor-pointer'
+                                          : isToday
+                                            ? 'text-on-background'
+                                            : 'text-on-surface-variant/60 cursor-default'
+                                    }`}
+                                  >
+                                    {day}
+                                    {isToday && !isSelected && (
+                                      <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
+                                    )}
+                                  </button>
+                                );
+                              })}
                             </div>
-                            <button onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)} className="px-4 min-h-[44px] bg-surface-container hover:bg-surface-variant text-on-background border border-outline-variant/30 rounded-lg font-headline-md text-xs font-semibold transition-all">
-                              Lobby Hub
-                            </button>
+                          );
+                        })()}
+                        {/* Legend */}
+                        <div className="mt-2.5 pt-2 border-t border-outline-variant/20 flex items-center gap-3 flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <span className="w-2.5 h-2.5 rounded-sm bg-primary/20 ring-1 ring-primary/30" />
+                            <span className="text-[9px] text-on-surface-variant">Tournament</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="w-2.5 h-2.5 rounded-sm bg-surface-variant relative flex items-center justify-center">
+                              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
+                            </span>
+                            <span className="text-[9px] text-on-surface-variant">Today</span>
                           </div>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* ── Tournament Cards ── */}
+                      <div className="flex-1 min-w-0 space-y-2">
+                        {/* Selected date indicator */}
+                        {selectedCalDate && (() => {
+                          const [y, m, d] = selectedCalDate.split('-').map(Number);
+                          const label = new Date(y, m, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-on-surface-variant font-medium">Showing:</span>
+                              <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold border border-primary/25 flex items-center gap-1">
+                                <span className="material-symbols-outlined" style={{fontSize:'11px'}}>event</span>
+                                {label}
+                              </span>
+                              <button
+                                onClick={() => setSelectedCalDate(null)}
+                                className="text-[9px] text-on-surface-variant hover:text-on-background underline transition-colors"
+                              >clear</button>
+                            </div>
+                          );
+                        })()}
+
+                        {filteredPlayerTournaments.length === 0 ? (
+                          <div className="glass-card text-center py-8 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 p-4 space-y-2">
+                            <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">event_busy</span>
+                            <p className="text-xs text-on-surface-variant">
+                              {selectedCalDate ? 'No tournaments on this date.' : 'No tournaments match this filter.'}
+                            </p>
+                            {selectedCalDate && (
+                              <button onClick={() => setSelectedCalDate(null)} className="text-[10px] text-primary hover:underline">Clear date filter</button>
+                            )}
+                          </div>
+                        ) : (
+                          filteredPlayerTournaments.map((t) => {
+                            const isLive = t.status === 'live';
+                            const isCompleted = t.status === 'completed';
+                            const regApproved = t.result === 'Approved & Registered';
+                            const regRejected = t.result === 'Rejected';
+                            const regPayment = t.result === 'Payment Pending';
+                            const regWait = t.result === 'Waitlisted';
+                            const regStatusColor = regApproved ? 'text-emerald-400' : regRejected ? 'text-rose-400' : regPayment ? 'text-amber-400' : regWait ? 'text-sky-400' : 'text-primary';
+                            return (
+                              <div
+                                key={t.regId || t.id}
+                                className="glass-card rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md hover:border-primary/30 transition-all overflow-hidden"
+                              >
+                                <div className="flex items-stretch gap-0">
+                                  {/* Thumbnail strip */}
+                                  <div className="relative w-16 shrink-0 overflow-hidden bg-surface-container-highest">
+                                    {t.bannerUrl ? (
+                                      <img src={t.bannerUrl} alt={t.title} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center">
+                                        <GameIcon game={t.game} size={28} />
+                                      </div>
+                                    )}
+                                    {/* Status strip */}
+                                    <div className={`absolute bottom-0 left-0 right-0 py-0.5 text-center text-[8px] font-black uppercase tracking-wider ${
+                                      isLive ? 'bg-rose-600/90 text-white' :
+                                      isCompleted ? 'bg-surface-container-highest/90 text-on-surface-variant' :
+                                      'bg-primary/80 text-white'
+                                    }`}>
+                                      {isLive && <span className="inline-block w-1 h-1 rounded-full bg-white animate-pulse mr-0.5" />}
+                                      {t.status}
+                                    </div>
+                                  </div>
+
+                                  {/* Content */}
+                                  <div className="flex-1 min-w-0 p-2.5 flex flex-col gap-1 justify-between">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                                          <span className="px-1.5 py-px rounded bg-primary/15 text-primary font-label-caps text-[8px] font-bold">{t.game}</span>
+                                          {t.slotNumber && (
+                                            <span className="px-1.5 py-px rounded bg-surface-variant/60 text-on-surface-variant font-label-caps text-[8px]">Slot #{t.slotNumber}</span>
+                                          )}
+                                        </div>
+                                        <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background line-clamp-1">{t.title}</h4>
+                                        {t.orgName && (
+                                          <p className="text-[9px] text-on-surface-variant/70 truncate">by {t.orgName}</p>
+                                        )}
+                                      </div>
+                                      {/* Reg status */}
+                                      <div className="text-right shrink-0">
+                                        <div className="text-[8px] text-on-surface-variant uppercase tracking-wider mb-0.5">Reg. Status</div>
+                                        <div className={`text-[10px] font-bold ${regStatusColor}`}>{t.result}</div>
+                                      </div>
+                                    </div>
+
+                                    {/* Info row */}
+                                    <div className="flex items-center gap-3 flex-wrap border-t border-outline-variant/20 pt-1.5 mt-0.5">
+                                      <div className="flex items-center gap-1 text-[9px] text-on-surface-variant">
+                                        <span className="material-symbols-outlined" style={{fontSize:'11px'}}>calendar_today</span>
+                                        {t.dateFormatted}
+                                      </div>
+                                      {t.prize && t.prize !== 'TBA' && (
+                                        <div className="flex items-center gap-1 text-[9px] text-secondary font-semibold">
+                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>workspace_premium</span>
+                                          {t.prize}
+                                        </div>
+                                      )}
+                                      {t.teamName && (
+                                        <div className="flex items-center gap-1 text-[9px] text-on-surface-variant">
+                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>groups</span>
+                                          {t.teamName}
+                                        </div>
+                                      )}
+                                      <button
+                                        onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
+                                        className="ml-auto px-2.5 py-1 rounded-lg bg-surface-container-highest hover:bg-surface-variant text-on-background border border-outline-variant/30 text-[9px] font-bold transition-all shrink-0"
+                                      >
+                                        View
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   )}
                 </motion.div>
