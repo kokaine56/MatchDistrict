@@ -272,6 +272,35 @@ function PublicOrgMatchesView({ orgData, tournamentsList, onNavigate }) {
   )
 }
 
+const RegCardPoster = ({ poster, game, title }) => {
+  const [broken, setBroken] = useState(false);
+  const safePoster = poster && !broken ? poster : null;
+  return (
+    <div className="absolute inset-0">
+      {safePoster ? (
+        <img
+          src={safePoster}
+          alt={title || 'Tournament poster'}
+          loading="lazy"
+          decoding="async"
+          onError={() => setBroken(true)}
+          className="w-full h-full object-cover object-center"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center bg-surface-container-highest">
+          <GameIcon game={game} size={34} rounded="rounded-lg" />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const getTournamentStatusPill = (status) => {
+  if (status === 'live') return { label: 'LIVE', cls: 'bg-rose-600 text-white', live: true };
+  if (status === 'completed') return { label: 'COMPLETED', cls: 'bg-surface-container-high/95 text-on-surface-variant border border-outline-variant/40', live: false };
+  return { label: 'UPCOMING', cls: 'bg-primary/90 text-white', live: false };
+};
+
 function Profile({ onNavigate, selectedUserProfile }) {
   const [currentUserFromContext, setCurrentUserFromContext] = useCurrentUser()
   const { signOut } = useUser()
@@ -1623,7 +1652,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
           prize: t.prize || 'TBA',
           entry: t.entry || 'Free',
           orgName: t.orgName || '',
-          bannerUrl: t.bannerUrl || t.banner || null,
+          poster: t.cover_image_url || t.bannerUrl || t.banner || null,
           logoUrl: t.logoUrl || null,
           slotsTotal: t.slotsTotal || 0,
           slotsFilled: t.slotsFilled || 0,
@@ -2696,27 +2725,27 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   {/* ── Header row: title + compact segmented filter ── */}
                   <div className="glass-card px-4 py-3 rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <h3 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight shrink-0">
-                      <span className="material-symbols-outlined text-primary" style={{fontSize:'18px'}}>sports_esports</span>
-                      Roster Registrations
+                      <span className="material-symbols-outlined text-primary" style={{fontSize:'18px'}}>emoji_events</span>
+                      My Tournament Registrations
                       {playerTournamentsList.length > 0 && (
                         <span className="ml-1 px-1.5 py-0.5 rounded bg-primary/15 text-primary text-[9px] font-bold">{playerTournamentsList.length}</span>
                       )}
                     </h3>
                     {/* Compact segmented filter chips */}
-                    <div className="flex items-center gap-0.5 bg-surface-container-highest/60 p-0.5 rounded-lg border border-outline-variant/20 self-start sm:self-auto overflow-x-auto max-w-full scrollbar-none">
+                    <div className="flex items-center gap-0.5 bg-surface-container-highest/60 p-0.5 rounded-lg border border-outline-variant/20 self-start sm:self-auto overflow-x-auto scrollbar-none shrink-0">
                       {['all', 'live', 'upcoming', 'completed'].map((filter) => {
                         const count = filter === 'all' ? playerTournamentsList.length : playerTournamentsList.filter(t => t.status === filter).length;
                         return (
                           <button
                             key={filter}
                             onClick={() => { setTournamentFilter(filter); setSelectedCalDate(null); }}
-                            className={`relative px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
+                            className={`relative px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
                               tournamentFilter === filter
                                 ? 'bg-primary text-on-primary shadow-sm'
                                 : 'text-on-surface-variant hover:text-on-background'
                             }`}
                           >
-                            {filter}
+                            {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
                             {filter === 'live' && count > 0 && <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
                           </button>
                         );
@@ -2728,7 +2757,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                     /* ── Empty state ── */
                     <div className="glass-card text-center py-14 space-y-4 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 backdrop-blur-md p-6">
                       <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
-                        <span className="material-symbols-outlined text-3xl">sports_esports</span>
+                        <span className="material-symbols-outlined text-3xl">emoji_events</span>
                       </div>
                       <div className="space-y-1">
                         <h4 className="font-headline-md text-sm font-black text-on-background">No Tournament Registrations</h4>
@@ -2742,83 +2771,114 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </button>
                     </div>
                   ) : (
-                    /* ── Main content: calendar + cards ── */
-                    <div className="flex flex-col md:flex-row gap-3 items-start">
+                    /* ── Main content: two-column grid (calendar + cards) ── */
+                    <div className="grid grid-cols-1 md:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] gap-3 items-start">
 
                       {/* ── Mini Calendar ── */}
-                      <div className="glass-card rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md p-3 w-full md:w-[220px] shrink-0">
+                      <div className="glass-card rounded-xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md p-3.5 w-full shrink-0 self-start">
                         {/* Month nav */}
-                        <div className="flex items-center justify-between mb-2.5">
+                        <div className="flex items-center justify-between mb-3">
                           <button
                             onClick={() => setCalendarMonth(prev => {
                               const d = new Date(prev.year, prev.month - 1);
                               return { year: d.getFullYear(), month: d.getMonth() };
                             })}
-                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
                             aria-label="Previous month"
                           >
-                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>chevron_left</span>
+                            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>chevron_left</span>
                           </button>
-                          <span className="text-[11px] font-bold text-on-background font-headline-md uppercase tracking-wider">
-                            {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                          <span className="text-[11px] font-bold text-on-background font-headline-md uppercase tracking-widest">
+                            {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                           </span>
                           <button
                             onClick={() => setCalendarMonth(prev => {
                               const d = new Date(prev.year, prev.month + 1);
                               return { year: d.getFullYear(), month: d.getMonth() };
                             })}
-                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
+                            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-surface-variant/60 text-on-surface-variant transition-colors"
                             aria-label="Next month"
                           >
-                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>chevron_right</span>
+                            <span className="material-symbols-outlined" style={{fontSize:'16px'}}>chevron_right</span>
                           </button>
                         </div>
                         {/* Day labels */}
-                        <div className="grid grid-cols-7 mb-1">
+                        <div className="grid grid-cols-7 mb-1.5">
                           {['S','M','T','W','T','F','S'].map((d, i) => (
-                            <div key={i} className="text-center text-[9px] font-bold text-on-surface-variant/50 uppercase py-0.5">{d}</div>
+                            <div key={i} className="text-center text-[9px] font-bold text-on-surface-variant/40 uppercase py-0.5">{d}</div>
                           ))}
                         </div>
                         {/* Calendar grid */}
                         {(() => {
                           const today = new Date();
+                          const todayY = today.getFullYear();
+                          const todayM = today.getMonth();
+                          const todayD = today.getDate();
                           const firstDay = new Date(calendarMonth.year, calendarMonth.month, 1).getDay();
                           const daysInMonth = new Date(calendarMonth.year, calendarMonth.month + 1, 0).getDate();
                           const cells = [];
                           for (let i = 0; i < firstDay; i++) cells.push(null);
                           for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-                          // pad to complete last row
                           while (cells.length % 7 !== 0) cells.push(null);
                           const dateKey = (d) => `${calendarMonth.year}-${calendarMonth.month}-${d}`;
                           return (
-                            <div className="grid grid-cols-7 gap-0.5">
+                            <div className="grid grid-cols-7 gap-y-1 gap-x-0.5">
                               {cells.map((day, idx) => {
-                                if (!day) return <div key={idx} />;
+                                if (!day) return <div key={idx} className="aspect-square" />;
                                 const key = dateKey(day);
                                 const hasTournament = tournamentDateSet.has(key);
-                                const isToday = today.getFullYear() === calendarMonth.year && today.getMonth() === calendarMonth.month && today.getDate() === day;
+                                const isToday = todayY === calendarMonth.year && todayM === calendarMonth.month && todayD === day;
                                 const isSelected = selectedCalDate === key;
+                                const ariaLabel = [
+                                  new Date(calendarMonth.year, calendarMonth.month, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
+                                  isSelected ? 'selected' : '',
+                                  isToday ? 'today' : '',
+                                  hasTournament ? 'has registered tournaments' : '',
+                                ].filter(Boolean).join(', ');
                                 return (
                                   <button
                                     key={idx}
+                                    type="button"
                                     onClick={() => {
                                       if (!hasTournament) return;
                                       setSelectedCalDate(prev => prev === key ? null : key);
                                     }}
-                                    className={`relative w-full aspect-square flex items-center justify-center rounded text-[10px] font-medium transition-all ${
-                                      isSelected
-                                        ? 'bg-primary text-on-primary font-bold shadow-sm'
-                                        : hasTournament
-                                          ? 'bg-primary/15 text-primary font-bold ring-1 ring-primary/30 hover:bg-primary/25 cursor-pointer'
-                                          : isToday
-                                            ? 'text-on-background'
-                                            : 'text-on-surface-variant/60 cursor-default'
-                                    }`}
+                                    aria-pressed={isSelected}
+                                    aria-label={ariaLabel}
+                                    className={`relative aspect-square flex items-center justify-center transition-colors rounded-lg ${hasTournament ? 'cursor-pointer hover:bg-surface-variant/30' : 'cursor-default'}`}
                                   >
-                                    {day}
-                                    {isToday && !isSelected && (
-                                      <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
+                                    {/* TODAY: filled primary circle (shows even when selected) */}
+                                    {isToday && (
+                                      <span className="absolute inset-[3px] rounded-full bg-primary" />
                                     )}
+                                    {/* SELECTED: primary ring outline (layered on top of today fill) */}
+                                    {isSelected && (
+                                      <span className="absolute inset-[2px] rounded-lg ring-2 ring-primary ring-inset pointer-events-none" />
+                                    )}
+                                    {/* TOURNAMENT only: amber ring (not today, not selected) */}
+                                    {hasTournament && !isToday && !isSelected && (
+                                      <span className="absolute inset-[3px] rounded-full ring-[1.5px] ring-amber-400/80 pointer-events-none" />
+                                    )}
+                                    {/* TOURNAMENT + TODAY: amber outer ring (visible outside the filled circle) */}
+                                    {hasTournament && isToday && !isSelected && (
+                                      <span className="absolute inset-[1px] rounded-lg ring-[1.5px] ring-amber-400/60 pointer-events-none" />
+                                    )}
+                                    {/* TOURNAMENT + SELECTED: subtle amber outer glow */}
+                                    {hasTournament && isSelected && (
+                                      <span className="absolute inset-0 rounded-lg ring-[1px] ring-amber-400/50 pointer-events-none" />
+                                    )}
+                                    {/* Date number — priority: today (white on blue) > selected (primary) > tournament (amber) > default */}
+                                    <span className={`relative z-10 text-[11px] leading-none select-none transition-colors ${
+                                      isToday
+                                        ? 'text-white font-bold'
+                                        : isSelected
+                                          ? 'text-primary font-bold'
+                                          : hasTournament
+                                            ? 'text-amber-400 font-bold'
+                                            : 'text-on-surface-variant/55 font-medium'
+                                    }`}>
+                                      {day}
+                                    </span>
                                   </button>
                                 );
                               })}
@@ -2826,138 +2886,181 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           );
                         })()}
                         {/* Legend */}
-                        <div className="mt-2.5 pt-2 border-t border-outline-variant/20 flex items-center gap-3 flex-wrap">
-                          <div className="flex items-center gap-1">
-                            <span className="w-2.5 h-2.5 rounded-sm bg-primary/20 ring-1 ring-primary/30" />
-                            <span className="text-[9px] text-on-surface-variant">Tournament</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="w-2.5 h-2.5 rounded-sm bg-surface-variant relative flex items-center justify-center">
-                              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
+                        <div className="mt-3 pt-2.5 border-t border-outline-variant/20 grid grid-cols-3 gap-x-2 gap-y-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded flex items-center justify-center shrink-0">
+                              <span className="w-3 h-3 rounded ring-2 ring-primary" />
                             </span>
-                            <span className="text-[9px] text-on-surface-variant">Today</span>
+                            <span className="text-[8px] text-on-surface-variant leading-tight">Selected</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+                              <span className="text-[7px] text-white font-bold leading-none">T</span>
+                            </span>
+                            <span className="text-[8px] text-on-surface-variant leading-tight">Today</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-4 h-4 rounded flex items-center justify-center shrink-0">
+                              <span className="w-3 h-3 rounded-full ring-[1.5px] ring-amber-400/80" />
+                            </span>
+                            <span className="text-[8px] text-on-surface-variant leading-tight">Tournament</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* ── Tournament Cards ── */}
-                      <div className="flex-1 min-w-0 space-y-2">
-                        {/* Selected date indicator */}
-                        {selectedCalDate && (() => {
+                      {/* ── Right column: context header + tournament cards ── */}
+                      <div className="flex flex-col gap-2 min-w-0 w-full">
+
+                        {/* Selected date context header */}
+                        {selectedCalDate ? (() => {
                           const [y, m, d] = selectedCalDate.split('-').map(Number);
-                          const label = new Date(y, m, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                          const dateObj = new Date(y, m, d);
+                          const label = dateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+                          const count = filteredPlayerTournaments.length;
                           return (
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-on-surface-variant font-medium">Showing:</span>
-                              <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary text-[10px] font-bold border border-primary/25 flex items-center gap-1">
-                                <span className="material-symbols-outlined" style={{fontSize:'11px'}}>event</span>
-                                {label}
-                              </span>
-                              <button
-                                onClick={() => setSelectedCalDate(null)}
-                                className="text-[9px] text-on-surface-variant hover:text-on-background underline transition-colors"
-                              >clear</button>
+                            <div className="glass-card px-3.5 py-2.5 rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="material-symbols-outlined text-primary shrink-0" style={{fontSize:'15px'}}>calendar_month</span>
+                                <span className="text-[11px] font-bold text-on-background truncate">Tournaments on {label}</span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary text-[9px] font-bold border border-primary/20">
+                                  {count} {count === 1 ? 'Tournament' : 'Tournaments'}
+                                </span>
+                                <button
+                                  onClick={() => setSelectedCalDate(null)}
+                                  className="text-on-surface-variant hover:text-on-background transition-colors"
+                                  aria-label="Clear date selection"
+                                >
+                                  <span className="material-symbols-outlined" style={{fontSize:'14px'}}>close</span>
+                                </button>
+                              </div>
                             </div>
                           );
-                        })()}
+                        })() : (
+                          <div className="px-1 flex items-center gap-1.5 text-[10px] text-on-surface-variant/50">
+                            <span className="material-symbols-outlined" style={{fontSize:'12px'}}>touch_app</span>
+                            <span>Tap a highlighted date on the calendar to filter by day</span>
+                          </div>
+                        )}
 
+                        {/* Tournament cards */}
                         {filteredPlayerTournaments.length === 0 ? (
-                          <div className="glass-card text-center py-8 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 p-4 space-y-2">
-                            <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">event_busy</span>
-                            <p className="text-xs text-on-surface-variant">
+                          <div className="glass-card text-center py-10 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 backdrop-blur-md p-6 space-y-2">
+                            <span className="material-symbols-outlined text-3xl text-on-surface-variant/30">event_busy</span>
+                            <p className="text-xs font-semibold text-on-surface-variant">
                               {selectedCalDate ? 'No tournaments on this date.' : 'No tournaments match this filter.'}
                             </p>
+                            <p className="text-[10px] text-on-surface-variant/60 max-w-[220px] mx-auto leading-relaxed">
+                              {selectedCalDate
+                                ? 'Select another highlighted date from the calendar to view your registered tournaments.'
+                                : 'Try switching to the All filter to see everything.'}
+                            </p>
                             {selectedCalDate && (
-                              <button onClick={() => setSelectedCalDate(null)} className="text-[10px] text-primary hover:underline">Clear date filter</button>
+                              <button onClick={() => setSelectedCalDate(null)} className="mt-1 text-[10px] text-primary hover:underline font-semibold">Clear date filter</button>
                             )}
                           </div>
                         ) : (
-                          filteredPlayerTournaments.map((t) => {
-                            const isLive = t.status === 'live';
-                            const isCompleted = t.status === 'completed';
-                            const regApproved = t.result === 'Approved & Registered';
-                            const regRejected = t.result === 'Rejected';
-                            const regPayment = t.result === 'Payment Pending';
-                            const regWait = t.result === 'Waitlisted';
-                            const regStatusColor = regApproved ? 'text-emerald-400' : regRejected ? 'text-rose-400' : regPayment ? 'text-amber-400' : regWait ? 'text-sky-400' : 'text-primary';
-                            return (
-                              <div
-                                key={t.regId || t.id}
-                                className="glass-card rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md hover:border-primary/30 transition-all overflow-hidden"
-                              >
-                                <div className="flex items-stretch gap-0">
-                                  {/* Thumbnail strip */}
-                                  <div className="relative w-16 shrink-0 overflow-hidden bg-surface-container-highest">
-                                    {t.bannerUrl ? (
-                                      <img src={t.bannerUrl} alt={t.title} className="w-full h-full object-cover" />
-                                    ) : (
-                                      <div className="w-full h-full flex items-center justify-center">
-                                        <GameIcon game={t.game} size={28} />
+                          <div className="space-y-2">
+                            {filteredPlayerTournaments.map((t) => {
+                              const regApproved = t.result === 'Approved & Registered';
+                              const regRejected = t.result === 'Rejected';
+                              const regPayment = t.result === 'Payment Pending';
+                              const regWait = t.result === 'Waitlisted';
+                              const regStatusColor = regApproved
+                                ? 'text-emerald-400'
+                                : regRejected ? 'text-rose-400'
+                                : regPayment ? 'text-amber-400'
+                                : regWait ? 'text-sky-400'
+                                : 'text-primary';
+                              const regStatusBg = regApproved
+                                ? 'bg-emerald-400/10 border-emerald-400/25'
+                                : regRejected ? 'bg-rose-400/10 border-rose-400/25'
+                                : regPayment ? 'bg-amber-400/10 border-amber-400/25'
+                                : regWait ? 'bg-sky-400/10 border-sky-400/25'
+                                : 'bg-primary/10 border-primary/25';
+                              const statusPill = getTournamentStatusPill(t.status);
+                              return (
+                                <div
+                                  key={t.regId || t.id}
+                                  className="glass-card w-full rounded-xl border border-outline-variant/25 bg-surface-container-low/40 backdrop-blur-md hover:border-primary/35 hover:shadow-md transition-all overflow-hidden"
+                                >
+                                  <div className="flex items-stretch w-full">
+                                    {/* Poster — fixed width thumbnail, full card height */}
+                                    <div className="relative w-[80px] sm:w-[96px] md:w-[108px] shrink-0 self-stretch min-h-[118px] bg-surface-container-highest overflow-hidden">
+                                      <RegCardPoster poster={t.poster} game={t.game} title={t.title} />
+                                      {/* Tournament status pill overlaid on poster */}
+                                      <div className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider flex items-center gap-0.5 shadow-sm ${statusPill.cls}`}>
+                                        {statusPill.live && <span className="w-1 h-1 rounded-full bg-white animate-pulse" />}
+                                        {statusPill.label}
                                       </div>
-                                    )}
-                                    {/* Status strip */}
-                                    <div className={`absolute bottom-0 left-0 right-0 py-0.5 text-center text-[8px] font-black uppercase tracking-wider ${
-                                      isLive ? 'bg-rose-600/90 text-white' :
-                                      isCompleted ? 'bg-surface-container-highest/90 text-on-surface-variant' :
-                                      'bg-primary/80 text-white'
-                                    }`}>
-                                      {isLive && <span className="inline-block w-1 h-1 rounded-full bg-white animate-pulse mr-0.5" />}
-                                      {t.status}
                                     </div>
-                                  </div>
 
-                                  {/* Content */}
-                                  <div className="flex-1 min-w-0 p-2.5 flex flex-col gap-1 justify-between">
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                                          <span className="px-1.5 py-px rounded bg-primary/15 text-primary font-label-caps text-[8px] font-bold">{t.game}</span>
+                                    {/* Content area — must fill all remaining width */}
+                                    <div className="flex-1 min-w-0 p-2.5 sm:p-3 flex flex-col gap-1.5 justify-between">
+                                      {/* Row 1: game badge + slot + reg status (top right) */}
+                                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="inline-flex items-center gap-1 px-1.5 py-px rounded bg-primary/15 text-primary font-label-caps text-[8px] font-bold">
+                                            <GameIcon game={t.game} size={10} rounded="rounded-[3px]" />
+                                            {t.game}
+                                          </span>
                                           {t.slotNumber && (
-                                            <span className="px-1.5 py-px rounded bg-surface-variant/60 text-on-surface-variant font-label-caps text-[8px]">Slot #{t.slotNumber}</span>
+                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-surface-variant/60 text-on-surface-variant font-label-caps text-[8px]">
+                                              <span className="material-symbols-outlined" style={{fontSize:'9px'}}>tag</span>
+                                              Slot #{t.slotNumber}
+                                            </span>
                                           )}
                                         </div>
-                                        <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background line-clamp-1">{t.title}</h4>
-                                        {t.orgName && (
-                                          <p className="text-[9px] text-on-surface-variant/70 truncate">by {t.orgName}</p>
+                                        {/* Registration status — compact badge */}
+                                        <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[8px] font-bold uppercase tracking-wider ${regStatusColor} ${regStatusBg}`}>
+                                          {t.result}
+                                        </span>
+                                      </div>
+
+                                      {/* Row 2: Tournament name + organizer */}
+                                      <div className="min-w-0">
+                                        <h4 className="font-headline-md text-xs sm:text-sm font-bold text-on-background line-clamp-1 leading-snug">{t.title}</h4>
+                                        {t.orgName && <p className="text-[9px] text-on-surface-variant/65 truncate mt-0.5">by {t.orgName}</p>}
+                                      </div>
+
+                                      {/* Row 3: date, prize pool, team name */}
+                                      <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[9px] text-on-surface-variant">
+                                        <span className="inline-flex items-center gap-1 shrink-0">
+                                          <span className="material-symbols-outlined" style={{fontSize:'10px'}}>calendar_today</span>
+                                          {t.dateFormatted}
+                                        </span>
+                                        {t.prize && t.prize !== 'TBA' && t.prize !== 'TBD' && (
+                                          <span className="inline-flex items-center gap-1 text-amber-400 font-semibold shrink-0">
+                                            <span className="material-symbols-outlined" style={{fontSize:'10px'}}>workspace_premium</span>
+                                            {t.prize}
+                                          </span>
+                                        )}
+                                        {t.teamName && (
+                                          <span className="inline-flex items-center gap-1 min-w-0">
+                                            <span className="material-symbols-outlined shrink-0" style={{fontSize:'10px'}}>groups</span>
+                                            <span className="truncate max-w-[100px] sm:max-w-[180px]">{t.teamName}</span>
+                                          </span>
                                         )}
                                       </div>
-                                      {/* Reg status */}
-                                      <div className="text-right shrink-0">
-                                        <div className="text-[8px] text-on-surface-variant uppercase tracking-wider mb-0.5">Reg. Status</div>
-                                        <div className={`text-[10px] font-bold ${regStatusColor}`}>{t.result}</div>
-                                      </div>
-                                    </div>
 
-                                    {/* Info row */}
-                                    <div className="flex items-center gap-3 flex-wrap border-t border-outline-variant/20 pt-1.5 mt-0.5">
-                                      <div className="flex items-center gap-1 text-[9px] text-on-surface-variant">
-                                        <span className="material-symbols-outlined" style={{fontSize:'11px'}}>calendar_today</span>
-                                        {t.dateFormatted}
+                                      {/* Row 4: View button */}
+                                      <div className="flex items-center justify-end pt-1 border-t border-outline-variant/15">
+                                        <button
+                                          onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
+                                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white text-[9px] font-bold transition-all shadow-sm"
+                                          aria-label={`View ${t.title}`}
+                                        >
+                                          View
+                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>arrow_forward</span>
+                                        </button>
                                       </div>
-                                      {t.prize && t.prize !== 'TBA' && (
-                                        <div className="flex items-center gap-1 text-[9px] text-secondary font-semibold">
-                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>workspace_premium</span>
-                                          {t.prize}
-                                        </div>
-                                      )}
-                                      {t.teamName && (
-                                        <div className="flex items-center gap-1 text-[9px] text-on-surface-variant">
-                                          <span className="material-symbols-outlined" style={{fontSize:'11px'}}>groups</span>
-                                          {t.teamName}
-                                        </div>
-                                      )}
-                                      <button
-                                        onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
-                                        className="ml-auto px-2.5 py-1 rounded-lg bg-surface-container-highest hover:bg-surface-variant text-on-background border border-outline-variant/30 text-[9px] font-bold transition-all shrink-0"
-                                      >
-                                        View
-                                      </button>
                                     </div>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })
+                              );
+                            })}
+                          </div>
                         )}
                       </div>
                     </div>
