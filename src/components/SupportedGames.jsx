@@ -37,9 +37,11 @@ function GameCard({ game }) {
       <p className="mt-3.5 text-center text-[14px] sm:text-[15px] font-semibold text-[#111827] leading-tight truncate w-full">
         {game.name}
       </p>
-      <p className="mt-1.5 text-center text-[12px] sm:text-[13px] font-medium text-[#6B7280]">
-        {game.active ? game.count : 'Coming Soon'}
-      </p>
+      {!game.active && (
+        <p className="mt-1.5 text-center text-[12px] sm:text-[13px] font-medium text-[#6B7280]">
+          Coming Soon
+        </p>
+      )}
     </motion.div>
   )
 }
