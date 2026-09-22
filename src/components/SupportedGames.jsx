@@ -26,7 +26,7 @@ function GameCard({ game }) {
           : 'shadow-[0_2px_12px_rgba(0,0,0,0.08)]'
       }`}>
         <img
-          className="w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-[250ms] ease-out"
+          className={`w-full h-full object-cover group-hover:scale-[1.04] transition-transform duration-[250ms] ease-out ${game.active ? '' : 'grayscale'}`}
           alt={game.name}
           src={game.img}
         />
@@ -55,7 +55,7 @@ export default function SupportedGames() {
         <span className="w-1 h-5 sm:h-6 bg-primary rounded-full shadow-[0_0_10px_rgba(192,193,255,0.5)]"></span>
         Supported Games
       </h2>
-      <div className="flex sm:grid sm:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0 pb-2" style={{ touchAction: 'pan-x' }}>
+      <div className="flex sm:grid sm:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0 pb-2" style={{ touchAction: 'pan-x pan-y', WebkitOverflowScrolling: 'touch' }}>
         {GAMES.map((g) => (
           <div key={g.name} className="shrink-0 w-[120px] sm:w-auto">
             <GameCard game={g} />
