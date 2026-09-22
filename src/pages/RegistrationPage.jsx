@@ -809,17 +809,30 @@ function RegistrationPage({ onNavigate }) {
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="bg-[#111] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4"
+                className="bg-white border border-slate-200 rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4"
               >
-                <h3 className="text-lg font-bold">Submit for Verification?</h3>
-                <p className="text-sm text-white/60">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="material-symbols-outlined text-primary text-2xl shrink-0">info</span>
+                    <h3 className="text-lg font-bold text-slate-900">Submit for Verification?</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmModal(false)}
+                    aria-label="Close confirmation"
+                    className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-base">close</span>
+                  </button>
+                </div>
+                <p className="text-sm text-slate-600">
                   Your payment proof and details will be sent for admin verification.
                 </p>
                 <div className="flex gap-3 pt-2">
                   <button
                     type="button"
                     onClick={() => setShowConfirmModal(false)}
-                    className="flex-1 bg-white/10 text-white font-bold py-3 rounded-xl hover:bg-white/20 transition-colors"
+                    className="flex-1 bg-white border border-slate-300 text-slate-800 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors"
                   >
                     Cancel
                   </button>

@@ -1597,7 +1597,7 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk.toString(); });
     req.on('end', async () => {
       try {
-        if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+        if (!CLOUDINARY_CLOUD_NAME) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'Server missing media proxy configuration' }));
           return;
@@ -1610,19 +1610,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Authenticate request (ensure a user is logged in before allowing uploads)
-        // If the upload needs to be public for registration, we skip auth for this specific endpoint.
-        // Given current usage (registration, org page, profile), we will allow it but validate structure.
-
-        const timestamp = Math.floor(Date.now() / 1000);
-        const signatureString = `timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
-        const signature = crypto.createHash('sha1').update(signatureString).digest('hex');
+        // We use the unsigned upload preset because the API Key may not have create permissions,
+        // but we still proxy it through the backend to avoid exposing upload logic in the frontend.
+        const uploadPreset = process.env.VITE_CLOUDINARY_UPLOAD_PRESET || process.env.CLOUDINARY_UPLOAD_PRESET || 'matchdistrict_default';
 
         const cloudinaryParams = new URLSearchParams();
         cloudinaryParams.append('file', data.file);
-        cloudinaryParams.append('api_key', CLOUDINARY_API_KEY);
-        cloudinaryParams.append('timestamp', timestamp);
-        cloudinaryParams.append('signature', signature);
+        cloudinaryParams.append('upload_preset', uploadPreset);
 
         const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
