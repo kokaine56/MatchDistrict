@@ -25,6 +25,7 @@ const Profile         = lazy(() => import('./pages/Profile.jsx'))
 const AdminDashboard  = lazy(() => import('./pages/AdminDashboard.jsx'))
 const AdminPayments   = lazy(() => import('./pages/AdminPayments.jsx'))
 const AdminSponsorships = lazy(() => import('./pages/AdminSponsorships.jsx'))
+const AdminSystemHealth = lazy(() => import('./pages/AdminSystemHealth.jsx'))
 const Auth            = lazy(() => import('./pages/Auth.jsx'))
 const BecomeOrganizer = lazy(() => import('./pages/BecomeOrganizer.jsx'))
 const ExploreOrganisers = lazy(() => import('./pages/ExploreOrganisers.jsx'))
@@ -500,6 +501,12 @@ function AppInner() {
                 <Route path="/admin/sponsorships" element={
                   <PageTransition>
                     <AdminSponsorships />
+                  </PageTransition>
+                } />
+
+                <Route path="/admin/system-health" element={
+                  <PageTransition>
+                    <AdminSystemHealth />
                   </PageTransition>
                 } />
 

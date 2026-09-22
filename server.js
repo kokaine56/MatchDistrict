@@ -831,6 +831,77 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_leaderboard tables:', lbErr.message);
     }
 
+    // --- CREATE MONITORING AND SECURITY TABLES ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS system_services (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          slug VARCHAR(100) UNIQUE NOT NULL,
+          type VARCHAR(50) NOT NULL,
+          description TEXT,
+          enabled BOOLEAN DEFAULT true,
+          criticality VARCHAR(20) DEFAULT 'normal',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS service_health_checks (
+          id SERIAL PRIMARY KEY,
+          service_id VARCHAR(50) NOT NULL REFERENCES system_services(id) ON DELETE CASCADE,
+          status VARCHAR(20) NOT NULL,
+          response_time_ms INTEGER,
+          status_code INTEGER,
+          error_message TEXT,
+          checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS system_incidents (
+          id VARCHAR(50) PRIMARY KEY,
+          service_id VARCHAR(50) NOT NULL REFERENCES system_services(id) ON DELETE CASCADE,
+          started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          resolved_at TIMESTAMP,
+          duration_seconds INTEGER,
+          severity VARCHAR(20) NOT NULL,
+          reason TEXT,
+          status VARCHAR(20) DEFAULT 'active'
+        );
+
+        CREATE TABLE IF NOT EXISTS security_findings (
+          id VARCHAR(50) PRIMARY KEY,
+          type VARCHAR(50) NOT NULL,
+          severity VARCHAR(20) NOT NULL,
+          service VARCHAR(100),
+          description TEXT,
+          detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          resolved_at TIMESTAMP,
+          status VARCHAR(20) DEFAULT 'open',
+          fingerprint TEXT UNIQUE
+        );
+
+        CREATE TABLE IF NOT EXISTS monitoring_settings (
+          key VARCHAR(100) PRIMARY KEY,
+          value TEXT,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_health_checks_service ON service_health_checks(service_id, checked_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_system_incidents_status ON system_incidents(status);
+        CREATE INDEX IF NOT EXISTS idx_security_findings_status ON security_findings(status);
+      `);
+
+      // Seed initial critical services
+      await client.query(`
+        INSERT INTO system_services (id, name, slug, type, criticality, description) VALUES
+        ('srv_api', 'Match District API', 'api', 'internal', 'critical', 'Core internal REST API'),
+        ('srv_db', 'PostgreSQL Database', 'database', 'internal', 'critical', 'Main Supabase database connection'),
+        ('srv_supabase', 'Supabase Realtime & Auth', 'supabase', 'third_party', 'high', 'External Supabase REST & WebSocket endpoints'),
+        ('srv_cloudinary', 'Cloudinary Media Storage', 'cloudinary', 'third_party', 'normal', 'External media storage API')
+        ON CONFLICT (slug) DO NOTHING;
+      `);
+      console.log('📦 [MATCH DISTRICT DB] System Monitoring tables initialized.');
+    } catch (monErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create monitoring tables:', monErr.message);
+    }
     // --- ENABLE REALTIME REPLICATION ---
     try {
       await client.query(`
@@ -5311,6 +5382,219 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- ADMIN: System Monitoring Endpoints ---
+  if (req.url === '/api/admin/monitoring/overview' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+
+      // Fetch all services
+      const servicesRes = await pool.query('SELECT * FROM system_services ORDER BY name ASC');
+      
+      // Fetch active incidents
+      const incidentsRes = await pool.query(`
+        SELECT i.*, s.name as service_name 
+        FROM system_incidents i 
+        JOIN system_services s ON i.service_id = s.id 
+        WHERE i.status = 'active'
+        ORDER BY i.started_at DESC
+      `);
+
+      // For each service, calculate 24h, 7d, 30d uptime and get latest latency
+      const services = await Promise.all(servicesRes.rows.map(async (srv) => {
+        const stats = await pool.query(`
+          SELECT 
+            COUNT(*) as total_checks,
+            SUM(CASE WHEN status = 'healthy' THEN 1 ELSE 0 END) as successful_checks,
+            MAX(response_time_ms) as max_latency,
+            AVG(response_time_ms) as avg_latency
+          FROM service_health_checks
+          WHERE service_id = $1 AND checked_at >= NOW() - INTERVAL '30 days'
+        `, [srv.id]);
+
+        const latest = await pool.query(`
+          SELECT status, response_time_ms, checked_at 
+          FROM service_health_checks 
+          WHERE service_id = $1 
+          ORDER BY checked_at DESC LIMIT 1
+        `, [srv.id]);
+
+        const total = parseInt(stats.rows[0].total_checks || '0', 10);
+        const success = parseInt(stats.rows[0].successful_checks || '0', 10);
+        const uptime30d = total > 0 ? ((success / total) * 100).toFixed(2) : 100;
+
+        return {
+          ...srv,
+          status: latest.rows.length > 0 ? latest.rows[0].status : 'unknown',
+          latency: latest.rows.length > 0 ? latest.rows[0].response_time_ms : null,
+          last_checked: latest.rows.length > 0 ? latest.rows[0].checked_at : null,
+          uptime_30d: parseFloat(uptime30d)
+        };
+      }));
+
+      // Calculate global uptime (average of all 30d uptimes)
+      const globalUptime = services.length > 0 
+        ? (services.reduce((acc, s) => acc + s.uptime_30d, 0) / services.length).toFixed(2) 
+        : 100;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true, 
+        services, 
+        incidents: incidentsRes.rows,
+        global_uptime: parseFloat(globalUptime)
+      }));
+    } catch (err) {
+      console.error('[Monitoring] Overview Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/admin/monitoring/history' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+
+      const checksRes = await pool.query(`
+        SELECT service_id, status, response_time_ms, checked_at 
+        FROM service_health_checks 
+        WHERE checked_at >= NOW() - INTERVAL '24 hours'
+        ORDER BY checked_at ASC
+      `);
+
+      // Group by service_id
+      const history = {};
+      checksRes.rows.forEach(row => {
+        if (!history[row.service_id]) history[row.service_id] = [];
+        history[row.service_id].push({
+          time: row.checked_at,
+          latency: row.response_time_ms,
+          status: row.status
+        });
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, history }));
+    } catch (err) {
+      console.error('[Monitoring] History Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/admin/monitoring/security' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+      const findings = await pool.query('SELECT * FROM security_findings ORDER BY detected_at DESC');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, findings: findings.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/admin/monitoring/security/scan' && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        return;
+      }
+
+      // Rate limit security scan
+      const deviceKey = 'scan_' + (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown');
+      const rl = checkRateLimit(deviceKey);
+      if (!rl.allowed) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': rl.retryAfter });
+        res.end(JSON.stringify({ success: false, error: 'Too many requests, try again later' }));
+        return;
+      }
+
+      const findings = [];
+      
+      // 1. Check for exposed secrets in the environment
+      if (process.env.ADMIN_PASSWORD === '101010' || !process.env.ADMIN_PASSWORD) {
+        findings.push({ type: 'weak_config', severity: 'critical', service: 'authentication', description: 'Admin password is set to default or missing.' });
+      }
+      if (process.env.JWT_SECRET === 'matchdistrict_super_secure_jwt_secret_key_2026') {
+        findings.push({ type: 'weak_config', severity: 'critical', service: 'authentication', description: 'JWT Secret is set to insecure default.' });
+      }
+      
+      // 2. Scan frontend bundle (dist/assets/*.js) for sensitive strings (safely)
+      const fs = await import('fs');
+      const path = await import('path');
+      const distAssetsPath = path.join(process.cwd(), 'dist', 'assets');
+      
+      if (fs.existsSync(distAssetsPath)) {
+        const files = fs.readdirSync(distAssetsPath).filter(f => f.endsWith('.js'));
+        const secretsToHunt = [
+          { name: 'SUPABASE_SERVICE_ROLE_KEY', val: process.env.SUPABASE_SERVICE_ROLE_KEY },
+          { name: 'CLOUDINARY_API_SECRET', val: process.env.CLOUDINARY_API_SECRET },
+          { name: 'DATABASE_URL', val: process.env.DATABASE_URL },
+          { name: 'JWT_SECRET', val: process.env.JWT_SECRET }
+        ].filter(s => s.val && s.val.length > 5); // Only hunt if secret is substantial
+
+        for (const file of files) {
+          const content = fs.readFileSync(path.join(distAssetsPath, file), 'utf-8');
+          for (const secret of secretsToHunt) {
+            if (content.includes(secret.val)) {
+               findings.push({ 
+                 type: 'credential_leak', 
+                 severity: 'critical', 
+                 service: 'frontend_bundle', 
+                 description: `Potential server-side credential (${secret.name}) exposed in client bundle: ${file}` 
+               });
+            }
+          }
+        }
+      }
+
+      // Save findings to DB
+      for (const finding of findings) {
+        const fingerprint = crypto.createHash('sha1').update(`${finding.type}-${finding.description}`).digest('hex');
+        await pool.query(`
+          INSERT INTO security_findings (id, type, severity, service, description, fingerprint) 
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (fingerprint) DO UPDATE SET detected_at = CURRENT_TIMESTAMP, status = 'open'
+        `, [`SEC-${Date.now()}-${Math.floor(Math.random()*1000)}`, finding.type, finding.severity, finding.service, finding.description, fingerprint]);
+      }
+
+      // Audit Log
+      await pool.query(
+        `INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details) 
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        ['LOG-' + Date.now(), authUser.id, 'security_scan', 'system', 'monitoring', JSON.stringify({ findings: findings.length })]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Scan complete', findingCount: findings.length }));
+    } catch (err) {
+      console.error('[Monitoring] Security Scan Error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
     }
     return;
   }
@@ -12675,12 +12959,105 @@ function startAutomationProcessor() {
   }, 60000);
 }
 
+// ── SYSTEM HEALTH MONITORING WORKER ─────
+function startMonitoringWorker() {
+  const intervalSeconds = parseInt(process.env.MONITORING_INTERVAL_SECONDS || '300', 10);
+  console.log(`🛡️ System monitoring started (interval: ${intervalSeconds}s)`);
+  
+  setInterval(async () => {
+    try {
+      const services = await pool.query('SELECT * FROM system_services WHERE enabled = true');
+      for (const srv of services.rows) {
+        const start = Date.now();
+        let isHealthy = false;
+        let errorMessage = null;
+        let statusCode = null;
+        
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+          if (srv.slug === 'api') {
+             const res = await fetch(`http://127.0.0.1:${PORT}/api/health`, { 
+               signal: controller.signal, 
+               redirect: 'manual' 
+             });
+             statusCode = res.status;
+             isHealthy = res.ok;
+          } else if (srv.slug === 'database') {
+             const res = await pool.query('SELECT 1 as ok');
+             isHealthy = res.rows.length > 0;
+             statusCode = 200;
+          } else if (srv.slug === 'supabase') {
+             const res = await fetch(`${SUPABASE_URL}/rest/v1/`, { 
+               headers: { apikey: SUPABASE_ANON_KEY },
+               signal: controller.signal,
+               redirect: 'manual'
+             });
+             statusCode = res.status;
+             isHealthy = res.ok;
+          } else if (srv.slug === 'cloudinary') {
+             if (CLOUDINARY_CLOUD_NAME) {
+               const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/ping`, {
+                 signal: controller.signal,
+                 redirect: 'manual'
+               });
+               statusCode = res.status;
+               isHealthy = res.ok || res.status === 401; 
+             } else {
+               isHealthy = false;
+               errorMessage = 'Missing CLOUDINARY_CLOUD_NAME';
+             }
+          }
+          clearTimeout(timeoutId);
+        } catch (err) {
+          isHealthy = false;
+          errorMessage = err.message;
+        }
+
+        const duration = Date.now() - start;
+        const statusStr = isHealthy ? 'healthy' : 'down';
+        
+        await pool.query(
+          `INSERT INTO service_health_checks (service_id, status, response_time_ms, status_code, error_message)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [srv.id, statusStr, duration, statusCode, errorMessage]
+        );
+
+        const recentFailures = await pool.query(
+          `SELECT status FROM service_health_checks WHERE service_id = $1 ORDER BY checked_at DESC LIMIT 3`,
+          [srv.id]
+        );
+        const consecutiveFails = recentFailures.rows.filter(r => r.status === 'down').length;
+
+        if (consecutiveFails >= 3) {
+          await pool.query(
+            `INSERT INTO system_incidents (id, service_id, severity, reason, status) 
+             VALUES ($1, $2, $3, $4, 'active') 
+             ON CONFLICT DO NOTHING`,
+            [`INC-${srv.id}-${Date.now()}`, srv.id, srv.criticality === 'critical' ? 'critical' : 'warning', errorMessage || 'Service unavailable']
+          );
+        } else if (isHealthy) {
+          await pool.query(
+            `UPDATE system_incidents 
+             SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, duration_seconds = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - started_at))
+             WHERE service_id = $1 AND status = 'active'`,
+            [srv.id]
+          );
+        }
+      }
+    } catch (err) {
+      console.error('Monitoring worker error:', err.message);
+    }
+  }, intervalSeconds * 1000);
+}
+
 (async () => {
   await initDb();
   startSlotManagerWorker(pool);
   startAutomationProcessor();
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 [MATCH DISTRICT PRODUCTION SERVER] Running on http://localhost:${PORT}`);
+  startMonitoringWorker();
+  server.listen(PORT, '0.0.0.0', () => {    console.log(`\n🚀 [MATCH DISTRICT PRODUCTION SERVER] Running on http://localhost:${PORT}`);
     console.log(`🌐 Network: http://127.0.0.1:${PORT} (listening on all interfaces 0.0.0.0)`);
     console.log(`📦 Serving static frontend from ./dist`);
     console.log(`🔑 API Endpoints active (OTP, JWT Auth, Supabase DB)\n`);
