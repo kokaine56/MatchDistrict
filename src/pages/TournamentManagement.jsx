@@ -6,6 +6,10 @@ import { getAuthToken } from '../utils/getAuthToken'
 import { normalizeTournamentRow } from '../utils/api'
 import { hasOrganizerRights } from '../utils/iamRoles.js'
 import { formatDate } from '../utils/timeFormat'
+import TournamentPlanningConfigEditor from '../components/TournamentPlanningConfigEditor'
+import TournamentPlanningResultCard from '../components/TournamentPlanningResultCard'
+import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder'
+import AllocationManagement from '../components/AllocationManagement'
 
 const TABS = ['All Tournaments', 'Drafts', 'Published', 'Completed', 'Archived']
 
@@ -90,6 +94,10 @@ export default function TournamentManagement({ onNavigate }) {
   const [registrationData, setRegistrationData] = useState([])
   const [registrationLoading, setRegistrationLoading] = useState(false)
   const [regActionLoading, setRegActionLoading] = useState(null)
+  const [planningConfigTournament, setPlanningConfigTournament] = useState(null)
+  const [planningResultTournament, setPlanningResultTournament] = useState(null)
+  const [roadmapTournament, setRoadmapTournament] = useState(null)
+  const [allocationTournament, setAllocationTournament] = useState(null)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -278,6 +286,9 @@ export default function TournamentManagement({ onNavigate }) {
           setAnalyticsTournament(t)
           fetchAnalytics(t.id)
           break
+        case 'allocations':
+          setAllocationTournament(t)
+          break
         case 'review-registrations':
           setActiveTournament(t)
           fetchRegistrations(t.id)
@@ -306,6 +317,15 @@ export default function TournamentManagement({ onNavigate }) {
           else showToast(json.message || 'Failed to hide rounds', 'error')
           break
         }
+        case 'planning-config':
+          setPlanningConfigTournament(t)
+          break
+        case 'planning-result':
+          setPlanningResultTournament(t)
+          break
+        case 'roadmap':
+          setRoadmapTournament(t)
+          break
       }
     } catch (err) {
       showToast('Action failed: ' + err.message, 'error')
@@ -581,6 +601,14 @@ export default function TournamentManagement({ onNavigate }) {
                                           <MenuButton icon="eyeOff" label="Hide Rounds" onClick={() => { setMenuOpenId(null); handleAction('hide-rounds', t) }} />
                                         )}
                                         <MenuButton icon="duplicate" label="Duplicate" onClick={() => { setMenuOpenId(null); handleAction('duplicate', t) }} />
+                                        {t.status !== 'archived' && t.status !== 'completed' && (
+                                          <>
+                                            <MenuButton icon="calendar" label="Configure Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
+                                            <MenuButton icon="clipboard" label="View Planning Result" onClick={() => { setMenuOpenId(null); handleAction('planning-result', t) }} />
+                                            <MenuButton icon="map" label="View Roadmap" onClick={() => { setMenuOpenId(null); handleAction('roadmap', t) }} />
+                                            <MenuButton icon="calendar" label="Allocation Management" onClick={() => { setMenuOpenId(null); handleAction('allocations', t) }} />
+                                          </>
+                                        )}
                                         {!t.isDraft && t.status !== 'archived' && <MenuButton icon="archive" label="Archive" onClick={() => { setMenuOpenId(null); handleAction('archive', t) }} />}
                                         <MenuButton icon="trash" label="Delete" onClick={() => { setMenuOpenId(null); handleAction('delete', t) }} danger />
                                       </div>
@@ -672,9 +700,87 @@ export default function TournamentManagement({ onNavigate }) {
         )}
       </AnimatePresence>
 
+      {/* Planning Config Editor Modal */}
+      <AnimatePresence>
+        {planningConfigTournament && (
+          <TournamentPlanningConfigEditor
+            tournamentId={planningConfigTournament.id}
+            tournamentTitle={planningConfigTournament.title}
+            onClose={() => setPlanningConfigTournament(null)}
+            onSaved={() => {
+              showToast('Planning configuration saved successfully.')
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Planning Result Card Modal */}
+      <AnimatePresence>
+        {planningResultTournament && (
+          <TournamentPlanningResultCard
+            tournamentId={planningResultTournament.id}
+            tournamentTitle={planningResultTournament.title}
+            onClose={() => setPlanningResultTournament(null)}
+            onRegenerate={() => {
+              showToast('Capacity plan regenerated successfully.')
+            }}
+            onApproved={() => {
+              showToast('Capacity plan approved successfully.')
+              fetchTournaments() // optionally refresh
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+    {/* Roadmap Builder Modal */}
+      <AnimatePresence>
+        {roadmapTournament && (
+          <TournamentRoadmapBuilder
+            tournamentId={roadmapTournament.id}
+            tournamentTitle={roadmapTournament.title}
+            onClose={() => setRoadmapTournament(null)}
+            onApproved={() => {
+              showToast('Roadmap approved successfully.')
+              fetchTournaments()
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Allocation Management Modal */}
+      <AnimatePresence>
+        {allocationTournament && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 overflow-y-auto"
+          >
+            <div className="min-h-screen p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto flex flex-col">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl sm:text-3xl font-black text-white">Allocation Management</h2>
+                  <p className="text-gray-400 text-sm mt-1">{allocationTournament.title}</p>
+                </div>
+                <button 
+                  onClick={() => setAllocationTournament(null)} 
+                  className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-xl transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div className="flex-1 bg-[#0A0C10] rounded-2xl border border-white/10 p-4 sm:p-6 shadow-2xl">
+                <AllocationManagement tournamentId={allocationTournament.id} />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   )
 }
+
 
 // ── Registration Manager (Master-Detail Drill-Down) ────────────
 function RegistrationManager({
@@ -987,6 +1093,7 @@ function MenuButton({ icon, label, onClick, danger }) {
     clipboard: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
     play: 'M8 5v14l11-7z',
     check: 'M5 13l4 4L19 7',
+    calendar: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
   }
   return (
     <button

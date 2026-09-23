@@ -1,218 +1,168 @@
-import { useState, useEffect } from 'react';
-import { fetchJsonWithRetry } from '../utils/api.js';
+import React, { useState, useEffect } from 'react';
+import { Trophy, Medal, Target, Crown, AlertCircle } from 'lucide-react';
 
-const PAGE_SIZE = 20;
-const MOBILE_COLS = 'grid-cols-[8%_minmax(0,1fr)_11%_19%_12%_14%]';
-
-function num(value) {
-  return Number(value || 0).toLocaleString('en-IN');
-}
-
-// Display-only team name: the column is already titled "TEAM", so strip a
-// redundant leading "Team" word (e.g. "Team Genocide" → "Genocide") without
-// ever touching the stored registration data. Teams whose whole name is just
-// "Team" fall back to their original value.
-function displayTeamName(name) {
-  const raw = String(name || '').trim();
-  const stripped = raw.replace(/^team\s+/i, '').trim();
-  return stripped || raw;
-}
-
-function TrophyIcon({ isGoldTheme }) {
-  return (
-    <svg
-      className={`w-8 h-8 mx-auto ${isGoldTheme ? 'text-[#D4A017]/50' : 'text-slate-200'}`}
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M6 2h12v2h-2v1.5A7 7 0 0113 12.9V15h-2v-2.1A7 7 0 018 5.5V4H6V2zm-3 7a3 3 0 003 3h1.08A7.02 7.02 0 015 7V5H2v4zm15 3a3 3 0 003-3V5h-3v2a7.02 7.02 0 01-2.08 5.08H17a3 3 0 000-.08M13 17h-2v3H8v2h8v-2h-3v-3z" />
-    </svg>
-  );
-}
-
-export default function TournamentLeaderboard({ tournamentId, isGoldTheme, cardContainerClass }) {
+export default function TournamentLeaderboard({ tournamentId }) {
   const [standings, setStandings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!tournamentId) return;
-    fetchJsonWithRetry(`/api/tournaments/${tournamentId}/leaderboard`)
-      .then(({ ok, data }) => {
-        setLoading(false);
-        setPage(1);
-        if (ok && data?.success) {
-          setStandings(data.standings || []);
-        } else {
-          setError(data?.message || 'Leaderboard will appear once match results are added.');
-        }
-      })
-      .catch(() => {
-        setLoading(false);
-        setPage(1);
-        setError('Unable to load the leaderboard right now.');
-      });
+    fetchLeaderboard();
   }, [tournamentId]);
+
+  const fetchLeaderboard = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tournaments/${tournamentId}/leaderboard`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to load leaderboard');
+      setStandings(data.standings || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (loading) {
     return (
-      <div className={`${cardContainerClass} w-full`}>
-        <div className="space-y-2">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className={`h-8 rounded-lg animate-pulse ${isGoldTheme ? 'bg-[#EDE5D0]/60' : 'bg-slate-100'}`} />
-          ))}
-        </div>
+      <div className="flex justify-center items-center py-20 text-indigo-400 font-bold animate-pulse">
+        <Trophy className="w-8 h-8 mr-3 opacity-50" />
+        Calculating Standings...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8 text-center text-red-400 bg-red-500/10 rounded-2xl border border-red-500/20">
+        <AlertCircle className="w-10 h-10 mx-auto mb-3" />
+        <p className="font-bold">{error}</p>
       </div>
     );
   }
 
   if (standings.length === 0) {
     return (
-      <div className={`${cardContainerClass} pt-2 sm:pt-3 w-full text-center`}>
-        <div className="flex flex-col items-center justify-center gap-2.5 py-4">
-          <TrophyIcon isGoldTheme={isGoldTheme} />
-          <p className={`text-[13px] sm:text-sm font-medium ${isGoldTheme ? 'text-[#6B4D00]' : 'text-slate-500'}`}>
-            {error || 'Leaderboard will appear once match results are added.'}
-          </p>
-        </div>
+      <div className="p-12 text-center border border-dashed border-white/10 rounded-2xl bg-white/[0.02]">
+        <Trophy className="w-16 h-16 mx-auto mb-4 text-white/10" />
+        <h3 className="text-xl font-black text-gray-300 mb-2">No Results Yet</h3>
+        <p className="text-gray-500 text-sm max-w-sm mx-auto">
+          The leaderboard will update automatically once match results are verified by the organizers.
+        </p>
       </div>
     );
   }
 
-  const totalPages = Math.max(1, Math.ceil(standings.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageRows = standings.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-
-  const headerClass = `text-[10px] font-black uppercase tracking-widest ${
-    isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
-  }`;
-  const headerClassMobile = `text-[9px] font-bold uppercase whitespace-nowrap ${
-    isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-400'
-  }`;
-  const teamNameClass = `block min-w-0 w-full truncate text-[13px] font-bold ${
-    isGoldTheme ? 'text-[#1F2937]' : 'text-slate-900'
-  }`;
-  const rankNumClass = `text-[13px] font-bold tabular-nums ${
-    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'
-  }`;
-  const rankTopClass = isGoldTheme ? 'text-[#B8860B]' : 'text-amber-600';
-  const rankTextClass = `text-[11px] font-bold tabular-nums ${
-    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-700'
-  }`;
-  const statClass = `text-xs font-semibold tabular-nums whitespace-nowrap ${
-    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
-  }`;
-  const statClassMobile = `text-[12px] font-semibold tabular-nums whitespace-nowrap ${
-    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
-  }`;
-  const totalClass = isGoldTheme ? 'text-[#B8860B]' : 'text-amber-600';
-  const rowBorder = isGoldTheme ? 'border-[#D4A017]/15' : 'border-slate-100';
-  const pageBtn =
-    `h-10 min-w-[84px] px-3 rounded-lg border text-xs font-bold transition-colors disabled:cursor-not-allowed ` +
-    (isGoldTheme
-      ? 'border-[#D4A017]/30 bg-[#FAF7F0] text-[#6B4D00] hover:bg-[#F5F0E1] disabled:text-[#D4A017]/40 disabled:hover:bg-[#FAF7F0]'
-      : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:text-slate-300 disabled:hover:bg-white');
-
   return (
-    <div className={`${cardContainerClass} pt-2 sm:pt-3 w-full`}>
-
-      {/* Desktop / tablet: full-width single-line rank table */}
-      <div className="hidden md:block overflow-hidden">
-        <table className="w-full table-fixed">
-          <thead>
-            <tr className={`border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'}`}>
-              <th className={`${headerClass} text-center py-2 px-1 whitespace-nowrap w-[8%]`}>#</th>
-              <th className={`${headerClass} text-left py-2 px-3 w-[43%]`}>Team</th>
-              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[11%]`}>WWCD</th>
-              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[14%]`}>Position</th>
-              <th className={`${headerClass} text-center py-2 px-2 whitespace-nowrap w-[11%]`}>Kills</th>
-              <th className={`${headerClass} text-right py-2 px-2 whitespace-nowrap w-[13%]`}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map(row => (
-              <tr
-                key={row.team_id}
-                className={`border-b last:border-b-0 transition-colors ${rowBorder} ${
-                  isGoldTheme ? 'hover:bg-[#F5F0E1]' : 'hover:bg-slate-50'
-                }`}
-              >
-                <td className="py-2 px-1 text-center overflow-hidden">
-                  <span className={`${rankNumClass} ${row.rank === 1 ? rankTopClass : ''}`}>{row.rank}</span>
-                </td>
-                <td className="py-2 px-3 overflow-hidden">
-                  <span className={teamNameClass}>{displayTeamName(row.team_name)}</span>
-                </td>
-                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.wwcd)}</td>
-                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.placement_points)}</td>
-                <td className={`${statClass} py-2 px-2 text-center overflow-hidden`}>{num(row.kills)}</td>
-                <td className="py-2 px-2 text-right whitespace-nowrap overflow-hidden">
-                  <span className={`text-sm font-black tabular-nums ${totalClass}`}>{num(row.total_points)}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile: balanced full-width grid — # | TEAM | WWCD | POSITION | KILLS | TOTAL */}
-      <div className="md:hidden">
-        <div className={`grid ${MOBILE_COLS} items-center border-b ${isGoldTheme ? 'border-[#D4A017]/25 bg-[#F5F0E1]' : 'border-slate-200 bg-slate-50'} py-1.5`}>
-          <span className={`${headerClassMobile} text-center justify-self-stretch`}>#</span>
-          <span className={`${headerClassMobile} text-left truncate`}>Team</span>
-          <span className={`${headerClassMobile} text-center`}>WWCD</span>
-          <span className={`${headerClassMobile} text-center`}>Position</span>
-          <span className={`${headerClassMobile} text-center`}>Kills</span>
-          <span className={`${headerClassMobile} text-right pr-0.5`}>Total</span>
-        </div>
-        {pageRows.map(row => (
-          <div
-            key={row.team_id}
-            className={`grid ${MOBILE_COLS} items-center py-[7px] border-b last:border-b-0 ${rowBorder}`}
-          >
-            <span className={`text-center ${rankTextClass} ${row.rank === 1 ? rankTopClass : ''}`}>{row.rank}</span>
-            <span className={teamNameClass}>{displayTeamName(row.team_name)}</span>
-            <span className={`${statClassMobile} text-center`}>{num(row.wwcd)}</span>
-            <span className={`${statClassMobile} text-center`}>{num(row.placement_points)}</span>
-            <span className={`${statClassMobile} text-center`}>{num(row.kills)}</span>
-            <span className={`${statClassMobile} font-black text-right pr-0.5 ${totalClass}`}>{num(row.total_points)}</span>
+    <div className="space-y-6">
+      
+      {/* Top 3 Podium (Desktop) */}
+      <div className="hidden md:flex justify-center items-end gap-6 h-64 mb-10 mt-12">
+        {/* Rank 2 */}
+        {standings[1] && (
+          <div className="w-48 bg-gradient-to-t from-gray-300/20 to-gray-300/5 rounded-t-xl border border-b-0 border-gray-300/30 flex flex-col items-center justify-start p-4 relative" style={{ height: '80%' }}>
+            <div className="absolute -top-12 bg-[#0A0C10] p-2 rounded-full border border-gray-300/30 shadow-[0_0_20px_rgba(209,213,219,0.1)]">
+              <Medal className="w-10 h-10 text-gray-300" />
+            </div>
+            <div className="mt-8 text-center">
+              <div className="font-black text-gray-100 text-lg truncate w-40">{standings[1].team_name}</div>
+              <div className="text-sm font-bold text-gray-400">{standings[1].total_points} PTS</div>
+            </div>
           </div>
-        ))}
+        )}
+        
+        {/* Rank 1 */}
+        {standings[0] && (
+          <div className="w-56 bg-gradient-to-t from-yellow-400/20 to-yellow-400/5 rounded-t-xl border border-b-0 border-yellow-400/40 flex flex-col items-center justify-start p-4 relative shadow-[0_-10px_30px_rgba(250,204,21,0.1)]" style={{ height: '100%' }}>
+            <div className="absolute -top-14 bg-[#0A0C10] p-3 rounded-full border border-yellow-400/50 shadow-[0_0_30px_rgba(250,204,21,0.3)]">
+              <Crown className="w-12 h-12 text-yellow-400 drop-shadow-[0_0_10px_rgba(250,204,21,0.5)]" />
+            </div>
+            <div className="mt-10 text-center">
+              <div className="font-black text-yellow-400 text-xl truncate w-48">{standings[0].team_name}</div>
+              <div className="text-md font-black text-yellow-500 mt-1">{standings[0].total_points} PTS</div>
+              <div className="text-xs text-yellow-400/60 font-bold mt-2 uppercase tracking-widest">{standings[0].total_kills} Kills &bull; {standings[0].wwcd_count} WWCD</div>
+            </div>
+          </div>
+        )}
+        
+        {/* Rank 3 */}
+        {standings[2] && (
+          <div className="w-48 bg-gradient-to-t from-amber-600/20 to-amber-600/5 rounded-t-xl border border-b-0 border-amber-600/30 flex flex-col items-center justify-start p-4 relative" style={{ height: '70%' }}>
+            <div className="absolute -top-12 bg-[#0A0C10] p-2 rounded-full border border-amber-600/30 shadow-[0_0_20px_rgba(217,119,6,0.1)]">
+              <Medal className="w-10 h-10 text-amber-600" />
+            </div>
+            <div className="mt-8 text-center">
+              <div className="font-black text-gray-100 text-lg truncate w-40">{standings[2].team_name}</div>
+              <div className="text-sm font-bold text-gray-400">{standings[2].total_points} PTS</div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Pagination — client-side, 20 per page, no reload */}
-      {totalPages > 1 && (
-        <nav
-          aria-label="Leaderboard pagination"
-          className="mt-3 flex items-center justify-center gap-2.5"
-        >
-          {currentPage > 1 && (
-            <button
-              type="button"
-              onClick={() => setPage(p => p - 1)}
-              aria-label="Previous page"
-              className={pageBtn}
-            >
-              ← Previous
-            </button>
-          )}
-          <span className={`text-[11px] font-semibold tabular-nums ${isGoldTheme ? 'text-[#8A6A14]' : 'text-slate-500'}`}>
-            Page {currentPage} of {totalPages}
-          </span>
-          {currentPage < totalPages && (
-            <button
-              type="button"
-              onClick={() => setPage(p => p + 1)}
-              aria-label="Next page"
-              className={pageBtn}
-            >
-              Next →
-            </button>
-          )}
-        </nav>
-      )}
+      {/* Leaderboard Table */}
+      <div className="bg-[#0A0C10] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse whitespace-nowrap">
+            <thead>
+              <tr className="bg-black/40 text-gray-400 text-xs uppercase tracking-wider">
+                <th className="px-6 py-4 font-bold text-center w-16">Rank</th>
+                <th className="px-6 py-4 font-bold">Team</th>
+                <th className="px-6 py-4 font-bold text-center">Played</th>
+                <th className="px-6 py-4 font-bold text-center">Place Pts</th>
+                <th className="px-6 py-4 font-bold text-center">Kill Pts</th>
+                <th className="px-6 py-4 font-bold text-center">Total Kills</th>
+                <th className="px-6 py-4 font-bold text-center">WWCD</th>
+                <th className="px-6 py-4 font-black text-right text-white">Total Pts</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 text-sm font-medium">
+              {standings.map((team, idx) => (
+                <tr 
+                  key={team.team_id} 
+                  className={`hover:bg-white/[0.02] transition-colors ${
+                    idx === 0 ? 'bg-yellow-400/[0.02] border-l-2 border-l-yellow-400' : 
+                    idx === 1 ? 'bg-gray-300/[0.02] border-l-2 border-l-gray-300' :
+                    idx === 2 ? 'bg-amber-600/[0.02] border-l-2 border-l-amber-600' : ''
+                  }`}
+                >
+                  <td className="px-6 py-4 text-center">
+                    {idx === 0 ? <Crown className="w-5 h-5 text-yellow-400 mx-auto" /> :
+                     idx === 1 ? <Medal className="w-5 h-5 text-gray-300 mx-auto" /> :
+                     idx === 2 ? <Medal className="w-5 h-5 text-amber-600 mx-auto" /> :
+                     <span className="text-gray-500 font-bold">#{team.rank}</span>}
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="font-black text-white">{team.team_name}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">LDR: {team.leader_name}</div>
+                  </td>
+                  <td className="px-6 py-4 text-center text-gray-400">{team.matches_played}</td>
+                  <td className="px-6 py-4 text-center text-gray-400">{team.total_placement_points}</td>
+                  <td className="px-6 py-4 text-center text-gray-400">{team.total_kill_points}</td>
+                  <td className="px-6 py-4 text-center">
+                    <div className="flex items-center justify-center gap-1 text-red-400/80">
+                      <Target className="w-3.5 h-3.5" />
+                      {team.total_kills}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    {team.wwcd_count > 0 ? (
+                      <span className="bg-yellow-400/10 text-yellow-400 border border-yellow-400/20 px-2 py-0.5 rounded font-bold text-xs">
+                        {team.wwcd_count}
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">-</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <span className="text-lg font-black text-indigo-400">{team.total_points}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

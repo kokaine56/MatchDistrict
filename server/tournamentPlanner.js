@@ -1,0 +1,418 @@
+﻿// server/tournamentPlanner.js
+// Automatic roadmap planning engine (Phase 2.5 / 2026-09-24).
+//
+// Given a tournament, its planning configuration (tournament_planning_config)
+// and its Round/Stage rows (server/roundsService.js syncTournamentRounds), this
+// module computes a deterministic scheduling PROPOSAL — rooms, groups/batches,
+// simultaneous rooms, match time slots, required days and per-round progression.
+//
+// Guarantees:
+//   - Room capacity is the tournament-configured teams_per_room (never the game
+//     roster maximum).
+//   - required_rooms = CEILING(teams_entering_round / teams_per_room), computed
+//     independently per round (Round 1 enters maximum_teams; later rounds enter
+//     the previous round's teams_advancing when it is a positive value below the
+//     previous entering count, otherwise teams carry forward with a warning).
+//   - max_simultaneous_rooms is a scheduled constraint: rooms on a day are split
+//     into ceil(rooms / max_sim) concurrent batches (groups). Match slots are
+//     interleaved across batches exactly like the structural generator so a
+//     proposal can be materialized 1:1 without drift.
+//   - Every match starts and finishes inside the daily start/end window; the
+//     corrected window math guarantees no last-session overflow (a group can only
+//     exist if matches_per_team * groups <= sequential slots available).
+//   - Spills to the next tournament day when the window is exhausted, and rounds
+//     are scheduled sequentially (round N cannot start before round N-1
+//     completes; an optional configured round date may push a round later but
+//     never earlier).
+//   - Everything is pure and deterministic given the same inputs — no randomness,
+//     no database writes, no team allocation, no structural records.
+//
+// This is a PROPOSAL only. Nothing here writes a roadmap or allocates rooms;
+// approving the plan and materializing the roadmap are explicit later steps.
+
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function toMins(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function toTime(mins) {
+  return `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
+}
+
+// Naive 'YYYY-MM-DD' helpers. Avoiding Date-local-time arithmetic prevents
+// timezone drift when a day is moved forward (same convention as roomReveal).
+function toIsoDate(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  const d = new Date(value);
+  if (!isNaN(d.getTime())) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  return null;
+}
+
+function addDaysNaive(dateStr, days) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const base = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+  base.setUTCDate(base.getUTCDate() + days);
+  return `${base.getUTCFullYear()}-${pad2(base.getUTCMonth() + 1)}-${pad2(base.getUTCDate())}`;
+}
+
+function utcDayDiff(from, to) {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+function round1(value) {
+  return Math.round(value * 10) / 10;
+}
+
+// Normalize planner round descriptors. Same shape as normalizeRounds in the
+// generator but ids are DETERMINISTIC (RND-<zero-padded round_number>) when a
+// round does not already carry a stable id, so plan generation and roadmap
+// generation agree even without a database.
+function normalizePlannerRounds(rounds) {
+  const list = Array.isArray(rounds) ? rounds.slice() : [];
+  if (list.length === 0) {
+    list.push({ round_number: 1, name: 'Round 1' });
+  }
+  return list
+    .map((r, idx) => {
+      const parsed = parseInt(r.round_number != null ? r.round_number : idx + 1, 10);
+      const roundNumber = Number.isFinite(parsed) && parsed >= 1 ? parsed : idx + 1;
+      const teamsAdvancing = parseInt(r.teams_advancing, 10);
+      return {
+        id: (r.id && String(r.id)) || `RND-${pad2(roundNumber)}`,
+        round_number: roundNumber,
+        name: (r.name && String(r.name)) || `Round ${roundNumber}`,
+        date: r.date ? String(r.date).trim() : null,
+        time: r.time ? String(r.time).trim() : null,
+        teams_advancing: Number.isFinite(teamsAdvancing) && teamsAdvancing > 0 ? teamsAdvancing : null
+      };
+    })
+    .sort((a, b) => a.round_number - b.round_number);
+}
+
+export function calculateTournamentPlan(config, tournament, rounds) {
+  const errors = [];
+
+  if (!config) {
+    return { ok: false, errors: ['Missing tournament planning configuration.'] };
+  }
+
+  const expectedTeams = parseInt(config.expected_teams, 10);
+  const maxTeams = parseInt(config.maximum_teams, 10);
+  const teamsPerRoom = parseInt(config.teams_per_room, 10);
+  const maxSimultaneousRooms = parseInt(config.max_simultaneous_rooms, 10);
+  const matchesPerTeam = parseInt(config.matches_per_team, 10);
+  const matchDurationMins = parseInt(config.match_duration_minutes, 10);
+  const breakMins = parseInt(config.break_between_matches_minutes, 10);
+
+  if (isNaN(maxTeams) || maxTeams <= 0) errors.push('Maximum teams must be greater than zero.');
+  if (isNaN(teamsPerRoom) || teamsPerRoom <= 0) errors.push('Teams per room must be greater than zero.');
+  if (isNaN(maxSimultaneousRooms) || maxSimultaneousRooms <= 0) errors.push('Maximum simultaneous rooms must be greater than zero.');
+  if (isNaN(matchesPerTeam) || matchesPerTeam <= 0) errors.push('Matches per team must be greater than zero.');
+  if (isNaN(matchDurationMins) || matchDurationMins <= 0) errors.push('Match duration must be greater than zero.');
+  if (isNaN(breakMins) || breakMins < 0) errors.push('Break duration cannot be negative.');
+
+  if (!config.daily_start_time || !TIME_RE.test(config.daily_start_time)) errors.push('Invalid daily start time.');
+  if (!config.daily_end_time || !TIME_RE.test(config.daily_end_time)) errors.push('Invalid daily end time.');
+
+  if (errors.length > 0) return { ok: false, errors };
+
+  const startMins = toMins(config.daily_start_time);
+  const endMins = toMins(config.daily_end_time);
+
+  if (endMins <= startMins) {
+    return { ok: false, errors: ['Daily end time must be later than start time.'] };
+  }
+
+  const dailyOperatingMinutes = endMins - startMins;
+  const matchSlotMinutes = matchDurationMins + breakMins;
+  const sequentialSlotsPerRoom = Math.floor((dailyOperatingMinutes + breakMins) / matchSlotMinutes);
+
+  if (matchDurationMins > dailyOperatingMinutes) {
+    return { ok: false, errors: ['The match duration exceeds the daily operating window.'] };
+  }
+  if (sequentialSlotsPerRoom <= 0) {
+    return { ok: false, errors: ['The daily operating window is too short for even a single match.'] };
+  }
+
+  // Number of concurrent room batches (groups) the daily window can host
+  // sequentially. Each group's rooms play matchesPerTeam matches, one batch-slot
+  // each, so matches_per_team * groups must fit inside the available slots.
+  // This is the TRUE window constraint (fixes the latent overflow where the old
+  // session-based capacity could schedule a match ending past daily_end_time).
+  const groupsPerDay = Math.floor(sequentialSlotsPerRoom / matchesPerTeam);
+  if (groupsPerDay < 1) {
+    return { ok: false, errors: ['The daily operating window is too short to schedule the configured matches per team.'] };
+  }
+
+  const dailyRoomsCapacity = groupsPerDay * maxSimultaneousRooms;
+  const calculatedDailyCapacity = dailyRoomsCapacity * matchesPerTeam;
+
+  const configuredMaxPerDay = (config.max_matches_per_day !== undefined && config.max_matches_per_day !== null && String(config.max_matches_per_day).trim() !== '')
+    ? parseInt(config.max_matches_per_day, 10)
+    : null;
+
+  let effectiveDailyCapacity = calculatedDailyCapacity;
+  if (configuredMaxPerDay !== null && !isNaN(configuredMaxPerDay) && configuredMaxPerDay > 0) {
+    effectiveDailyCapacity = Math.min(effectiveDailyCapacity, configuredMaxPerDay);
+  }
+
+  if (effectiveDailyCapacity <= 0) {
+    return { ok: false, errors: ['Effective daily capacity is zero or negative.'] };
+  }
+
+  const effectiveDailyRoomCapacity = Math.floor(effectiveDailyCapacity / matchesPerTeam);
+  if (effectiveDailyRoomCapacity <= 0) {
+    return { ok: false, errors: ['Daily capacity is too low to support even a single room playing all its matches.'] };
+  }
+
+  const warnings = [];
+  const summary = [];
+
+  // Base schedule date: tournament.startDate, else first round's configured
+  // date, else today. Registration close is deliberately independent of the
+  // roadmap window — the tournament start is what anchors the schedule.
+  let baseDate = null;
+  if (tournament && tournament.startDate) baseDate = toIsoDate(tournament.startDate);
+
+  const plannerRounds = normalizePlannerRounds(rounds);
+  if (!baseDate && plannerRounds[0] && plannerRounds[0].date) baseDate = toIsoDate(plannerRounds[0].date);
+  if (!baseDate) baseDate = toIsoDate(new Date());
+
+  let cursorDate = baseDate;
+  let prevEntering = maxTeams;
+  let globalRoomNumber = 1;
+  let orderError = null;
+
+  const roundPlans = [];
+  const scheduleDays = [];
+  const dailyPlan = [];
+
+  for (let rIdx = 0; rIdx < plannerRounds.length; rIdx++) {
+    const round = plannerRounds[rIdx];
+    const roundNumber = round.round_number;
+    const roundName = round.name;
+
+    // Entering teams for this round.
+    let enteringTeams;
+    let carryForward = false;
+    if (rIdx === 0) {
+      enteringTeams = maxTeams;
+    } else {
+      const prev = plannerRounds[rIdx - 1];
+      const adv = prev.teams_advancing;
+      if (adv != null && adv > 0 && adv < prevEntering) {
+        enteringTeams = adv;
+      } else {
+        enteringTeams = prevEntering;
+        carryForward = true;
+        const reason = (adv == null || adv <= 0)
+          ? `Round ${prev.round_number} has no teams_advancing value`
+          : `Round ${roundNumber} teams_advancing (${adv}) is not below the ${prevEntering} teams that entered Round ${prev.round_number}`;
+        warnings.push(`${reason}; carrying ${prevEntering} teams forward into Round ${roundNumber} (rooms recalculated).`);
+      }
+    }
+    prevEntering = enteringTeams;
+
+    const requiredRoomsRound = Math.ceil(enteringTeams / teamsPerRoom);
+    const roundTotalSessions = requiredRoomsRound * matchesPerTeam;
+
+    // Round ordering: round N cannot start before round N-1 completes. An
+    // optional configured date may only push the round later (gap warning),
+    // never earlier (hard error).
+    const earliestDate = rIdx === 0 ? baseDate : addDaysNaive(cursorDate, 1);
+    let roundStart = earliestDate;
+    if (round.date) {
+      const configuredDate = toIsoDate(round.date);
+      if (configuredDate) {
+        if (configuredDate < earliestDate) {
+          orderError = `Round ${roundNumber} is configured to start ${configuredDate}, before the previous round completes (${earliestDate}). Move it forward or remove the date.`;
+          break;
+        }
+        if (configuredDate > earliestDate) {
+          roundStart = configuredDate;
+          const gapDays = utcDayDiff(earliestDate, configuredDate);
+          if (gapDays > 0) {
+            warnings.push(`Round ${roundNumber} starts ${gapDays} day${gapDays > 1 ? 's' : ''} after the previous round completes (configured date ${configuredDate}); leave a gap of ${gapDays} day${gapDays > 1 ? 's' : ''}.`);
+          }
+        }
+      }
+    }
+
+    const daysNeeded = Math.ceil(requiredRoomsRound / effectiveDailyRoomCapacity);
+    const roundLastDay = addDaysNaive(roundStart, daysNeeded - 1);
+
+    let remainingRooms = requiredRoomsRound;
+    let roundMaxUtilization = 0;
+    for (let d = 0; d < daysNeeded; d++) {
+      const roomsOnDay = Math.min(remainingRooms, effectiveDailyRoomCapacity);
+      remainingRooms -= roomsOnDay;
+      const sessionsOnDay = roomsOnDay * matchesPerTeam;
+      const dayNumberInRound = d + 1;
+      const date = d === 0 ? roundStart : addDaysNaive(roundStart, d);
+
+      // Concurrent room batches (groups) for this day.
+      const totalBatches = Math.ceil(roomsOnDay / maxSimultaneousRooms);
+      const groups = [];
+      for (let g = 0; g < totalBatches; g++) {
+        groups.push({
+          name: `Group ${String.fromCharCode(65 + g)}`,
+          sequence: g + 1,
+          room_numbers: []
+        });
+      }
+
+      // Interleaved batch scheduling (mirrors the structural generator exactly):
+      // slotIndex = (m - 1) * totalBatches + batchIndex.
+      const dayRooms = [];
+      for (let r = 0; r < roomsOnDay; r++) {
+        const batchIndex = Math.floor(r / maxSimultaneousRooms);
+        const group = groups[batchIndex];
+        group.room_numbers.push(globalRoomNumber);
+
+        const roomMatches = [];
+        for (let m = 1; m <= matchesPerTeam; m++) {
+          const slotIndex = (m - 1) * totalBatches + batchIndex;
+          const matchStartMins = startMins + slotIndex * matchSlotMinutes;
+          const matchEndMins = matchStartMins + matchDurationMins;
+          roomMatches.push({
+            match_number: m,
+            start_time: toTime(matchStartMins),
+            end_time: toTime(matchEndMins)
+          });
+        }
+
+        dayRooms.push({
+          room_number: globalRoomNumber,
+          capacity: teamsPerRoom,
+          group_sequence: group.sequence,
+          matches: roomMatches
+        });
+        globalRoomNumber++;
+      }
+
+      const utilizationPercent = round1((sessionsOnDay / effectiveDailyCapacity) * 100);
+      if (utilizationPercent > roundMaxUtilization) roundMaxUtilization = utilizationPercent;
+
+      scheduleDays.push({
+        round_id: round.id,
+        round_number: roundNumber,
+        round_name: roundName,
+        day_number: dayNumberInRound,
+        date,
+        groups,
+        rooms: dayRooms,
+        planned_rooms: roomsOnDay,
+        planned_matches: sessionsOnDay,
+        window_capacity_matches: calculatedDailyCapacity,
+        configured_capacity_matches: effectiveDailyCapacity,
+        utilization_percent: utilizationPercent
+      });
+
+      dailyPlan.push({
+        dayNumber: scheduleDays.length,
+        date,
+        plannedRoomMatchSessions: sessionsOnDay,
+        availableRoomCapacity: effectiveDailyCapacity,
+        utilization: utilizationPercent,
+        feasible: true,
+        plannedRooms: roomsOnDay,
+        round_id: round.id,
+        round_number: roundNumber,
+        round_day_number: dayNumberInRound
+      });
+    }
+
+    if (roundMaxUtilization >= 100) {
+      warnings.push(`Round ${roundNumber} reaches ${roundMaxUtilization}% of daily capacity (last day ${roundLastDay}); consider a wider window or more simultaneous rooms.`);
+    }
+
+    const roundSummary = `${roundName} — ${enteringTeams} teams enter, ${requiredRoomsRound} room${requiredRoomsRound > 1 ? 's' : ''} required (${teamsPerRoom} teams/room), over ${daysNeeded} day${daysNeeded > 1 ? 's' : ''} (${roundStart} → ${roundLastDay}).`;
+    summary.push(roundSummary);
+
+    roundPlans.push({
+      id: round.id,
+      round_number: roundNumber,
+      name: roundName,
+      teams_entering: enteringTeams,
+      teams_advancing: round.teams_advancing,
+      carry_forward: carryForward,
+      teams_per_room: teamsPerRoom,
+      required_rooms: requiredRoomsRound,
+      total_sessions: roundTotalSessions,
+      days_needed: daysNeeded,
+      start_date: roundStart,
+      end_date: roundLastDay,
+      groups_per_day: groupsPerDay,
+      daily_room_capacity: effectiveDailyRoomCapacity,
+      summary: roundSummary
+    });
+
+    cursorDate = roundLastDay;
+  }
+
+  if (orderError) {
+    return { ok: false, errors: [orderError] };
+  }
+
+  const requiredRooms = roundPlans.reduce((s, rp) => s + rp.required_rooms, 0);
+  const totalRoomMatchSessions = roundPlans.reduce((s, rp) => s + rp.total_sessions, 0);
+  const requiredDays = scheduleDays.length;
+  const startDate = requiredDays > 0 ? scheduleDays[0].date : null;
+  const endDate = requiredDays > 0 ? scheduleDays[requiredDays - 1].date : null;
+  const simultaneousRooms = Math.min(maxSimultaneousRooms, requiredRooms);
+
+  summary.push(
+    `Automatic proposal: ${requiredRooms} total rooms across ${requiredDays} day${requiredDays > 1 ? 's' : ''} and ${plannerRounds.length} round${plannerRounds.length > 1 ? 's' : ''}, starting ${startDate} and ending ${endDate}.`
+  );
+
+  const plan = {
+    planningTeamCount: maxTeams,
+    expectedTeams: expectedTeams,
+    requiredRooms,
+    maxSimultaneousRooms,
+    simultaneousRooms,
+    teamsPerRoom,
+    matchesPerTeam,
+    totalRoomMatchSessions,
+    matchDurationMinutes: matchDurationMins,
+    breakBetweenMatchesMinutes: breakMins,
+    dailyOperatingMinutes,
+    matchSlotMinutes,
+    sequentialSlotsPerRoom,
+    groupsPerDay,
+    dailyRoomsCapacity,
+    calculatedDailyCapacity,
+    configuredMaxPerDay,
+    effectiveDailyCapacity,
+    effectiveDailyRoomCapacity,
+    requiredDays,
+    startDate,
+    endDate,
+    dailyPlan,
+    round_plan: {
+      rounds: roundPlans,
+      days: scheduleDays,
+      summary,
+      warnings
+    },
+    warnings,
+    summary,
+    configSnapshot: JSON.parse(JSON.stringify(config))
+  };
+
+  return { ok: true, plan };
+}

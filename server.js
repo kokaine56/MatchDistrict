@@ -11,7 +11,13 @@ import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
-import { validateScoring, computeTotalPoints, sortAndRank, calculateRankings } from './server/leaderboardService.js';
+import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings } from './server/leaderboardService.js';
+import { calculateTournamentPlan } from './server/tournamentPlanner.js';
+import { generateTournamentRoadmap } from './server/roadmapGenerator.js';
+import { syncTournamentRounds, legacyRoundBackfill, getTournamentRounds } from './server/roundsService.js';
+import { validateRoadmapStructure, validateSingleMatchEdit, validateDayDateEdit, computeMatchEndTime } from './server/roadmapValidation.js';
+import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus } from './server/registrationTeamBridge.js';
+import { allocateTeam, AllocationError, ALLOCATION_SOURCES } from './server/allocationService.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -477,6 +483,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS cover_image_url TEXT DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS lobby_start_time VARCHAR(100) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sponsors_data TEXT DEFAULT '[]';
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS roadmap_status VARCHAR(50) DEFAULT 'pending';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sponsors_enabled BOOLEAN DEFAULT false;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_enabled BOOLEAN DEFAULT false;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_amount INTEGER DEFAULT 0;
@@ -831,6 +838,375 @@ async function initDb() {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_leaderboard tables:', lbErr.message);
     }
 
+    // --- CREATE TOURNAMENT PLANNING CONFIGURATION TABLE (Phase 1) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_planning_config (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          expected_teams INTEGER NOT NULL DEFAULT 0,
+          maximum_teams INTEGER NOT NULL DEFAULT 0,
+          players_per_team INTEGER NOT NULL DEFAULT 4,
+          teams_per_room INTEGER NOT NULL DEFAULT 25,
+          max_simultaneous_rooms INTEGER NOT NULL DEFAULT 1,
+          matches_per_team INTEGER NOT NULL DEFAULT 3,
+          match_duration_minutes INTEGER NOT NULL DEFAULT 25,
+          break_between_matches_minutes INTEGER NOT NULL DEFAULT 5,
+          daily_start_time VARCHAR(10) NOT NULL DEFAULT '10:00',
+          daily_end_time VARCHAR(10) NOT NULL DEFAULT '22:00',
+          max_matches_per_day INTEGER DEFAULT NULL,
+          config_status VARCHAR(30) DEFAULT 'draft',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_planning_config_tournament ON tournament_planning_config(tournament_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] tournament_planning_config table initialized.');
+    } catch (planErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_planning_config table:', planErr.message);
+    }
+
+    // --- CREATE TOURNAMENT PLANNING RESULT TABLE (Phase 2) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_planning_result (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          config_snapshot JSONB NOT NULL,
+          planning_team_count INTEGER NOT NULL,
+          expected_teams INTEGER NOT NULL,
+          required_rooms INTEGER NOT NULL,
+          max_simultaneous_rooms INTEGER NOT NULL,
+          teams_per_room INTEGER NOT NULL,
+          matches_per_team INTEGER NOT NULL,
+          total_room_sessions INTEGER NOT NULL,
+          match_duration_minutes INTEGER NOT NULL,
+          break_between_matches_minutes INTEGER NOT NULL,
+          daily_operating_minutes INTEGER NOT NULL,
+          match_slot_minutes INTEGER NOT NULL,
+          sequential_slots_per_room INTEGER NOT NULL,
+          calculated_daily_capacity INTEGER NOT NULL,
+          configured_max_per_day INTEGER,
+          effective_daily_capacity INTEGER NOT NULL,
+          required_days INTEGER NOT NULL,
+          tournament_start_date VARCHAR(30),
+          tournament_end_date VARCHAR(30),
+          daily_plan JSONB NOT NULL,
+          plan_version INTEGER NOT NULL DEFAULT 1,
+          plan_status VARCHAR(30) DEFAULT 'generated',
+          generated_by VARCHAR(50) NOT NULL,
+          generated_at TIMESTAMPTZ DEFAULT NOW(),
+          approved_by VARCHAR(50),
+          approved_at TIMESTAMPTZ,
+          UNIQUE(tournament_id, plan_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_planning_result_tournament ON tournament_planning_result(tournament_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] tournament_planning_result table initialized.');
+    } catch (planResErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_planning_result table:', planResErr.message);
+    }
+
+    // --- PLANNING ENGINE (2026-09-24): round_plan proposal column ---
+    try {
+      await client.query(`
+        ALTER TABLE tournament_planning_result
+          ADD COLUMN IF NOT EXISTS round_plan JSONB
+      `);
+    } catch (roundPlanErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not add round_plan column:', roundPlanErr.message);
+    }
+
+    // --- CREATE TOURNAMENT ROADMAP TABLES (Phase 3) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_days (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          day_number INTEGER NOT NULL,
+          date VARCHAR(30) NOT NULL,
+          UNIQUE(tournament_id, day_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_days_tournament ON tournament_days(tournament_id);
+
+        CREATE TABLE IF NOT EXISTS tournament_groups (
+          id VARCHAR(50) PRIMARY KEY,
+          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          group_name VARCHAR(100) NOT NULL,
+          sequence INTEGER NOT NULL,
+          UNIQUE(day_id, sequence)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_groups_day ON tournament_groups(day_id);
+
+        CREATE TABLE IF NOT EXISTS tournament_rooms (
+          id VARCHAR(50) PRIMARY KEY,
+          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
+          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          room_number INTEGER NOT NULL,
+          capacity INTEGER NOT NULL,
+          status VARCHAR(30) DEFAULT 'DRAFT',
+          UNIQUE(tournament_id, room_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_rooms_group ON tournament_rooms(group_id);
+
+        CREATE TABLE IF NOT EXISTS tournament_matches (
+          id VARCHAR(50) PRIMARY KEY,
+          room_id VARCHAR(50) NOT NULL REFERENCES tournament_rooms(id) ON DELETE CASCADE,
+          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
+          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          match_number INTEGER NOT NULL,
+          start_time VARCHAR(10) NOT NULL,
+          end_time VARCHAR(10) NOT NULL,
+          status VARCHAR(30) DEFAULT 'PENDING',
+          room_identifier VARCHAR(100),
+          room_password VARCHAR(100),
+          credential_status VARCHAR(30) DEFAULT 'Not Configured',
+          UNIQUE(room_id, match_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_matches_room ON tournament_matches(room_id);
+      `);
+
+      // Add Phase 9 Columns to existing tables if needed
+      await client.query(`
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS room_credentials_release_minutes INTEGER DEFAULT 15;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_identifier VARCHAR(100);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_password VARCHAR(100);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS credential_status VARCHAR(30) DEFAULT 'Not Configured';
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Roadmap tables (days, groups, rooms, matches) initialized.');
+    } catch (roadmapErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create roadmap tables:', roadmapErr.message);
+    }
+
+    // --- CREATE TOURNAMENT ROUND/STAGE TABLES (structural foundation) ---
+    // Round/Stage sits between a Tournament and its Days:
+    // Tournament -> Round/Stage -> Day -> Group -> Room -> Match.
+    // Round definitions are authored in the Step 6 timeline and materialized here
+    // by roundsService.syncTournamentRounds (idempotent one-way derivation).
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_rounds (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          round_number INTEGER NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          status VARCHAR(30) DEFAULT 'configured',
+          teams_advancing INTEGER,
+          "date" VARCHAR(30),
+          "time" VARCHAR(10),
+          map VARCHAR(255),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, round_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_rounds_tournament ON tournament_rounds(tournament_id);
+
+        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+      `);
+
+      // Day numbers are now 1-based WITHIN a round ("Round 2 · Day 1"), so the
+      // old UNIQUE(tournament_id, day_number) must become UNIQUE(tournament_id,
+      // round_id, day_number). Idempotent: drop only if the legacy constraint is
+      // still present, add only if the new one is missing.
+      await client.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'tournament_days_tournament_id_day_number_key'
+              AND conrelid = 'public.tournament_days'::regclass
+          ) THEN
+            ALTER TABLE public.tournament_days DROP CONSTRAINT tournament_days_tournament_id_day_number_key;
+          END IF;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'uq_tournament_days_round_day'
+              AND conrelid = 'public.tournament_days'::regclass
+          ) THEN
+            ALTER TABLE public.tournament_days ADD CONSTRAINT uq_tournament_days_round_day
+              UNIQUE (tournament_id, round_id, day_number);
+          END IF;
+        END $$;
+      `);
+
+      // Backfill pre-Round tournaments (roadmap rows exist, round rows do not).
+      // Writes association columns only; never recreates or deletes existing data.
+      await legacyRoundBackfill(pool);
+      console.log('📦 [MATCH DISTRICT DB] Tournament rounds (Round/Stage) initialized.');
+    } catch (roundErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not initialise tournament rounds:', roundErr.message);
+    }
+
+    // --- CREATE TOURNAMENT TEAMS TABLES (Phase 4) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_teams (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          team_name VARCHAR(255) NOT NULL,
+          leader_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status VARCHAR(50) DEFAULT 'awaiting_members',
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, team_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_teams_tournament ON tournament_teams(tournament_id);
+
+        CREATE TABLE IF NOT EXISTS tournament_team_members (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          role VARCHAR(20) NOT NULL,
+          status VARCHAR(20) DEFAULT 'active',
+          joined_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tournament_team_members_team ON tournament_team_members(tournament_team_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Tournament Teams tables (Phase 4) initialized.');
+    } catch (teamsErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament teams tables:', teamsErr.message);
+    }
+
+    // --- REGISTRATION → TEAM BRIDGE: additive registration_id link column ---
+    // Links a tournament_team to the eligible tournament_registration (the
+    // registered team slot) that granted the leader their place. Plain column +
+    // index (no FK): legacy admin tooling hard-deletes registration rows, and a
+    // dangling link is handled gracefully (treated as not-eligible). Additive &
+    // idempotent; never touches existing data.
+    try {
+      await client.query(`
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS registration_id VARCHAR(50);
+        CREATE INDEX IF NOT EXISTS idx_tournament_teams_registration ON tournament_teams(registration_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Tournament Teams registration_id bridge column (Phase 4b) initialized.');
+    } catch (bridgeErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not add tournament teams registration_id column:', bridgeErr.message);
+    }
+
+    // --- CREATE INVITATION TABLES (Phase 5) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_team_invitations (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+          created_by_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token VARCHAR(100) UNIQUE NOT NULL,
+          status VARCHAR(20) DEFAULT 'active',
+          expires_at TIMESTAMPTZ NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_invitations_token ON tournament_team_invitations(token);
+        CREATE INDEX IF NOT EXISTS idx_team_invitations_team ON tournament_team_invitations(tournament_team_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Tournament Invitations tables (Phase 5) initialized.');
+    } catch (inviteErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament invitation tables:', inviteErr.message);
+    }
+
+    // --- CREATE ALLOCATION TABLES (Phase 7) ---
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_match_assignments (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+          match_id VARCHAR(50) NOT NULL REFERENCES tournament_matches(id) ON DELETE CASCADE,
+          room_id VARCHAR(50) NOT NULL REFERENCES tournament_rooms(id) ON DELETE CASCADE,
+          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
+          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
+          status VARCHAR(20) DEFAULT 'allocated',
+          assigned_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_team_id, match_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_match_assignments_team ON tournament_match_assignments(tournament_team_id);
+        CREATE INDEX IF NOT EXISTS idx_match_assignments_match ON tournament_match_assignments(match_id);
+        CREATE INDEX IF NOT EXISTS idx_match_assignments_room ON tournament_match_assignments(room_id);
+
+        ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual';
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Tournament Allocation tables (Phase 7) + source column initialized.');
+    } catch (allocErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament allocation tables:', allocErr.message);
+    }
+
+    // --- CREATE SCORING & RESULTS TABLES (Phase 10) ---
+    try {
+      await client.query(`
+        -- Drop old leaderboard tables if they exist so we can recreate them against tournament_teams
+        DROP TABLE IF EXISTS leaderboard_audit CASCADE;
+        DROP TABLE IF EXISTS tournament_leaderboard CASCADE;
+
+        CREATE TABLE IF NOT EXISTS tournament_scoring_rules (
+          tournament_id VARCHAR(50) PRIMARY KEY REFERENCES tournaments(id) ON DELETE CASCADE,
+          kill_points_multiplier INTEGER DEFAULT 1,
+          placement_points_map JSONB DEFAULT '{"1": 15, "2": 12, "3": 10, "4": 8, "5": 6, "6": 4, "7": 2, "8": 1, "9": 1, "10": 1, "11": 1, "12": 1, "13": 0, "14": 0, "15": 0, "16": 0, "17": 0, "18": 0, "19": 0, "20": 0}'::jsonb,
+          wwcd_bonus INTEGER DEFAULT 0,
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS tournament_match_results (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          match_id VARCHAR(50) NOT NULL REFERENCES tournament_matches(id) ON DELETE CASCADE,
+          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+          placement INTEGER NOT NULL,
+          kills INTEGER NOT NULL,
+          kill_points INTEGER DEFAULT 0,
+          placement_points INTEGER DEFAULT 0,
+          wwcd BOOLEAN DEFAULT FALSE,
+          total_points INTEGER DEFAULT 0,
+          status VARCHAR(20) DEFAULT 'pending',
+          submitted_by VARCHAR(50),
+          verified_by VARCHAR(50),
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(match_id, team_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_match_results_tourn ON tournament_match_results(tournament_id);
+        CREATE INDEX IF NOT EXISTS idx_match_results_match ON tournament_match_results(match_id);
+
+        CREATE TABLE IF NOT EXISTS tournament_match_results_audit (
+          id VARCHAR(50) PRIMARY KEY,
+          result_id VARCHAR(50) NOT NULL REFERENCES tournament_match_results(id) ON DELETE CASCADE,
+          action VARCHAR(50) NOT NULL,
+          previous_data JSONB,
+          new_data JSONB,
+          actor_id VARCHAR(50),
+          reason TEXT,
+          timestamp TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS tournament_leaderboard (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+          matches_played INTEGER DEFAULT 0,
+          total_kills INTEGER DEFAULT 0,
+          total_kill_points INTEGER DEFAULT 0,
+          total_placement_points INTEGER DEFAULT 0,
+          total_points INTEGER DEFAULT 0,
+          wwcd_count INTEGER DEFAULT 0,
+          best_placement INTEGER,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, team_id)
+        );
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Scoring & Results tables (Phase 10) initialized.');
+    } catch (scoreErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create scoring tables:', scoreErr.message);
+    }
+
     // --- CREATE MONITORING AND SECURITY TABLES ---
     try {
       await client.query(`
@@ -1061,6 +1437,23 @@ async function initDb() {
       }
     } catch (migErr) {
       console.warn('⚠️ [MIGRATION] Handle sync skipped:', migErr.message);
+    }
+
+    // ── REGISTRATION → TEAM BRIDGE: idempotent legacy backfill ─────────────
+    // Links existing tournament_teams to their leader's UNIQUE eligible
+    // registration where unambiguous. Never creates teams, never guesses, and
+    // re-running is a no-op (only NULL registration_id rows are ever written).
+    try {
+      const backfill = await backfillRegistrationLinks(client);
+      if (backfill.total > 0) {
+        console.log(
+          `🔗 [BRIDGE] Registration→Team backfill: ${backfill.linked} linked, ` +
+          `${backfill.skippedNone} no eligible registration, ${backfill.skippedAmbiguous} ambiguous, ` +
+          `${backfill.total} unlinked teams scanned.`
+        );
+      }
+    } catch (bridgeBfErr) {
+      console.warn('⚠️ [BRIDGE] Registration→Team backfill skipped:', bridgeBfErr.message);
     }
 
     client.release();
@@ -4714,7 +5107,1795 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7j. Supabase Register Team Service
+  // 7k_plan. GET /api/tournaments/:id/planning-config — retrieve planning config (owner or admin)
+  const planningConfigGetMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/planning-config$/);
+  if (planningConfigGetMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(planningConfigGetMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        return;
+      }
+      // Verify tournament exists and user owns it (or is admin)
+      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        return;
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        return;
+      }
+      const cfgRes = await pool.query(
+        'SELECT * FROM tournament_planning_config WHERE tournament_id = $1',
+        [tId]
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        config: cfgRes.rows.length > 0 ? cfgRes.rows[0] : null
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_plan2. POST /api/tournaments/:id/planning-config — upsert planning config (owner or admin)
+  const planningConfigPostMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/planning-config$/);
+  if (planningConfigPostMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(planningConfigPostMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+          return;
+        }
+        if (!requireOrganizer(req, res, authUser)) return;
+
+        // Verify tournament ownership
+        const tRes = await pool.query('SELECT "orgId", title FROM tournaments WHERE id = $1', [tId]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+          return;
+        }
+
+        const cfg = JSON.parse(body || '{}');
+
+        // ── Server-side validation ──────────────────────────────────────────
+        const validationErrors = {};
+
+        // Helper: parse positive integer
+        function parsePositiveInt(val, fieldName, allowZero = false) {
+          const n = Number(val);
+          if (!Number.isFinite(n) || !Number.isInteger(n)) return `${fieldName} must be a whole number.`;
+          if (allowZero && n < 0) return `${fieldName} must be 0 or greater.`;
+          if (!allowZero && n <= 0) return `${fieldName} must be greater than 0.`;
+          return null;
+        }
+
+        const expectedTeams = parseInt(cfg.expected_teams, 10);
+        const maximumTeams  = parseInt(cfg.maximum_teams, 10);
+
+        const fields = [
+          ['expected_teams',              cfg.expected_teams,              false],
+          ['maximum_teams',               cfg.maximum_teams,               false],
+          ['players_per_team',            cfg.players_per_team,            false],
+          ['teams_per_room',              cfg.teams_per_room,              false],
+          ['max_simultaneous_rooms',      cfg.max_simultaneous_rooms,      false],
+          ['matches_per_team',            cfg.matches_per_team,            false],
+          ['match_duration_minutes',      cfg.match_duration_minutes,      false],
+          ['break_between_matches_minutes', cfg.break_between_matches_minutes, true],
+        ];
+
+        for (const [field, val, allowZero] of fields) {
+          const errMsg = parsePositiveInt(val, field, allowZero);
+          if (errMsg) validationErrors[field] = errMsg;
+        }
+
+        // maximum_teams must be >= expected_teams
+        if (!validationErrors.expected_teams && !validationErrors.maximum_teams) {
+          if (maximumTeams < expectedTeams) {
+            validationErrors.maximum_teams = 'Maximum teams cannot be lower than expected teams.';
+          }
+        }
+
+        // Validate time fields
+        const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+        if (!cfg.daily_start_time || !timeRegex.test(cfg.daily_start_time)) {
+          validationErrors.daily_start_time = 'Daily start time must be a valid time (HH:MM).';
+        }
+        if (!cfg.daily_end_time || !timeRegex.test(cfg.daily_end_time)) {
+          validationErrors.daily_end_time = 'Daily end time must be a valid time (HH:MM).';
+        }
+        if (!validationErrors.daily_start_time && !validationErrors.daily_end_time) {
+          const [sh, sm] = cfg.daily_start_time.split(':').map(Number);
+          const [eh, em] = cfg.daily_end_time.split(':').map(Number);
+          const startMins = sh * 60 + sm;
+          const endMins   = eh * 60 + em;
+          if (endMins <= startMins) {
+            validationErrors.daily_end_time = 'Daily end time must be later than the start time.';
+          }
+        }
+
+        // max_matches_per_day is optional — validate only if provided
+        if (cfg.max_matches_per_day !== undefined && cfg.max_matches_per_day !== null && cfg.max_matches_per_day !== '') {
+          const mmpd = parseInt(cfg.max_matches_per_day, 10);
+          if (!Number.isFinite(mmpd) || !Number.isInteger(mmpd) || mmpd <= 0) {
+            validationErrors.max_matches_per_day = 'Max matches per day must be a positive integer if provided.';
+          }
+        }
+
+        if (Object.keys(validationErrors).length > 0) {
+          res.writeHead(422, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', errors: validationErrors }));
+          return;
+        }
+
+        // ── Upsert config ──────────────────────────────────────────────────
+        const configId = 'PC-' + tId.slice(-8) + '-' + crypto.randomBytes(3).toString('hex').toUpperCase();
+        const maxMatchesPerDay = (cfg.max_matches_per_day !== undefined && cfg.max_matches_per_day !== null && cfg.max_matches_per_day !== '')
+          ? parseInt(cfg.max_matches_per_day, 10) : null;
+
+        const dbRes = await pool.query(
+          `INSERT INTO tournament_planning_config (
+            id, tournament_id, expected_teams, maximum_teams, players_per_team,
+            teams_per_room, max_simultaneous_rooms, matches_per_team,
+            match_duration_minutes, break_between_matches_minutes,
+            daily_start_time, daily_end_time, max_matches_per_day,
+            config_status, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+          ON CONFLICT (tournament_id) DO UPDATE SET
+            expected_teams = EXCLUDED.expected_teams,
+            maximum_teams  = EXCLUDED.maximum_teams,
+            players_per_team = EXCLUDED.players_per_team,
+            teams_per_room = EXCLUDED.teams_per_room,
+            max_simultaneous_rooms = EXCLUDED.max_simultaneous_rooms,
+            matches_per_team = EXCLUDED.matches_per_team,
+            match_duration_minutes = EXCLUDED.match_duration_minutes,
+            break_between_matches_minutes = EXCLUDED.break_between_matches_minutes,
+            daily_start_time = EXCLUDED.daily_start_time,
+            daily_end_time   = EXCLUDED.daily_end_time,
+            max_matches_per_day = EXCLUDED.max_matches_per_day,
+            config_status = EXCLUDED.config_status,
+            updated_at = NOW()
+          RETURNING *`,
+          [
+            configId,
+            tId,
+            expectedTeams,
+            maximumTeams,
+            parseInt(cfg.players_per_team, 10),
+            parseInt(cfg.teams_per_room, 10),
+            parseInt(cfg.max_simultaneous_rooms, 10),
+            parseInt(cfg.matches_per_team, 10),
+            parseInt(cfg.match_duration_minutes, 10),
+            parseInt(cfg.break_between_matches_minutes, 10),
+            cfg.daily_start_time,
+            cfg.daily_end_time,
+            maxMatchesPerDay,
+            'configured',
+          ]
+        );
+
+        console.log(`\n📋 [PLANNING CONFIG] Saved for tournament ${tId}\n`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, config: dbRes.rows[0] }));
+      } catch (err) {
+        console.error('❌ [PLANNING CONFIG] Save failed:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7k_plan3. POST /api/tournaments/:id/planning-result/generate — Generate capacity plan (owner or admin)
+  const planningGenerateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/planning-result\/generate$/);
+  if (planningGenerateMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(planningGenerateMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+      }
+      // Check organizer
+      const oRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+
+      // 1. Fetch tournament
+      const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
+      const tournament = tRes.rows[0];
+
+      // 2. Fetch config
+      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
+      if (cfgRes.rows.length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NO_CONFIG', message: 'Tournament planning configuration is missing.' }));
+      }
+      const config = cfgRes.rows[0];
+
+      // 3. Generate Plan
+      // 3a. Materialize Round/Stage definitions (idempotent one-way sync from the
+      //     Step 6 timeline) so the plan is computed against the real round
+      //     structure (teams_advancing drives which teams enter each round).
+      const roundRowsForPlan = await syncTournamentRounds(pool, tournament);
+      const result = calculateTournamentPlan(config, tournament, roundRowsForPlan);
+      if (!result.ok) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'INFEASIBLE', messages: result.errors }));
+      }
+
+      // 4. Determine new version
+      const vRes = await pool.query('SELECT COALESCE(MAX(plan_version), 0) as max_v FROM tournament_planning_result WHERE tournament_id = $1', [tId]);
+      const nextVersion = parseInt(vRes.rows[0].max_v, 10) + 1;
+
+      const p = result.plan;
+      const insertQuery = `
+        INSERT INTO tournament_planning_result (
+          id, tournament_id, config_snapshot, planning_team_count, expected_teams, required_rooms,
+          max_simultaneous_rooms, teams_per_room, matches_per_team, total_room_sessions,
+          match_duration_minutes, break_between_matches_minutes, daily_operating_minutes,
+          match_slot_minutes, sequential_slots_per_room, calculated_daily_capacity,
+          configured_max_per_day, effective_daily_capacity, required_days,
+          tournament_start_date, tournament_end_date, daily_plan, round_plan,
+          plan_version, plan_status, generated_by, generated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, 'generated', $25, NOW()
+        ) RETURNING *;
+      `;
+      const resDb = await pool.query(insertQuery, [
+        generateId(), tId, JSON.stringify(p.configSnapshot), p.planningTeamCount, p.expectedTeams, p.requiredRooms,
+        p.maxSimultaneousRooms, p.teamsPerRoom, p.matchesPerTeam, p.totalRoomMatchSessions,
+        p.matchDurationMinutes, p.breakBetweenMatchesMinutes, p.dailyOperatingMinutes,
+        p.matchSlotMinutes, p.sequentialSlotsPerRoom, p.calculatedDailyCapacity,
+        p.configuredMaxPerDay, p.effectiveDailyCapacity, p.requiredDays,
+        p.startDate, p.endDate, JSON.stringify(p.dailyPlan),
+        JSON.stringify(p.round_plan || { rounds: [], days: [], summary: [], warnings: [] }),
+        nextVersion, authUser.id
+      ]);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result: resDb.rows[0] }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_plan4. GET /api/tournaments/:id/planning-result — Get current plan (owner or admin)
+  const planningGetResultMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/planning-result$/);
+  if (planningGetResultMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(planningGetResultMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      
+      const resDb = await pool.query(
+        'SELECT * FROM tournament_planning_result WHERE tournament_id = $1 ORDER BY plan_version DESC LIMIT 1',
+        [tId]
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        result: resDb.rows.length > 0 ? resDb.rows[0] : null
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_plan5. POST /api/tournaments/:id/planning-result/approve — Approve plan
+  const planningApproveMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/planning-result\/approve$/);
+  if (planningApproveMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(planningApproveMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      // Check organizer
+      const oRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+
+      const resDb = await pool.query(`
+        UPDATE tournament_planning_result 
+        SET plan_status = 'approved', approved_by = $1, approved_at = NOW()
+        WHERE tournament_id = $2 AND plan_status = 'generated'
+        AND plan_version = (SELECT MAX(plan_version) FROM tournament_planning_result WHERE tournament_id = $2)
+        RETURNING *;
+      `, [authUser.id, tId]);
+
+      if (resDb.rows.length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'INVALID_STATE', message: 'No valid generated plan found to approve.' }));
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result: resDb.rows[0] }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_road1. POST /api/tournaments/:id/roadmap/generate — Generate roadmap (Phase 3)
+  const roadmapGenerateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/generate$/);
+  if (roadmapGenerateMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapGenerateMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const oRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+
+      // An approved roadmap is immutable: regenerating would silently wipe the
+      // approved schedule. Return a clear conflict instead of writing anything.
+      if (oRes.rows[0].roadmap_status === 'approved') {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: 'ROADMAP_APPROVED',
+          message: 'The roadmap is already approved. Generate a new planning proposal before regenerating the roadmap.'
+        }));
+      }
+
+      // 1. Fetch tournament
+      const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
+      const tournament = tRes.rows[0];
+
+      // 2. Fetch config & approved planning result
+      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
+      const planRes = await pool.query(`
+        SELECT * FROM tournament_planning_result 
+        WHERE tournament_id = $1 AND plan_status = 'approved'
+        ORDER BY plan_version DESC LIMIT 1
+      `, [tId]);
+
+      if (cfgRes.rows.length === 0 || planRes.rows.length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NO_APPROVED_PLAN', message: 'An approved capacity plan is required to generate a roadmap.' }));
+      }
+      const config = cfgRes.rows[0];
+      const planningResult = planRes.rows[0];
+
+      // 3. Materialize Round/Stage definitions (idempotent one-way sync from the
+      //    Step 6 timeline), then generate the structural roadmap against them.
+      const roundRows = await syncTournamentRounds(pool, tournament);
+      let roadmapProposal = null;
+      if (planningResult.round_plan) {
+        try {
+          roadmapProposal = typeof planningResult.round_plan === 'string'
+            ? JSON.parse(planningResult.round_plan)
+            : planningResult.round_plan;
+        } catch (proposalErr) {
+          roadmapProposal = null;
+        }
+      }
+      const result = generateTournamentRoadmap(config, planningResult, tournament, roundRows, roadmapProposal);
+      if (!result.ok) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'ROADMAP_ERROR', message: result.error }));
+      }
+
+      const { days, groups, rooms, matches } = result.roadmap;
+
+      // 4. Atomic Database Transaction
+      const dbClient = await pool.connect();
+      try {
+        await dbClient.query('BEGIN');
+
+        // Delete any existing draft roadmap components (they cascade down)
+        await dbClient.query('DELETE FROM tournament_days WHERE tournament_id = $1', [tId]);
+
+        // Insert Days
+        for (const d of days) {
+          await dbClient.query(`
+            INSERT INTO tournament_days (id, tournament_id, day_number, date, round_id)
+            VALUES ($1, $2, $3, $4, $5)
+          `, [d.id, d.tournament_id, d.day_number, d.date, d.round_id]);
+        }
+
+        // Insert Groups
+        for (const g of groups) {
+          await dbClient.query(`
+            INSERT INTO tournament_groups (id, day_id, tournament_id, group_name, sequence, round_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+          `, [g.id, g.day_id, g.tournament_id, g.group_name, g.sequence, g.round_id]);
+        }
+
+        // Insert Rooms
+        for (const r of rooms) {
+          await dbClient.query(`
+            INSERT INTO tournament_rooms (id, group_id, day_id, tournament_id, room_number, capacity, status, round_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `, [r.id, r.group_id, r.day_id, r.tournament_id, r.room_number, r.capacity, r.status, r.round_id]);
+        }
+
+        // Insert Matches
+        for (const m of matches) {
+          await dbClient.query(`
+            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `, [m.id, m.room_id, m.group_id, m.day_id, m.tournament_id, m.match_number, m.start_time, m.end_time, m.status, m.round_id]);
+        }
+
+        // Update tournament status
+        await dbClient.query(`
+          UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1
+        `, [tId]);
+
+        await dbClient.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, roadmap: result.roadmap }));
+      } catch (txnErr) {
+        await dbClient.query('ROLLBACK');
+        throw txnErr;
+      } finally {
+        dbClient.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_road2. GET /api/tournaments/:id/roadmap — Fetch structural roadmap
+  const roadmapGetMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap$/);
+  if (roadmapGetMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(roadmapGetMatch[1]);
+    try {
+      const tRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      
+      const t = tRes.rows[0];
+      const authUser = getAuthUser(req);
+      
+      // If draft, only admin/org can view
+      if (t.roadmap_status === 'draft') {
+        if (!authUser || (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Roadmap is draft.' }));
+        }
+      }
+
+      const rounds = await getTournamentRounds(pool, tId);
+      const roundOrder = new Map(rounds.map((r, i) => [r.id, i]));
+      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
+      const days = daysQuery.rows
+        .sort((a, b) =>
+          (roundOrder.get(a.round_id) ?? -1) - (roundOrder.get(b.round_id) ?? -1) ||
+          a.day_number - b.day_number
+        )
+        .map((d) => ({
+          ...d,
+          round_number: rounds.find((r) => r.id === d.round_id)?.round_number ?? null
+        }));
+      const groups = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY sequence ASC', [tId]);
+      const rooms = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tId]);
+      const matches = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tId]);
+      
+      // Phase 7: Fetch assignments to count allocated teams
+      const assignments = await pool.query(`
+        SELECT match_id, room_id, tournament_team_id
+        FROM tournament_match_assignments
+        WHERE tournament_id = $1
+      `, [tId]);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        roadmap_status: t.roadmap_status,
+        roadmap: {
+          rounds,
+          days,
+          groups: groups.rows,
+          rooms: rooms.rows,
+          matches: matches.rows,
+          assignments: assignments.rows
+        }
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_road3. POST /api/tournaments/:id/roadmap/approve — Approve the roadmap
+  const roadmapApproveMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/approve$/);
+  if (roadmapApproveMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapApproveMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const oRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+
+      if (oRes.rows[0].roadmap_status !== 'draft') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'INVALID_STATE', message: 'Roadmap must be in draft status to approve.' }));
+      }
+
+      // Structural gate: a roadmap with blocking errors must NOT be approved.
+      // Non-blocking warnings are surfaced but do not prevent approval.
+      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
+      const rounds = await getTournamentRounds(pool, tId);
+      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
+      const groupsQuery = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1', [tId]);
+      const roomsQuery = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1', [tId]);
+      const matchesQuery = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1', [tId]);
+
+      const validation = validateRoadmapStructure({
+        days: daysQuery.rows,
+        groups: groupsQuery.rows,
+        rooms: roomsQuery.rows,
+        matches: matchesQuery.rows,
+        config: cfgRes.rows[0] || {},
+        rounds
+      });
+
+      if (validation.errors.length > 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: 'ROADMAP_STRUCTURE_INVALID',
+          message: 'The roadmap has blocking structural errors. Fix or regenerate before approving.',
+          details: { errors: validation.errors, warnings: validation.warnings }
+        }));
+      }
+
+      await pool.query(`UPDATE tournaments SET roadmap_status = 'approved' WHERE id = $1`, [tId]);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Roadmap approved successfully.' }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_road3b. POST /api/tournaments/:id/roadmap/validate — Run structural validation
+  const roadmapValidateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/validate$/);
+  if (roadmapValidateMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapValidateMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const oRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+
+      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
+      const rounds = await getTournamentRounds(pool, tId);
+      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
+      const groupsQuery = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1', [tId]);
+      const roomsQuery = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1', [tId]);
+      const matchesQuery = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1', [tId]);
+
+      const validation = validateRoadmapStructure({
+        days: daysQuery.rows,
+        groups: groupsQuery.rows,
+        rooms: roomsQuery.rows,
+        matches: matchesQuery.rows,
+        config: cfgRes.rows[0] || {},
+        rounds
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        valid: validation.errors.length === 0,
+        errors: validation.errors,
+        warnings: validation.warnings
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // 7k_road3c. PUT /api/tournaments/:id/roadmap/matches/:matchId — Edit a match start time
+  const roadmapMatchEditMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/matches\/([^/]+)$/);
+  if (roadmapMatchEditMatch && req.method === 'PUT') {
+    const tId = decodeURIComponent(roadmapMatchEditMatch[1]);
+    const matchId = decodeURIComponent(roadmapMatchEditMatch[2]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const oRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+          return;
+        }
+        if (oRes.rows[0].roadmap_status === 'approved') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ROADMAP_APPROVED', message: 'An approved roadmap is locked. Regenerate a new draft to edit.' }));
+          return;
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const start_time = payload.start_time;
+        if (typeof start_time !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'start_time is required.' }));
+          return;
+        }
+
+        const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
+        if (cfgRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NO_CONFIG', message: 'Tournament planning configuration is missing.' }));
+          return;
+        }
+        const config = cfgRes.rows[0];
+
+        const matchRes = await pool.query('SELECT * FROM tournament_matches WHERE id = $1 AND tournament_id = $2', [matchId, tId]);
+        if (matchRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Match not found.' }));
+          return;
+        }
+        const match = matchRes.rows[0];
+
+        const siblingsRes = await pool.query(
+          `SELECT * FROM tournament_matches
+           WHERE tournament_id = $1 AND day_id = $2 AND room_id = $3 AND id <> $4`,
+          [tId, match.day_id, match.room_id, matchId]
+        );
+
+        const gate = validateSingleMatchEdit({
+          match: { ...match, start_time },
+          siblings: siblingsRes.rows,
+          config
+        });
+        if (!gate.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_EDIT', message: gate.error }));
+          return;
+        }
+
+        const end_time = computeMatchEndTime(start_time, config.match_duration_minutes);
+        await pool.query(
+          `UPDATE tournament_matches SET start_time = $1, end_time = $2 WHERE id = $3`,
+          [start_time, end_time, matchId]
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, match: { ...match, start_time, end_time } }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7k_road3d. PUT /api/tournaments/:id/roadmap/days/:dayId — Edit a day's date
+  const roadmapDayEditMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/days\/([^/]+)$/);
+  if (roadmapDayEditMatch && req.method === 'PUT') {
+    const tId = decodeURIComponent(roadmapDayEditMatch[1]);
+    const dayId = decodeURIComponent(roadmapDayEditMatch[2]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
+        const oRes = await pool.query('SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+          return;
+        }
+        if (oRes.rows[0].roadmap_status === 'approved') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ROADMAP_APPROVED', message: 'An approved roadmap is locked. Regenerate a new draft to edit.' }));
+          return;
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const date = payload.date;
+        if (typeof date !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'date is required.' }));
+          return;
+        }
+
+        const dayRes = await pool.query('SELECT * FROM tournament_days WHERE id = $1 AND tournament_id = $2', [dayId, tId]);
+        if (dayRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Day not found.' }));
+          return;
+        }
+        const day = dayRes.rows[0];
+
+        const rounds = await getTournamentRounds(pool, tId);
+        const allDays = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
+
+        const gate = validateDayDateEdit({ day, editedDate: date, allDays: allDays.rows, rounds });
+        if (!gate.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_EDIT', message: gate.error }));
+          return;
+        }
+
+        await pool.query(`UPDATE tournament_days SET date = $1 WHERE id = $2`, [date, dayId]);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, day: { ...day, date } }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // --- PHASE 4: TOURNAMENT-SPECIFIC TEAMS ENDPOINTS ---
+
+  // GET /api/tournaments/:id/my-team
+  const myTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/my-team$/);
+  if (myTeamMatch && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(myTeamMatch[1]);
+      const teamRes = await pool.query(`
+        SELECT t.*, m.role, m.status as member_status
+        FROM tournament_teams t
+        JOIN tournament_team_members m ON t.id = m.tournament_team_id
+        WHERE t.tournament_id = $1 AND m.user_id = $2
+      `, [tId, authUser.id]);
+
+      let members = [];
+      let assignments = [];
+      if (teamRes.rows.length > 0) {
+        const teamId = teamRes.rows[0].id;
+        const membersRes = await pool.query(`
+          SELECT m.id, m.role, m.created_at, u.name, u.avatar
+          FROM tournament_team_members m
+          JOIN users u ON m.user_id = u.id
+          WHERE m.tournament_team_id = $1
+          ORDER BY m.created_at ASC
+        `, [teamId]);
+        members = membersRes.rows;
+
+        const assignRes = await pool.query(`
+          SELECT a.id, a.status,
+                 d.day_number, d.date as day_date,
+                 g.group_name,
+                 r.room_number,
+                 m.match_number, m.start_time, m.end_time
+          FROM tournament_match_assignments a
+          JOIN tournament_days d ON a.day_id = d.id
+          JOIN tournament_groups g ON a.group_id = g.id
+          JOIN tournament_rooms r ON a.room_id = r.id
+          JOIN tournament_matches m ON a.match_id = m.id
+          WHERE a.tournament_team_id = $1
+          ORDER BY d.day_number ASC, m.match_number ASC
+        `, [teamId]);
+        assignments = assignRes.rows;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true, 
+        team: teamRes.rows.length > 0 ? teamRes.rows[0] : null,
+        members: members,
+        assignments: assignments
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/tournaments/:id/teams (Create a team)
+  const createTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams$/);
+  if (createTeamMatch && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        const tId = decodeURIComponent(createTeamMatch[1]);
+        const data = JSON.parse(body);
+        const teamName = data.teamName?.trim();
+
+        if (!teamName || teamName.length < 3 || teamName.length > 20) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, message: 'Invalid team name (3-20 characters).' }));
+        }
+
+        const tRes = await pool.query('SELECT status FROM tournaments WHERE id = $1', [tId]);
+        if (tRes.rows.length === 0 || ['archived', 'completed'].includes(tRes.rows[0].status)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, message: 'Tournament is not open for team creation.' }));
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+
+          // Registration → team bridge gate: the team slot must be backed by an
+          // eligible (slot-confirming) registration for the creating user.
+          const regRowsRes = await client.query(
+            'SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
+            [tId, authUser.id]
+          );
+          if (regRowsRes.rows.length === 0) {
+            throw Object.assign(new Error('You must register for this tournament before creating a team.'), { code: 'REGISTRATION_NOT_FOUND' });
+          }
+          const eligiblePick = pickEligibleRegistration(regRowsRes.rows);
+          if (!eligiblePick.ok) {
+            throw Object.assign(
+              new Error('Your registration for this tournament is not yet approved/verified. Create your team after it is confirmed.'),
+              { code: 'REGISTRATION_NOT_ELIGIBLE' }
+            );
+          }
+
+          // Check if user already in a team
+          const existingMember = await client.query('SELECT 1 FROM tournament_team_members WHERE tournament_id = $1 AND user_id = $2', [tId, authUser.id]);
+          if (existingMember.rows.length > 0) {
+            const existingTeamRes = await client.query(
+              `SELECT t.id, t.team_name, t.status, t.registration_id
+               FROM tournament_teams t
+               JOIN tournament_team_members m ON m.tournament_team_id = t.id
+               WHERE m.tournament_id = $1 AND m.user_id = $2
+               LIMIT 1`,
+              [tId, authUser.id]
+            );
+            throw Object.assign(new Error('You are already part of a team for this tournament.'), {
+              code: 'ALREADY_IN_TEAM',
+              existing_team: existingTeamRes.rows[0] || null,
+            });
+          }
+          // Check team name
+          const existingTeam = await client.query('SELECT 1 FROM tournament_teams WHERE tournament_id = $1 AND team_name = $2', [tId, teamName]);
+          if (existingTeam.rows.length > 0) {
+            throw Object.assign(new Error('This team name is already taken in this tournament.'), { code: 'TEAM_NAME_TAKEN' });
+          }
+
+          const teamId = 'tt_' + Math.random().toString(36).substr(2, 9);
+          const memberId = 'ttm_' + Math.random().toString(36).substr(2, 9);
+
+          await client.query(`
+            INSERT INTO tournament_teams (id, tournament_id, team_name, leader_user_id, status, registration_id)
+            VALUES ($1, $2, $3, $4, 'awaiting_members', $5)
+          `, [teamId, tId, teamName, authUser.id, eligiblePick.registration.id]);
+
+          await client.query(`
+            INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status)
+            VALUES ($1, $2, $3, $4, 'leader', 'active')
+          `, [memberId, teamId, tId, authUser.id]);
+
+          await client.query('COMMIT');
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Team created successfully!', team_id: teamId, registration_id: eligiblePick.registration.id }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          const isUniqueViolation = txnErr && txnErr.code === '23505';
+          const payload = { success: false, message: txnErr.message || 'Failed to create team.' };
+          if (isUniqueViolation) {
+            // Race from simult/duplicate team creation — the DB unique
+            // constraints are the final backstop; map to a clean, idempotent message.
+            payload.error = 'ALREADY_IN_TEAM';
+            payload.message = txnErr.constraint && String(txnErr.constraint).includes('team_name')
+              ? 'This team name is already taken in this tournament.'
+              : 'You are already part of a team for this tournament.';
+          } else if (txnErr.code) {
+            payload.error = txnErr.code;
+          }
+          if (txnErr.existing_team) payload.existing_team = txnErr.existing_team;
+          res.writeHead(txnErr.code === 'REGISTRATION_NOT_FOUND' || txnErr.code === 'REGISTRATION_NOT_ELIGIBLE' ? 403 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(payload));
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /api/tournaments/:id/teams (Organizer view)
+  const getTeamsMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams$/);
+  if (getTeamsMatch && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(getTeamsMatch[1]);
+      
+      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Tournament not found' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Forbidden' }));
+      }
+
+      const teamsRes = await pool.query(`
+        SELECT t.id, t.team_name, t.status, t.created_at, t.registration_id, u.name as leader_ign,
+        tr.status as registration_status,
+        (SELECT COUNT(*) FROM tournament_team_members m WHERE m.tournament_team_id = t.id) as member_count
+        FROM tournament_teams t
+        LEFT JOIN users u ON t.leader_user_id = u.id
+        LEFT JOIN tournament_registrations tr ON tr.id = t.registration_id
+        WHERE t.tournament_id = $1
+        ORDER BY t.created_at DESC
+      `, [tId]);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, teams: teamsRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- PHASE 5: TOURNAMENT-SPECIFIC TEAM INVITATIONS ---
+
+  // POST /api/tournaments/:id/teams/:teamId/invitation (Generate / Regenerate)
+  const generateInviteMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/invitation$/);
+  if (generateInviteMatch && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(generateInviteMatch[1]);
+      const teamId = decodeURIComponent(generateInviteMatch[2]);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        
+        // Verify user is leader
+        const leaderCheck = await client.query(
+          'SELECT 1 FROM tournament_teams WHERE id = $1 AND tournament_id = $2 AND leader_user_id = $3',
+          [teamId, tId, authUser.id]
+        );
+        if (leaderCheck.rows.length === 0) {
+          throw new Error('You must be the team leader to manage invitations.');
+        }
+
+        // Revoke any existing active invitations
+        await client.query(`
+          UPDATE tournament_team_invitations
+          SET status = 'revoked', updated_at = NOW()
+          WHERE tournament_team_id = $1 AND status = 'active'
+        `, [teamId]);
+
+        // Create new invitation
+        const inviteId = 'inv_' + Math.random().toString(36).substr(2, 9) + Date.now();
+        const crypto = require('crypto');
+        const token = crypto.randomBytes(16).toString('hex');
+        const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
+
+        await client.query(`
+          INSERT INTO tournament_team_invitations
+          (id, tournament_id, tournament_team_id, created_by_user_id, token, expires_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [inviteId, tId, teamId, authUser.id, token, expiresAt]);
+
+        await client.query('COMMIT');
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, token, expiresAt }));
+      } catch (txnErr) {
+        await client.query('ROLLBACK');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: txnErr.message }));
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/tournaments/:id/teams/:teamId/invitation (Get active invitation)
+  if (generateInviteMatch && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(generateInviteMatch[1]);
+      const teamId = decodeURIComponent(generateInviteMatch[2]);
+
+      const leaderCheck = await pool.query(
+        'SELECT 1 FROM tournament_teams WHERE id = $1 AND tournament_id = $2 AND leader_user_id = $3',
+        [teamId, tId, authUser.id]
+      );
+      if (leaderCheck.rows.length === 0) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Forbidden' }));
+      }
+
+      const invRes = await pool.query(
+        "SELECT token, expires_at, status FROM tournament_team_invitations WHERE tournament_team_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+        [teamId]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, invitation: invRes.rows[0] || null }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/tournaments/:id/teams/:teamId/invitation/revoke
+  const revokeInviteMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/invitation\/revoke$/);
+  if (revokeInviteMatch && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(revokeInviteMatch[1]);
+      const teamId = decodeURIComponent(revokeInviteMatch[2]);
+
+      const leaderCheck = await pool.query(
+        'SELECT 1 FROM tournament_teams WHERE id = $1 AND tournament_id = $2 AND leader_user_id = $3',
+        [teamId, tId, authUser.id]
+      );
+      if (leaderCheck.rows.length === 0) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Forbidden' }));
+      }
+
+      await pool.query(
+        "UPDATE tournament_team_invitations SET status = 'revoked', updated_at = NOW() WHERE tournament_team_id = $1 AND status = 'active'",
+        [teamId]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/invitation/:token (Public resolving API)
+  const resolveInviteMatch = urlPath.match(/^\/api\/invitation\/([^/]+)$/);
+  if (resolveInviteMatch && req.method === 'GET') {
+    try {
+      const token = decodeURIComponent(resolveInviteMatch[1]);
+
+      const invRes = await pool.query(
+        "SELECT * FROM tournament_team_invitations WHERE token = $1",
+        [token]
+      );
+
+      if (invRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Invitation not found.' }));
+      }
+
+      const inv = invRes.rows[0];
+
+      if (inv.status !== 'active' || new Date(inv.expires_at) < new Date()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, status: inv.status === 'active' ? 'expired' : inv.status, message: 'Invitation is expired or revoked.' }));
+      }
+
+      const tRes = await pool.query('SELECT title, status, match_type FROM tournaments WHERE id = $1', [inv.tournament_id]);
+      const teamRes = await pool.query('SELECT team_name, status, leader_user_id FROM tournament_teams WHERE id = $1', [inv.tournament_team_id]);
+      
+      if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Tournament or Team no longer exists.' }));
+      }
+
+      const tournament = tRes.rows[0];
+      const team = teamRes.rows[0];
+
+      if (['archived', 'completed'].includes(tournament.status)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, status: 'closed', message: 'Tournament is closed.' }));
+      }
+
+      const membersRes = await pool.query('SELECT COUNT(*) as member_count FROM tournament_team_members WHERE tournament_team_id = $1', [inv.tournament_team_id]);
+      const memberCount = parseInt(membersRes.rows[0].member_count, 10);
+
+      const maxMembers = maxMembersForMatchType(tournament.match_type);
+
+      if (memberCount >= maxMembers) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, status: 'full', message: 'Team is full.' }));
+      }
+
+      const leaderRes = await pool.query('SELECT name FROM users WHERE id = $1', [team.leader_user_id]);
+      const leaderName = leaderRes.rows[0]?.name || 'Unknown Leader';
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        invitation: {
+          token: inv.token,
+          tournamentId: inv.tournament_id,
+          teamId: inv.tournament_team_id,
+          tournamentTitle: tournament.title,
+          teamName: team.team_name,
+          leaderName,
+          memberCount,
+          maxMembers
+        }
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  const resolveInviteJoinMatch = req.url.match(/^\/api\/invitation\/([^\/]+)\/join$/);
+  if (resolveInviteJoinMatch && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+
+      const token = decodeURIComponent(resolveInviteJoinMatch[1]);
+      const client = await pool.connect();
+
+      try {
+        await client.query('BEGIN');
+
+        const invRes = await client.query('SELECT * FROM tournament_team_invitations WHERE token = $1 FOR UPDATE', [token]);
+        if (invRes.rows.length === 0) {
+          throw new Error('Invitation not found.');
+        }
+
+        const inv = invRes.rows[0];
+        if (inv.status !== 'active' || new Date(inv.expires_at) < new Date()) {
+          throw new Error('Invitation is expired or revoked.');
+        }
+
+        const tRes = await client.query('SELECT title, status, match_type FROM tournaments WHERE id = $1', [inv.tournament_id]);
+        const teamRes = await client.query('SELECT team_name, status, leader_user_id FROM tournament_teams WHERE id = $1 FOR UPDATE', [inv.tournament_team_id]);
+        
+        if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
+          throw new Error('Tournament or Team no longer exists.');
+        }
+
+        const tournament = tRes.rows[0];
+        const team = teamRes.rows[0];
+
+        if (['archived', 'completed'].includes(tournament.status)) {
+          throw new Error('Tournament is closed.');
+        }
+
+        // Check if user is already in THIS team
+        const selfMemberCheck = await client.query('SELECT 1 FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2', [inv.tournament_team_id, authUser.id]);
+        if (selfMemberCheck.rows.length > 0) {
+          // Idempotent success
+          await client.query('ROLLBACK');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: true, message: 'You are already a member of this team.', status: 'already_member' }));
+        }
+
+        // Check if user is in ANOTHER team in THIS tournament
+        const otherMemberCheck = await client.query('SELECT 1 FROM tournament_team_members WHERE tournament_id = $1 AND user_id = $2', [inv.tournament_id, authUser.id]);
+        if (otherMemberCheck.rows.length > 0) {
+          throw new Error('You are already part of another team for this tournament.');
+        }
+
+        // Registration → team bridge member guard: members fill roster slots
+        // (leader-registers-slot model, no per-member registration required), but
+        // a user the registration system explicitly EXCLUDED from this
+        // tournament (rejected / cancelled / expired / payment rejected) cannot
+        // bypass that exclusion by joining a team via invite.
+        const joinRegRes = await client.query(
+          'SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
+          [inv.tournament_id, authUser.id]
+        );
+        if (joinRegRes.rows.some((r) => isExcludedRegistrationStatus(r.status))) {
+          throw new Error('Your previous registration for this tournament was rejected or cancelled, so you cannot join a team.');
+        }
+
+        const membersRes = await client.query('SELECT COUNT(*) as member_count FROM tournament_team_members WHERE tournament_team_id = $1', [inv.tournament_team_id]);
+        const memberCount = parseInt(membersRes.rows[0].member_count, 10);
+
+        const maxMembers = maxMembersForMatchType(tournament.match_type);
+
+        if (memberCount >= maxMembers) {
+          throw new Error('Team is full.');
+        }
+
+        // Insert new member
+        const memberId = 'mem_' + Math.random().toString(36).substr(2, 9) + Date.now();
+        await client.query(`
+          INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role)
+          VALUES ($1, $2, $3, $4, 'member')
+        `, [memberId, inv.tournament_team_id, inv.tournament_id, authUser.id]);
+
+        const newMemberCount = memberCount + 1;
+        if (newMemberCount >= maxMembers) {
+          await client.query(`
+            UPDATE tournament_teams 
+            SET status = 'members_complete'
+            WHERE id = $1
+          `, [inv.tournament_team_id]);
+        }
+
+        await client.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Successfully joined the team.' }));
+      } catch (txnErr) {
+        await client.query('ROLLBACK');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: txnErr.message }));
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- PHASE 7: VERIFICATION & ALLOCATION ---
+  const verifyTeamMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/teams\/([^\/]+)\/verify$/);
+  if (verifyTeamMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(verifyTeamMatch[1]);
+    const teamId = decodeURIComponent(verifyTeamMatch[2]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        
+        // Lock team
+        const teamRes = await client.query('SELECT * FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE', [teamId, tId]);
+        if (teamRes.rows.length === 0) throw new Error('Team not found');
+        
+        const team = teamRes.rows[0];
+        if (team.leader_user_id !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
+          throw new Error('Only the team leader or an admin can verify the team.');
+        }
+
+        if (['verified', 'allocated', 'allocation_pending'].includes(team.status)) {
+          // Idempotent return or simple notification
+          await client.query('ROLLBACK');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: true, status: team.status, message: 'Team is already processed.' }));
+        }
+
+        if (team.status !== 'members_complete') {
+          throw new Error('Team does not have all required members joined yet.');
+        }
+
+        // Registration → team bridge check at verification time: a LINKED team
+        // must still be backed by an eligible (slot-confirming) registration.
+        // Legacy teams without a registration_id keep the prior behavior.
+        if (team.registration_id) {
+          const linkedRegRes = await client.query(
+            'SELECT status FROM tournament_registrations WHERE id = $1 AND tournament_id = $2',
+            [team.registration_id, tId]
+          );
+          const linkedStatus = linkedRegRes.rows[0] ? linkedRegRes.rows[0].status : null;
+          if (!linkedRegRes.rows[0] || !isEligibleRegistrationStatus(linkedStatus)) {
+            throw new Error('The registration linked to this team is no longer eligible for verification. Please contact the organizer.');
+          }
+        }
+
+        // Proceed to allocation through the shared allocation service. The
+        // service revalidates team state + registration-bridge eligibility, locks
+        // the tournament (approved-roadmap gate), enforces capacity in the same
+        // transaction, and assigns to the first available Round 1 room in
+        // deterministic order. It never writes roadmap rows and never creates
+        // duplicate/unassigned placements.
+        const allocation = await allocateTeam(client, {
+          teamId,
+          tournamentId: tId,
+          source: ALLOCATION_SOURCES.AUTOMATIC,
+          actorId: authUser.id,
+        });
+        await client.query('COMMIT');
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, status: allocation.status, message: allocation.message }));
+      } catch (txnErr) {
+        await client.query('ROLLBACK');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: txnErr.message, code: txnErr instanceof AllocationError ? txnErr.code : undefined }));
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- PHASE 8: ORGANIZER ALLOCATION MANAGEMENT ---
+  const allocationGetMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/allocations$/);
+  if (allocationGetMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(allocationGetMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+      }
+
+      const metrics = await pool.query(`
+        SELECT 
+          COUNT(*) as total_teams,
+          SUM(CASE WHEN status = 'members_complete' THEN 1 ELSE 0 END) as pending_verification,
+          SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified,
+          SUM(CASE WHEN status = 'allocated' THEN 1 ELSE 0 END) as allocated,
+          SUM(CASE WHEN status = 'allocation_pending' THEN 1 ELSE 0 END) as pending_allocation
+        FROM tournament_teams WHERE tournament_id = $1
+      `, [tId]);
+
+      const teamsRes = await pool.query(`
+        SELECT t.id, t.team_name, t.status, t.created_at, u.name as leader_name,
+               a.match_id, a.room_id, a.group_id, a.day_id, a.assigned_at, a.source,
+               r.room_number, m.match_number, g.group_name, d.day_number, d.date
+        FROM tournament_teams t
+        LEFT JOIN users u ON t.leader_user_id = u.id
+        LEFT JOIN tournament_match_assignments a ON t.id = a.tournament_team_id
+        LEFT JOIN tournament_rooms r ON a.room_id = r.id
+        LEFT JOIN tournament_matches m ON a.match_id = m.id
+        LEFT JOIN tournament_groups g ON a.group_id = g.id
+        LEFT JOIN tournament_days d ON a.day_id = d.id
+        WHERE t.tournament_id = $1
+        ORDER BY t.created_at DESC
+      `, [tId]);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, metrics: metrics.rows[0], teams: teamsRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  const allocMoveMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/allocations\/move$/);
+  if (allocMoveMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(allocMoveMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        
+        const payload = JSON.parse(body);
+        const { teamId, matchId, roomId, reason } = payload;
+        if (!teamId || !matchId || !roomId || !reason) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'Missing fields' }));
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+
+          // Role gate (non-locking read; the shared service, which runs after,
+          // locks the team then the tournament as the allocation serialization
+          // point — uniform ordering on both automatic and manual paths).
+          const tRes = await client.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+          if (tRes.rows.length === 0) throw new Error('Tournament not found');
+          if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) throw new Error('Access denied');
+
+          const allocation = await allocateTeam(client, {
+            teamId,
+            tournamentId: tId,
+            source: ALLOCATION_SOURCES.ORGANIZER,
+            options: { roomId, matchId, reason },
+            actorId: authUser.id,
+          });
+
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: allocation.message }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: txnErr.message, code: txnErr instanceof AllocationError ? txnErr.code : undefined }));
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  const allocReleaseMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/allocations\/release$/);
+  if (allocReleaseMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(allocReleaseMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        
+        const payload = JSON.parse(body);
+        const { teamId, reason } = payload;
+        
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const tRes = await client.query('SELECT "orgId" FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
+          if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) throw new Error('Access denied');
+          
+          const oldAssignRes = await client.query('SELECT * FROM tournament_match_assignments WHERE tournament_team_id = $1', [teamId]);
+          
+          await client.query('DELETE FROM tournament_match_assignments WHERE tournament_team_id = $1', [teamId]);
+          await client.query("UPDATE tournament_teams SET status = 'allocation_pending' WHERE id = $1", [teamId]);
+          
+          // Audit
+          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await client.query(`
+            INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details)
+            VALUES ($1, $2, $3, $4, $5, $6)
+          `, [logId, authUser.id, 'allocation_release', 'tournament_team', teamId, JSON.stringify({ old: oldAssignRes.rows[0], reason })]);
+          
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Allocation released.' }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: txnErr.message }));
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  const allocHealthMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/allocations\/health$/);
+  if (allocHealthMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(allocHealthMatch[1]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      
+      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+      }
+
+      const healthIssues = [];
+      const dupRes = await pool.query(`
+        SELECT tournament_team_id, match_id, COUNT(*)
+        FROM tournament_match_assignments
+        WHERE tournament_id = $1
+        GROUP BY tournament_team_id, match_id
+        HAVING COUNT(*) > 1
+      `, [tId]);
+      if (dupRes.rows.length > 0) healthIssues.push('Duplicate allocations found.');
+
+      const capRes = await pool.query(`
+        SELECT a.room_id, r.capacity, COUNT(DISTINCT a.tournament_team_id) as count
+        FROM tournament_match_assignments a
+        JOIN tournament_rooms r ON a.room_id = r.id
+        WHERE a.tournament_id = $1
+        GROUP BY a.room_id, r.capacity
+        HAVING COUNT(DISTINCT a.tournament_team_id) > r.capacity
+      `, [tId]);
+      if (capRes.rows.length > 0) healthIssues.push('Capacity violations detected.');
+
+      const orphanedRes = await pool.query(`
+        SELECT a.id FROM tournament_match_assignments a
+        LEFT JOIN tournament_teams t ON a.tournament_team_id = t.id
+        WHERE a.tournament_id = $1 AND t.id IS NULL
+      `, [tId]);
+      if (orphanedRes.rows.length > 0) healthIssues.push('Orphaned assignment records found.');
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, healthy: healthIssues.length === 0, issues: healthIssues }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- PHASE 9: MATCH CREDENTIALS & PARTICIPANT EXPERIENCE ---
+  const credentialsMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/matches\/([^\/]+)\/credentials$/);
+  if (credentialsMatch && req.method === 'PUT') {
+    const tId = decodeURIComponent(credentialsMatch[1]);
+    const mId = decodeURIComponent(credentialsMatch[2]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+
+        const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        }
+
+        const payload = JSON.parse(body);
+        const { room_identifier, room_password } = payload;
+        
+        const mRes = await pool.query('SELECT * FROM tournament_matches WHERE id = $1 AND tournament_id = $2', [mId, tId]);
+        if (mRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'Match not found.' }));
+        }
+
+        const status = (room_identifier && room_password) ? 'Configured' : 'Not Configured';
+
+        await pool.query(`
+          UPDATE tournament_matches 
+          SET room_identifier = $1, room_password = $2, credential_status = $3
+          WHERE id = $4
+        `, [room_identifier || null, room_password || null, status, mId]);
+
+        // Audit log
+        const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(`
+          INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [logId, authUser.id, 'update_credentials', 'tournament_match', mId, JSON.stringify({ action: 'Set room credentials', status })]);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Credentials saved.', credential_status: status }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (credentialsMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(credentialsMatch[1]);
+    const mId = decodeURIComponent(credentialsMatch[2]);
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+
+      // Organizer check
+      const tRes = await pool.query('SELECT "orgId", room_credentials_release_minutes FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+      }
+      const isOrganizer = hasRole(authUser, ROLES.ADMIN) || tRes.rows[0].orgId === authUser.id;
+      const releaseMinutes = parseInt(tRes.rows[0].room_credentials_release_minutes) || 15;
+
+      // Verify participant is allocated to this match
+      let isAllocated = false;
+      if (!isOrganizer) {
+        const teamCheck = await pool.query(`
+          SELECT a.id 
+          FROM tournament_match_assignments a
+          JOIN tournament_team_members tm ON a.tournament_team_id = tm.tournament_team_id
+          WHERE a.match_id = $1 AND tm.user_id = $2
+        `, [mId, authUser.id]);
+        if (teamCheck.rows.length > 0) isAllocated = true;
+      }
+
+      if (!isOrganizer && !isAllocated) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'You are not allocated to this match.' }));
+      }
+
+      const mRes = await pool.query(`
+        SELECT m.start_time, m.room_identifier, m.room_password, d.date 
+        FROM tournament_matches m
+        JOIN tournament_days d ON m.day_id = d.id
+        WHERE m.id = $1 AND m.tournament_id = $2
+      `, [mId, tId]);
+      
+      if (mRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Match not found.' }));
+      }
+
+      const matchData = mRes.rows[0];
+      
+      // Calculate release time
+      let releaseTime = null;
+      let isReleased = false;
+      if (matchData.date && matchData.start_time) {
+        const matchDateTime = new Date(`${matchData.date}T${matchData.start_time}:00`);
+        releaseTime = new Date(matchDateTime.getTime() - releaseMinutes * 60000);
+        isReleased = new Date() >= releaseTime;
+      }
+
+      if (isOrganizer || isReleased) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          status: 'released',
+          room_identifier: matchData.room_identifier,
+          room_password: matchData.room_password,
+          releaseTime: releaseTime ? releaseTime.toISOString() : null
+        }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          status: 'locked',
+          releaseTime: releaseTime ? releaseTime.toISOString() : null
+        }));
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
   // === REGISTRATION SESSION ENDPOINTS ===
 
   // 7i_a. Create registration session (temporary, before payment)
@@ -5593,41 +7774,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── ADMIN: Leaderboard scores for a tournament (registered teams + scores) ──
-  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'GET') {
+  // ── PHASE 10: SCORING CONFIGURATION ──
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/scoring$/) && req.method === 'GET') {
     const parts = req.url.split('/');
-    const tournId = parts[4];
+    const tournId = parts[3];
     try {
-      const authUser = getAuthUser(req);
-      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
-        return;
-      }
-      if (!tournId) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Tournament id is required.' }));
-        return;
-      }
-      const [scoreRes, regRes, tournRes] = await Promise.all([
-        pool.query('SELECT * FROM tournament_leaderboard WHERE tournament_id = $1', [tournId]),
-        pool.query(
-          `SELECT id, team_name, status FROM tournament_registrations
-           WHERE tournament_id = $1 AND status NOT IN ('rejected', 'cancelled', 'expired')
-           ORDER BY created_at ASC`,
-          [tournId]
-        ),
-        pool.query('SELECT id, title FROM tournaments WHERE id = $1', [tournId]),
-      ]);
-      const scoresByTeam = new Map(scoreRes.rows.map(s => [s.team_id, s]));
-      const standings = sortAndRank(scoreRes.rows);
+      const resDb = await pool.query('SELECT * FROM tournament_scoring_rules WHERE tournament_id = $1', [tournId]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: true,
-        tournament: tournRes.rows[0] || null,
-        teams: regRes.rows.map(r => ({ ...r, score: scoresByTeam.get(r.id) || null })),
-        standings,
-      }));
+      res.end(JSON.stringify({ success: true, scoringRules: resDb.rows[0] || null }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -5635,11 +7789,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── ADMIN: Upsert a team's leaderboard score ───────────────────────────────
-  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'PUT') {
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/scoring$/) && req.method === 'PUT') {
     const parts = req.url.split('/');
-    const tournId = parts[4];
-    const teamId = parts[5];
+    const tournId = parts[3];
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
@@ -5647,66 +7799,24 @@ const server = http.createServer(async (req, res) => {
         const authUser = getAuthUser(req);
         if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizer access required' }));
           return;
         }
         const data = JSON.parse(body || '{}');
-        const scoringCheck = validateScoring(data);
-        if (!scoringCheck.valid) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_SCORE', message: scoringCheck.errors.join(' ') }));
-          return;
-        }
-        const regRes = await pool.query(
-          `SELECT id, team_name, status FROM tournament_registrations
-           WHERE id = $1 AND tournament_id = $2
-           AND status NOT IN ('rejected', 'cancelled', 'expired')`,
-          [teamId, tournId]
-        );
-        if (regRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'TEAM_NOT_REGISTERED', message: 'Team is not registered for this tournament.' }));
-          return;
-        }
-        const reg = regRes.rows[0];
-        const { kills, placement_points, wwcd, bonus_points } = scoringCheck.values;
-        const totalPoints = computeTotalPoints(scoringCheck.values);
-
-        const existing = await pool.query(
-          'SELECT id, total_points FROM tournament_leaderboard WHERE tournament_id = $1 AND team_id = $2',
-          [tournId, teamId]
-        );
-        const previousScore = existing.rows.length ? existing.rows[0].total_points : null;
-        const lbId = existing.rows.length ? existing.rows[0].id : 'LB-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-
+        const { kill_points_multiplier = 1, placement_points_map = {}, wwcd_bonus = 0 } = data;
+        
         await pool.query(
-          `INSERT INTO tournament_leaderboard
-             (id, tournament_id, team_id, team_name, kills, placement_points, wwcd, bonus_points, total_points, updated_by, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP)
-           ON CONFLICT (tournament_id, team_id)
-           DO UPDATE SET
-             team_name = EXCLUDED.team_name,
-             kills = EXCLUDED.kills,
-             placement_points = EXCLUDED.placement_points,
-             wwcd = EXCLUDED.wwcd,
-             bonus_points = EXCLUDED.bonus_points,
-             total_points = EXCLUDED.total_points,
-             updated_by = EXCLUDED.updated_by,
-             updated_at = CURRENT_TIMESTAMP
-           RETURNING *`,
-          [lbId, tournId, teamId, reg.team_name, kills, placement_points, wwcd, bonus_points, totalPoints, authUser.id]
+          `INSERT INTO tournament_scoring_rules (tournament_id, kill_points_multiplier, placement_points_map, wwcd_bonus, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (tournament_id) DO UPDATE SET
+             kill_points_multiplier = EXCLUDED.kill_points_multiplier,
+             placement_points_map = EXCLUDED.placement_points_map,
+             wwcd_bonus = EXCLUDED.wwcd_bonus,
+             updated_at = NOW()`,
+          [tournId, kill_points_multiplier, JSON.stringify(placement_points_map), wwcd_bonus]
         );
-
-        const auditId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-        await pool.query(
-          `INSERT INTO leaderboard_audit (id, tournament_id, team_id, team_name, previous_score, new_score, updated_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [auditId, tournId, teamId, reg.team_name, previousScore, totalPoints, authUser.id]
-        );
-
-        const standings = await calculateRankings(pool, tournId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Score updated successfully', standings }));
+        res.end(JSON.stringify({ success: true, message: 'Scoring configuration updated' }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -5715,43 +7825,126 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── ADMIN: Remove a team's leaderboard score ──────────────────────────────
-  if (req.url.startsWith('/api/admin/leaderboard/') && req.method === 'DELETE') {
+  // ── PHASE 10: MATCH RESULTS ──
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/matches\/([^/]+)\/results$/) && req.method === 'GET') {
     const parts = req.url.split('/');
-    const tournId = parts[4];
-    const teamId = parts[5];
+    const tournId = parts[3];
+    const matchId = parts[5];
     try {
-      const authUser = getAuthUser(req);
-      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
-        return;
-      }
-      const delRes = await pool.query(
-        'DELETE FROM tournament_leaderboard WHERE tournament_id = $1 AND team_id = $2 RETURNING *',
-        [tournId, teamId]
+      const resultsDb = await pool.query(
+        `SELECT r.*, t.team_name, u.name as leader_name 
+         FROM tournament_match_results r
+         JOIN tournament_teams t ON r.team_id = t.id
+         JOIN users u ON t.leader_user_id = u.id
+         WHERE r.match_id = $1`,
+        [matchId]
       );
-      if (delRes.rows.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'No score found for this team.' }));
-        return;
-      }
-      const removed = delRes.rows[0];
-      const auditId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-      await pool.query(
-        `INSERT INTO leaderboard_audit (id, tournament_id, team_id, team_name, previous_score, new_score, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [auditId, tournId, teamId, removed.team_name, removed.total_points, null, authUser.id]
-      );
-      const standings = await calculateRankings(pool, tournId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Score removed.', standings }));
+      res.end(JSON.stringify({ success: true, results: resultsDb.rows }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
     return;
   }
+
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/matches\/([^/]+)\/results$/) && req.method === 'POST') {
+    const parts = req.url.split('/');
+    const tournId = parts[3];
+    const matchId = parts[5];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizer access required' }));
+          return;
+        }
+
+        const data = JSON.parse(body || '{}');
+        const { results } = data; // Expected: [{team_id, placement, kills}, ...]
+        if (!Array.isArray(results)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Expected array of results' }));
+          return;
+        }
+
+        // Fetch scoring rules
+        const scoringRes = await pool.query('SELECT * FROM tournament_scoring_rules WHERE tournament_id = $1', [tournId]);
+        const scoringRules = scoringRes.rows[0] || { kill_points_multiplier: 1, placement_points_map: {}, wwcd_bonus: 0 };
+
+        await pool.query('BEGIN');
+
+        for (const r of results) {
+          const { team_id, placement, kills } = r;
+          
+          if (!team_id || placement == null || kills == null || kills < 0 || placement < 1) {
+            throw new Error(`Invalid result data for team ${team_id}`);
+          }
+
+          // Verify team allocation
+          const allocCheck = await pool.query('SELECT * FROM tournament_match_assignments WHERE match_id = $1 AND tournament_team_id = $2', [matchId, team_id]);
+          if (allocCheck.rows.length === 0) {
+            throw new Error(`Team ${team_id} is not allocated to this match.`);
+          }
+
+          const { calculateMatchPoints, updateTeamLeaderboard } = await import('./server/leaderboardService.js');
+          const pts = calculateMatchPoints(kills, placement, scoringRules);
+
+          const resultId = 'RES-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+
+          await pool.query(
+            `INSERT INTO tournament_match_results (
+               id, tournament_id, match_id, team_id, placement, kills, 
+               kill_points, placement_points, wwcd, total_points, status, verified_by, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'verified', $11, NOW())
+             ON CONFLICT (match_id, team_id) DO UPDATE SET
+               placement = EXCLUDED.placement,
+               kills = EXCLUDED.kills,
+               kill_points = EXCLUDED.kill_points,
+               placement_points = EXCLUDED.placement_points,
+               wwcd = EXCLUDED.wwcd,
+               total_points = EXCLUDED.total_points,
+               status = 'verified',
+               verified_by = EXCLUDED.verified_by,
+               updated_at = NOW()`,
+            [resultId, tournId, matchId, team_id, placement, kills, pts.kill_points, pts.placement_points, pts.wwcd, pts.total_points, authUser.id]
+          );
+
+          // Re-aggregate team leaderboard
+          await updateTeamLeaderboard(pool, tournId, team_id);
+        }
+
+        await pool.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Results verified and leaderboard updated.' }));
+      } catch (err) {
+        await pool.query('ROLLBACK');
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── PHASE 10: LEADERBOARD VIEW ──
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/leaderboard$/) && req.method === 'GET') {
+    const parts = req.url.split('/');
+    const tournId = parts[3];
+    try {
+      const { calculateRankings } = await import('./server/leaderboardService.js');
+      const standings = await calculateRankings(pool, tournId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, standings }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
 
   // 7k_b. Supabase Get All Registrations for a User (auth + ownership required)
   if (req.url.startsWith('/api/users/') && req.url.endsWith('/registrations') && req.method === 'GET') {
@@ -6693,10 +8886,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 8f. GET /api/tournaments/:id/roadmap - Fetch roadmap rounds
-  const roadmapGetMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/roadmap$/);
-  if (roadmapGetMatch && req.method === 'GET') {
+  const roadmapGetLegacyMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/roadmap$/);
+  if (roadmapGetLegacyMatch && req.method === 'GET') {
     try {
-      const tId = roadmapGetMatch[1];
+      const tId = roadmapGetLegacyMatch[1];
       const dbRes = await pool.query('SELECT timeline, "orgId", "rounds_published" FROM tournaments WHERE id = $1', [tId]);
       if (dbRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });

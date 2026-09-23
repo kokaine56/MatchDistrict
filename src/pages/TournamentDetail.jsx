@@ -19,6 +19,8 @@ import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
+import Phase3RoadmapViewer from '../components/Phase3RoadmapViewer.jsx';
+import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
 import { isSystemAdmin } from '../utils/iamRoles.js';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
@@ -1332,6 +1334,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 { id: 'overview', label: 'Overview' },
                 { id: 'prize', label: 'Prize Pool' },
                 { id: 'roadmap', label: 'Roadmap' },
+                ...(currentUser ? [{ id: 'my_team', label: 'My Team' }] : []),
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
                 { id: 'leaderboard', label: 'Leaderboard' },
@@ -1666,12 +1669,23 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               )
             )}
             {activeTab === 'roadmap' && (
-              <TournamentRoadmap
-                roadmap={parsedTimeline.roadmap}
-                isGoldTheme={isGoldTheme}
-                roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
-                isOwner={isTournamentOwner}
-                onSaveCredentials={handleSaveRoundCredentials}
+              tourney?.roadmap_status === 'approved' ? (
+                <Phase3RoadmapViewer tournamentId={tourney.id} />
+              ) : (
+                <TournamentRoadmap
+                  roadmap={parsedTimeline.roadmap}
+                  isGoldTheme={isGoldTheme}
+                  roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
+                  isOwner={isTournamentOwner}
+                  onSaveCredentials={handleSaveRoundCredentials}
+                />
+              )
+            )}
+            {activeTab === 'my_team' && currentUser && (
+              <TournamentTeamHub
+                tournamentId={tourney.id}
+                tournamentTitle={tourney.title}
+                maxTeamSize={tourney.players_per_team || 4}
               />
             )}
             {activeTab === 'rules' && (

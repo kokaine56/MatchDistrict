@@ -1,38 +1,39 @@
 {
-  "name": "matchdistrict",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint .",
-    "preview": "vite preview",
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "@floating-ui/react": "^0.27.19",
-    "@supabase/supabase-js": "^2.108.2",
-    "framer-motion": "^12.43.0",
-    "lucide-react": "^1.21.0",
-    "otpauth": "^9.5.1",
-    "pg": "^8.20.0",
-    "qrcode": "^1.5.4",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-router-dom": "^7.18.0",
-    "recharts": "^3.9.0",
-    "resend": "^6.12.3"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^10.5.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.3",
-    "globals": "^17.6.0",
-    "vite": "^8.0.12"
-  }
+    "name":  "matchdistrict",
+    "private":  true,
+    "version":  "0.0.0",
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "vite build",
+                    "lint":  "eslint .",
+                    "preview":  "vite preview",
+                    "start":  "node server.js",
+                    "test":  "node --test tests/tournamentPlanner.test.js"
+                },
+    "dependencies":  {
+                         "@floating-ui/react":  "^0.27.19",
+                         "@supabase/supabase-js":  "^2.108.2",
+                         "framer-motion":  "^12.43.0",
+                         "lucide-react":  "^1.21.0",
+                         "otpauth":  "^9.5.1",
+                         "pg":  "^8.20.0",
+                         "qrcode":  "^1.5.4",
+                         "react":  "^19.2.7",
+                         "react-dom":  "^19.2.7",
+                         "react-router-dom":  "^7.18.0",
+                         "recharts":  "^3.9.0",
+                         "resend":  "^6.12.3"
+                     },
+    "devDependencies":  {
+                            "@eslint/js":  "^10.0.1",
+                            "@types/react":  "^19.2.17",
+                            "@types/react-dom":  "^19.2.3",
+                            "@vitejs/plugin-react":  "^6.0.1",
+                            "eslint":  "^10.5.0",
+                            "eslint-plugin-react-hooks":  "^7.1.1",
+                            "eslint-plugin-react-refresh":  "^0.5.3",
+                            "globals":  "^17.6.0",
+                            "vite":  "^8.0.12"
+                        }
 }
