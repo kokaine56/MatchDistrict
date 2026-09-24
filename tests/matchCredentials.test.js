@@ -237,6 +237,9 @@ test('participant /my-team assignment SQL uses match round and scopes tournament
   assert.match(handler, /LEFT JOIN tournament_rounds rnd ON rnd\.id = m\.round_id AND rnd\.tournament_id = a\.tournament_id/);
   assert.match(handler, /WHERE a\.tournament_team_id = \$1 AND a\.tournament_id = \$2/);
   assert.match(handler, /ORDER BY rnd\.round_number ASC NULLS LAST, d\.day_number ASC, m\.match_number ASC/);
+  assert.match(handler, /SELECT m\.id, m\.role, m\.joined_at AS created_at, u\.name, u\.avatar/);
+  assert.match(handler, /ORDER BY m\.joined_at ASC NULLS LAST, m\.id ASC/);
+  assert.doesNotMatch(handler, /m\.created_at/);
 });
 
 test('participant credential authorization remains scoped to authenticated membership, match, and tournament', async () => {
@@ -416,6 +419,38 @@ async function seedParticipantScenario(client, tournamentId = 'CRD-TRN-1') {
     [`${tournamentId}-ASG`, tournamentId, 'CRD-TEAM-A', `${tournamentId}-M`, `${tournamentId}-RM`, `${tournamentId}-G`, `${tournamentId}-D`, 'allocated']
   );
 }
+
+test('my-team members query reads the real joined_at column and preserves created_at response shape', async (t) => {
+  await withTransaction(async (client) => {
+    const tournamentId = 'CRD-MYTEAM-MEMBERS';
+    await seedParticipantScenario(client, tournamentId);
+    await client.query(
+      'INSERT INTO users (id, email, name, password) VALUES ($1, $2, $3, $4)',
+      ['CRD-A2', 'crd-a2@crd.test', 'Player A2', 'x']
+    );
+    await client.query(
+      `INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, joined_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      ['CRD-MEM-A2', 'CRD-TEAM-A', tournamentId, 'CRD-A2', 'member', null]
+    );
+    await client.query(
+      'UPDATE tournament_team_members SET joined_at = $1 WHERE id = $2',
+      ['2026-01-01T00:00:00Z', 'CRD-MEM-A']
+    );
+
+    const membersRes = await client.query(`
+      SELECT m.id, m.role, m.joined_at AS created_at, u.name, u.avatar
+      FROM tournament_team_members m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.tournament_team_id = $1
+      ORDER BY m.joined_at ASC NULLS LAST, m.id ASC
+    `, ['CRD-TEAM-A']);
+    assert.deepStrictEqual(membersRes.rows.map((member) => member.id), ['CRD-MEM-A', 'CRD-MEM-A2']);
+    assert.strictEqual(membersRes.rows[0].created_at.toISOString(), '2026-01-01T00:00:00.000Z');
+    assert.strictEqual(membersRes.rows[1].created_at, null);
+    assert.strictEqual(membersRes.rows[1].name, 'Player A2');
+  }, t);
+});
 
 test('credentials roadmap: server SQL resolves only the caller' + "'s team + scoped assignments", async (t) => {
   await withTransaction(async (client) => {     const tournamentId = 'CRD-TRN-1';

@@ -6763,11 +6763,11 @@ const server = http.createServer(async (req, res) => {
       if (teamRes.rows.length > 0) {
         const teamId = teamRes.rows[0].id;
         const membersRes = await pool.query(`
-          SELECT m.id, m.role, m.created_at, u.name, u.avatar
+          SELECT m.id, m.role, m.joined_at AS created_at, u.name, u.avatar
           FROM tournament_team_members m
           JOIN users u ON m.user_id = u.id
           WHERE m.tournament_team_id = $1
-          ORDER BY m.created_at ASC
+          ORDER BY m.joined_at ASC NULLS LAST, m.id ASC
         `, [teamId]);
         members = membersRes.rows;
 
