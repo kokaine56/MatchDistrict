@@ -30,6 +30,7 @@ export const PROGRESSION_ERR = Object.freeze({
   ROUND_NO_RESULTS: 'ROUND_NO_RESULTS',
   NO_NEXT_ROUND: 'NO_NEXT_ROUND',
   ROUND_ALREADY_COMPLETED: 'ROUND_ALREADY_COMPLETED',
+  TOURNAMENT_FINALIZED: 'TOURNAMENT_FINALIZED',
 });
 
 export class ProgressionError extends Error {
@@ -97,7 +98,7 @@ export async function getRoundStandings(client, tournamentId, roundId) {
      JOIN tournament_matches m ON m.id = tm.match_id AND m.tournament_id = $1
      JOIN tournament_teams t ON t.id = tm.team_id
      LEFT JOIN users u ON u.id = t.leader_user_id
-     WHERE m.round_id = $2
+     WHERE m.round_id = $2 AND tm.status = 'verified'
      GROUP BY tm.team_id, t.team_name, u.name`,
     [tournamentId, roundId]
   );
@@ -118,9 +119,9 @@ function roundSummary(round) {
 //
 // Transactional contract:
 //   - the caller owns the transaction (BEGIN before, COMMIT/ROLLBACK after);
-//   - lock order is round FOR UPDATE → (per team, inside allocateTeam) team →
-//     tournament — tournament is always acquired last, so it cannot cycle with
-//     the verify/move paths (team → tournament);
+//   - lock order is tournament FOR UPDATE → round FOR UPDATE → team FOR UPDATE
+//     (inside allocateTeam), matching verification, manual movement, results,
+//     and finalization so concurrent lifecycle writes do not cycle;
 //   - an already-completed round is idempotent (returns alreadyQualified: true);
 //   - hard allocation failures (e.g. roadmap revoked mid-batch) abort the whole
 //     run; soft ones (ineligible registration, misplaced team) skip that team only.
@@ -131,9 +132,12 @@ export async function qualifyRound(client, { tournamentId, roundNumber, actorId 
     throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, 'A valid round number must be provided.');
   }
 
-  const tournRes = await client.query('SELECT id, "orgId", roadmap_status FROM tournaments WHERE id = $1', [tId]);
+  const tournRes = await client.query('SELECT id, "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
   if (tournRes.rows.length === 0) {
     throw progressionError(PROGRESSION_ERR.TOURNAMENT_NOT_FOUND, 'Tournament not found.');
+  }
+  if (tournRes.rows[0].finalized_at) {
+    throw progressionError(PROGRESSION_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; round progression is locked.');
   }
   if (tournRes.rows[0].roadmap_status !== 'approved') {
     throw progressionError(PROGRESSION_ERR.ROADMAP_NOT_APPROVED, 'The roadmap must be approved before qualifying teams.');

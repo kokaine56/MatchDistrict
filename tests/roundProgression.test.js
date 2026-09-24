@@ -195,10 +195,15 @@ test('progression: qualifyRound guards a missing client and invalid round number
 });
 
 test('progression: getRoundStandings tolerates a missing tournament as empty (query-only)', async () => {
+  let capturedSql = '';
   const fakeClient = {
-    query: async () => ({ rows: [{ team_id: 'T1', total_points: 5 }] }),
+    query: async (sql) => {
+      capturedSql = sql;
+      return { rows: [{ team_id: 'T1', total_points: 5 }] };
+    },
   };
   const standings = await getRoundStandings(fakeClient, 'TRN-X', 'RND-X');
+  assert.match(capturedSql, /tm\.status = 'verified'/);
   assert.ok(Array.isArray(standings));
   assert.strictEqual(standings[0].team_id, 'T1');
   assert.strictEqual(standings[0].rank, 1);

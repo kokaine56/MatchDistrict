@@ -22,6 +22,7 @@ import VerificationBadge from '../components/VerificationBadge.jsx'
 import { formatDate } from '../utils/timeFormat'
 import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
+import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -2568,6 +2569,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           { id: 'teams', label: 'Teams & Squads', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
                           { id: 'wallet', label: 'Wallet & Payouts', icon: 'account_balance_wallet' },
+                          { id: 'prize-payments', label: 'Prize Payments', icon: 'payments' },
                           { id: 'settings', label: 'Settings', icon: 'settings' },
                           ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
                             ? [{ id: 'verifier', label: 'Verifier Panel', icon: 'verified' }]
@@ -2604,6 +2606,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           { id: 'teams', label: 'Teams', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
                           { id: 'wallet', label: 'Wallet', icon: 'account_balance_wallet' },
+                          { id: 'prize-payments', label: 'Prize Payments', icon: 'payments' },
                           { id: 'settings', label: 'Settings', icon: 'settings' },
                           ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
                             ? [{ id: 'verifier', label: 'Verifier', icon: 'verified' }]
@@ -3574,6 +3577,17 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </div>
                     )}
                   </div>
+                </motion.div>
+              )}
+              {activeTab === 'prize-payments' && (
+                <motion.div
+                  key="prize-payments"
+                  variants={tabContentVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                >
+                  <PrizePaymentHistory />
                 </motion.div>
               )}
               {/* Tab 5: Settings */}

@@ -8,6 +8,7 @@ import {
   MATCH_TERMINAL_STATUSES,
   DEFAULT_SCORING_RULES,
   randomId,
+  mapPublicMatchResult,
   validateScoringRulesPayload,
   validateResultEntries,
   computeFinalPlacementCollision,
@@ -28,6 +29,33 @@ const scoringRules = {
   },
   wwcd_bonus: 5
 };
+
+test('public match result mapping omits internal actor and persistence fields', () => {
+  const mapped = mapPublicMatchResult({
+    id: 'RESULT-1',
+    tournament_id: 'TOURNAMENT-1',
+    match_id: 'MATCH-1',
+    team_id: 'TEAM-1',
+    team_name: 'Blue Team',
+    leader_name: 'Leader',
+    placement: 1,
+    kills: 4,
+    kill_points: 4,
+    placement_points: 15,
+    wwcd: true,
+    total_points: 19,
+    status: 'verified',
+    submitted_by: 'USER-SUBMITTER',
+    verified_by: 'USER-VERIFIER',
+    secret: 'must not escape',
+  });
+  assert.equal(mapped.team_name, 'Blue Team');
+  assert.equal(mapped.total_points, 19);
+  assert.equal('submitted_by' in mapped, false);
+  assert.equal('verified_by' in mapped, false);
+  assert.equal('tournament_id' in mapped, false);
+  assert.equal('secret' in mapped, false);
+});
 
 test('scoring: calculates points correctly for WWCD', () => {
   const result = calculateMatchPoints(5, 1, scoringRules);

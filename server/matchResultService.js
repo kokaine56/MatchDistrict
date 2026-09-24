@@ -23,6 +23,7 @@ export const MATCH_RESULT_ERR = Object.freeze({
   NOT_FOUND: 'NOT_FOUND',
   INVALID_INPUT: 'INVALID_INPUT',
   ROADMAP_NOT_APPROVED: 'ROADMAP_NOT_APPROVED',
+  TOURNAMENT_FINALIZED: 'TOURNAMENT_FINALIZED',
   MATCH_TOURNAMENT_MISMATCH: 'MATCH_TOURNAMENT_MISMATCH',
   MATCH_CLOSED: 'MATCH_CLOSED',
   TEAM_NOT_ALLOCATED: 'TEAM_NOT_ALLOCATED',
@@ -49,6 +50,26 @@ export function matchResultError(code, message, status = 400) {
 
 export function randomId(prefix = 'RES-') {
   return prefix + randomBytes(6).toString('hex').toUpperCase();
+}
+
+// Public tournament result responses contain scores and public team labels,
+// never internal actor IDs or other persistence-only fields.
+export function mapPublicMatchResult(row) {
+  return {
+    id: row.id,
+    team_id: row.team_id,
+    team_name: row.team_name,
+    leader_name: row.leader_name,
+    placement: row.placement,
+    kills: row.kills,
+    kill_points: row.kill_points,
+    placement_points: row.placement_points,
+    wwcd: row.wwcd,
+    total_points: row.total_points,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 // Terminal match statuses. No route currently advances tournament_matches.status (it stays
@@ -232,9 +253,12 @@ export async function applyMatchResults(client, { tournId, matchId, results, act
   }
 
   // 1. Lock the tournament row and enforce the approved-roadmap gate.
-  const tournRes = await client.query('SELECT "orgId", roadmap_status, title FROM tournaments WHERE id = $1 FOR UPDATE', [tournId]);
+  const tournRes = await client.query('SELECT "orgId", roadmap_status, title, finalized_at, status FROM tournaments WHERE id = $1 FOR UPDATE', [tournId]);
   if (tournRes.rows.length === 0) {
     throw matchResultError(MATCH_RESULT_ERR.NOT_FOUND, 'Tournament not found.', 404);
+  }
+  if (tournRes.rows[0].finalized_at) {
+    throw matchResultError(MATCH_RESULT_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; match results are locked.', 409);
   }
   if (tournRes.rows[0].roadmap_status !== 'approved') {
     throw matchResultError(MATCH_RESULT_ERR.ROADMAP_NOT_APPROVED, 'The tournament roadmap must be approved before results can be recorded.');
@@ -255,8 +279,9 @@ export async function applyMatchResults(client, { tournId, matchId, results, act
 
   // 3. Authoritative allocation set + placement bound.
   const allocRes = await client.query(
-    'SELECT DISTINCT tournament_team_id FROM tournament_match_assignments WHERE match_id = $1',
-    [matchId]
+    `SELECT DISTINCT tournament_team_id FROM tournament_match_assignments
+     WHERE match_id = $1 AND tournament_id = $2 AND status = 'allocated'`,
+    [matchId, tournId]
   );
   const allocatedIds = new Set(allocRes.rows.map((r) => r.tournament_team_id));
   const bound = allocatedIds.size;

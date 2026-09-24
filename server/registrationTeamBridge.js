@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 // --- REGISTRATION → TOURNAMENT TEAM BRIDGE ---
 //
 // Additive, server-authoritative bridge between the legacy registration system
@@ -49,6 +51,14 @@ export function maxMembersForMatchType(matchType) {
   if (type === 'solo') return 1;
   if (type === 'duo') return 2;
   return 4;
+}
+// Cryptographically random invitation identifiers and bearer tokens. Kept in
+// this pure module so the ESM route and the token format can be tested directly.
+export function createInvitationCredentials() {
+  return {
+    id: `inv_${randomBytes(12).toString('hex')}`,
+    token: randomBytes(16).toString('hex'),
+  };
 }
 
 export function isEligibleRegistrationStatus(status) {

@@ -10,10 +10,10 @@
 // state and audit rules.
 //
 // Concurrency: the caller controls the transaction (no hidden COMMIT/ROLLBACK).
-// allocateTeam locks the team row FOR UPDATE first, then the tournament row FOR
-// UPDATE as the serialization point (because team→tournament lock ordering is
-// uniform across automatic and manual paths, concurrent allocations cannot deadlock
-// and never exceed room capacity). Every verification of available capacity happens
+// allocateTeam locks the tournament row FOR UPDATE first, then the team row FOR
+// UPDATE. Tournament-first ordering matches qualification and finalization and
+// prevents a qualification batch from deadlocking against a concurrent move.
+// Every verification of available capacity happens
 // inside the same transaction that performs the insert.
 //
 // Idempotency: re-calling allocateTeam for an already-allocated team under the
@@ -37,6 +37,7 @@ export const AWAITING_MEMBERS_STATUS = 'awaiting_members';
 export const ALLOCATION_ERR = Object.freeze({
   TEAM_NOT_FOUND: 'TEAM_NOT_FOUND',
   TOURNAMENT_NOT_FOUND: 'TOURNAMENT_NOT_FOUND',
+  TOURNAMENT_FINALIZED: 'TOURNAMENT_FINALIZED',
   TOURNAMENT_MISMATCH: 'TOURNAMENT_MISMATCH',
   ROADMAP_NOT_APPROVED: 'ROADMAP_NOT_APPROVED',
   TEAM_NOT_COMPLETE: 'TEAM_NOT_COMPLETE',
@@ -461,7 +462,23 @@ export async function allocateTeam(client, {
   const src = normalizeSource(source);
   const opts = options || {};
 
-  // 1. Lock the team row (serialization point for concurrent verify/move).
+  // 1. Lock the tournament first. This is the shared serialization point for
+  // allocation, qualification, result mutation, and finalization.
+  const tournRes = await client.query(
+    'SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1 FOR UPDATE',
+    [tournamentId]
+  );
+  if (tournRes.rows.length === 0) {
+    throw allocationError(ALLOCATION_ERR.TOURNAMENT_NOT_FOUND, 'Tournament not found.');
+  }
+  if (tournRes.rows[0].finalized_at) {
+    throw allocationError(ALLOCATION_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; team allocations are locked.');
+  }
+  if (tournRes.rows[0].roadmap_status !== 'approved') {
+    throw allocationError(ALLOCATION_ERR.ROADMAP_NOT_APPROVED, 'The tournament roadmap is not approved. Approve the roadmap before allocating teams.');
+  }
+
+  // 2. Lock the team row (serialization point for concurrent verify/move).
   const teamRes = await client.query(
     'SELECT id, tournament_id, status, team_name, registration_id FROM tournament_teams WHERE id = $1 FOR UPDATE',
     [teamId]
@@ -474,7 +491,7 @@ export async function allocateTeam(client, {
     throw allocationError(ALLOCATION_ERR.TOURNAMENT_MISMATCH, 'Team does not belong to this tournament.');
   }
 
-  // 2. Idempotent short-circuit: an already-allocated team under the automatic
+  // 3. Idempotent short-circuit: an already-allocated team under the automatic
   //    flow is left untouched. Manual moves on allocated teams still proceed.
   if (team.status === ALLOCATED_STATUS && src === ALLOCATION_SOURCES.AUTOMATIC) {
     const existing = await client.query(
@@ -495,25 +512,12 @@ export async function allocateTeam(client, {
     }
   }
 
-  // 3. State gate.
+  // 4. State gate.
   if (!canTransitionFromStatus(team.status, src)) {
     if (team.status === AWAITING_MEMBERS_STATUS || team.status === MEMBERS_COMPLETE_STATUS) {
       throw allocationError(ALLOCATION_ERR.TEAM_NOT_COMPLETE, 'Team has not completed its roster yet. All members must join before allocation.');
     }
     throw allocationError(ALLOCATION_ERR.TEAM_NOT_VERIFIED, 'Team must be verified before allocation.');
-  }
-
-  // 4. Lock the tournament as the allocation serialization point and enforce the
-  //    approved-roadmap gate. No roadmap row is ever written.
-  const tournRes = await client.query(
-    'SELECT "orgId", roadmap_status FROM tournaments WHERE id = $1 FOR UPDATE',
-    [tournamentId]
-  );
-  if (tournRes.rows.length === 0) {
-    throw allocationError(ALLOCATION_ERR.TOURNAMENT_NOT_FOUND, 'Tournament not found.');
-  }
-  if (tournRes.rows[0].roadmap_status !== 'approved') {
-    throw allocationError(ALLOCATION_ERR.ROADMAP_NOT_APPROVED, 'The tournament roadmap is not approved. Approve the roadmap before allocating teams.');
   }
 
   // 5. Registration-bridge eligibility (defense in depth; the verify handler also

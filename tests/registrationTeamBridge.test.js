@@ -4,6 +4,7 @@ import {
   REG_BRIDGE_ELIGIBLE_STATUSES,
   REG_BRIDGE_EXCLUDED_STATUSES,
   maxMembersForMatchType,
+  createInvitationCredentials,
   isEligibleRegistrationStatus,
   isExcludedRegistrationStatus,
   pickEligibleRegistration,
@@ -11,6 +12,15 @@ import {
 } from '../server/registrationTeamBridge.js';
 
 // --- maxMembersForMatchType ---
+test('createInvitationCredentials: returns a unique ESM-safe bearer token and identifier', () => {
+  const first = createInvitationCredentials();
+  const second = createInvitationCredentials();
+  assert.match(first.id, /^inv_[a-f0-9]{24}$/);
+  assert.match(first.token, /^[a-f0-9]{32}$/);
+  assert.notEqual(first.id, second.id);
+  assert.notEqual(first.token, second.token);
+});
+
 test('maxMembersForMatchType: solo=1, duo=2, squad/other=4', () => {
   assert.strictEqual(maxMembersForMatchType('solo'), 1);
   assert.strictEqual(maxMembersForMatchType('duo'), 2);

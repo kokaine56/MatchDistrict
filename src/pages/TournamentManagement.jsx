@@ -98,10 +98,56 @@ export default function TournamentManagement({ onNavigate }) {
   const [planningResultTournament, setPlanningResultTournament] = useState(null)
   const [roadmapTournament, setRoadmapTournament] = useState(null)
   const [allocationTournament, setAllocationTournament] = useState(null)
+  const [prizeAwardsTournament, setPrizeAwardsTournament] = useState(null)
+  const [prizeAwards, setPrizeAwards] = useState([])
+  const [prizeAwardsMeta, setPrizeAwardsMeta] = useState(null)
+  const [prizeAwardsLoading, setPrizeAwardsLoading] = useState(false)
+  const [settlementAward, setSettlementAward] = useState(null)
+  const [settlementUtr, setSettlementUtr] = useState('')
+  const [manualPaymentConfirmed, setManualPaymentConfirmed] = useState(false)
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3000)
+  }
+
+  const refreshPrizePayouts = async (tournamentId, headers) => {
+    const res = await fetch(`/api/tournaments/${tournamentId}/prize-awards/payouts`, { headers })
+    const json = await res.json()
+    if (!json.success) throw new Error(json.message || 'Could not load payout details')
+    const payouts = json.payouts || []
+    setPrizeAwards(payouts)
+    setPrizeAwardsMeta({
+      award_count: payouts.length,
+      total_award_amount: payouts.reduce((sum, award) => sum + Number(award.prize_amount || 0), 0),
+      alreadyGenerated: payouts.length > 0,
+    })
+  }
+
+  const submitManualPayout = async (award) => {
+    if (!manualPaymentConfirmed || !settlementUtr.trim()) return
+    setActionLoading(`settle-prize:${award.id}`)
+    try {
+      const token = await getAuthToken()
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers.Authorization = `Bearer ${token}`
+      const res = await fetch(`/api/tournaments/${award.tournament_id}/prize-awards/${award.id}/settle`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ utr_reference: settlementUtr, confirm_manual_payment: true, upi_id_used: award.payout_upi_id }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.message || json.error || 'Could not record the payout')
+      showToast(json.alreadyPaid ? 'This payment was already recorded' : 'Manual UPI payment recorded')
+      setSettlementAward(null)
+      setSettlementUtr('')
+      setManualPaymentConfirmed(false)
+      await refreshPrizePayouts(award.tournament_id, headers)
+    } catch (error) {
+      showToast(error.message || 'Could not record the payout', 'error')
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   useEffect(() => {
@@ -258,7 +304,33 @@ export default function TournamentManagement({ onNavigate }) {
           if (json.success) { showToast('Tournament archived'); fetchTournaments() }
           else showToast(json.message || 'Failed to archive', 'error')
           break
-        case 'delete':
+        case 'finalize':
+          if (!confirm(`Finalize ${t.title}? All final-round matches must have verified results. Finalization locks the results and tournament structure.`)) break
+          res = await fetch(`/api/tournaments/${t.id}/finalize`, { method: 'POST', headers })
+          json = await res.json()
+          if (json.success) {
+            showToast(json.alreadyFinalized ? 'Tournament was already finalized' : 'Tournament finalized and standings saved')
+            fetchTournaments()
+          } else showToast(json.message || json.error || 'Finalization is blocked', 'error')
+          break
+        case 'prize-awards': {
+          setPrizeAwardsTournament(t)
+          setSettlementAward(null)
+          setSettlementUtr('')
+          setManualPaymentConfirmed(false)
+          setPrizeAwards([])
+          setPrizeAwardsMeta(null)
+          setPrizeAwardsLoading(true)
+          try {
+            await refreshPrizePayouts(t.id, headers)
+          } catch {
+            showToast('Could not load prize awards', 'error')
+            setPrizeAwardsTournament(null)
+          } finally {
+            setPrizeAwardsLoading(false)
+          }
+          break
+        }        case 'delete':
           if (!confirm('Delete this tournament permanently? This cannot be undone.')) break
           res = await fetch(`/api/tournaments/${t.id}`, { method: 'DELETE', headers })
           json = await res.json()
@@ -601,6 +673,12 @@ export default function TournamentManagement({ onNavigate }) {
                                           <MenuButton icon="eyeOff" label="Hide Rounds" onClick={() => { setMenuOpenId(null); handleAction('hide-rounds', t) }} />
                                         )}
                                         <MenuButton icon="duplicate" label="Duplicate" onClick={() => { setMenuOpenId(null); handleAction('duplicate', t) }} />
+                                        {!t.isDraft && t.status === 'live' && !t.finalized_at && (
+                                          <MenuButton icon="check" label="Finalize Tournament" onClick={() => { setMenuOpenId(null); handleAction('finalize', t) }} />
+                                        )}
+                                        {!t.isDraft && t.finalized_at && (
+                                          <MenuButton icon="star" label="Prize Awards" onClick={() => { setMenuOpenId(null); handleAction('prize-awards', t) }} />
+                                        )}
                                         {t.status !== 'archived' && t.status !== 'completed' && (
                                           <>
                                             <MenuButton icon="calendar" label="Configure Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
@@ -695,6 +773,161 @@ export default function TournamentManagement({ onNavigate }) {
               >
                 View Tournament Page
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Prize Awards and manual settlement (Phase 9C) */}
+      <AnimatePresence>
+        {prizeAwardsTournament && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setPrizeAwardsTournament(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-surface-container border border-outline-variant/30 p-5 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-on-background">Prize Awards</h2>
+                  <p className="text-xs text-on-surface-variant mt-0.5">{prizeAwardsTournament.title}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPrizeAwardsTournament(null)}
+                  className="text-on-surface-variant hover:text-on-background text-sm"
+                >
+                  Close
+                </button>
+              </div>
+
+              {prizeAwardsLoading ? (
+                <p className="text-sm text-on-surface-variant py-8 text-center">Loading…</p>
+              ) : prizeAwards.length === 0 ? (
+                <div className="space-y-4">
+                  <p className="text-sm text-on-surface-variant">
+                    No prize awards yet. Generation creates immutable obligations from final standings and the configured prize distribution. No money is sent.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={actionLoading === `generate-prize-awards:${prizeAwardsTournament.id}`}
+                    onClick={async () => {
+                      const t = prizeAwardsTournament
+                      setActionLoading(`generate-prize-awards:${t.id}`)
+                      setPrizeAwardsLoading(true)
+                      try {
+                        const token = await getAuthToken()
+                        const headers = { 'Content-Type': 'application/json' }
+                        if (token) headers['Authorization'] = `Bearer ${token}`
+                        const res = await fetch(`/api/tournaments/${t.id}/prize-awards/generate`, { method: 'POST', headers })
+                        const json = await res.json()
+                        if (json.success) {
+                          await refreshPrizePayouts(t.id, headers)
+                          setPrizeAwardsMeta(prev => ({ ...prev, alreadyGenerated: true }))
+                          showToast(json.alreadyGenerated ? 'Prize awards were already generated' : 'Prize awards generated')
+                        } else {
+                          showToast(json.message || json.error || 'Could not generate prize awards', 'error')
+                        }
+                      } catch {
+                        showToast('Could not generate prize awards', 'error')
+                      } finally {
+                        setPrizeAwardsLoading(false)
+                        setActionLoading(null)
+                      }
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-primary text-white text-sm font-semibold disabled:opacity-50"
+                  >
+                    Generate Prize Awards
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-on-surface-variant">
+                    {prizeAwardsMeta?.award_count || prizeAwards.length} award{(prizeAwardsMeta?.award_count || prizeAwards.length) === 1 ? '' : 's'}
+                    {' · '}
+                    Total obligation ₹{(prizeAwardsMeta?.total_award_amount || 0).toLocaleString('en-IN')}
+                    {' · '}
+                    Manual UPI settlement only; this system does not send payments.
+                  </p>
+                  <div className="space-y-2">
+                    {prizeAwards.map((a) => (
+                      <div
+                        key={a.id}
+                        className="rounded-xl border border-outline-variant/20 bg-surface/40 px-3 py-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-on-background truncate">
+                            #{a.rank} · {a.team_name || a.team_id}
+                          </p>
+                          <p className="text-[11px] text-on-surface-variant mt-0.5">
+                            Recipient: {a.recipient_user_id
+                              ? (a.recipient_name || 'Team leader assigned')
+                              : 'Pending assignment'}
+                            {' · '}
+                            {a.status === 'pending_payout' ? 'Pending payout' : a.status === 'pending_recipient' ? 'Pending recipient' : a.status}
+                          </p>
+                          {a.payout_upi_id && <p className="text-[11px] text-on-surface-variant mt-1">UPI ID: <span className="font-mono">{a.payout_upi_id}</span></p>}
+                          {a.utr_reference && <p className="text-[11px] text-on-surface-variant mt-1">UTR: <span className="font-mono">{a.utr_reference}</span> · Paid {a.paid_at ? new Date(a.paid_at).toLocaleString() : ''}</p>}
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          <p className="text-sm font-bold text-emerald-500 whitespace-nowrap">₹{Number(a.prize_amount || 0).toLocaleString('en-IN')}</p>
+                          {a.status !== 'paid' && a.status !== 'pending_recipient' && a.recipient_user_id && a.payout_upi_id && (
+                            <button
+                              type="button"
+                              onClick={() => { setSettlementAward(settlementAward === a.id ? null : a.id); setSettlementUtr(''); setManualPaymentConfirmed(false) }}
+                              className="rounded-lg border border-primary/40 px-2.5 py-1.5 text-[10px] font-bold text-primary hover:bg-primary/10"
+                            >Record UPI Payment</button>
+                          )}
+                        </div>
+                        </div>
+                      {settlementAward === a.id && (
+                        <form
+                          onSubmit={(event) => { event.preventDefault(); submitManualPayout(a) }}
+                          className="mt-2 space-y-3 rounded-xl border border-primary/30 bg-primary/5 p-3"
+                        >
+                          <p className="text-xs font-semibold text-on-background">Payment has to be sent manually via UPI before marking this award as paid.</p>
+                          <p className="text-[11px] text-on-surface-variant">Recipient: {a.recipient_name} · {a.payout_upi_id}</p>
+                          <p className="text-[11px] text-on-surface-variant">Authoritative full award amount: <strong className="text-on-background">₹{Number(a.prize_amount).toLocaleString('en-IN')}</strong></p>
+                          <label className="block text-[11px] font-semibold text-on-surface-variant">
+                            UTR / payment reference
+                            <input
+                              required
+                              minLength={6}
+                              maxLength={128}
+                              value={settlementUtr}
+                              onChange={(event) => setSettlementUtr(event.target.value)}
+                              className="mt-1 w-full rounded-lg border border-outline-variant/40 bg-surface px-3 py-2 text-sm text-on-background"
+                              placeholder="Enter the UPI transaction reference"
+                            />
+                          </label>
+                          <label className="flex items-start gap-2 text-[11px] text-on-surface-variant">
+                            <input type="checkbox" checked={manualPaymentConfirmed} onChange={(event) => setManualPaymentConfirmed(event.target.checked)} className="mt-0.5" />
+                            I confirm I have already sent the full amount manually to this recipient.
+                          </label>
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => setSettlementAward(null)} className="rounded-lg px-3 py-2 text-xs text-on-surface-variant">Cancel</button>
+                            <button
+                              type="submit"
+                              disabled={!manualPaymentConfirmed || !settlementUtr.trim() || actionLoading === `settle-prize:${a.id}`}
+                              className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                            >{actionLoading === `settle-prize:${a.id}` ? 'Recording…' : 'Record payment'}</button>
+                          </div>
+                        </form>
+                      )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

@@ -253,3 +253,26 @@ test('allocation: allocateTeam requires a client and ids (guards misuse)', async
     return true;
   });
 });
+
+test('allocation: locks tournament before team to match qualification and finalization ordering', async () => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql.includes('FROM tournaments')) {
+        return { rows: [{ roadmap_status: 'approved', finalized_at: null }] };
+      }
+      if (sql.includes('FROM tournament_teams')) {
+        return { rows: [{ id: 'TEAM', tournament_id: 'TOURN', status: 'awaiting_members' }] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+  };
+
+  await assert.rejects(
+    allocateTeam(client, { teamId: 'TEAM', tournamentId: 'TOURN' }),
+    (err) => err instanceof AllocationError && err.code === ALLOCATION_ERR.TEAM_NOT_COMPLETE
+  );
+  assert.match(calls[0], /FROM tournaments[\s\S]*FOR UPDATE/);
+  assert.match(calls[1], /FROM tournament_teams[\s\S]*FOR UPDATE/);
+});
