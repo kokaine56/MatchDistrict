@@ -9,6 +9,7 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
   const [loading, setLoading] = useState(true);
   const [roadmap, setRoadmap] = useState(null);
   const [error, setError] = useState(null);
+  const [mode, setMode] = useState(null);
 
   const [expandedDays, setExpandedDays] = useState({});
   const [expandedGroups, setExpandedGroups] = useState({});
@@ -30,6 +31,7 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
         setRoadmap(data.roadmap);
         setExpandedDays({ [data.roadmap.days[0].id]: true });
       }
+      setMode(data.mode || null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -46,6 +48,29 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
   }
   if (error || !roadmap) {
     return <div className="p-8 text-center text-gray-400">Roadmap not available yet.</div>;
+  }
+  if (roadmap.days?.length === 0 && mode !== 'organizer') {
+    // Participant mode with nothing to show (no team, not allocated, or the
+    // roadmap simply has no placement rows yet).
+    const noTeam = mode === 'no-team';
+    return (
+      <div className="bg-[#0A0B10] border border-white/10 rounded-xl overflow-hidden w-full max-w-4xl mx-auto">
+        <div className="p-4 bg-white/5 border-b border-white/10">
+          <h3 className="font-bold text-white flex items-center gap-2">
+            <CalendarDays className="w-5 h-5 text-indigo-400" />
+            Tournament Allocation Roadmap
+          </h3>
+        </div>
+        <div className="p-8 text-center">
+          <Users className="w-10 h-10 text-white/20 mx-auto mb-3" />
+          <p className="text-sm text-gray-400 font-medium">
+            {noTeam
+              ? 'Join or register a team for this tournament to see your match schedule here.'
+              : 'Your team’s match schedule will appear here once the organizer publishes and approves the roadmap.'}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -150,6 +175,11 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
                                                         <Clock className="w-3.5 h-3.5" />
                                                         {match.start_time} - {match.end_time}
                                                       </span>
+                                                      {mode === 'participant' && (
+                                                        <span className={`ml-2 flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded ${match.credentials_available ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20' : 'text-amber-400/90 bg-amber-500/10 border border-amber-500/20'}`}>
+                                                          {match.credentials_available ? 'Credentials available' : 'Locked'}
+                                                        </span>
+                                                      )}
                                                     </div>
                                                   ))}
                                                 </div>

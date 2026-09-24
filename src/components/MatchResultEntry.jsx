@@ -2,6 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { Save, CheckCircle2, ShieldAlert, Users, Trophy } from 'lucide-react';
 import { getAuthToken } from '../utils/getAuthToken';
 
+const RESULT_ERROR_MESSAGES = {
+  INVALID_INPUT: 'The submitted results are invalid. Please review them and try again.',
+  ROADMAP_NOT_APPROVED: 'The tournament roadmap must be approved before results can be recorded.',
+  MATCH_TOURNAMENT_MISMATCH: 'The match does not belong to this tournament.',
+  MATCH_CLOSED: 'This match is closed; results can no longer be recorded.',
+  TEAM_NOT_ALLOCATED: 'At least one team is not allocated to this match.',
+  DUPLICATE_TEAM: 'A team appears more than once in the submission.',
+  DUPLICATE_PLACEMENT: 'Two teams ended up sharing a placement. Each team must have a unique placement.',
+  INVALID_PLACEMENT: 'A placement is out of range or assigned more than once.',
+  INVALID_KILLS: 'Kills must be a whole number from 0 to 1,000,000.',
+};
+
+function readableResultError(data) {
+  if (!data) return 'Could not save match results.';
+  if (RESULT_ERROR_MESSAGES[data.error]) return RESULT_ERROR_MESSAGES[data.error];
+  if (data.message) return data.message;
+  return 'Could not save match results.';
+}
+
 export default function MatchResultEntry({ tournamentId, matchDetails, onSaved, onCancel }) {
   const [results, setResults] = useState([]);
   const [scoringRules, setScoringRules] = useState(null);
@@ -110,7 +129,7 @@ export default function MatchResultEntry({ tournamentId, matchDetails, onSaved, 
       });
       
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || data.message);
+      if (!data.success) throw new Error(readableResultError(data));
 
       if (onSaved) onSaved();
     } catch (err) {

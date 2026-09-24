@@ -11,7 +11,6 @@ const NAV_ITEMS = [
   { id: 'users', label: 'User Governance', icon: 'supervised_user_circle' },
   { id: 'tournaments', label: 'Tournaments', icon: 'stadium' },
   { id: 'devices', label: 'Payment Verifier', icon: 'qr_code_scanner' },
-  { id: 'leaderboard', label: 'Leaderboard', icon: 'leaderboard' },
   { id: 'sponsorships', label: 'Sponsorships', icon: 'volunteer_activism', route: '/admin/sponsorships', badgeKey: 'sponsors' },
   { id: 'monitoring', label: 'System Health', icon: 'health_and_safety', route: '/admin/system-health' },
 ]

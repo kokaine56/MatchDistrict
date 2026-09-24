@@ -25,6 +25,7 @@ import { isEligibleRegistrationStatus } from './registrationTeamBridge.js';
 export const ALLOCATION_SOURCES = Object.freeze({
   AUTOMATIC: 'automatic',
   ORGANIZER: 'organizer',
+  ADVANCEMENT: 'advancement',
 });
 
 export const ALLOCATED_STATUS = 'allocated';
@@ -65,17 +66,22 @@ export function randomId(prefix = 'ASN-') {
 // --- Pure helpers (unit-testable without a database) ---
 
 export function normalizeSource(source) {
-  return source === ALLOCATION_SOURCES.ORGANIZER ? ALLOCATION_SOURCES.ORGANIZER : ALLOCATION_SOURCES.AUTOMATIC;
+  if (source === ALLOCATION_SOURCES.ORGANIZER) return ALLOCATION_SOURCES.ORGANIZER;
+  if (source === ALLOCATION_SOURCES.ADVANCEMENT) return ALLOCATION_SOURCES.ADVANCEMENT;
+  return ALLOCATION_SOURCES.AUTOMATIC;
 }
 
 // Which team statuses may proceed to allocation, per source.
-//   automatic: verified (first placement after members_complete) or
-//              allocation_pending (release frees a position later)
-//   organizer: additionally an already-allocated team (a move)
+//   automatic:   verified (first placement after members_complete) or
+//                allocation_pending (a release frees a position later)
+//   organizer:   additionally an already-allocated team (a move)
+//   advancement: additionally an already-allocated team that qualified out of a
+//                completed round, placed into the next round's first free room
 export function canTransitionFromStatus(status, source) {
   const src = normalizeSource(source);
   if (status === VERIFIED_STATUS || status === ALLOCATION_PENDING_STATUS) return true;
   if (src === ALLOCATION_SOURCES.ORGANIZER && status === ALLOCATED_STATUS) return true;
+  if (src === ALLOCATION_SOURCES.ADVANCEMENT && status === ALLOCATED_STATUS) return true;
   return false;
 }
 
@@ -96,10 +102,15 @@ export function firstRoundNumberOf(roundRows = []) {
 // room whose round_number exceeds 1 (later rounds are populated only by results /
 // qualification), returning the first Round 1 room with remaining capacity, or null
 // (no available position). `occupancy` maps room id → allocated-team count.
-export function selectRoomForTeam(rooms = [], occupancy = {}) {
+// Picks the first room with spare capacity that belongs to the requested round.
+//   automatic placement targets Round 1 (default); advancement allocation targets
+//   the next round's first free room, so later rounds are only populated by
+//   results-driven qualification, never by the initial (verify-time) placement.
+export function selectRoomForTeam(rooms = [], occupancy = {}, roundNumber = 1) {
+  const targetRound = Number(roundNumber) || 1;
   for (const room of rooms) {
-    const roundNumber = Number(room.round_number ?? room.roundNumber ?? 1) || 1;
-    if (roundNumber > 1) continue;
+    const rn = Number(room.round_number ?? room.roundNumber ?? 1) || 1;
+    if (rn !== targetRound) continue;
     const used = Number(occupancy[room.id] ?? occupancy[room.roomId] ?? 0) || 0;
     if (used < Number(room.capacity)) return room;
   }
@@ -177,7 +188,9 @@ async function writeAudit(client, { actorId, source, tournamentId, team, room, m
     allocated_at: new Date().toISOString(),
   };
   if (oldSnapshot) details.old_assignments = oldSnapshot;
-  const action = source === ALLOCATION_SOURCES.AUTOMATIC ? 'allocation_automatic' : 'allocation_move';
+  const action = source === ALLOCATION_SOURCES.AUTOMATIC ? 'allocation_automatic'
+    : source === ALLOCATION_SOURCES.ADVANCEMENT ? 'allocation_advancement'
+    : 'allocation_move';
   await client.query(
     `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, details)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -185,21 +198,68 @@ async function writeAudit(client, { actorId, source, tournamentId, team, room, m
   );
 }
 
-// --- Automatic placement (participant VERIFIED, fills first available Round 1 slot) ---
+// --- Automatic placement (participant VERIFIED, fills first available slot in the
+//     target round — Round 1 for the initial placement, or the next round for an
+//     advancement placement) ---
 
-async function allocateAutomatic(client, { team, tournamentId, actorId }) {
+async function allocateAutomatic(client, { team, tournamentId, actorId, source = ALLOCATION_SOURCES.AUTOMATIC, targetRoundNumber = null }) {
   const teamId = team.id;
+  const src = normalizeSource(source);
 
-  const firstRoundRes = await client.query(
-    'SELECT COALESCE(MIN(round_number), 1)::int AS first_round FROM tournament_rounds WHERE tournament_id = $1',
-    [tournamentId]
-  );
-  const firstRound = firstRoundRes.rows[0].first_round;
+  let targetRound;
+  let targetRoundId;
 
-  // Deterministic pick: first round only, earliest day → group → room with free
-  // capacity and at least one scheduled match. The occupancy subquery counts
-  // distinct teams per room, so one team = one occupied position regardless of
-  // per-match rows (a team is placed against every match in its room).
+  if (src === ALLOCATION_SOURCES.ADVANCEMENT) {
+    const parsed = parseInt(targetRoundNumber, 10);
+    if (!(parsed >= 1)) {
+      throw allocationError(ALLOCATION_ERR.ALLOCATION_CONFLICT, 'A valid target round number is required for advancement allocation.');
+    }
+    targetRound = parsed;
+    const tRoundRes = await client.query(
+      'SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2',
+      [tournamentId, targetRound]
+    );
+    if (tRoundRes.rows.length === 0) {
+      throw allocationError(ALLOCATION_ERR.ALLOCATION_CONFLICT, `Round ${targetRound} does not exist for this tournament.`);
+    }
+    targetRoundId = tRoundRes.rows[0].id;
+
+    // Advancement idempotency: a team already placed inside the target round is
+    // left untouched (re-running qualification must never double-place).
+    const inRoundRes = await client.query(
+      `SELECT 1
+       FROM tournament_match_assignments a
+       JOIN tournament_matches m ON m.id = a.match_id AND m.tournament_id = $1
+       WHERE a.tournament_team_id = $2 AND a.tournament_id = $1 AND m.round_id = $3
+       LIMIT 1`,
+      [tournamentId, teamId, targetRoundId]
+    );
+    if (inRoundRes.rows.length > 0) {
+      return {
+        status: ALLOCATED_STATUS,
+        source: src,
+        code: ALLOCATION_ERR.TEAM_ALREADY_ALLOCATED,
+        alreadyAllocated: true,
+        message: `Team is already allocated in Round ${targetRound}.`,
+        room: null,
+        matchIds: [],
+        assignmentCount: 0,
+      };
+    }
+  } else {
+    // The initial placement only ever populates the earliest round; later rounds
+    // are filled by results-driven qualification.
+    const firstRoundRes = await client.query(
+      'SELECT COALESCE(MIN(round_number), 1)::int AS first_round FROM tournament_rounds WHERE tournament_id = $1',
+      [tournamentId]
+    );
+    targetRound = firstRoundRes.rows[0].first_round;
+  }
+
+  // Deterministic pick inside the target round only: earliest day → group → room
+  // with free capacity and at least one scheduled match. The occupancy subquery
+  // counts distinct teams per room, so one team = one occupied position regardless
+  // of per-match rows (a team is placed against every match in its room).
   const roomRes = await client.query(`
     SELECT r.id, r.group_id, r.day_id, r.capacity, r.room_number,
            d.day_number,
@@ -222,7 +282,7 @@ async function allocateAutomatic(client, { team, tournamentId, actorId }) {
       AND EXISTS (SELECT 1 FROM tournament_matches mq WHERE mq.room_id = r.id)
     ORDER BY COALESCE(rnd.round_number, 1)::int ASC, d.day_number ASC, g.sequence ASC, r.room_number ASC
     LIMIT 1
-  `, [tournamentId, firstRound]);
+  `, [tournamentId, targetRound]);
 
   if (roomRes.rows.length === 0) {
     await client.query(
@@ -231,9 +291,9 @@ async function allocateAutomatic(client, { team, tournamentId, actorId }) {
     );
     return {
       status: ALLOCATION_PENDING_STATUS,
-      source: ALLOCATION_SOURCES.AUTOMATIC,
+      source: src,
       code: ALLOCATION_ERR.NO_AVAILABLE_POSITION,
-      message: 'No available position exists in the approved roadmap.',
+      message: 'No available position exists in the approved roadmap for this round.',
       room: null,
       matchIds: [],
       assignmentCount: 0,
@@ -256,14 +316,14 @@ async function allocateAutomatic(client, { team, tournamentId, actorId }) {
     teamId,
     room,
     matchIds,
-    source: ALLOCATION_SOURCES.AUTOMATIC,
+    source: src,
   });
   await insertAssignments(client, rows);
 
   await client.query("UPDATE tournament_teams SET status = 'allocated', updated_at = NOW() WHERE id = $1", [teamId]);
   await writeAudit(client, {
     actorId,
-    source: ALLOCATION_SOURCES.AUTOMATIC,
+    source: src,
     tournamentId,
     team,
     room,
@@ -274,9 +334,11 @@ async function allocateAutomatic(client, { team, tournamentId, actorId }) {
 
   return {
     status: ALLOCATED_STATUS,
-    source: ALLOCATION_SOURCES.AUTOMATIC,
+    source: src,
     code: ALLOCATED_STATUS,
-    message: 'Team verified and automatically allocated to the first available tournament roadmap slot.',
+    message: src === ALLOCATION_SOURCES.ADVANCEMENT
+      ? 'Team advanced to the next round and was allocated to the first available roadmap slot.'
+      : 'Team verified and automatically allocated to the first available tournament roadmap slot.',
     room: { id: room.id, room_number: room.room_number, day_number: room.day_number, group_sequence: room.group_sequence, capacity: room.capacity },
     matchIds,
     assignmentCount: rows.length,
@@ -372,8 +434,9 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
 //
 // Parameters:
 //   teamId, tournamentId  — required
-//   source                — 'automatic' | 'organizer' (defaults to 'automatic')
-//   options               — { roomId, matchId, reason } for organizer moves
+//   source                — 'automatic' | 'organizer' | 'advancement' (defaults to 'automatic')
+//   options               — { roomId, matchId, reason } for organizer moves;
+//                           { targetRoundNumber (or targetRound) } for advancement
 //   actorId               — acting user id; 'SYSTEM' when null (automatic audit)
 //   ensureEligibleRegistration — revalidate the linked registration (default true)
 //
@@ -466,8 +529,14 @@ export async function allocateTeam(client, {
     }
   }
 
-  if (src === ALLOCATION_SOURCES.AUTOMATIC) {
-    return allocateAutomatic(client, { team, tournamentId, actorId });
+  if (src === ALLOCATION_SOURCES.ORGANIZER) {
+    return allocateManual(client, { team, tournamentId, opts, actorId });
   }
-  return allocateManual(client, { team, tournamentId, opts, actorId });
+  return allocateAutomatic(client, {
+    team,
+    tournamentId,
+    actorId,
+    source: src,
+    targetRoundNumber: opts.targetRoundNumber ?? opts.targetRound ?? null,
+  });
 }
