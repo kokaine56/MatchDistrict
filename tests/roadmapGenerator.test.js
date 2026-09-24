@@ -1,6 +1,7 @@
 ﻿import test from 'node:test';
 import assert from 'node:assert';
 import { generateTournamentRoadmap } from '../server/roadmapGenerator.js';
+import { calculateTournamentPlan } from '../server/tournamentPlanner.js';
 
 test('TEST 1: One-day tournament, 10 rooms, max 10 simultaneous', () => {
   const config = {
@@ -74,5 +75,39 @@ const res = generateTournamentRoadmap(config, planningResult, tournament);
   const m1EndMins = parseInt(m1End.split(':')[0])*60 + parseInt(m1End.split(':')[1]);
   const m2StartMins = parseInt(m2Start.split(':')[0])*60 + parseInt(m2Start.split(':')[1]);
   assert.ok(m2StartMins >= m1EndMins, 'Matches must not overlap');
+});
+
+test('proposal materializes persistent groups with one BGMI room for each scheduled match', () => {
+  const config = {
+    teams_per_group: 16, max_simultaneous_rooms: 4, matches_per_team: 4,
+    match_duration_minutes: 25, break_between_matches_minutes: 5,
+    daily_start_time: '10:00', daily_end_time: '22:00',
+  };
+  const planning = calculateTournamentPlan(config, {
+    id: 'T-GROUP', slotsTotal: 64, match_type: 'squad', startDate: '2026-10-10',
+  });
+  assert.equal(planning.ok, true, planning.errors?.join(', '));
+
+  const materialized = generateTournamentRoadmap(
+    config,
+    {
+      required_days: planning.plan.requiredDays,
+      required_rooms: planning.plan.requiredRooms,
+      total_room_sessions: planning.plan.totalRoomMatchSessions,
+    },
+    { id: 'T-GROUP' },
+    planning.plan.round_plan.rounds,
+    planning.plan.round_plan,
+  );
+
+  assert.equal(materialized.ok, true, materialized.error);
+  assert.equal(materialized.roadmap.groups.length, 4);
+  assert.equal(materialized.roadmap.rooms.length, 16);
+  assert.equal(materialized.roadmap.matches.length, 16);
+  for (const group of materialized.roadmap.groups) {
+    const matches = materialized.roadmap.matches.filter((match) => match.group_id === group.id);
+    assert.deepEqual(matches.map((match) => match.match_number).sort((a, b) => a - b), [1, 2, 3, 4]);
+    assert.equal(new Set(matches.map((match) => match.room_id)).size, 4);
+  }
 });
 

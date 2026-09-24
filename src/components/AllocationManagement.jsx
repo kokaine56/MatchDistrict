@@ -316,7 +316,7 @@ export default function AllocationManagement({ tournamentId, isGoldTheme }) {
                       <td className="px-4 py-3">
                         {team.status === 'allocated' && team.match_id ? (
                           <div className="text-xs font-medium text-gray-300">
-                            Day {team.day_number} &rarr; Group {team.group_name} &rarr; Room {team.room_number} &rarr; Match {team.match_number}
+                            Group {team.group_name} &rarr; Match {team.match_number} &rarr; BGMI Room {team.room_number} (Day {team.day_number})
                           </div>
                         ) : (
                           <span className="text-xs text-gray-600">—</span>
@@ -507,7 +507,7 @@ export default function AllocationManagement({ tournamentId, isGoldTheme }) {
                             disabled={isFull}
                             data-match={JSON.stringify({ match_id: match.id, room_id: room.id, group_id: group.id, day_id: day.id })}
                           >
-                            Group {group.group_name} - Room {room.room_number} - Match {match.match_number} {isFull ? '(FULL)' : `(${roomAssignments.length}/${room.capacity})`}
+                            Group {group.group_name} - Match {match.match_number} - BGMI Room {room.room_number} {isFull ? '(FULL)' : `(${roomAssignments.length}/${room.capacity})`}
                           </option>
                         );
                       })}

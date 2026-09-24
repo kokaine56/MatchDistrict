@@ -136,6 +136,22 @@ export function buildAutomaticAssignmentRows({ tournamentId, teamId, room, match
   }));
 }
 
+// New roadmaps keep team membership at group scope, with every match linked to
+// its own technical room. Each scheduled match gets one assignment row for the
+// same team/group membership.
+export function buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId, matches = [], source = ALLOCATION_SOURCES.AUTOMATIC, idFn = null }) {
+  return matches.map((match) => ({
+    id: idFn ? idFn() : randomId('ASN-'),
+    tournament_id: tournamentId,
+    tournament_team_id: teamId,
+    match_id: match.id ?? match.match_id,
+    room_id: match.room_id,
+    group_id: groupId,
+    day_id: match.day_id,
+    source,
+  }));
+}
+
 // Pure manual-target gate. room = destination room row, match = the room's match
 // row (or null), occupancyInRoomExcludingTeam = distinct teams already in the room
 // (excluding the moving team). Returns { ok:true } or { ok:false, code, message }.
@@ -262,24 +278,43 @@ async function allocateAutomatic(client, { team, tournamentId, actorId, source =
   // counts distinct teams per room, so one team = one occupied position regardless
   // of per-match rows (a team is placed against every match in its room).
   const roomRes = await client.query(`
+    WITH group_shape AS (
+      SELECT group_id, COUNT(*) AS match_count,
+             COUNT(DISTINCT match_number) AS distinct_match_count
+      FROM tournament_matches
+      WHERE tournament_id = $1
+      GROUP BY group_id
+    ),
+    group_occupancy AS (
+      SELECT group_id, COUNT(DISTINCT tournament_team_id) AS allocated_teams
+      FROM tournament_match_assignments
+      WHERE tournament_id = $1
+      GROUP BY group_id
+    ),
+    room_occupancy AS (
+      SELECT group_id, room_id, COUNT(DISTINCT tournament_team_id) AS allocated_teams
+      FROM tournament_match_assignments
+      WHERE tournament_id = $1
+      GROUP BY group_id, room_id
+    )
     SELECT r.id, r.group_id, r.day_id, r.capacity, r.room_number,
            d.day_number,
            g.sequence AS group_sequence,
            COALESCE(rnd.round_number, 1)::int AS round_number,
-           COALESCE(occ.allocated_teams, 0)::int AS allocated_teams
+           (gs.match_count = gs.distinct_match_count) AS persistent_group,
+           COALESCE(CASE WHEN gs.match_count = gs.distinct_match_count
+             THEN go.allocated_teams ELSE ro.allocated_teams END, 0)::int AS allocated_teams
     FROM tournament_rooms r
     JOIN tournament_days d ON d.id = r.day_id
     JOIN tournament_groups g ON g.id = r.group_id
+    JOIN group_shape gs ON gs.group_id = g.id
     LEFT JOIN tournament_rounds rnd ON rnd.id = r.round_id
-    LEFT JOIN (
-      SELECT room_id, COUNT(DISTINCT tournament_team_id) AS allocated_teams
-      FROM tournament_match_assignments
-      WHERE tournament_id = $1
-      GROUP BY room_id
-    ) occ ON occ.room_id = r.id
+    LEFT JOIN group_occupancy go ON go.group_id = r.group_id
+    LEFT JOIN room_occupancy ro ON ro.group_id = r.group_id AND ro.room_id = r.id
     WHERE r.tournament_id = $1
       AND COALESCE(rnd.round_number, 1)::int = $2
-      AND COALESCE(occ.allocated_teams, 0)::int < r.capacity
+      AND COALESCE(CASE WHEN gs.match_count = gs.distinct_match_count
+        THEN go.allocated_teams ELSE ro.allocated_teams END, 0)::int < r.capacity
       AND EXISTS (SELECT 1 FROM tournament_matches mq WHERE mq.room_id = r.id)
     ORDER BY COALESCE(rnd.round_number, 1)::int ASC, d.day_number ASC, g.sequence ASC, r.room_number ASC
     LIMIT 1
@@ -303,8 +338,10 @@ async function allocateAutomatic(client, { team, tournamentId, actorId, source =
 
   const room = roomRes.rows[0];
   const matchesRes = await client.query(
-    'SELECT id, match_number FROM tournament_matches WHERE room_id = $1 AND tournament_id = $2 ORDER BY match_number ASC',
-    [room.id, tournamentId]
+    room.persistent_group
+      ? 'SELECT id, room_id, day_id, match_number FROM tournament_matches WHERE group_id = $1 AND tournament_id = $2 ORDER BY match_number ASC'
+      : 'SELECT id, room_id, day_id, match_number FROM tournament_matches WHERE room_id = $1 AND tournament_id = $2 ORDER BY match_number ASC',
+    [room.persistent_group ? room.group_id : room.id, tournamentId]
   );
   const matchIds = matchesRes.rows.map((m) => m.id);
 
@@ -312,13 +349,9 @@ async function allocateAutomatic(client, { team, tournamentId, actorId, source =
     throw allocationError(ALLOCATION_ERR.ALLOCATION_CONFLICT, 'The selected roadmap room has no scheduled matches.');
   }
 
-  const rows = buildAutomaticAssignmentRows({
-    tournamentId,
-    teamId,
-    room,
-    matchIds,
-    source: src,
-  });
+  const rows = room.persistent_group
+    ? buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId: room.group_id, matches: matchesRes.rows, source: src })
+    : buildAutomaticAssignmentRows({ tournamentId, teamId, room, matchIds, source: src });
   await insertAssignments(client, rows);
 
   await client.query("UPDATE tournament_teams SET status = 'allocated', updated_at = NOW() WHERE id = $1", [teamId]);
@@ -370,16 +403,22 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
   }
 
   const matchRes = await client.query(
-    'SELECT id, match_number FROM tournament_matches WHERE id = $1 AND room_id = $2 AND tournament_id = $3',
+    'SELECT id, group_id, match_number FROM tournament_matches WHERE id = $1 AND room_id = $2 AND tournament_id = $3',
     [matchId, roomId, tournamentId]
   );
   const match = matchRes.rows[0] || null;
 
+  const shapeRes = match ? await client.query(
+    `SELECT COUNT(*) AS match_count, COUNT(DISTINCT match_number) AS distinct_match_count
+     FROM tournament_matches WHERE group_id = $1 AND tournament_id = $2`,
+    [match.group_id, tournamentId]
+  ) : { rows: [{ match_count: 0, distinct_match_count: 0 }] };
+  const persistentGroup = Number(shapeRes.rows[0].match_count) === Number(shapeRes.rows[0].distinct_match_count);
   const capacityRes = await client.query(
     `SELECT COUNT(DISTINCT tournament_team_id)::int AS n
      FROM tournament_match_assignments
-     WHERE room_id = $1 AND tournament_id = $2 AND tournament_team_id != $3`,
-    [roomId, tournamentId, teamId]
+     WHERE ${persistentGroup ? 'group_id' : 'room_id'} = $1 AND tournament_id = $2 AND tournament_team_id != $3`,
+    [persistentGroup ? match.group_id : roomId, tournamentId, teamId]
   );
   const gate = validateManualTarget(room, match, capacityRes.rows[0].n);
   if (!gate.ok) {
@@ -394,17 +433,20 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
 
   await client.query('DELETE FROM tournament_match_assignments WHERE tournament_team_id = $1', [teamId]);
 
-  const row = {
-    id: randomId('ASN-'),
-    tournament_id: tournamentId,
-    tournament_team_id: teamId,
-    match_id: matchId,
-    room_id: roomId,
-    group_id: room.group_id,
-    day_id: room.day_id,
+  const targetMatchesRes = await client.query(
+    persistentGroup
+      ? 'SELECT id, room_id, day_id FROM tournament_matches WHERE group_id = $1 AND tournament_id = $2 ORDER BY match_number ASC'
+      : 'SELECT id, room_id, day_id FROM tournament_matches WHERE id = $1 AND tournament_id = $2',
+    [persistentGroup ? match.group_id : matchId, tournamentId]
+  );
+  const rows = buildPersistentGroupAssignmentRows({
+    tournamentId,
+    teamId,
+    groupId: match.group_id,
+    matches: targetMatchesRes.rows,
     source: ALLOCATION_SOURCES.ORGANIZER,
-  };
-  await insertAssignments(client, [row]);
+  });
+  await insertAssignments(client, rows);
 
   await client.query("UPDATE tournament_teams SET status = 'allocated', updated_at = NOW() WHERE id = $1", [teamId]);
 
@@ -414,9 +456,9 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
     tournamentId,
     team,
     room,
-    matchIds: [matchId],
+    matchIds: rows.map((r) => r.match_id),
     reason,
-    assignmentCount: 1,
+    assignmentCount: rows.length,
     oldSnapshot: oldAssignments,
   });
 
@@ -426,8 +468,8 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
     code: ALLOCATED_STATUS,
     message: 'Allocation moved successfully',
     room: { id: room.id, room_number: room.room_number, capacity: room.capacity },
-    matchIds: [matchId],
-    assignmentCount: 1,
+    matchIds: rows.map((r) => r.match_id),
+    assignmentCount: rows.length,
   };
 }
 

@@ -191,7 +191,7 @@ test('participantRoadmap: multi-round assignments are ordered and carry safe rou
   assert.deepStrictEqual(built.matches.map((m) => m.id), ['M1-EARLY', 'M1-LATE', 'M2-R2']);
   assert.strictEqual(built.matches[2].round_id, 'RND2');
   assert.strictEqual(built.rounds[1].name, 'Final');
-  assert.ok(!('teams_advancing' in built.rounds[1]));
+  assert.equal(built.rounds[1].teams_advancing, 16);
   assert.strictEqual(built.matches[2].credentials_available, false);
   for (const match of built.matches) {
     assert.ok(!('room_identifier' in match));
@@ -236,7 +236,8 @@ test('participant /my-team assignment SQL uses match round and scopes tournament
   assert.match(handler, /rnd\.round_number, rnd\.name as round_name/);
   assert.match(handler, /LEFT JOIN tournament_rounds rnd ON rnd\.id = m\.round_id AND rnd\.tournament_id = a\.tournament_id/);
   assert.match(handler, /WHERE a\.tournament_team_id = \$1 AND a\.tournament_id = \$2/);
-  assert.match(handler, /ORDER BY rnd\.round_number ASC NULLS LAST, d\.day_number ASC, m\.match_number ASC/);
+  assert.match(handler, /ORDER BY rnd\.round_number ASC NULLS LAST, d\.day_number ASC, g\.sequence ASC, m\.match_number ASC/);
+  assert.match(handler, /SELECT a\.id, a\.match_id, a\.group_id, a\.tournament_team_id, a\.status/);
   assert.match(handler, /SELECT m\.id, m\.role, m\.joined_at AS created_at, u\.name, u\.avatar/);
   assert.match(handler, /ORDER BY m\.joined_at ASC NULLS LAST, m\.id ASC/);
   assert.doesNotMatch(handler, /m\.created_at/);
@@ -279,11 +280,11 @@ test('participantRoadmap: credentials_available flips with server release timing
   assert.strictEqual(open.matches[0].credentials_available, true);
 });
 
-test('participantRoadmap: rounds strip planning/qualification metadata', () => {
+test('participantRoadmap: rounds expose configured advancement count without planning internals', () => {
   const { full, releaseMinutes, nowMs } = makeFullRoadmap();
   const built = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes, nowMs });
   assert.strictEqual(built.rounds.length, 1);
-  assert.ok(!('teams_advancing' in built.rounds[0]), 'teams_advancing must be stripped');
+  assert.equal(built.rounds[0].teams_advancing, full.rounds[0].teams_advancing);
   assert.strictEqual(built.rounds[0].round_number, 1);
   assert.ok('map' in built.rounds[0], 'non-sensitive scheduling fields are kept');
 });
@@ -536,7 +537,7 @@ test('credentials roadmap: DB-loaded participant slice leaks no credential colum
       for (const k of ['room_identifier', 'room_password', 'credential_status']) {
         assert.ok(!(k in built.matches[0]), `${k} leaked into the participant payload`);
       }
-      assert.ok(!('teams_advancing' in built.rounds[0]), 'teams_advancing leaked');
+      assert.equal(built.rounds[0].teams_advancing, rounds.rows[0].teams_advancing);
     } catch (err) {
       // If the schema diverges from the DDL above, this surfaces as a wait,
       // not a silent pass.

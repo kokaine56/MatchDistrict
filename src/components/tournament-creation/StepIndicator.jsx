@@ -12,7 +12,6 @@ const STEPS = [
   { num: 8, label: 'Rules & Regulations' },
   { num: 9, label: 'Preview' },
   { num: 10, label: 'Publish' },
-  { num: 11, label: 'Planning Config' },
 ]
 
 

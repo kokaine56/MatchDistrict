@@ -681,7 +681,7 @@ export default function TournamentManagement({ onNavigate }) {
                                         )}
                                         {t.status !== 'archived' && t.status !== 'completed' && (
                                           <>
-                                            <MenuButton icon="calendar" label="Configure Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
+                                            <MenuButton icon="calendar" label="Roadmap Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
                                             <MenuButton icon="clipboard" label="View Planning Result" onClick={() => { setMenuOpenId(null); handleAction('planning-result', t) }} />
                                             <MenuButton icon="map" label="View Roadmap" onClick={() => { setMenuOpenId(null); handleAction('roadmap', t) }} />
                                             <MenuButton icon="calendar" label="Allocation Management" onClick={() => { setMenuOpenId(null); handleAction('allocations', t) }} />
@@ -933,7 +933,7 @@ export default function TournamentManagement({ onNavigate }) {
         )}
       </AnimatePresence>
 
-      {/* Planning Config Editor Modal */}
+      {/* Roadmap planning controls */}
       <AnimatePresence>
         {planningConfigTournament && (
           <TournamentPlanningConfigEditor
@@ -941,7 +941,7 @@ export default function TournamentManagement({ onNavigate }) {
             tournamentTitle={planningConfigTournament.title}
             onClose={() => setPlanningConfigTournament(null)}
             onSaved={() => {
-              showToast('Planning configuration saved successfully.')
+              showToast('Roadmap planning saved successfully.')
             }}
           />
         )}

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import RoundEditor from '../RoundEditor'
 import TimelinePreview from '../TimelinePreview'
 import { withReleaseDefaults } from '../../../utils/roomReveal'
+import RoadmapPlanningConfig from './RoadmapPlanningConfig'
 
 const emptyRound = {
   date: '',
@@ -88,7 +89,7 @@ export const validateStep7 = (data) => {
   return errors
 }
 
-export default function Step7Roadmap({ data, onChange, errors, showAllErrors }) {
+export default function Step7Roadmap({ data, onChange, errors, showAllErrors, onSavePlanningConfig, planningConfigStatus }) {
   const registrationOpenDate = data?.registrationOpenDate || ''
   const registrationCloseDate = data?.registrationCloseDate || ''
   const roadmap = data?.roadmap || []
@@ -207,6 +208,14 @@ export default function Step7Roadmap({ data, onChange, errors, showAllErrors }) 
       animate={{ opacity: 1 }}
       className="w-full max-w-2xl mx-auto space-y-8 pb-8"
     >
+      <header className="space-y-2">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">Tournament execution</p>
+        <h2 className="text-2xl font-bold text-on-background">Tournament Roadmap</h2>
+        <p className="max-w-2xl text-sm leading-relaxed text-on-surface-variant">Configure how teams move through rounds, rooms, and match days. Capacity and team format come from earlier steps.</p>
+      </header>
+
+      <RoadmapPlanningConfig data={data} onChange={onChange} onSavePlanningConfig={onSavePlanningConfig} planningConfigStatus={planningConfigStatus} />
+
       {/* Section: Round Publication */}
       <div className="bg-surface-container-low/40 rounded-2xl p-5 md:p-6 space-y-5 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-3">

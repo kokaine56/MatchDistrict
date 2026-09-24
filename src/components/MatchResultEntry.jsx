@@ -152,7 +152,7 @@ export default function MatchResultEntry({ tournamentId, matchDetails, onSaved, 
             Enter Match Results
           </h3>
           <p className="text-gray-400 text-sm font-medium mt-1">
-            Match {matchDetails.match_number} &bull; Room {matchDetails.room_number} &bull; Day {matchDetails.day_number}
+            Group {matchDetails.group_name || '—'} &bull; Match {matchDetails.match_number} &bull; BGMI Room {matchDetails.room_number} &bull; Day {matchDetails.day_number}
           </p>
         </div>
         <button onClick={onCancel} className="text-gray-500 hover:text-white transition-colors px-3 py-1 bg-white/5 rounded-lg text-sm font-bold">

@@ -141,15 +141,15 @@ export function buildParticipantRoadmap(full, teamId, opts = {}) {
     .slice()
     .sort((a, b) => (matchOrder.get(a.match_id) ?? 0) - (matchOrder.get(b.match_id) ?? 0) || String(a.id).localeCompare(String(b.id)));
 
-  // Rounds are carried for structural context only — strip planning/qualification
-  // metadata (teams_advancing, etc.) so progression numbers never reach a
-  // participant payload.
+  // Keep only public progression information needed to explain the next round.
+  // Planning internals and private credential data remain excluded.
   const roundSafeColumns = (r) => ({
     id: r.id,
     tournament_id: r.tournament_id,
     round_number: r.round_number,
     name: r.name,
     status: r.status,
+    teams_advancing: r.teams_advancing ?? null,
     date: r.date,
     time: r.time,
     map: r.map,

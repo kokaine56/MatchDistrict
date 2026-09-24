@@ -12,6 +12,7 @@ import {
   AWAITING_MEMBERS_STATUS,
   allocationError,
   buildAutomaticAssignmentRows,
+  buildPersistentGroupAssignmentRows,
   canTransitionFromStatus,
   firstRoundNumberOf,
   normalizeSource,
@@ -192,6 +193,24 @@ test('allocation: automatic assignment rows cover every match in the room with a
   assert.strictEqual(rows[0].day_id, 'D1');
   assert.strictEqual(rows[0].source, ALLOCATION_SOURCES.AUTOMATIC);
   assert.notStrictEqual(rows[0].id, rows[1].id, 'ids are unique within a placement');
+});
+
+test('allocation: persistent group membership assigns the team to every match-specific BGMI room', () => {
+  const rows = buildPersistentGroupAssignmentRows({
+    tournamentId: 'T-1', teamId: 'TEAM-1', groupId: 'GROUP-A',
+    matches: [
+      { id: 'MATCH-1', room_id: 'BGMI-1', day_id: 'DAY-1' },
+      { id: 'MATCH-2', room_id: 'BGMI-2', day_id: 'DAY-1' },
+      { id: 'MATCH-3', room_id: 'BGMI-3', day_id: 'DAY-1' },
+      { id: 'MATCH-4', room_id: 'BGMI-4', day_id: 'DAY-1' },
+    ],
+    idFn: (() => { let id = 0; return () => `A-${++id}`; })(),
+  });
+
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows.map((row) => row.match_id), ['MATCH-1', 'MATCH-2', 'MATCH-3', 'MATCH-4']);
+  assert.deepEqual(rows.map((row) => row.room_id), ['BGMI-1', 'BGMI-2', 'BGMI-3', 'BGMI-4']);
+  assert.ok(rows.every((row) => row.group_id === 'GROUP-A' && row.tournament_team_id === 'TEAM-1'));
 });
 
 // --- 28/29 (pure scaling model): configured fleet fills exactly, no new rooms ---

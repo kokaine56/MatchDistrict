@@ -74,8 +74,9 @@ export default function TournamentRoadmapBuilder({
       const rd = data.roadmap;
       if (rd && rd.days && rd.days.length > 0) {
         setRoadmap(rd);
-        const firstDay = rd.days[0];
-        if (firstDay) setExpandedDays({ [firstDay.id]: true });
+        setExpandedDays(Object.fromEntries(rd.days.map((day) => [day.id, true])));
+        setExpandedGroups(Object.fromEntries((rd.groups || []).map((group) => [group.id, true])));
+        setExpandedRooms(Object.fromEntries((rd.rooms || []).map((room) => [room.id, true])));
       } else {
         setRoadmap(null);
       }
@@ -139,7 +140,9 @@ export default function TournamentRoadmapBuilder({
       setEditingMatchId(null);
       setEditingDayId(null);
       if (data.roadmap.days.length > 0) {
-        setExpandedDays({ [data.roadmap.days[0].id]: true });
+        setExpandedDays(Object.fromEntries(data.roadmap.days.map((day) => [day.id, true])));
+        setExpandedGroups(Object.fromEntries((data.roadmap.groups || []).map((group) => [group.id, true])));
+        setExpandedRooms(Object.fromEntries((data.roadmap.rooms || []).map((room) => [room.id, true])));
       }
       setSuccess('Roadmap generated.');
     } catch (err) {
@@ -441,7 +444,7 @@ export default function TournamentRoadmapBuilder({
                 {[
                   { icon: CalendarDays, label: 'Days', value: roadmap.days.length },
                   { icon: Layers, label: 'Groups', value: roadmap.groups.length },
-                  { icon: LayoutGrid, label: 'Rooms', value: roadmap.rooms.length },
+                  { icon: LayoutGrid, label: 'BGMI Rooms', value: roadmap.rooms.length },
                   { icon: Swords, label: 'Matches', value: roadmap.matches.length }
                 ].map(({ icon: Icon, label, value }) => (
                   <div key={label} className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center text-center">
@@ -470,7 +473,7 @@ export default function TournamentRoadmapBuilder({
                 <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
                   <div>
                     <h3 className="font-bold text-white">Structural Preview</h3>
-                    <p className="text-xs text-gray-400 mt-1">Expand days to view exact match scheduling.</p>
+                    <p className="text-xs text-gray-400 mt-1">Groups keep the same teams for all matches; every match has its own scheduled BGMI room.</p>
                   </div>
                   {pendingCount > 0 && (
                     <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded-lg font-semibold">
@@ -536,6 +539,9 @@ export default function TournamentRoadmapBuilder({
                           <div className="p-3 pl-9 space-y-2 bg-[#0A0B10]">
                             {dayGroups.map((group) => {
                               const groupRooms = roadmap.rooms.filter((r) => r.group_id === group.id);
+                              const groupMatchIds = new Set(roadmap.matches.filter((match) => match.group_id === group.id).map((match) => match.id));
+                              const groupAssignedTeams = new Set((roadmap.assignments || []).filter((assignment) => groupMatchIds.has(assignment.match_id)).map((assignment) => assignment.tournament_team_id));
+                              const groupCapacity = Math.max(0, ...groupRooms.map((room) => Number(room.capacity) || 0));
                               const isExpandedGroup = expandedGroups[group.id];
                               return (
                                 <div key={group.id} className="border border-white/5 rounded-lg overflow-hidden">
@@ -546,7 +552,8 @@ export default function TournamentRoadmapBuilder({
                                     {isExpandedGroup ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
                                     <Layers className="w-4 h-4 text-emerald-400" />
                                     <span className="font-semibold text-gray-200 flex-1">{group.group_name}</span>
-                                    <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{groupRooms.length} Rooms</span>
+                                    <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-300">{groupCapacity || '—'} teams · {groupRooms.length} matches</span>
+                                    {groupAssignedTeams.size > 0 && <span className="text-[10px] text-emerald-300">{groupAssignedTeams.size} allocated</span>}
                                   </button>
 
                                   {isExpandedGroup && (
@@ -564,9 +571,10 @@ export default function TournamentRoadmapBuilder({
                                             >
                                               {isExpandedRoom ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />}
                                               <LayoutGrid className="w-4 h-4 text-amber-400" />
-                                              <span className="font-medium text-sm text-gray-300 flex-1">Room {room.room_number}</span>
+                                              <span className="font-medium text-sm text-gray-300 flex-1">Match {roomMatches[0]?.match_number ?? '—'}</span>
+                                              <span className="text-[10px] uppercase tracking-wide text-amber-300">BGMI Room {room.room_number}</span>
                                               <span className="flex items-center gap-1 text-xs text-gray-500">
-                                                <Users className="w-3 h-3" /> {room.capacity} teams
+                                                <Users className="w-3 h-3" /> {room.capacity} team slots
                                               </span>
                                             </button>
 
@@ -576,9 +584,18 @@ export default function TournamentRoadmapBuilder({
                                                   const isEditing = editingMatchId === match.id;
                                                   const stagedTime = staged.matches[match.id];
                                                   const assigned = assignmentCounts.get(match.id) || 0;
+                                                  const matchDay = roadmap.days.find((scheduledDay) => scheduledDay.id === match.day_id);
+                                                  const matchRound = roundOf.get(match.round_id);
                                                   return (
                                                     <div key={match.id} className="bg-white/5 border border-white/10 p-2 rounded flex items-center justify-between gap-2">
-                                                      <span className="text-xs font-semibold text-gray-300">Match {match.match_number}</span>
+                                                      <div className="min-w-0">
+                                                        <span className="text-xs font-semibold text-gray-200">{matchRound?.name?.toLowerCase().includes('final') ? 'Final' : matchRound?.round_number === 1 ? 'Qualifier' : 'Match'} {match.match_number}</span>
+                                                        <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-gray-500">
+                                                          <span>{matchDay?.date || 'Date TBD'}</span>
+                                                          {matchRound?.map && <span>{matchRound.map}</span>}
+                                                          <span>{match.status || 'Scheduled'}</span>
+                                                        </div>
+                                                      </div>
                                                       <span className="flex items-center gap-1.5">
                                                         {isEditing ? (
                                                           <span className="flex items-center gap-1 text-xs text-gray-400 bg-black/30 px-2 py-0.5 rounded">

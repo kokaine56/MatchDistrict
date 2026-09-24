@@ -5758,7 +5758,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       // Verify tournament exists and user owns it (or is admin)
-      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", "slotsTotal", match_type, perspective FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -5773,10 +5773,18 @@ const server = http.createServer(async (req, res) => {
         'SELECT * FROM tournament_planning_config WHERE tournament_id = $1',
         [tId]
       );
+      const slots = parseInt(tRes.rows[0].slotsTotal, 10);
+      const teamSize = ({ solo: 1, duo: 2, squad: 4 })[String(tRes.rows[0].match_type || 'squad').toLowerCase()] || 4;
+      const savedConfig = cfgRes.rows.length > 0 ? cfgRes.rows[0] : null;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
-        config: cfgRes.rows.length > 0 ? cfgRes.rows[0] : null
+        config: savedConfig ? { ...savedConfig, expected_teams: slots, maximum_teams: slots, players_per_team: teamSize } : null,
+        tournament: {
+          slotsTotal: tRes.rows[0].slotsTotal,
+          match_type: tRes.rows[0].match_type,
+          perspective: tRes.rows[0].perspective,
+        }
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -5802,7 +5810,7 @@ const server = http.createServer(async (req, res) => {
         if (!requireOrganizer(req, res, authUser)) return;
 
         // Verify tournament ownership
-        const tRes = await pool.query('SELECT "orgId", title, finalized_at, status FROM tournaments WHERE id = $1', [tId]);
+        const tRes = await pool.query('SELECT "orgId", title, finalized_at, status, "slotsTotal", match_type FROM tournaments WHERE id = $1', [tId]);
         if (tRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -5834,13 +5842,16 @@ const server = http.createServer(async (req, res) => {
           return null;
         }
 
-        const expectedTeams = parseInt(cfg.expected_teams, 10);
-        const maximumTeams  = parseInt(cfg.maximum_teams, 10);
+        const tournamentCapacity = parseInt(tRes.rows[0].slotsTotal, 10);
+        const matchType = String(tRes.rows[0].match_type || 'squad').toLowerCase();
+        const playersPerTeam = ({ solo: 1, duo: 2, squad: 4 })[matchType] || 4;
+        const expectedTeams = tournamentCapacity;
+        const maximumTeams = tournamentCapacity;
 
         const fields = [
-          ['expected_teams',              cfg.expected_teams,              false],
-          ['maximum_teams',               cfg.maximum_teams,               false],
-          ['players_per_team',            cfg.players_per_team,            false],
+          ['expected_teams',              expectedTeams,                    false],
+          ['maximum_teams',               maximumTeams,                     false],
+          ['players_per_team',            playersPerTeam,                   false],
           ['teams_per_room',              cfg.teams_per_room,              false],
           ['max_simultaneous_rooms',      cfg.max_simultaneous_rooms,      false],
           ['matches_per_team',            cfg.matches_per_team,            false],
@@ -5910,16 +5921,13 @@ const server = http.createServer(async (req, res) => {
           }
           dbRes = await updateClient.query(
           `INSERT INTO tournament_planning_config (
-            id, tournament_id, expected_teams, maximum_teams, players_per_team,
+            id, tournament_id,
             teams_per_room, max_simultaneous_rooms, matches_per_team,
             match_duration_minutes, break_between_matches_minutes,
             daily_start_time, daily_end_time, max_matches_per_day,
             config_status, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'configured', NOW(), NOW())
           ON CONFLICT (tournament_id) DO UPDATE SET
-            expected_teams = EXCLUDED.expected_teams,
-            maximum_teams  = EXCLUDED.maximum_teams,
-            players_per_team = EXCLUDED.players_per_team,
             teams_per_room = EXCLUDED.teams_per_room,
             max_simultaneous_rooms = EXCLUDED.max_simultaneous_rooms,
             matches_per_team = EXCLUDED.matches_per_team,
@@ -5934,9 +5942,6 @@ const server = http.createServer(async (req, res) => {
           [
             configId,
             tId,
-            expectedTeams,
-            maximumTeams,
-            parseInt(cfg.players_per_team, 10),
             parseInt(cfg.teams_per_room, 10),
             parseInt(cfg.max_simultaneous_rooms, 10),
             parseInt(cfg.matches_per_team, 10),
@@ -5945,7 +5950,6 @@ const server = http.createServer(async (req, res) => {
             cfg.daily_start_time,
             cfg.daily_end_time,
             maxMatchesPerDay,
-            'configured',
           ]
           );
           await updateClient.query('COMMIT');
@@ -5958,7 +5962,15 @@ const server = http.createServer(async (req, res) => {
 
         console.log(`\n📋 [PLANNING CONFIG] Saved for tournament ${tId}\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, config: dbRes.rows[0] }));
+        res.end(JSON.stringify({
+          success: true,
+          config: {
+            ...dbRes.rows[0],
+            expected_teams: tournamentCapacity,
+            maximum_teams: tournamentCapacity,
+            players_per_team: playersPerTeam,
+          }
+        }));
       } catch (err) {
         console.error('❌ [PLANNING CONFIG] Save failed:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -6760,6 +6772,7 @@ const server = http.createServer(async (req, res) => {
 
       let members = [];
       let assignments = [];
+      let groupStandings = [];
       if (teamRes.rows.length > 0) {
         const teamId = teamRes.rows[0].id;
         const membersRes = await pool.query(`
@@ -6773,8 +6786,9 @@ const server = http.createServer(async (req, res) => {
 
         if (roadmapApproved) {
           const assignRes = await pool.query(`
-            SELECT a.id, a.status,
+            SELECT a.id, a.match_id, a.group_id, a.tournament_team_id, a.status,
                    rnd.round_number, rnd.name as round_name,
+                   rnd.id as round_id,
                    d.day_number, d.date as day_date,
                    g.group_name,
                    r.room_number,
@@ -6786,9 +6800,43 @@ const server = http.createServer(async (req, res) => {
             JOIN tournament_matches m ON a.match_id = m.id
             LEFT JOIN tournament_rounds rnd ON rnd.id = m.round_id AND rnd.tournament_id = a.tournament_id
             WHERE a.tournament_team_id = $1 AND a.tournament_id = $2
-            ORDER BY rnd.round_number ASC NULLS LAST, d.day_number ASC, m.match_number ASC
+            ORDER BY rnd.round_number ASC NULLS LAST, d.day_number ASC, g.sequence ASC, m.match_number ASC
           `, [teamId, tId]);
           assignments = assignRes.rows;
+          const groupIdsByRound = new Map();
+          for (const assignment of assignments) {
+            if (!assignment.round_id || !assignment.group_id) continue;
+            const key = `${assignment.round_id}:${assignment.round_number}`;
+            if (!groupIdsByRound.has(key)) groupIdsByRound.set(key, new Map());
+            groupIdsByRound.get(key).set(assignment.group_id, assignment.group_name);
+          }
+          const roundScopes = [...groupIdsByRound.entries()];
+          const standingsByRound = await Promise.all(roundScopes.map(async ([key, groupIds]) => {
+            const [roundId, roundNumber] = key.split(':');
+            const standings = await getRoundStandings(pool, tId, roundId);
+            const teamIds = standings.map((row) => row.team_id);
+            let advancedTeamIds = new Set();
+            if (teamIds.length > 0) {
+              const nextAssignments = await pool.query(`
+                SELECT DISTINCT a.tournament_team_id AS team_id
+                FROM tournament_match_assignments a
+                JOIN tournament_matches m ON m.id = a.match_id AND m.tournament_id = $1
+                JOIN tournament_rounds next_round ON next_round.id = m.round_id
+                WHERE a.tournament_id = $1 AND next_round.round_number > $2
+              `, [tId, Number(roundNumber)]);
+              advancedTeamIds = new Set(nextAssignments.rows.map((row) => row.team_id));
+            }
+            return standings.flatMap((row) => [...groupIds].filter(([groupId]) =>
+              assignments.some((assignment) => assignment.group_id === groupId && assignment.round_id === roundId && assignment.tournament_team_id === row.team_id)
+            ).map(([groupId, groupName]) => ({
+              ...row,
+              group_id: groupId,
+              group_name: groupName,
+              round_number: Number(roundNumber),
+              advanced: advancedTeamIds.has(row.team_id),
+            })));
+          }));
+          groupStandings = standingsByRound.flat();
         }
       }
 
@@ -6797,7 +6845,8 @@ const server = http.createServer(async (req, res) => {
         success: true, 
         team: teamRes.rows.length > 0 ? teamRes.rows[0] : null,
         members: members,
-        assignments: assignments
+        assignments,
+        groupStandings
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });

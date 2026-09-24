@@ -45,10 +45,9 @@ export default function TournamentRoadmapPreview({
       
       if (data.roadmap && data.roadmap.days.length > 0) {
         setRoadmap(data.roadmap);
-        // Expand first day by default
-        if (data.roadmap.days[0]) {
-          setExpandedDays({ [data.roadmap.days[0].id]: true });
-        }
+        setExpandedDays(Object.fromEntries(data.roadmap.days.map((day) => [day.id, true])));
+        setExpandedGroups(Object.fromEntries((data.roadmap.groups || []).map((group) => [group.id, true])));
+        setExpandedRooms(Object.fromEntries((data.roadmap.rooms || []).map((room) => [room.id, true])));
       } else {
         setRoadmap(null);
       }
@@ -76,9 +75,9 @@ export default function TournamentRoadmapPreview({
       setRoadmapStatus('draft');
       setRoadmap(data.roadmap);
       if (data.roadmap.days.length > 0) {
-        setExpandedDays({ [data.roadmap.days[0].id]: true });
-        setExpandedGroups({});
-        setExpandedRooms({});
+        setExpandedDays(Object.fromEntries(data.roadmap.days.map((day) => [day.id, true])));
+        setExpandedGroups(Object.fromEntries((data.roadmap.groups || []).map((group) => [group.id, true])));
+        setExpandedRooms(Object.fromEntries((data.roadmap.rooms || []).map((room) => [room.id, true])));
       }
     } catch (err) {
       setError(err.message);
@@ -225,7 +224,7 @@ export default function TournamentRoadmapPreview({
                 <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center text-center">
                   <LayoutGrid className="w-5 h-5 text-gray-400 mb-2" />
                   <div className="text-2xl font-black text-white">{roadmap.rooms.length}</div>
-                  <div className="text-xs text-gray-500 uppercase font-semibold mt-1">Rooms</div>
+                  <div className="text-xs text-gray-500 uppercase font-semibold mt-1">BGMI Rooms</div>
                 </div>
                 <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center text-center">
                   <Swords className="w-5 h-5 text-gray-400 mb-2" />
@@ -238,7 +237,7 @@ export default function TournamentRoadmapPreview({
               <div className="bg-[#0A0B10] border border-white/10 rounded-xl overflow-hidden">
                 <div className="p-4 bg-white/5 border-b border-white/10">
                   <h3 className="font-bold text-white">Structural Preview</h3>
-                  <p className="text-xs text-gray-400 mt-1">Expand days and groups to view exact match scheduling.</p>
+                  <p className="text-xs text-gray-400 mt-1">Groups keep the same teams for all matches; each match has its own BGMI room.</p>
                 </div>
                 
                 <div className="p-2 space-y-1 max-h-[500px] overflow-y-auto">
@@ -281,7 +280,7 @@ export default function TournamentRoadmapPreview({
                                         {isExpandedGroup ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
                                         <Layers className="w-4 h-4 text-emerald-400" />
                                         <span className="font-semibold text-gray-200 flex-1">{group.group_name}</span>
-                                        <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{groupRooms.length} Rooms</span>
+                                        <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-400">{groupRooms.length} Matches</span>
                                       </button>
 
                                       <AnimatePresence>
@@ -305,8 +304,9 @@ export default function TournamentRoadmapPreview({
                                                     >
                                                       {isExpandedRoom ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />}
                                                       <LayoutGrid className="w-4 h-4 text-amber-400" />
-                                                      <span className="font-medium text-sm text-gray-300 flex-1">Room {room.room_number}</span>
-                                                      <span className="flex items-center gap-1 text-xs text-gray-500"><Users className="w-3 h-3" /> {room.capacity} teams</span>
+                                                      <span className="font-medium text-sm text-gray-300 flex-1">Match {roomMatches[0]?.match_number ?? '—'}</span>
+                                                      <span className="text-[10px] uppercase tracking-wide text-amber-300">BGMI Room {room.room_number}</span>
+                                                      <span className="flex items-center gap-1 text-xs text-gray-500"><Users className="w-3 h-3" /> {room.capacity} team slots</span>
                                                     </button>
                                                     
                                                     <AnimatePresence>

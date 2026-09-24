@@ -4,9 +4,8 @@ import { calculateTournamentPlan } from '../server/tournamentPlanner.js';
 import { generateTournamentRoadmap } from '../server/roadmapGenerator.js';
 
 // server/tournamentPlanner.js + roadmapGenerator proposal path tests.
-// Scenarios required by the planning-engine prompt: 1250/25/10 -> 50 rooms,
-// 64/16/2 -> 4 rooms sequential groups, 16/16/1 -> 1 room, multi-day spill,
-// round progression 64->32->16 -> 4/2/1 rooms.
+// Persistent competitive groups schedule several matches, each with a
+// match-specific technical BGMI room.
 
 const baseConfig = (overrides = {}) => ({
   expected_teams: 64,
@@ -28,64 +27,61 @@ const toMins = (t) => {
   return h * 60 + m;
 };
 
-test('PLAN TEST 1: 1250 teams / 25 per room / 10 simultaneous -> 50 rooms', () => {
+test('PLAN TEST 1: 1250 teams / 25 per group / 10 simultaneous -> 50 groups and 150 match rooms', () => {
   const config = baseConfig({
     maximum_teams: 1250, expected_teams: 1250, teams_per_room: 25, max_simultaneous_rooms: 10
   });
   const res = calculateTournamentPlan(config, null);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.plan.requiredRooms, 50);
+  assert.strictEqual(res.plan.requiredGroups, 50);
+  assert.strictEqual(res.plan.requiredRooms, 150);
   assert.strictEqual(res.plan.simultaneousRooms, 10);
   assert.strictEqual(res.plan.requiredDays, 1);
-  // Room capacity is the configured teams_per_room, never the game roster max.
-  assert.strictEqual(res.plan.teamsPerRoom, 25);
-  assert.strictEqual(res.plan.round_plan.rounds[0].required_rooms, 50);
+  assert.strictEqual(res.plan.teamsPerGroup, 25);
+  assert.strictEqual(res.plan.round_plan.rounds[0].required_groups, 50);
   assert.strictEqual(res.plan.round_plan.rounds[0].teams_entering, 1250);
-  // 50 rooms / 10 simultaneous => 5 concurrent batches (Group A..E).
   const day = res.plan.round_plan.days[0];
-  assert.strictEqual(day.groups.length, 5);
-  assert.strictEqual(day.planned_rooms, 50);
-  assert.deepStrictEqual(day.groups[0].room_numbers, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.strictEqual(day.groups.length, 50);
+  assert.strictEqual(day.planned_rooms, 150);
+  assert.deepStrictEqual(day.rooms.filter((room) => room.group_sequence === 1).map((room) => room.matches[0].match_number), [1, 2, 3]);
 });
 
-test('PLAN TEST 2: 64 teams / 16 per room / 2 simultaneous -> 4 rooms, sequential groups', () => {
+test('PLAN TEST 2: 64 teams / 16 per group / 2 simultaneous -> 4 persistent groups', () => {
   const res = calculateTournamentPlan(baseConfig(), null);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.plan.requiredRooms, 4);
+  assert.strictEqual(res.plan.requiredGroups, 4);
+  assert.strictEqual(res.plan.requiredRooms, 12);
   assert.strictEqual(res.plan.simultaneousRooms, 2);
   const day = res.plan.round_plan.days[0];
-  // 4 rooms / 2 simultaneous = 2 groups (no fixed bucket size).
-  assert.strictEqual(day.groups.length, 2);
+  assert.strictEqual(day.groups.length, 4);
   assert.strictEqual(day.groups[0].name, 'Group A');
   assert.strictEqual(day.groups[1].name, 'Group B');
-  assert.deepStrictEqual(day.groups[0].room_numbers, [1, 2]);
-  assert.deepStrictEqual(day.groups[1].room_numbers, [3, 4]);
-  // Interleaved batch scheduling: Group A match 1 at 10:00, Group B at 10:30.
   const roomsByNumber = new Map(day.rooms.map((r) => [r.room_number, r]));
   assert.strictEqual(roomsByNumber.get(1).matches[0].start_time, '10:00');
-  assert.strictEqual(roomsByNumber.get(3).matches[0].start_time, '10:30');
-  assert.strictEqual(roomsByNumber.get(1).matches[1].start_time, '11:00');
-  assert.strictEqual(roomsByNumber.get(3).matches[1].start_time, '11:30');
+  assert.strictEqual(roomsByNumber.get(2).matches[0].start_time, '10:30');
+  assert.strictEqual(roomsByNumber.get(3).matches[0].start_time, '11:00');
+  assert.strictEqual(roomsByNumber.get(4).matches[0].start_time, '10:00');
   assert.strictEqual(roomsByNumber.get(1).group_sequence, 1);
-  assert.strictEqual(roomsByNumber.get(3).group_sequence, 2);
+  assert.strictEqual(roomsByNumber.get(4).group_sequence, 2);
 });
 
-test('PLAN TEST 3: 16 teams / 16 per room / 1 simultaneous -> 1 room', () => {
+test('PLAN TEST 3: 16 teams / 16 per group / 1 simultaneous -> one group and three match rooms', () => {
   const config = baseConfig({ maximum_teams: 16, expected_teams: 16, max_simultaneous_rooms: 1 });
   const res = calculateTournamentPlan(config, null);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.plan.requiredRooms, 1);
+  assert.strictEqual(res.plan.requiredGroups, 1);
+  assert.strictEqual(res.plan.requiredRooms, 3);
   assert.strictEqual(res.plan.simultaneousRooms, 1);
   const day = res.plan.round_plan.days[0];
-  assert.strictEqual(day.rooms.length, 1);
+  assert.strictEqual(day.rooms.length, 3);
   assert.strictEqual(day.groups.length, 1);
-  const starts = day.rooms[0].matches.map((m) => m.start_time);
+  const starts = day.rooms.map((room) => room.matches[0].start_time);
   assert.deepStrictEqual(starts, ['10:00', '10:30', '11:00']);
-  assert.strictEqual(day.rooms[0].matches[2].end_time, '11:25');
+  assert.strictEqual(day.rooms[2].matches[0].end_time, '11:25');
 });
 
 test('PLAN TEST 4: window too small -> spills to next days; every match inside the window', () => {
-  // 4 rooms, 1 simultaneous, short 3h40m window -> exactly 2 rooms/day over 2 days.
+  // Four groups, one simultaneous, short window -> two groups/day over two days.
   const config = baseConfig({
     max_simultaneous_rooms: 1,
     daily_start_time: '10:00',
@@ -93,9 +89,11 @@ test('PLAN TEST 4: window too small -> spills to next days; every match inside t
   });
   const res = calculateTournamentPlan(config, null);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.plan.requiredRooms, 4);
+  assert.strictEqual(res.plan.requiredGroups, 4);
+  assert.strictEqual(res.plan.requiredRooms, 12);
   assert.strictEqual(res.plan.requiredDays, 2);
-  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_rooms), [2, 2]);
+  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_groups), [2, 2]);
+  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_rooms), [6, 6]);
   const dayTwoDate = res.plan.round_plan.days[1].date;
   const expected = new Date(new Date(res.plan.round_plan.days[0].date + 'T12:00:00'));
   expected.setUTCDate(expected.getUTCDate() + 1);
@@ -111,7 +109,7 @@ test('PLAN TEST 4: window too small -> spills to next days; every match inside t
   }
 });
 
-test('PLAN TEST 5: rounds 64 -> 32 -> 16 advancing yields 4/2/1 rooms', () => {
+test('PLAN TEST 5: rounds 64 -> 32 -> 16 advancing yields 4/2/1 persistent groups', () => {
   const rounds = [
     { id: 'RND-R1', round_number: 1, name: 'Round 1', teams_advancing: 32, date: '2026-05-01' },
     { id: 'RND-R2', round_number: 2, name: 'Round 2', teams_advancing: 16, date: null },
@@ -120,9 +118,11 @@ test('PLAN TEST 5: rounds 64 -> 32 -> 16 advancing yields 4/2/1 rooms', () => {
   const tournament = { startDate: '2026-05-01' };
   const res = calculateTournamentPlan(baseConfig(), tournament, rounds);
   assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(res.plan.round_plan.rounds.map((r) => r.required_rooms), [4, 2, 1]);
+  assert.deepStrictEqual(res.plan.round_plan.rounds.map((r) => r.required_groups), [4, 2, 1]);
+  assert.deepStrictEqual(res.plan.round_plan.rounds.map((r) => r.required_rooms), [12, 6, 3]);
   assert.deepStrictEqual(res.plan.round_plan.rounds.map((r) => r.teams_entering), [64, 32, 16]);
-  assert.strictEqual(res.plan.requiredRooms, 7);
+  assert.strictEqual(res.plan.requiredGroups, 7);
+  assert.strictEqual(res.plan.requiredRooms, 21);
   assert.strictEqual(res.plan.requiredDays, 3);
   // Round ordering: round N starts the day after the previous round completes.
   assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.date), ['2026-05-01', '2026-05-02', '2026-05-03']);
@@ -155,9 +155,11 @@ test('PLAN TEST 7: capacity correction – a match can never finish past the win
   });
   const res = calculateTournamentPlan(config, null);
   assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.plan.requiredRooms, 6);
+  assert.strictEqual(res.plan.requiredGroups, 6);
+  assert.strictEqual(res.plan.requiredRooms, 18);
   assert.strictEqual(res.plan.requiredDays, 3); // 2 rooms/day
-  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_rooms), [2, 2, 2]);
+  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_groups), [2, 2, 2]);
+  assert.deepStrictEqual(res.plan.round_plan.days.map((d) => d.planned_rooms), [6, 6, 6]);
   const endMins = toMins('12:30');
   for (const day of res.plan.round_plan.days) {
     for (const room of day.rooms) {
@@ -267,20 +269,20 @@ test('PLAN TEST 14: proposal materializes 1:1 through the roadmap generator', ()
 
   const roadmap = gen.roadmap;
   assert.strictEqual(roadmap.days.length, 3);
-  assert.strictEqual(roadmap.rooms.length, 7);
+  assert.strictEqual(roadmap.rooms.length, 21);
   assert.strictEqual(roadmap.matches.length, 21);
   assert.deepStrictEqual(roadmap.rounds.map((r) => r.round_number), [1, 2, 3]);
   assert.deepStrictEqual(roadmap.rounds.map((r) => r.id), ['RND-R1', 'RND-R2', 'RND-R3']);
 
-  // Room numbers flow through contiguously 1..7 in schedule order.
-  assert.deepStrictEqual(roadmap.rooms.map((r) => r.room_number), [1, 2, 3, 4, 5, 6, 7]);
+  // Match-specific room numbers flow through contiguously 1..21.
+  assert.deepStrictEqual(roadmap.rooms.map((r) => r.room_number), Array.from({ length: 21 }, (_, i) => i + 1));
   // Day round ids and within-round day numbers are explicit in the proposal path.
   assert.deepStrictEqual(roadmap.days.map((d) => d.round_id), ['RND-R1', 'RND-R2', 'RND-R3']);
   assert.deepStrictEqual(roadmap.days.map((d) => d.day_number), [1, 1, 1]);
   assert.deepStrictEqual(roadmap.days.map((d) => d.date), ['2026-05-01', '2026-05-02', '2026-05-03']);
 
   // Group topology matches the proposal (Round 1: 4 rooms/2 sim = 2 groups; R2/R3: 1 group).
-  assert.deepStrictEqual(roadmap.groups.map((g) => g.group_name), ['Group A', 'Group B', 'Group A', 'Group A']);
+  assert.deepStrictEqual(roadmap.groups.map((g) => g.group_name), ['Group A', 'Group B', 'Group C', 'Group D', 'Group A', 'Group B', 'Group A']);
 
   // Match times are identical to the proposal (spot check room 1 + last room).
   const proposalRoom1FirstMatch = plan.round_plan.days[0].rooms.find((r) => r.room_number === 1).matches[0];
@@ -289,7 +291,7 @@ test('PLAN TEST 14: proposal materializes 1:1 through the roadmap generator', ()
   assert.strictEqual(genRoom1Matches[0].start_time, proposalRoom1FirstMatch.start_time);
   assert.strictEqual(genRoom1Matches[0].end_time, proposalRoom1FirstMatch.end_time);
 
-  // Every room capacity is the configured teams_per_room.
+  // Each match room carries its group's team allocation capacity.
   assert.ok(roadmap.rooms.every((r) => r.capacity === 16));
 });
 

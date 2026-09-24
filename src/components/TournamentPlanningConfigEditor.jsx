@@ -6,6 +6,7 @@ import {
 } from "lucide-react"
 import { getAuthToken } from "../utils/getAuthToken"
 import TournamentPlanningResultCard from "./TournamentPlanningResultCard"
+import { deriveTournamentPlanningConfig } from "./tournament-creation/planningConfigModel"
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 function validateConfig(d) {
@@ -19,9 +20,6 @@ function validateConfig(d) {
     return null
   }
   const numFields = [
-    ["expected_teams", d.expected_teams, "Expected teams", false],
-    ["maximum_teams", d.maximum_teams, "Maximum teams", false],
-    ["players_per_team", d.players_per_team, "Players per team", false],
     ["teams_per_room", d.teams_per_room, "Teams per room", false],
     ["max_simultaneous_rooms", d.max_simultaneous_rooms, "Max simultaneous rooms", false],
     ["matches_per_team", d.matches_per_team, "Matches per team", false],
@@ -31,9 +29,6 @@ function validateConfig(d) {
   for (const [k, v, label, allowZero] of numFields) {
     const e = posInt(v, label, allowZero)
     if (e) errs[k] = e
-  }
-  if (!errs.expected_teams && !errs.maximum_teams) {
-    if (Number(d.maximum_teams) < Number(d.expected_teams)) errs.maximum_teams = "Maximum teams cannot be lower than expected teams."
   }
   const timeRe = /^([01]\d|2[0-3]):([0-5]\d)$/
   if (!d.daily_start_time || !timeRe.test(d.daily_start_time)) errs.daily_start_time = "Valid start time required (HH:MM)."
@@ -51,7 +46,7 @@ function validateConfig(d) {
 
 const EMPTY = {
   expected_teams: "", maximum_teams: "", players_per_team: "4",
-  teams_per_room: "25", max_simultaneous_rooms: "", matches_per_team: "3",
+  teams_per_room: "25", max_simultaneous_rooms: "1", matches_per_team: "3",
   match_duration_minutes: "25", break_between_matches_minutes: "5",
   daily_start_time: "10:00", daily_end_time: "22:00", max_matches_per_day: "",
 }
@@ -104,6 +99,7 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [showResult, setShowResult] = useState(false)
+  const [tournament, setTournament] = useState(null)
   const [open, setOpen] = useState({ team: true, room: true, match: true, schedule: true })
   const toggle = (k) => setOpen((p) => ({ ...p, [k]: !p[k] }))
 
@@ -115,11 +111,11 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
         if (token) headers["Authorization"] = `Bearer ${token}`
         const res = await fetch(`/api/tournaments/${tournamentId}/planning-config`, { headers })
         const json = await res.json()
+        if (json.success && json.tournament) setTournament(json.tournament)
         if (json.success && json.config) {
+          const inherited = deriveTournamentPlanningConfig(json.tournament, json.config)
           setData({
-            expected_teams: String(json.config.expected_teams ?? ""),
-            maximum_teams: String(json.config.maximum_teams ?? ""),
-            players_per_team: String(json.config.players_per_team ?? "4"),
+            ...inherited,
             teams_per_room: String(json.config.teams_per_room ?? "25"),
             max_simultaneous_rooms: String(json.config.max_simultaneous_rooms ?? ""),
             matches_per_team: String(json.config.matches_per_team ?? "3"),
@@ -146,7 +142,6 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
     const errs = validateConfig(data)
     setErrors(errs)
     if (Object.keys(errs).length > 0) {
-      if (errs.expected_teams || errs.maximum_teams || errs.players_per_team) setOpen(p => ({ ...p, team: true }))
       if (errs.teams_per_room || errs.max_simultaneous_rooms) setOpen(p => ({ ...p, room: true }))
       if (errs.matches_per_team || errs.match_duration_minutes || errs.break_between_matches_minutes) setOpen(p => ({ ...p, match: true }))
       if (errs.daily_start_time || errs.daily_end_time || errs.max_matches_per_day) setOpen(p => ({ ...p, schedule: true }))
@@ -157,7 +152,7 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
       const token = await getAuthToken()
       const headers = { "Content-Type": "application/json" }
       if (token) headers["Authorization"] = `Bearer ${token}`
-      const res = await fetch(`/api/tournaments/${tournamentId}/planning-config`, { method: "POST", headers, body: JSON.stringify(data) })
+      const res = await fetch(`/api/tournaments/${tournamentId}/planning-config`, { method: "POST", headers, body: JSON.stringify(deriveTournamentPlanningConfig(tournament, data)) })
       const json = await res.json()
       if (!json.success) {
         setSaveError(json.message || json.error || "Failed to save.")
@@ -169,7 +164,7 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
       }
     } catch { setSaveError("Network error. Please try again.") }
     finally { setSaving(false) }
-  }, [data, tournamentId, onSaved])
+  }, [data, tournament, tournamentId, onSaved])
 
   const e = (k) => errors[k]
 
@@ -189,7 +184,7 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
             <CalendarDays className="w-5 h-5" />
           </span>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-on-background leading-tight">Planning Configuration</h2>
+            <h2 className="text-base font-bold text-on-background leading-tight">Roadmap Planning</h2>
             {tournamentTitle && <p className="text-xs text-on-surface-variant truncate mt-0.5">{tournamentTitle}</p>}
           </div>
           <button type="button" onClick={onClose} className="flex-shrink-0 p-2 rounded-lg text-on-surface-variant hover:text-on-background hover:bg-surface-container-highest/50 transition-colors">
@@ -210,16 +205,12 @@ export default function TournamentPlanningConfigEditor({ tournamentId, tournamen
               </p>
 
               {/* Section 1 */}
-              <Section icon={Users} title="Team Structure" open={open.team} onToggle={() => toggle("team")}>
-                <Field label="Expected Teams" hint="Estimated teams expected to participate." error={e("expected_teams")}>
-                  <NumInput value={data.expected_teams} onChange={set("expected_teams")} error={e("expected_teams")} placeholder="e.g. 180" min="1" />
-                </Field>
-                <Field label="Maximum Teams" hint="Maximum teams this tournament can accept." error={e("maximum_teams")}>
-                  <NumInput value={data.maximum_teams} onChange={set("maximum_teams")} error={e("maximum_teams")} placeholder="e.g. 200" min="1" />
-                </Field>
-                <Field label="Players Per Team" hint="Number of players per team." error={e("players_per_team")}>
-                  <NumInput value={data.players_per_team} onChange={set("players_per_team")} error={e("players_per_team")} placeholder="e.g. 4" min="1" />
-                </Field>
+              <Section icon={Users} title="Tournament format" open={open.team} onToggle={() => toggle("team")}>
+                <div className="sm:col-span-2 grid grid-cols-1 gap-3 rounded-xl bg-surface/50 p-3 sm:grid-cols-3">
+                  <div><span className="block text-xs text-on-surface-variant">Tournament capacity</span><strong className="text-sm text-on-background">{tournament?.slotsTotal || 'Not set'} teams</strong></div>
+                  <div><span className="block text-xs text-on-surface-variant">Format</span><strong className="text-sm text-on-background">{`${(tournament?.match_type || 'squad').toUpperCase()} · ${(tournament?.perspective || 'tpp').toUpperCase()}`}</strong></div>
+                  <div><span className="block text-xs text-on-surface-variant">Players per team</span><strong className="text-sm text-on-background">{deriveTournamentPlanningConfig(tournament).players_per_team}</strong></div>
+                </div>
               </Section>
 
               {/* Section 2 */}

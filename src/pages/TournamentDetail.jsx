@@ -1669,7 +1669,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               )
             )}
             {activeTab === 'roadmap' && (
-              tourney?.roadmap_status === 'approved' ? (
+              tourney?.roadmap_status === 'approved' || isTournamentOwner ? (
                 <Phase3RoadmapViewer tournamentId={tourney.id} />
               ) : (
                 <TournamentRoadmap

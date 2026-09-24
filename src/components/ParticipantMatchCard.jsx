@@ -90,7 +90,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
             {matchDetails.round_number != null ? `ROUND ${matchDetails.round_number} · MATCH ${matchDetails.match_number}` : `MATCH ${matchDetails.match_number}`}
           </h3>
           <p className="text-gray-400 text-sm font-medium mt-0.5">
-            {matchDetails.round_name ? `${matchDetails.round_name} · ` : ''}Day {matchDetails.day_number} &bull; Group {matchDetails.group_name} &bull; Room {matchDetails.room_number}
+            {matchDetails.round_name ? `${matchDetails.round_name} · ` : ''}Group {matchDetails.group_name} &bull; Day {matchDetails.day_number} &bull; Match {matchDetails.match_number}
           </p>
         </div>
         <div className="text-right">
@@ -116,7 +116,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
           <div className="bg-black/40 p-4 border-b border-white/10 flex items-center justify-between">
             <h4 className="text-sm font-bold text-white flex items-center gap-2">
               {isReleased ? <Unlock className="w-4 h-4 text-emerald-400" /> : <Lock className="w-4 h-4 text-amber-400" />}
-              ROOM CREDENTIALS
+              BGMI ROOM CREDENTIALS
             </h4>
             {loading ? (
               <span className="text-xs text-gray-500 font-medium flex items-center gap-2"><Clock className="w-3 h-3 animate-spin"/> Loading...</span>
@@ -133,7 +133,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
             {!isReleased && !loading && (
               <div className="text-center py-6">
                 <Lock className="w-8 h-8 text-white/20 mx-auto mb-3" />
-                <p className="text-sm text-gray-400 font-medium">Room credentials are currently locked.</p>
+                <p className="text-sm text-gray-400 font-medium">This match’s BGMI room credentials are currently locked.</p>
                 {timeLeft && <p className="text-xs text-amber-500/80 font-bold mt-2 bg-amber-500/10 inline-block px-3 py-1 rounded-full border border-amber-500/20">Available in: {timeLeft}</p>}
               </div>
             )}
@@ -142,7 +142,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex-1">
-                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Room ID</label>
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">BGMI Room ID</label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-black/60 border border-white/10 rounded-lg p-3 text-lg font-mono text-white tracking-widest break-all">
                         {credentials.room_identifier || 'Not Set'}
@@ -150,7 +150,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
                       <button 
                         onClick={() => handleCopy(credentials.room_identifier || '', 'id')}
                         className="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors min-w-[50px] flex justify-center"
-                        title="Copy Room ID"
+                        title="Copy BGMI Room ID"
                       >
                         {copiedId ? <CheckCircle className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5 text-gray-400" />}
                       </button>

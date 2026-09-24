@@ -17,9 +17,9 @@ import Step7Roadmap from './steps/Step7Roadmap'
 import Step7Rules from './steps/Step7Rules'
 import Step8Preview from './steps/Step8Preview'
 import Step9Publish from './steps/Step9Publish'
-import Step10PlanningConfig from './steps/Step10PlanningConfig'
+import { buildPlanningConfigPayload, DEFAULT_ROADMAP_PLANNING, deriveTournamentPlanningConfig } from './planningConfigModel'
 
-const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 const LS_KEY = 'md_tournament_draft'
 
 function emptyForm() {
@@ -58,7 +58,7 @@ function emptyForm() {
     unique_amount_suffix_enabled: false,
     card_color: 'white',
     rounds_published: true,
-    planningConfig: null,
+    planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
   }
 }
 
@@ -330,7 +330,7 @@ export default function CreationWizard() {
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
           card_color: t.card_color || 'white',
           rounds_published: t.rounds_published !== false && t.rounds_published !== 'false',
-          planningConfig: null,
+          planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
         })
         setDraftId(id)
         // Load planning config for edit mode
@@ -341,7 +341,7 @@ export default function CreationWizard() {
           const pcRes = await fetch(`/api/tournaments/${id}/planning-config`, { headers: pcHeaders })
           const pcJson = await pcRes.json()
           if (pcJson.success && pcJson.config) {
-            setFormData((prev) => ({ ...prev, planningConfig: pcJson.config }))
+            setFormData((prev) => ({ ...prev, planningConfig: { ...DEFAULT_ROADMAP_PLANNING, ...deriveTournamentPlanningConfig(t, pcJson.config) } }))
           }
         } catch { /* planning config is optional at edit time */ }
       }
@@ -587,14 +587,16 @@ export default function CreationWizard() {
   const handleSavePlanningConfig = useCallback(async (configData) => {
     try {
       const targetId = draftId || editingId
+      let createdDraftId = null
       if (!targetId) {
         // Must save tournament first
         const draftResult = await saveToServer('DRAFT')
         if (draftResult?.error || !draftResult?.tournament) {
-          return { success: false, message: 'Please save your tournament as a draft first before saving planning configuration.' }
+          return { success: false, message: 'Save the tournament draft before saving roadmap planning.' }
         }
+        createdDraftId = draftResult.tournament.id
       }
-      const tid = draftId || editingId
+      const tid = targetId || createdDraftId
       if (!tid) return { success: false, message: 'Tournament ID not found. Please save the tournament first.' }
       const token = await getAuthToken()
       const headers = { 'Content-Type': 'application/json' }
@@ -602,18 +604,18 @@ export default function CreationWizard() {
       const res = await fetch(`/api/tournaments/${tid}/planning-config`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(configData),
+        body: JSON.stringify(buildPlanningConfigPayload(formData, configData)),
       })
       const json = await res.json()
       if (!json.success) {
         return { success: false, message: json.message || json.error, errors: json.errors }
       }
-      showToast('Planning configuration saved successfully.')
+      showToast('Roadmap planning saved successfully.')
       return { success: true, config: json.config }
     } catch {
       return { success: false, message: 'Network error. Please check your connection.' }
     }
-  }, [draftId, editingId, saveToServer, showToast])
+  }, [draftId, editingId, formData, saveToServer, showToast])
 
   const handlePublish = useCallback(async () => {
     setPublishError(null)
@@ -628,13 +630,18 @@ export default function CreationWizard() {
       setPublishError(errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.')
       return
     }
+    const planningSave = await handleSavePlanningConfig(formData.planningConfig || DEFAULT_ROADMAP_PLANNING)
+    if (!planningSave.success) {
+      setPublishError(planningSave.message || 'Save roadmap planning before publishing.')
+      return
+    }
     const result = await saveToServer('PUBLISHED')
     if (result?.tournament) {
       navigate(`/tournaments/${result.tournament.id}`)
     } else if (result?.error) {
       setPublishError(result.message)
     }
-  }, [formData, planLimits, saveToServer, navigate, orgName, userTier, currentUser])
+  }, [formData, planLimits, saveToServer, navigate, orgName, userTier, currentUser, handleSavePlanningConfig])
 
   const handlePublishStep9 = useCallback(async (preUploadedImageUrl) => {
     setPublishError(null)
@@ -651,12 +658,17 @@ export default function CreationWizard() {
       const errMessages = Object.values(allErrors).filter(Boolean)
       return { tournament: null, error: 'VALIDATION', message: errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.' }
     }
+    const planningSave = await handleSavePlanningConfig(formData.planningConfig || DEFAULT_ROADMAP_PLANNING)
+    if (!planningSave.success) {
+      setPublishError(planningSave.message || 'Save roadmap planning before publishing.')
+      return { tournament: null, error: 'PLANNING_CONFIG', message: planningSave.message || 'Save roadmap planning before publishing.' }
+    }
     const result = await saveToServer('PUBLISHED', preUploadedImageUrl)
     if (result?.error) {
       setPublishError(result.message)
     }
     return result
-  }, [formData, planLimits, saveToServer, orgName, userTier, currentUser])
+  }, [formData, planLimits, saveToServer, orgName, userTier, currentUser, handleSavePlanningConfig])
 
   const debounceRef = useRef(null)
   const handleChange = useCallback((newData) => {
@@ -694,14 +706,13 @@ export default function CreationWizard() {
       case 4: return <Step4PrizePool {...props} />
       case 5: return <Step5Media {...props} />
       case 6: return <Step6Schedule {...props} />
-      case 7: return <Step7Roadmap {...props} />
+      case 7: return <Step7Roadmap {...props} onSavePlanningConfig={handleSavePlanningConfig} planningConfigStatus={formData.planningConfig?.config_status} />
       case 8: return <Step7Rules {...props} />
       case 9: return <Step8Preview {...props} />
       case 10: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} isEditMode={isEditMode} />
-      case 11: return <Step10PlanningConfig {...props} tournamentId={draftId || editingId} onSavePlanningConfig={handleSavePlanningConfig} planningConfigStatus={formData.planningConfig?.config_status} />
       default: return null
     }
-  }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError, draftId, editingId, handleSavePlanningConfig])
+  }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError, handleSavePlanningConfig])
 
   return (
     <div className="min-h-screen bg-background">
