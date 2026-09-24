@@ -5,6 +5,27 @@ import {
 } from "lucide-react";
 import { getAuthToken } from "../utils/getAuthToken";
 
+// Group participant days under their round, preserving the server's round-major
+// order (days arrive sorted round → day_number). Days without a round_id are
+// folded into a synthesized section so nothing disappears.
+function groupDaysByRound(days, rounds) {
+  const byId = new Map((rounds || []).map((r) => [r.id, r]));
+  const sections = [];
+  const seen = new Map();
+  for (const day of days || []) {
+    const rid = day.round_id;
+    let section = seen.get(rid);
+    if (!section) {
+      const round = byId.get(rid) || { id: rid, round_number: day.round_number ?? null, name: '', status: null };
+      section = { round, days: [] };
+      seen.set(rid, section);
+      sections.push(section);
+    }
+    section.days.push(day);
+  }
+  return sections;
+}
+
 export default function Phase3RoadmapViewer({ tournamentId }) {
   const [loading, setLoading] = useState(true);
   const [roadmap, setRoadmap] = useState(null);
@@ -73,23 +94,13 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
     );
   }
 
-  return (
-    <div className="bg-[#0A0B10] border border-white/10 rounded-xl overflow-hidden w-full max-w-4xl mx-auto">
-      <div className="p-4 bg-white/5 border-b border-white/10">
-        <h3 className="font-bold text-white flex items-center gap-2">
-          <CalendarDays className="w-5 h-5 text-indigo-400" />
-          Tournament Allocation Roadmap
-        </h3>
-        <p className="text-xs text-gray-400 mt-1">Expand days and groups to view assigned rooms and matches.</p>
-      </div>
-      
-      <div className="p-4 space-y-2">
-        {roadmap.days.map((day) => {
-          const dayGroups = roadmap.groups.filter(g => g.day_id === day.id);
-          const isExpandedDay = expandedDays[day.id];
+  const isParticipant = mode === 'participant';
+  const renderDay = (day) => {
+    const dayGroups = roadmap.groups.filter(g => g.day_id === day.id);
+    const isExpandedDay = expandedDays[day.id];
 
-          return (
-            <div key={day.id} className="border border-white/5 rounded-lg overflow-hidden bg-[#0D0E15]">
+    return (
+    <div key={day.id} className="border border-white/5 rounded-lg overflow-hidden bg-[#0D0E15]">
               <button 
                 onClick={() => toggleDay(day.id)}
                 className="w-full flex items-center gap-3 p-4 text-left hover:bg-white/5 transition-colors"
@@ -201,8 +212,53 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
                 )}
               </AnimatePresence>
             </div>
-          );
-        })}
+    );
+  };
+
+  return (
+    <div className="bg-[#0A0B10] border border-white/10 rounded-xl overflow-hidden w-full max-w-4xl mx-auto">
+      <div className="p-4 bg-white/5 border-b border-white/10">
+        <h3 className="font-bold text-white flex items-center gap-2">
+          <CalendarDays className="w-5 h-5 text-indigo-400" />
+          Tournament Allocation Roadmap
+        </h3>
+        <p className="text-xs text-gray-400 mt-1">
+          {isParticipant
+            ? 'Your team’s schedule, organized by round.'
+            : 'Expand days and groups to view assigned rooms and matches.'}
+        </p>
+      </div>
+
+      <div className="p-4 space-y-2">
+        {isParticipant
+          ? groupDaysByRound(roadmap.days, roadmap.rounds).map((section) => (
+              <div key={section.round.id ?? 'round'} className="space-y-2">
+                <div className="flex items-center gap-2 px-1 pt-0.5 pb-1">
+                  <span className="font-bold text-white">
+                    {section.round.round_number != null ? `Round ${section.round.round_number}` : 'Round'}
+                    {section.round.name && section.round.name !== `Round ${section.round.round_number}` ? ` · ${section.round.name}` : ''}
+                  </span>
+                  {section.round.status === 'live' && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                      Live
+                    </span>
+                  )}
+                  {section.round.status === 'completed' && (
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-white/5 text-gray-400 border border-white/10">
+                      Completed
+                    </span>
+                  )}
+                  {section.round.status === 'configured' && (
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                      Upcoming
+                    </span>
+                  )}
+                </div>
+                {section.days.map(renderDay)}
+              </div>
+            ))
+          : roadmap.days.map(renderDay)}
       </div>
     </div>
   );

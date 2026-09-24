@@ -442,9 +442,11 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
                     key={asn.id}
                     tournamentId={tournamentId}
                     teamId={team.id}
-                    matchDetails={{
+matchDetails={{
                       match_id: asn.match_id,
                       match_number: asn.match_number,
+                      round_number: asn.round_number,
+                      round_name: asn.round_name,
                       day_number: asn.day_number,
                       group_name: asn.group_name,
                       room_number: asn.room_number,

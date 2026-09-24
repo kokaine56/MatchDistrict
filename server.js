@@ -6204,6 +6204,7 @@ const server = http.createServer(async (req, res) => {
         if (roadmapApproved) {
           const assignRes = await pool.query(`
             SELECT a.id, a.status,
+                   rnd.round_number, rnd.name as round_name,
                    d.day_number, d.date as day_date,
                    g.group_name,
                    r.room_number,
@@ -6213,9 +6214,10 @@ const server = http.createServer(async (req, res) => {
             JOIN tournament_groups g ON a.group_id = g.id
             JOIN tournament_rooms r ON a.room_id = r.id
             JOIN tournament_matches m ON a.match_id = m.id
-            WHERE a.tournament_team_id = $1
-            ORDER BY d.day_number ASC, m.match_number ASC
-          `, [teamId]);
+            LEFT JOIN tournament_rounds rnd ON rnd.id = m.round_id AND rnd.tournament_id = a.tournament_id
+            WHERE a.tournament_team_id = $1 AND a.tournament_id = $2
+            ORDER BY rnd.round_number ASC NULLS LAST, d.day_number ASC, m.match_number ASC
+          `, [teamId, tId]);
           assignments = assignRes.rows;
         }
       }

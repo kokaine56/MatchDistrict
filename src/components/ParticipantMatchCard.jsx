@@ -86,9 +86,11 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
     <div className="bg-[#11131A] border border-white/5 rounded-2xl overflow-hidden shadow-lg mt-4 max-w-2xl">
       <div className="p-5 border-b border-white/5 flex items-center justify-between bg-black/20">
         <div>
-          <h3 className="text-xl font-black text-white">MATCH {matchDetails.match_number}</h3>
+          <h3 className="text-xl font-black text-white">
+            {matchDetails.round_number != null ? `ROUND ${matchDetails.round_number} · MATCH ${matchDetails.match_number}` : `MATCH ${matchDetails.match_number}`}
+          </h3>
           <p className="text-gray-400 text-sm font-medium mt-0.5">
-            Day {matchDetails.day_number} &bull; Group {matchDetails.group_name} &bull; Room {matchDetails.room_number}
+            {matchDetails.round_name ? `${matchDetails.round_name} · ` : ''}Day {matchDetails.day_number} &bull; Group {matchDetails.group_name} &bull; Room {matchDetails.room_number}
           </p>
         </div>
         <div className="text-right">

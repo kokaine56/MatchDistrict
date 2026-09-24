@@ -153,6 +153,105 @@ test('participantRoadmap: only the caller' + "'s own chain is included", () => {
   assert.deepStrictEqual(built.assignments.map((a) => a.id), ['ASG1']);
 });
 
+test('participantRoadmap: multi-round assignments are ordered and carry safe round metadata', () => {
+  const { full } = makeFullRoadmap();
+  // Reverse source row order and place a later day before an earlier one to
+  // ensure the participant view uses round/day ordering, not input order.
+  full.days = [
+    { ...full.days[0], id: 'DAY1-LATE', day_number: 2 },
+    { ...full.days[1], id: 'DAY2-EARLY', day_number: 1 },
+    { ...full.days[0], id: 'DAY1-EARLY', day_number: 1 },
+  ];
+  full.groups = [
+    { ...full.groups[0], id: 'GRP1-LATE', day_id: 'DAY1-LATE' },
+    { ...full.groups[1], id: 'GRP2', day_id: 'DAY2-EARLY' },
+    { ...full.groups[0], id: 'GRP1-EARLY', day_id: 'DAY1-EARLY' },
+  ];
+  full.rooms = [
+    { ...full.rooms[0], id: 'RM1-LATE', group_id: 'GRP1-LATE', day_id: 'DAY1-LATE' },
+    { ...full.rooms[1], id: 'RM2', group_id: 'GRP2', day_id: 'DAY2-EARLY' },
+    { ...full.rooms[0], id: 'RM1-EARLY', group_id: 'GRP1-EARLY', day_id: 'DAY1-EARLY' },
+  ];
+  full.matches = [
+    { ...full.matches[0], id: 'M1-LATE', room_id: 'RM1-LATE', group_id: 'GRP1-LATE', day_id: 'DAY1-LATE', match_number: 2 },
+    { ...full.matches[1], id: 'M2-R2', room_id: 'RM2', group_id: 'GRP2', day_id: 'DAY2-EARLY', match_number: 1 },
+    { ...full.matches[0], id: 'M1-EARLY', room_id: 'RM1-EARLY', group_id: 'GRP1-EARLY', day_id: 'DAY1-EARLY', match_number: 1 },
+  ];
+  full.assignments = [
+    { id: 'ASG-LATE', tournament_team_id: 'TEAM-A', match_id: 'M1-LATE', room_id: 'RM1-LATE', group_id: 'GRP1-LATE', day_id: 'DAY1-LATE' },
+    { id: 'ASG-R2', tournament_team_id: 'TEAM-A', match_id: 'M2-R2', room_id: 'RM2', group_id: 'GRP2', day_id: 'DAY2-EARLY', source: 'advancement' },
+    { id: 'ASG-EARLY', tournament_team_id: 'TEAM-A', match_id: 'M1-EARLY', room_id: 'RM1-EARLY', group_id: 'GRP1-EARLY', day_id: 'DAY1-EARLY' },
+    { id: 'ASG-B', tournament_team_id: 'TEAM-B', match_id: 'MTC1', room_id: 'RM1', group_id: 'GRP1', day_id: 'DAY1' },
+  ];
+
+  const built = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes: 15, nowMs: new Date('2026-11-01T09:59:59').getTime() });
+  assert.deepStrictEqual(built.rounds.map((r) => r.round_number), [1, 2]);
+  assert.deepStrictEqual(built.days.map((d) => [d.round_number, d.day_number]), [[1, 1], [1, 2], [2, 1]]);
+  assert.deepStrictEqual(built.matches.map((m) => [m.round_number, m.match_number]), [[1, 1], [1, 2], [2, 1]]);
+  assert.deepStrictEqual(built.matches.map((m) => m.id), ['M1-EARLY', 'M1-LATE', 'M2-R2']);
+  assert.strictEqual(built.matches[2].round_id, 'RND2');
+  assert.strictEqual(built.rounds[1].name, 'Final');
+  assert.ok(!('teams_advancing' in built.rounds[1]));
+  assert.strictEqual(built.matches[2].credentials_available, false);
+  for (const match of built.matches) {
+    assert.ok(!('room_identifier' in match));
+    assert.ok(!('room_password' in match));
+    assert.ok(!('credential_status' in match));
+  }
+  assert.strictEqual(built.matches.some((m) => m.id === 'MTC1'), false, 'unrelated team match excluded');
+  assert.deepStrictEqual(built.assignments.map((a) => a.id), ['ASG-EARLY', 'ASG-LATE', 'ASG-R2']);
+});
+
+test('participantRoadmap: an unqualified team with only Round 1 assignment sees no Round 2 data', () => {
+  const { full } = makeFullRoadmap();
+  const built = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes: 15, nowMs: Date.now() });
+  assert.deepStrictEqual(built.rounds.map((r) => r.round_number), [1]);
+  assert.ok(built.matches.every((m) => m.round_number === 1));
+  assert.ok(built.rooms.every((r) => r.id !== 'RM2'));
+  assert.ok(built.groups.every((g) => g.id !== 'GRP2'));
+  assert.ok(built.days.every((d) => d.id !== 'DAY2'));
+});
+
+test('participantRoadmap: Round 2 release uses the shared schedule release rule', () => {
+  const { full } = makeFullRoadmap();
+  full.assignments = [{ id: 'ASG2', tournament_team_id: 'TEAM-A', match_id: 'MTC2', room_id: 'RM2', group_id: 'GRP2', day_id: 'DAY2', source: 'advancement' }];
+  const before = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes: 15, nowMs: new Date('2026-11-02T13:44:59').getTime() });
+  const after = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes: 15, nowMs: new Date('2026-11-02T13:45:00').getTime() });
+  assert.strictEqual(before.matches[0].round_number, 2);
+  assert.strictEqual(before.matches[0].credentials_available, false);
+  assert.strictEqual(after.matches[0].credentials_available, true);
+  for (const m of after.matches) {
+    assert.ok(!('room_identifier' in m));
+    assert.ok(!('room_password' in m));
+  }
+});
+
+test('participant /my-team assignment SQL uses match round and scopes tournament before round-day ordering', async () => {
+  const fs = await import('node:fs/promises');
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  const start = source.indexOf("const myTeamMatch = urlPath.match");
+  const end = source.indexOf('// POST /api/tournaments/:id/teams (Create a team)', start);
+  assert.ok(start >= 0 && end > start, 'my-team handler source found');
+  const handler = source.slice(start, end);
+  assert.match(handler, /rnd\.round_number, rnd\.name as round_name/);
+  assert.match(handler, /LEFT JOIN tournament_rounds rnd ON rnd\.id = m\.round_id AND rnd\.tournament_id = a\.tournament_id/);
+  assert.match(handler, /WHERE a\.tournament_team_id = \$1 AND a\.tournament_id = \$2/);
+  assert.match(handler, /ORDER BY rnd\.round_number ASC NULLS LAST, d\.day_number ASC, m\.match_number ASC/);
+});
+
+test('participant credential authorization remains scoped to authenticated membership, match, and tournament', async () => {
+  const fs = await import('node:fs/promises');
+  const source = await fs.readFile(new URL('../server.js', import.meta.url), 'utf8');
+  const start = source.indexOf('if (credentialsMatch && req.method === \'GET\')');
+  const end = source.indexOf('// ── PHASE 10: MATCH RESULTS', start);
+  assert.ok(start >= 0 && end > start, 'credential handler source found');
+  const handler = source.slice(start, end);
+  assert.match(handler, /a\.match_id = \$1 AND a\.tournament_id = \$2 AND tm\.user_id = \$3/);
+  assert.match(handler, /\[mId, tId, authUser\.id\]/);
+  assert.match(handler, /WHERE m\.id = \$1 AND m\.tournament_id = \$2/);
+  assert.match(handler, /\[mId, tId\]/);
+});
+
 test('participantRoadmap: credential fields NEVER leave the builder', () => {
   const { full, releaseMinutes, nowMs } = makeFullRoadmap({ nowMs: new Date('2026-11-01T10:00:00').getTime() });
   const built = buildParticipantRoadmap(full, 'TEAM-A', { releaseMinutes, nowMs });
