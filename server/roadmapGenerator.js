@@ -1,341 +1,330 @@
-﻿import crypto from 'crypto';
-import { assignDaysToRounds, normalizeRoundNumber } from './roundsService.js';
+import crypto from 'crypto';
+import { buildGroups } from './groupService.js';
 
 // server/roadmapGenerator.js
-// Pure structural roadmap generator: Tournament -> Round/Stage -> Day -> Group -> Room -> Match.
+// Clean, group-based roadmap generator (2026-09-25 rewrite).
 //
-// Round/Stage relationship (2026 structural foundation):
-//   - The generator accepts an ordered `rounds` array (materialized by
-//     roundsService.syncTournamentRounds from the Step 6 timeline). When empty it
-//     falls back to a single default "Round 1", preserving legacy behaviour and
-//     output for pre-Round roadmaps.
-//   - Days are assigned to rounds via assignDaysToRounds (exact date match, then
-//     latest started round, then first round). Day numbers are 1-based WITHIN
-//     their round, so "Round 2 · Day 1" is representable and "Day N" never
-//     implies "Round N".
-//   - Every Day/Group/Room/Match carries its round_id, threading the relationship
-//     through the whole graph.
+// Architecture:
+//   - Reads slotsTotal + teams_per_group from the tournament row.
+//   - Derives groups via buildGroups() from groupService.js.
+//   - Distributes groups across days: 2 groups per day for group stages,
+//     Grand Final on the last day (always the final day).
+//   - Sequential match ordering: Group A finishes all matches THEN Group B starts.
+//   - Does NOT depend on tournament_planning_result or simultaneous_rooms.
+//   - Does NOT depend on room-based fields.
+//   - Returns { ok, roadmap: { days, groups, rooms, matches } }
 //
-// Grouping (was ROOMS_PER_GROUP = 5): no fixed constant exists anymore. Groups
-// are derived from the actual scheduling constraint already present in the
-// approved plan — max_simultaneous_rooms — so a day with N rooms and S
-// simultaneous rooms yields ceil(N / S) groups (e.g. 4 rooms with 2 simultaneous
-// -> Group A = rooms 1-2, Group B = rooms 3-4). The exact group topology will be
-// decided by the future planning engine; the generator only reflects the
-// constraint instead of inventing a number.
+// Day structure (example: 4 groups A/B/C/D + Grand Final):
+//   Day 1: Group A, Group B
+//   Day 2: Group C, Group D
+//   Day 3: Grand Final
 //
-// Room capacity uses the tournament-configured teams_per_room
-// (planningResult), NEVER the game's theoretical maximum roster size.
+// Day structure (example: 2 groups A/B + Grand Final):
+//   Day 1: Group A, Group B
+//   Day 2: Grand Final
+//
+// Day structure (example: 1 group + Grand Final):
+//   Day 1: Group A
+//   Day 2: Grand Final
+
+const DEFAULT_MAPS = {
+  bgmi: ['Erangel', 'Miramar', 'Rondo', 'Sanhok', 'Vikendi', 'Livik', 'Karakin', 'Nusa'],
+  'battlegrounds mobile india': ['Erangel', 'Miramar', 'Rondo', 'Sanhok', 'Vikendi', 'Livik', 'Karakin', 'Nusa'],
+  freefire: ['Bermuda', 'Purgatory', 'Kalahari', 'Alpine', 'NexTerra'],
+  'free fire': ['Bermuda', 'Purgatory', 'Kalahari', 'Alpine', 'NexTerra'],
+  codm: ['Crash', 'Standoff', 'Raid', 'Crossfire', 'Summit'],
+  'cod mobile': ['Crash', 'Standoff', 'Raid', 'Crossfire', 'Summit'],
+  valorant: ['Ascent', 'Haven', 'Bind', 'Split', 'Sunset'],
+};
+
+export function getDefaultMap(game, matchNumber) {
+  const gameKey = (game || 'bgmi').toLowerCase().trim();
+  const maps = DEFAULT_MAPS[gameKey] || DEFAULT_MAPS.bgmi;
+  return maps[(Math.max(1, matchNumber) - 1) % maps.length] || 'Erangel';
+}
+
+export function computeReleaseTime12h(timeStr, offsetMinutes = 15) {
+  if (!timeStr) return '';
+  const parts = timeStr.split(':').map(Number);
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return '';
+  let mins = parts[0] * 60 + parts[1] - offsetMinutes;
+  if (mins < 0) mins += 1440;
+  const relH = Math.floor(mins / 60) % 24;
+  const relM = mins % 60;
+  const period = relH >= 12 ? 'PM' : 'AM';
+  const hour12 = relH % 12 === 0 ? 12 : relH % 12;
+  return `${String(hour12).padStart(2, '0')}:${String(relM).padStart(2, '0')} ${period}`;
+}
 
 function generateId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-function normalizeRounds(rounds) {
-  const list = Array.isArray(rounds) ? rounds.slice() : [];
-  if (list.length === 0) {
-    list.push({ id: `RND-${generateId()}`, round_number: 1, name: 'Round 1' });
-  }
-  return list
-    .map((r, idx) => ({
-      id: r.id || `RND-${generateId()}`,
-      round_number: normalizeRoundNumber(r.round_number != null ? r.round_number : idx + 1),
-      name: (r.name && String(r.name)) || `Round ${idx + 1}`,
-      date: r.date ? String(r.date) : null,
-      time: r.time ? String(r.time) : null,
-      map: r.map ? String(r.map) : null
-    }))
-    .sort((a, b) => a.round_number - b.round_number);
+function formatTime(mins) {
+  const h = Math.floor(Math.abs(mins) / 60) % 24;
+  const m = Math.abs(mins) % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-export function generateTournamentRoadmap(config, planningResult, tournament, rounds, proposal) {
-  if (!config || !planningResult || !tournament) {
-    return { ok: false, error: 'Missing required inputs for roadmap generation.' };
-  }
+// How many matches per group-stage group (default 2: Erangel + Miramar)
+const DEFAULT_MATCHES_PER_GROUP = 2;
+// How many matches in the Grand Final (default 3)
+const DEFAULT_GRAND_FINAL_MATCHES = 3;
+// How many groups per day for group stages (default 2: e.g. A+B on Day 1)
+const GROUPS_PER_DAY = 2;
+// Default daily start time
+const DEFAULT_START_TIME = '13:00'; // 1:00 PM
+// Gap between matches in minutes (for time assignment)
+const MATCH_GAP_MINUTES = 60; // 1 hour per match slot (30 min play + 15 min break + 15 buffer)
 
+/**
+ * Main generator entry point.
+ *
+ * @param {object} tournament - Full tournament row from DB
+ *   Required fields: id, game, slotsTotal (or slots_total), teams_per_group, start_date
+ * @returns {{ ok: boolean, roadmap?: object, error?: string }}
+ */
+export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
   try {
-    // Proposal path (2026-09-24 planning engine): when the approved planning
-    // result carries a round_plan proposal, materialize the structural rows
-    // directly from it. Day/group/room/match times, room numbers, capacities,
-    // round_id and within-round day numbers are all authoritative from the
-    // proposal, so the materialized roadmap matches the proposed schedule 1:1.
-    const proposalDays = readProposalDays(proposal);
-    if (Array.isArray(proposalDays) && proposalDays.length > 0) {
-      return buildFromProposal(planningResult, tournament, proposal, proposalDays);
+    let tournament = param1;
+    if ((!tournament || !tournament.id) && legacyTourn && legacyTourn.id) {
+      tournament = legacyTourn;
+    }
+    if (!tournament || !tournament.id) {
+      return { ok: false, error: 'Tournament data is required.' };
     }
 
-    // Legacy path (unchanged): derive everything from daily_plan + rounds via
-    // assignDaysToRounds. Used for plans generated before the planning engine.
+    const slotsTotal = parseInt(tournament.slotsTotal || tournament.slots_total || tournament.teamsCount, 10) || 64;
+    const teamsPerGroup = parseInt(tournament.teams_per_group, 10) || 16;
+    const game = tournament.game || 'bgmi';
+
+    // Derive groups using the group service
+    const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
+    const numGroups = groupLayout.length;
+
+    if (numGroups === 0) {
+      return { ok: false, error: 'Could not derive groups from tournament configuration.' };
+    }
+
+    // Parse start date from tournament record (checking startDate, date, start_date, registrationCloseDate, legacy dates)
+    let startDate = null;
+    const rawDate = tournament.startDate || tournament.date || tournament.start_date || tournament.registrationCloseDate || legacyPlan?.daily_plan?.[0]?.date || legacyPlan?.tournament_start_date;
+    if (rawDate) {
+      try {
+        const d = new Date(rawDate);
+        if (!isNaN(d.getTime())) {
+          startDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!startDate) {
+      return {
+        ok: false,
+        error: 'Your tournament schedule date is missing. Configure the tournament schedule before generating the roadmap.'
+      };
+    }
+
     const days = [];
     const groups = [];
     const rooms = [];
     const matches = [];
 
-    const dailyPlan = typeof planningResult.daily_plan === 'string'
-      ? JSON.parse(planningResult.daily_plan)
-      : planningResult.daily_plan;
+    // ── GROUP STAGE DAYS ──
+    // Distribute numGroups groups across days, GROUPS_PER_DAY groups per day
+    // Sequential order: Group A (all matches), Group B (all matches), then Day 2: Group C, D, etc.
+    const numGroupStageDays = Math.ceil(numGroups / GROUPS_PER_DAY);
 
-    const maxSimultaneousRooms = Math.max(1, parseInt(planningResult.max_simultaneous_rooms, 10) || 1);
-    const matchesPerTeam = parseInt(planningResult.matches_per_team, 10);
-    const matchDurationMins = parseInt(planningResult.match_duration_minutes, 10);
-    const breakMins = parseInt(planningResult.break_between_matches_minutes, 10);
-    const roomCapacity = parseInt(planningResult.teams_per_room, 10);
-
-    const parseTime = (t) => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
-    const formatTime = (mins) => {
-      const h = Math.floor(mins / 60).toString().padStart(2, '0');
-      const m = (mins % 60).toString().padStart(2, '0');
-      return `${h}:${m}`;
-    };
-
-    const normalizedRounds = normalizeRounds(rounds);
-    const dailyDescriptors = dailyPlan.map((d) => ({
-      index: dailyPlan.indexOf(d),
-      date: d.date ? String(d.date) : ''
-    }));
-    const dayAssignments = assignDaysToRounds(dailyDescriptors, normalizedRounds);
-
-    const roundDayCounters = new Map();
-    const nextDayNumberForRound = (roundId) => {
-      const n = (roundDayCounters.get(roundId) || 0) + 1;
-      roundDayCounters.set(roundId, n);
-      return n;
-    };
-
-    let globalRoomCounter = 1;
-
-    for (let dayIdx = 0; dayIdx < dayAssignments.length; dayIdx++) {
-      const dayAssignment = dayAssignments[dayIdx];
-      const dayData = dailyPlan[dayIdx];
-      const assignedRound = dayAssignment.round || normalizedRounds[0];
+    for (let dayIdx = 0; dayIdx < numGroupStageDays; dayIdx++) {
       const dayId = `DAY-${generateId()}`;
+      const dayNumber = dayIdx + 1;
+      const dayDate = startDate ? addDays(startDate, dayIdx) : null;
 
       days.push({
         id: dayId,
         tournament_id: tournament.id,
-        day_number: nextDayNumberForRound(assignedRound.id),
-        date: dayData.date,
-        round_id: assignedRound.id
+        day_number: dayNumber,
+        date: dayDate,
+        stage: 'group',
+        round_id: null,
       });
 
-      // We rely on plannedRooms added in Phase 2
-      // Fallback: plannedRoomMatchSessions / matchesPerTeam (assuming correctly divisible now)
-      const plannedRoomsForDay = dayData.plannedRooms || (dayData.plannedRoomMatchSessions / matchesPerTeam);
+      // Groups on this day
+      const startGroupIdx = dayIdx * GROUPS_PER_DAY;
+      const endGroupIdx = Math.min(startGroupIdx + GROUPS_PER_DAY, numGroups);
 
-      if (plannedRoomsForDay <= 0) continue;
+      let currentTimeMins = parseTimeMins(DEFAULT_START_TIME);
 
-      // Groups derive from the real scheduling constraint (simultaneous rooms),
-      // not from a hard-coded bucket size.
-      const simRooms = Math.max(1, maxSimultaneousRooms);
-      const numGroups = Math.max(1, Math.ceil(plannedRoomsForDay / simRooms));
-      const dayGroups = [];
-
-      for (let g = 0; g < numGroups; g++) {
+      for (let gIdx = startGroupIdx; gIdx < endGroupIdx; gIdx++) {
+        const gl = groupLayout[gIdx];
         const groupId = `GRP-${generateId()}`;
-        const groupName = `Group ${String.fromCharCode(65 + g)}`; // A, B, C... per day
-        const groupObj = {
+        const groupName = `Group ${gl.name}`;
+
+        groups.push({
           id: groupId,
           day_id: dayId,
           tournament_id: tournament.id,
           group_name: groupName,
-          sequence: g + 1,
-          round_id: assignedRound.id
-        };
-        groups.push(groupObj);
-        dayGroups.push(groupObj);
-      }
+          sequence: gIdx + 1,
+          round_id: null,
+          capacity: gl.capacity,
+        });
 
-      const totalBatches = Math.ceil(plannedRoomsForDay / maxSimultaneousRooms);
-      const dayStartMins = parseTime(config.daily_start_time);
-
-      for (let r = 0; r < plannedRoomsForDay; r++) {
-        const groupIndex = Math.min(numGroups - 1, Math.floor(r / simRooms));
-        const group = dayGroups[groupIndex];
-
+        // Single room per group (room = group in our architecture)
         const roomId = `RM-${generateId()}`;
-        const roomObj = {
+        rooms.push({
           id: roomId,
-          group_id: group.id,
+          group_id: groupId,
           day_id: dayId,
           tournament_id: tournament.id,
-          room_number: globalRoomCounter,
-          capacity: roomCapacity,
+          room_number: gIdx + 1,
+          capacity: gl.capacity,
           status: 'DRAFT',
-          round_id: assignedRound.id
-        };
-        rooms.push(roomObj);
+          round_id: null,
+        });
 
-        const batchIndex = Math.floor(r / maxSimultaneousRooms);
-
-        for (let m = 1; m <= matchesPerTeam; m++) {
-          const slotIndex = (m - 1) * totalBatches + batchIndex;
-          const matchStartMins = dayStartMins + (slotIndex * (matchDurationMins + breakMins));
-          const matchEndMins = matchStartMins + matchDurationMins;
+        // Matches for this group — sequential, Group A finishes ALL then Group B starts
+        for (let m = 1; m <= DEFAULT_MATCHES_PER_GROUP; m++) {
+          const mapName = getDefaultMap(game, m);
+          const startTimeStr = formatTime(currentTimeMins);
+          const endTimeStr = formatTime(currentTimeMins + 30);
+          const releaseTime = computeReleaseTime12h(startTimeStr, 15);
 
           matches.push({
             id: `MAT-${generateId()}`,
             room_id: roomId,
-            group_id: group.id,
+            group_id: groupId,
             day_id: dayId,
             tournament_id: tournament.id,
             match_number: m,
-            start_time: formatTime(matchStartMins),
-            end_time: formatTime(matchEndMins),
+            start_time: startTimeStr,
+            end_time: endTimeStr,
             status: 'PENDING',
-            round_id: assignedRound.id
+            round_id: null,
+            map: mapName,
+            id_pwd_release_time: releaseTime,
           });
+
+          currentTimeMins += MATCH_GAP_MINUTES;
         }
-        globalRoomCounter++;
+
+        // Extra gap between groups on the same day
+        currentTimeMins += 15;
       }
     }
 
-    // Post-generation validation
-    if (days.length !== planningResult.required_days) {
-      return { ok: false, error: 'Generated days do not match required days.' };
-    }
-    if (rooms.length !== planningResult.required_rooms) {
-      return { ok: false, error: 'Generated rooms do not match required rooms.' };
-    }
-    if (matches.length !== planningResult.total_room_sessions) {
-      return { ok: false, error: 'Generated matches do not match total room sessions.' };
+    // ── GRAND FINAL DAY ──
+    const grandFinalDayId = `DAY-${generateId()}`;
+    const grandFinalDayNumber = numGroupStageDays + 1;
+    const grandFinalDate = startDate ? addDays(startDate, numGroupStageDays) : null;
+
+    days.push({
+      id: grandFinalDayId,
+      tournament_id: tournament.id,
+      day_number: grandFinalDayNumber,
+      date: grandFinalDate,
+      stage: 'final',
+      round_id: null,
+    });
+
+    const grandFinalGroupId = `GRP-${generateId()}`;
+    // Qualifying teams: top N from each group (default top 4 = teamsPerGroup/4)
+    const topPerGroup = Math.max(1, Math.ceil(teamsPerGroup / 4));
+    const qualifiedTeams = numGroups * topPerGroup;
+
+    groups.push({
+      id: grandFinalGroupId,
+      day_id: grandFinalDayId,
+      tournament_id: tournament.id,
+      group_name: 'Grand Final',
+      sequence: numGroups + 1,
+      round_id: null,
+      capacity: qualifiedTeams,
+      is_grand_final: true,
+      top_per_group: topPerGroup,
+    });
+
+    const grandFinalRoomId = `RM-${generateId()}`;
+    rooms.push({
+      id: grandFinalRoomId,
+      group_id: grandFinalGroupId,
+      day_id: grandFinalDayId,
+      tournament_id: tournament.id,
+      room_number: numGroups + 1,
+      capacity: qualifiedTeams,
+      status: 'DRAFT',
+      round_id: null,
+    });
+
+    // Grand Final matches (3 by default)
+    let gfTimeMins = parseTimeMins(DEFAULT_START_TIME);
+    for (let m = 1; m <= DEFAULT_GRAND_FINAL_MATCHES; m++) {
+      const mapName = getDefaultMap(game, m);
+      const startTimeStr = formatTime(gfTimeMins);
+      const endTimeStr = formatTime(gfTimeMins + 30);
+      const releaseTime = computeReleaseTime12h(startTimeStr, 15);
+
+      matches.push({
+        id: `MAT-${generateId()}`,
+        room_id: grandFinalRoomId,
+        group_id: grandFinalGroupId,
+        day_id: grandFinalDayId,
+        tournament_id: tournament.id,
+        match_number: m,
+        start_time: startTimeStr,
+        end_time: endTimeStr,
+        status: 'PENDING',
+        round_id: null,
+        map: mapName,
+        id_pwd_release_time: releaseTime,
+      });
+
+      gfTimeMins += MATCH_GAP_MINUTES;
     }
 
-    // Check overlaps
-    for (let r = 0; r < rooms.length; r++) {
-      const roomMatches = matches.filter(m => m.room_id === rooms[r].id).sort((a, b) => a.match_number - b.match_number);
-      for (let i = 1; i < roomMatches.length; i++) {
-        const prevEnd = parseTime(roomMatches[i-1].end_time);
-        const currStart = parseTime(roomMatches[i].start_time);
-        if (currStart < prevEnd) {
-          return { ok: false, error: 'Room has overlapping matches.' };
-        }
-      }
-    }
-
-    return { ok: true, roadmap: { days, groups, rooms, matches, rounds: normalizedRounds } };
+    return {
+      ok: true,
+      roadmap: {
+        days,
+        groups,
+        rooms,
+        matches,
+        rounds: [],
+        // Metadata for UI display
+        meta: {
+          total_slots: slotsTotal,
+          teams_per_group: teamsPerGroup,
+          num_groups: numGroups,
+          group_names: groupLayout.map(g => `Group ${g.name}`),
+          top_per_group: topPerGroup,
+          qualified_teams: qualifiedTeams,
+          grand_final_matches: DEFAULT_GRAND_FINAL_MATCHES,
+          game,
+        },
+      },
+    };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 }
 
-// Read the proposed days out of a round_plan object (may arrive as a JS object
-// or a JSON string when the stored planning result is parsed defensively).
-function readProposalDays(proposal) {
-  if (!proposal) return null;
-  let value = proposal;
-  if (typeof proposal === 'string') {
-    try {
-      value = JSON.parse(proposal);
-    } catch {
-      return null;
-    }
-  }
-  return value && Array.isArray(value.days) ? value.days : null;
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+function parseTimeMins(timeStr) {
+  if (!timeStr) return 13 * 60; // 1:00 PM default
+  const parts = timeStr.split(':').map(Number);
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return 13 * 60;
+  return parts[0] * 60 + parts[1];
 }
 
-// Materialize structural rows (Day -> Group -> Room -> Match) directly from a
-// validated planning proposal. Validation mirrors the legacy path so an
-// inconsistent proposal is rejected exactly like a bad legacy plan.
-function buildFromProposal(planningResult, tournament, proposal, proposalDays) {
-  const days = [];
-  const groups = [];
-  const rooms = [];
-  const matches = [];
-
-  const proposalRounds = proposal && Array.isArray(proposal.rounds) ? proposal.rounds : [];
-  const normalizedRounds = proposalRounds.length
-    ? proposalRounds.map((r) => ({ id: r.id, round_number: r.round_number, name: r.name, date: r.date || null, time: r.time || null, map: r.map || null }))
-    : normalizeRounds([]);
-
-  for (const day of proposalDays) {
-    const roundId = day.round_id || normalizedRounds[0]?.id || null;
-    const dayId = `DAY-${generateId()}`;
-
-    days.push({
-      id: dayId,
-      tournament_id: tournament.id,
-      day_number: day.day_number,
-      date: day.date,
-      round_id: roundId
-    });
-
-    // Groups
-    const dayGroups = [];
-    for (const g of day.groups || []) {
-      const groupId = `GRP-${generateId()}`;
-      const groupObj = {
-        id: groupId,
-        day_id: dayId,
-        tournament_id: tournament.id,
-        group_name: (g && (g.name || g.group_name)) || `Group ${g && g.sequence != null ? g.sequence : dayGroups.length + 1}`,
-        sequence: g && g.sequence != null ? g.sequence : dayGroups.length + 1,
-        round_id: roundId
-      };
-      groups.push(groupObj);
-      dayGroups.push(groupObj);
-    }
-    const groupBySequence = new Map(dayGroups.map((g) => [g.sequence, g]));
-    const fallbackGroup = dayGroups[dayGroups.length - 1] || null;
-
-    // Rooms -> Matches
-    for (const r of day.rooms || []) {
-      const roomId = `RM-${generateId()}`;
-      const group = groupBySequence.get(r && r.group_sequence) || fallbackGroup;
-
-      rooms.push({
-        id: roomId,
-        group_id: group ? group.id : null,
-        day_id: dayId,
-        tournament_id: tournament.id,
-        room_number: r.room_number,
-        capacity: r.capacity,
-        status: 'DRAFT',
-        round_id: roundId
-      });
-
-      for (const m of r.matches || []) {
-        matches.push({
-          id: `MAT-${generateId()}`,
-          room_id: roomId,
-          group_id: group ? group.id : null,
-          day_id: dayId,
-          tournament_id: tournament.id,
-          match_number: m.match_number,
-          start_time: m.start_time,
-          end_time: m.end_time,
-          status: 'PENDING',
-          round_id: roundId
-        });
-      }
-    }
+function addDays(dateStr, n) {
+  if (!dateStr) return null;
+  try {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    const base = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+    base.setUTCDate(base.getUTCDate() + n);
+    return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-${String(base.getUTCDate()).padStart(2, '0')}`;
+  } catch {
+    return null;
   }
-
-  // Post-generation validation (must mirror the legacy path)
-  if (days.length !== planningResult.required_days) {
-    return { ok: false, error: 'Generated days do not match required days.' };
-  }
-  if (rooms.length !== planningResult.required_rooms) {
-    return { ok: false, error: 'Generated rooms do not match required rooms.' };
-  }
-  if (matches.length !== planningResult.total_room_sessions) {
-    return { ok: false, error: 'Generated matches do not match total room sessions.' };
-  }
-
-  const parseTime = (t) => {
-    const [h, m] = t.split(':').map(Number);
-    return h * 60 + m;
-  };
-  for (let r = 0; r < rooms.length; r++) {
-    const roomMatches = matches.filter((m) => m.room_id === rooms[r].id).sort((a, b) => a.match_number - b.match_number);
-    for (let i = 1; i < roomMatches.length; i++) {
-      if (parseTime(roomMatches[i].start_time) < parseTime(roomMatches[i - 1].end_time)) {
-        return { ok: false, error: 'Room has overlapping matches.' };
-      }
-    }
-  }
-
-  return { ok: true, roadmap: { days, groups, rooms, matches, rounds: normalizedRounds } };
 }

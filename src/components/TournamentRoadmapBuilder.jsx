@@ -1,762 +1,571 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useMemo, useCallback } from "react"
+import { motion, AnimatePresence } from "framer-motion"
 import {
-  CalendarDays, Map, Layers, LayoutGrid, Clock, Users, Swords,
-  CheckCircle2, AlertCircle, RefreshCw, X, ChevronDown, ChevronRight,
-  ShieldCheck, Pencil, XCircle, Save, BadgeCheck, Trash2
-} from 'lucide-react';
-import { getAuthToken } from '../utils/getAuthToken';
+  Calendar, Plus, Trash2, Save, Eye, EyeOff,
+  CheckCircle, AlertCircle, RefreshCw, Trophy,
+  ChevronDown, ArrowDown, Swords
+} from "lucide-react"
+import { getAuthToken } from "../utils/getAuthToken"
 
-const STATUS_STYLES = {
-  pending: {
-    banner: 'bg-amber-500/10 border-amber-500/20',
-    icon: 'text-amber-400',
-    title: 'No Roadmap Generated',
-    desc: 'Generate the structural roadmap from your approved capacity plan.'
-  },
-  draft: {
-    banner: 'bg-indigo-500/10 border-indigo-500/20',
-    icon: 'text-indigo-400',
-    title: 'Draft Roadmap',
-    desc: 'Review the structure, adjust match timings or day dates, then validate and approve.'
-  },
-  approved: {
-    banner: 'bg-emerald-500/10 border-emerald-500/20',
-    icon: 'text-emerald-400',
-    title: 'Roadmap Approved',
-    desc: 'This roadmap is locked and ready for team allocation. Regenerate a new draft to edit.'
-  }
-};
+const MAP_OPTIONS = ["Erangel","Miramar","Rondo","Sanhok","Vikendi","Livik","Karakin","Nusa"]
 
+function formatTime12h(timeStr) {
+  if (!timeStr) return "TBD"
+  const parts = timeStr.split(":").map(Number)
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return timeStr
+  const [h, m] = parts
+  const period = h >= 12 ? "PM" : "AM"
+  const hour12 = h % 12 === 0 ? 12 : h % 12
+  return `${String(hour12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${period}`
+}
+
+function formatDateLabel(dateStr) {
+  if (!dateStr) return "Date TBD"
+  try {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return dateStr
+    return d.toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+  } catch { return dateStr }
+}
+
+function computeReleaseFromStart(startTimeStr) {
+  if (!startTimeStr) return ""
+  const [h, m] = startTimeStr.split(":").map(Number)
+  if (isNaN(h) || isNaN(m)) return ""
+  let relMins = h * 60 + m - 15
+  if (relMins < 0) relMins += 1440
+  const rH = Math.floor(relMins / 60) % 24
+  const rM = relMins % 60
+  const period = rH >= 12 ? "PM" : "AM"
+  const h12 = rH % 12 === 0 ? 12 : rH % 12
+  return `${String(h12).padStart(2, "0")}:${String(rM).padStart(2, "0")} ${period}`
+}
+
+function isGrandFinalGroup(group) {
+  return /grand.?final/i.test(group?.group_name || "")
+}
+
+// ─── Main Component ──────────────────────────────────────────────────────────
 export default function TournamentRoadmapBuilder({
-  tournamentId,
-  tournamentTitle,
-  onClose,
-  onApproved
+  tournamentId, tournamentTitle, isOrganizer = false, onClose = null, onApproved = null
 }) {
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [validating, setValidating] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [approving, setApproving] = useState(false);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
-
-  const [roadmapStatus, setRoadmapStatus] = useState('pending');
-  const [roadmap, setRoadmap] = useState(null);
-
-  const [expandedDays, setExpandedDays] = useState({});
-  const [expandedGroups, setExpandedGroups] = useState({});
-  const [expandedRooms, setExpandedRooms] = useState({});
-
-  // Staged edits: { matches: { id: start_time }, days: { id: date } }
-  const [staged, setStaged] = useState({ matches: {}, days: {} });
-  const [editingMatchId, setEditingMatchId] = useState(null);
-  const [editingDayId, setEditingDayId] = useState(null);
-
-  const [validation, setValidation] = useState(null); // { valid, errors, warnings }
-  const [confirmDialog, setConfirmDialog] = useState(null); // 'approve' | 'regenerate' | null
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(null)
+  const [previewMode, setPreviewMode] = useState(false)
+  const [roadmapStatus, setRoadmapStatus] = useState("pending")
+  const [roadmapData, setRoadmapData] = useState(null)
+  const [roadmapMeta, setRoadmapMeta] = useState(null)
 
   const fetchRoadmap = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setValidation(null);
+    if (!tournamentId) return
+    setLoading(true); setError(null)
     try {
-      const token = await getAuthToken();
+      const token = await getAuthToken()
       const res = await fetch(`/api/tournaments/${tournamentId}/roadmap`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || 'Failed to fetch roadmap.');
-      }
-      setRoadmapStatus(data.roadmap_status);
-      const rd = data.roadmap;
-      if (rd && rd.days && rd.days.length > 0) {
-        setRoadmap(rd);
-        setExpandedDays(Object.fromEntries(rd.days.map((day) => [day.id, true])));
-        setExpandedGroups(Object.fromEntries((rd.groups || []).map((group) => [group.id, true])));
-        setExpandedRooms(Object.fromEntries((rd.rooms || []).map((room) => [room.id, true])));
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || data.error || "Failed to load roadmap.")
+      setRoadmapStatus(data.roadmap_status || "pending")
+      const rm = data.roadmap
+      if (rm && Array.isArray(rm.days) && rm.days.length > 0) {
+        setRoadmapData(rm); setRoadmapMeta(rm.meta || null)
       } else {
-        setRoadmap(null);
+        setRoadmapData(null); setRoadmapMeta(null)
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [tournamentId]);
+    } catch (err) { setError(err.message) }
+    finally { setLoading(false) }
+  }, [tournamentId])
 
   useEffect(() => {
     let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) fetchRoadmap()
-    })
-    return () => {
-      cancelled = true
+    queueMicrotask(() => { if (!cancelled) fetchRoadmap() })
+    return () => { cancelled = true }
+  }, [fetchRoadmap])
+
+  const handleGenerate = async (isRegenerate = false) => {
+    if (isRegenerate && roadmapData) {
+      const confirmed = window.confirm("Regenerating will replace the current roadmap schedule. Continue?")
+      if (!confirmed) return
     }
-  }, [fetchRoadmap]);
-
-  const tokenHeader = useCallback(async () => {
-    const token = await getAuthToken();
-    return { Authorization: `Bearer ${token}` };
-  }, []);
-
-  const roundOf = useMemo(() => {
-    const m = new Map();
-    (roadmap?.rounds || []).forEach((r) => m.set(r.id, r));
-    return m;
-  }, [roadmap]);
-
-  const assignmentCounts = useMemo(() => {
-    const m = new Map();
-    (roadmap?.assignments || []).forEach((a) => {
-      m.set(a.match_id, (m.get(a.match_id) || 0) + 1);
-    });
-    return m;
-  }, [roadmap]);
-
-  const pendingCount = Object.keys(staged.matches).length + Object.keys(staged.days).length;
-
-  // ── Mutations ─────────────────────────────────────────────────────────────
-
-  const handleGenerate = async () => {
-    setGenerating(true);
-    setError(null);
-    setSuccess(null);
-    setValidation(null);
+    setGenerating(true); setError(null); setSuccess(null)
     try {
+      const token = await getAuthToken()
       const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/generate`, {
-        method: 'POST',
-        headers: await tokenHeader()
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || 'Failed to generate roadmap.');
-      }
-      setRoadmapStatus('draft');
-      setRoadmap(data.roadmap);
-      setStaged({ matches: {}, days: {} });
-      setEditingMatchId(null);
-      setEditingDayId(null);
-      if (data.roadmap.days.length > 0) {
-        setExpandedDays(Object.fromEntries(data.roadmap.days.map((day) => [day.id, true])));
-        setExpandedGroups(Object.fromEntries((data.roadmap.groups || []).map((group) => [group.id, true])));
-        setExpandedRooms(Object.fromEntries((data.roadmap.rooms || []).map((room) => [room.id, true])));
-      }
-      setSuccess('Roadmap generated.');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setGenerating(false);
-      setConfirmDialog(null);
-    }
-  };
-
-  // Flush staged edits to their PUT endpoints, then refresh local rows.
-  const flushStaged = async () => {
-    if (pendingCount === 0) return { flushed: 0 };
-    const headers = await tokenHeader();
-    const flushed = { matches: {}, days: {} };
-
-    for (const [id, start_time] of Object.entries(staged.matches)) {
-      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/matches/${id}`, {
-        method: 'PUT',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ start_time })
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || 'Failed to save match edit.');
-      }
-      flushed.matches[id] = data.match || { start_time };
-    }
-
-    for (const [id, date] of Object.entries(staged.days)) {
-      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/days/${id}`, {
-        method: 'PUT',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date })
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || 'Failed to save day edit.');
-      }
-      flushed.days[id] = data.day || { date };
-    }
-
-    // Merge flushed values into the local roadmap copy.
-    setRoadmap((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev };
-      next.matches = (prev.matches || []).map((m) => ({ ...m, ...(flushed.matches[m.id] || {}) }));
-      next.days = (prev.days || []).map((d) => ({ ...d, ...(flushed.days[d.id] || {}) }));
-      return next;
-    });
-    setStaged({ matches: {}, days: {} });
-    setEditingMatchId(null);
-    setEditingDayId(null);
-    return { flushed: Object.keys(flushed.matches).length + Object.keys(flushed.days).length };
-  };
-
-  const runValidate = async () => {
-    const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/validate`, {
-      method: 'POST',
-      headers: await tokenHeader()
-    });
-    const data = await res.json();
-    if (!data.success) {
-      throw new Error(data.message || data.error || 'Failed to validate roadmap.');
-    }
-    return { valid: data.valid, errors: data.errors || [], warnings: data.warnings || [] };
-  };
-
-  const handleSaveDraft = async () => {
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
-    setValidation(null);
-    try {
-      const { flushed } = await flushStaged();
-      const v = await runValidate();
-      setValidation(v);
-      setSuccess(
-        flushed > 0
-          ? `Saved ${flushed} edit${flushed === 1 ? '' : 's'} and validated the roadmap.`
-          : 'Roadmap validated.'
-      );
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleValidate = async () => {
-    setValidating(true);
-    setError(null);
-    setSuccess(null);
-    setValidation(null);
-    try {
-      const { flushed } = await flushStaged();
-      const v = await runValidate();
-      setValidation(v);
-      if (flushed > 0 && v.valid) {
-        setSuccess(`${flushed} edit${flushed === 1 ? '' : 's'} saved and roadmap is structurally sound.`);
-      } else if (v.valid) {
-        setSuccess('Roadmap is structurally sound.');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const handleApprove = async () => {
-    setApproving(true);
-    setError(null);
-    setSuccess(null);
-    setValidation(null);
-    try {
-      await flushStaged();
-      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/approve`, {
-        method: 'POST',
-        headers: await tokenHeader()
-      });
-      const data = await res.json();
-      if (!data.success) {
-        if (data.details && Array.isArray(data.details.errors)) {
-          setValidation({ valid: false, errors: data.details.errors, warnings: data.details.warnings || [] });
-        }
-        throw new Error(data.message || data.error || 'Failed to approve roadmap.');
-      }
-      setRoadmapStatus('approved');
-      setSuccess('Roadmap approved.');
-      if (onApproved) onApproved();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setApproving(false);
-      setConfirmDialog(null);
-    }
-  };
-
-  const stageMatch = (id, start_time) => setStaged((p) => ({ ...p, matches: { ...p.matches, [id]: start_time } }));
-  const stageDay = (id, date) => setStaged((p) => ({ ...p, days: { ...p.days, [id]: date } }));
-  const clearStageMatch = (id) =>
-    setStaged((p) => {
-      const next = { ...p, matches: { ...p.matches } };
-      delete next.matches[id];
-      return next;
-    });
-  const clearStageDay = (id) =>
-    setStaged((p) => {
-      const next = { ...p, days: { ...p.days } };
-      delete next.days[id];
-      return next;
-    });
-
-  const toggleDay = (id) => setExpandedDays((p) => ({ ...p, [id]: !p[id] }));
-  const toggleGroup = (id) => setExpandedGroups((p) => ({ ...p, [id]: !p[id] }));
-  const toggleRoom = (id) => setExpandedRooms((p) => ({ ...p, [id]: !p[id] }));
-
-  const statusCfg = STATUS_STYLES[roadmapStatus] || STATUS_STYLES.pending;
-  const inputCls =
-    'bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-indigo-500/50 [color-scheme:dark]';
-
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  if (loading) {
-    return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-        <div className="bg-[#0A0B10] border border-white/10 rounded-xl p-8 shadow-xl max-w-md w-full flex flex-col items-center justify-center">
-          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
-          <p className="text-gray-300">Loading roadmap...</p>
-        </div>
-      </div>
-    );
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || data.error || "Failed to generate roadmap.")
+      setRoadmapStatus("draft"); setRoadmapData(data.roadmap); setRoadmapMeta(data.roadmap?.meta || null)
+      setSuccess("Roadmap generated successfully from tournament groups and schedule.")
+    } catch (err) { setError(err.message) }
+    finally { setGenerating(false) }
   }
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6" onClick={onClose}>
-      <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 20, scale: 0.95 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="bg-[#07080C] border border-white/10 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="bg-[#07080C]/90 backdrop-blur-md border-b border-white/10 p-5 flex items-center justify-between shrink-0">
+  const handleSave = async () => {
+    if (!roadmapData) return
+    setSaving(true); setError(null); setSuccess(null)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ roadmap: roadmapData })
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || data.error || "Failed to save roadmap.")
+      setRoadmapStatus("approved"); setSuccess("Roadmap is now live on the public tournament page.")
+      if (onApproved) onApproved()
+    } catch (err) { setError(err.message) }
+    finally { setSaving(false) }
+  }
+
+  const updateDayDate = (dayId, newDate) =>
+    setRoadmapData(prev => !prev ? prev : { ...prev, days: prev.days.map(d => d.id === dayId ? { ...d, date: newDate } : d) })
+
+  const updateMatchField = (matchId, field, value) => {
+    setRoadmapData(prev => {
+      if (!prev) return prev
+      return {
+        ...prev, matches: prev.matches.map(m => {
+          if (m.id !== matchId) return m
+          const updated = { ...m, [field]: value }
+          if (field === "start_time" && value) updated.id_pwd_release_time = computeReleaseFromStart(value)
+          return updated
+        })
+      }
+    })
+  }
+
+  const handleAddMatch = (dayId, groupId, roomId) => {
+    setRoadmapData(prev => {
+      if (!prev) return prev
+      const groupMatches = prev.matches.filter(m => m.group_id === groupId)
+      const nextNum = groupMatches.length + 1
+      let startTime = "13:00"
+      if (groupMatches.length > 0) {
+        const last = groupMatches[groupMatches.length - 1]
+        if (last.start_time) {
+          const [h, min] = last.start_time.split(":").map(Number)
+          if (!isNaN(h) && !isNaN(min)) {
+            const nextMins = (h * 60 + min + 60) % 1440
+            startTime = `${String(Math.floor(nextMins / 60)).padStart(2, "0")}:${String(nextMins % 60).padStart(2, "0")}`
+          }
+        }
+      }
+      const newMatch = {
+        id: `MAT-${Date.now()}-${Math.floor(Math.random() * 9999)}`,
+        tournament_id: tournamentId, day_id: dayId, group_id: groupId,
+        room_id: roomId || `RM-${Date.now()}`, match_number: nextNum,
+        map: MAP_OPTIONS[(nextNum - 1) % MAP_OPTIONS.length], start_time: startTime,
+        end_time: "", id_pwd_release_time: computeReleaseFromStart(startTime), status: "PENDING"
+      }
+      return { ...prev, matches: [...prev.matches, newMatch] }
+    })
+  }
+
+  const handleDeleteMatch = (matchId) =>
+    setRoadmapData(prev => !prev ? prev : { ...prev, matches: prev.matches.filter(m => m.id !== matchId) })
+
+  const structure = useMemo(() => {
+    if (!roadmapData?.days) return []
+    return roadmapData.days.map((day, dIdx) => {
+      const dayGroups = (roadmapData.groups || [])
+        .filter(g => g.day_id === day.id)
+        .sort((a, b) => (a.sequence || 0) - (b.sequence || 0))
+      return {
+        ...day,
+        displayDay: `DAY ${day.day_number || dIdx + 1}`,
+        groups: dayGroups.map(group => {
+          const room = (roadmapData.rooms || []).find(r => r.group_id === group.id)
+          const groupMatches = (roadmapData.matches || [])
+            .filter(m => m.group_id === group.id)
+            .sort((a, b) => (Number(a.match_number) || 0) - (Number(b.match_number) || 0))
+          return { ...group, room_id: room?.id, capacity: group.capacity || room?.capacity || 16, matches: groupMatches, isGrandFinal: isGrandFinalGroup(group) }
+        })
+      }
+    })
+  }, [roadmapData])
+
+  const qualInfo = useMemo(() => {
+    if (!structure.length) return null
+    const stageGroups = structure.flatMap(d => d.groups).filter(g => !g.isGrandFinal)
+    if (stageGroups.length === 0) return null
+    const topPerGroup = roadmapMeta?.top_per_group || Math.max(1, Math.ceil((roadmapMeta?.teams_per_group || 16) / 4))
+    return { stageGroups, topPerGroup, qualified: stageGroups.length * topPerGroup }
+  }, [structure, roadmapMeta])
+
+  const numGroups = roadmapMeta?.num_groups || structure.flatMap(d => d.groups).filter(g => !g.isGrandFinal).length
+  const headerMeta = [
+    roadmapMeta?.total_slots && `${roadmapMeta.total_slots} Slots`,
+    numGroups && `${numGroups} Groups`,
+    roadmapMeta?.teams_per_group && `${roadmapMeta.teams_per_group} Teams Per Group`
+  ].filter(Boolean).join(" \u2022 ")
+
+  // Loading
+  if (loading) return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center shadow-sm">
+      <RefreshCw className="w-6 h-6 text-blue-600 animate-spin mx-auto mb-3" />
+      <p className="text-sm font-bold text-slate-600">Loading Tournament Roadmap...</p>
+    </div>
+  )
+
+  // Organizer empty state - SINGLE generate button
+  if (isOrganizer && !roadmapData) return (
+    <div className="w-full space-y-4">
+      <div className="bg-white border border-slate-200 rounded-2xl p-10 sm:p-14 text-center shadow-sm max-w-2xl mx-auto">
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center mx-auto mb-5">
+          <Swords className="w-8 h-8 text-blue-600" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">Tournament Roadmap</h2>
+        <p className="text-sm font-semibold text-slate-600 mb-2">No roadmap has been generated yet.</p>
+        <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed mb-8">
+          Generate a roadmap from this tournament's existing groups, schedule and qualification settings.
+        </p>
+        <button type="button" onClick={handleGenerate} disabled={generating}
+          className="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+          {generating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          {generating ? "Generating..." : "+ Generate Roadmap"}
+        </button>
+      </div>
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-semibold flex items-start gap-2 max-w-2xl mx-auto">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" /><span>{error}</span>
+        </div>
+      )}
+    </div>
+  )
+
+  // Public empty state
+  if (!roadmapData || structure.length === 0) return (
+    <div className="w-full bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm max-w-2xl mx-auto">
+      <Calendar className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+      <h3 className="text-base font-bold text-slate-800 mb-1">Tournament Roadmap</h3>
+      <p className="text-sm text-slate-400">The match schedule has not been published yet.</p>
+    </div>
+  )
+
+  // PUBLIC / PREVIEW VIEW
+  if (!isOrganizer || previewMode) return (
+    <div className="w-full space-y-5">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-              <Map className="w-6 h-6 text-indigo-400" />
-              Tournament Roadmap Builder
-            </h2>
-            <p className="text-sm text-gray-400 mt-1">{tournamentTitle}</p>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">Official Schedule</span>
+              {previewMode && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-md">Organizer Preview</span>}
+            </div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-1">Tournament Roadmap</h2>
+            {headerMeta && <p className="text-xs font-semibold text-slate-500">{headerMeta}</p>}
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-            aria-label="Close roadmap builder"
-          >
-            <X className="w-5 h-5" />
+          {previewMode && (
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setPreviewMode(false)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 text-slate-700 transition-colors">
+                <EyeOff className="w-3.5 h-3.5" />Back to Editor
+              </button>
+              <button type="button" onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-all disabled:opacity-50">
+                {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {saving ? "Saving..." : "Save & Publish"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {structure.map((day, dayIdx) => (
+        <React.Fragment key={day.id}>
+          <RoadmapDayCard day={day} qualInfo={dayIdx === structure.length - 2 ? qualInfo : null} />
+          {dayIdx < structure.length - 1 && (
+            <div className="flex items-center justify-center py-1"><ArrowDown className="w-5 h-5 text-slate-300" /></div>
+          )}
+        </React.Fragment>
+      ))}
+      {qualInfo && <GrandFinalSummary qualInfo={qualInfo} roadmapMeta={roadmapMeta} structure={structure} />}
+    </div>
+  )
+
+  // ORGANIZER EDITOR VIEW
+  return (
+    <div className="w-full space-y-5">
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">Roadmap Generator</span>
+              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${roadmapStatus === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                {roadmapStatus === "approved" ? "Live on Public Page" : "Draft - Unpublished"}
+              </span>
+            </div>
+            <h2 className="text-xl font-black text-slate-900 tracking-tight">Tournament Roadmap</h2>
+            {headerMeta && <p className="text-xs font-semibold text-slate-400 mt-0.5">{headerMeta}</p>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => handleGenerate(true)} disabled={generating} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />Regenerate
+            </button>
+            <button type="button" onClick={() => setPreviewMode(true)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-blue-200 hover:bg-blue-50 text-blue-700 transition-colors">
+              <Eye className="w-3.5 h-3.5" />Preview
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all disabled:opacity-50">
+              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {saving ? "Saving..." : "Save Roadmap"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {error && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-semibold flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-500" /><span>{error}</span>
+          </motion.div>
+        )}
+        {success && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-semibold flex items-start gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0 mt-0.5 text-emerald-500" /><span>{success}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {structure.map((day, dayIdx) => (
+        <React.Fragment key={day.id}>
+          <OrganizerDayCard day={day} onUpdateDate={updateDayDate} onUpdateMatchField={updateMatchField}
+            onAddMatch={handleAddMatch} onDeleteMatch={handleDeleteMatch}
+            qualInfo={dayIdx === structure.length - 2 ? qualInfo : null} />
+          {dayIdx < structure.length - 1 && (
+            <div className="flex items-center justify-center py-1"><ArrowDown className="w-5 h-5 text-slate-300" /></div>
+          )}
+        </React.Fragment>
+      ))}
+      {qualInfo && <GrandFinalSummary qualInfo={qualInfo} roadmapMeta={roadmapMeta} structure={structure} />}
+
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">
+          Total <strong className="text-slate-800">{roadmapData?.matches?.length || 0} matches</strong> across <strong className="text-slate-800">{roadmapData?.days?.length || 0} days</strong>
+        </p>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setPreviewMode(true)} className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 hover:bg-slate-50 text-slate-700 transition-colors">Preview</button>
+          <button type="button" onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all disabled:opacity-50">
+            {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            {saving ? "Saving..." : "Save Roadmap"}
           </button>
         </div>
-
-        {/* Content */}
-        <div className="p-6 overflow-y-auto flex-1">
-          {error && (
-            <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-4 rounded-xl flex items-start gap-3 mb-6">
-              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-              <p className="text-sm">{error}</p>
-            </div>
-          )}
-          {success && (
-            <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-4 rounded-xl flex items-start gap-3 mb-6">
-              <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
-              <p className="text-sm">{success}</p>
-            </div>
-          )}
-
-          {/* Status Banner */}
-          <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 ${statusCfg.banner}`}>
-            <div className="flex items-center gap-3">
-              {roadmapStatus === 'approved' ? (
-                <ShieldCheck className={`w-6 h-6 ${statusCfg.icon}`} />
-              ) : (
-                <AlertCircle className={`w-6 h-6 ${statusCfg.icon}`} />
-              )}
-              <div>
-                <h3 className={`font-semibold ${statusCfg.icon}`}>{statusCfg.title}</h3>
-                <p className="text-sm text-gray-400">{statusCfg.desc}</p>
-              </div>
-            </div>
-            {roadmapStatus === 'pending' && !roadmap && (
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 shrink-0"
-              >
-                {generating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Map className="w-4 h-4" />}
-                Generate Roadmap
-              </button>
-            )}
-          </div>
-
-          {!roadmap ? (
-            <div className="text-center py-12">
-              <Map className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-              <h3 className="text-lg font-bold text-white mb-2">No Roadmap Exists</h3>
-              <p className="text-gray-400 max-w-md mx-auto mb-6">
-                A structured roadmap has not been generated for this tournament yet. You must have an approved
-                capacity plan before generating the roadmap.
-              </p>
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 px-6 rounded-lg transition-colors flex items-center gap-2 mx-auto disabled:opacity-50"
-              >
-                {generating ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Map className="w-5 h-5" />}
-                Generate Roadmap
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Validation Result */}
-              {validation && (
-                <div className="space-y-2">
-                  {validation.valid ? (
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl flex items-center gap-3">
-                      <BadgeCheck className="w-5 h-5 flex-shrink-0" />
-                      <p className="text-sm font-medium">Roadmap is structurally sound.</p>
-                    </div>
-                  ) : (
-                    <div className="bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl">
-                      <div className="flex items-center gap-3 text-rose-400 mb-2">
-                        <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                        <p className="text-sm font-medium">Blocking errors found — approve is disabled until these are resolved.</p>
-                      </div>
-                      <ul className="space-y-1 pl-8">
-                        {validation.errors.map((e, i) => (
-                          <li key={`e-${i}`} className="text-xs text-rose-400/90 list-disc">{e}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {validation.warnings.length > 0 && (
-                    <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
-                      <p className="text-amber-400 text-sm font-medium mb-1.5">Non-blocking warnings</p>
-                      <ul className="space-y-1 pl-8">
-                        {validation.warnings.map((w, i) => (
-                          <li key={`w-${i}`} className="text-xs text-amber-400/90 list-disc">{w}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Summary Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                  { icon: CalendarDays, label: 'Days', value: roadmap.days.length },
-                  { icon: Layers, label: 'Groups', value: roadmap.groups.length },
-                  { icon: LayoutGrid, label: 'BGMI Rooms', value: roadmap.rooms.length },
-                  { icon: Swords, label: 'Matches', value: roadmap.matches.length }
-                ].map(({ icon: Icon, label, value }) => (
-                  <div key={label} className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center text-center">
-                    <Icon className="w-5 h-5 text-gray-400 mb-2" />
-                    <div className="text-2xl font-black text-white">{value}</div>
-                    <div className="text-xs text-gray-500 uppercase font-semibold mt-1">{label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Edit hint for drafts */}
-              {roadmapStatus === 'draft' && (
-                <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 flex items-center gap-3">
-                  <Pencil className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <p className="text-xs text-gray-400">
-                    Click the pencil on any day or match to adjust its date or start time. Changes are staged and
-                    only written to the database when you press{' '}
-                    <span className="text-gray-200 font-semibold">Save Draft</span> or{' '}
-                    <span className="text-gray-200 font-semibold">Approve</span>.
-                  </p>
-                </div>
-              )}
-
-              {/* Roadmap Hierarchy Tree */}
-              <div className="bg-[#0A0B10] border border-white/10 rounded-xl overflow-hidden">
-                <div className="p-4 bg-white/5 border-b border-white/10 flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-white">Structural Preview</h3>
-                    <p className="text-xs text-gray-400 mt-1">Groups keep the same teams for all matches; every match has its own scheduled BGMI room.</p>
-                  </div>
-                  {pendingCount > 0 && (
-                    <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded-lg font-semibold">
-                      {pendingCount} pending edit{pendingCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                </div>
-
-                <div className="p-2 space-y-1 max-h-[500px] overflow-y-auto">
-                  {roadmap.days.map((day) => {
-                    const dayGroups = roadmap.groups.filter((g) => g.day_id === day.id);
-                    const isExpandedDay = expandedDays[day.id];
-                    const round = roundOf.get(day.round_id);
-                    const isDraftMode = roadmapStatus === 'draft';
-                    const dayIsEditing = editingDayId === day.id;
-                    const stagedDate = staged.days[day.id];
-
-                    return (
-                      <div key={day.id} className="border border-white/5 rounded-lg overflow-hidden">
-                        <button
-                          onClick={toggleDay(day.id)}
-                          className={`w-full flex items-center gap-3 p-3 text-left hover:bg-white/5 transition-colors bg-[#0D0E15] ${dayIsEditing ? 'cursor-default' : ''}`}
-                        >
-                          {isExpandedDay ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-                          <CalendarDays className="w-5 h-5 text-indigo-400" />
-                          <span className="font-bold text-white flex-1">Day {day.day_number}</span>
-                          {round && (
-                            <span className="text-xs bg-indigo-500/15 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/30 font-semibold">
-                              Round {round.round_number}
-                            </span>
-                          )}
-                          {dayIsEditing && (
-                            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="date"
-                                className={inputCls}
-                                value={stagedDate ?? day.date}
-                                onChange={(e) => stageDay(day.id, e.target.value)}
-                              />
-                              <button
-                                onClick={() => { setEditingDayId(null); clearStageDay(day.id); }}
-                                className="p-1 text-gray-400 hover:text-rose-400 rounded"
-                                aria-label="Cancel day edit"
-                              >
-                                <XCircle className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
-                          {!dayIsEditing && <span className="text-sm text-gray-500">{day.date}</span>}
-                          <span className="text-xs bg-white/10 px-2 py-1 rounded text-gray-300">{dayGroups.length} Groups</span>
-                          {isDraftMode && !dayIsEditing && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setEditingDayId(day.id); }}
-                              className="p-1.5 text-gray-400 hover:text-indigo-300 rounded hover:bg-white/5"
-                              aria-label="Edit day date"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </button>
-
-                        {isExpandedDay && (
-                          <div className="p-3 pl-9 space-y-2 bg-[#0A0B10]">
-                            {dayGroups.map((group) => {
-                              const groupRooms = roadmap.rooms.filter((r) => r.group_id === group.id);
-                              const groupMatchIds = new Set(roadmap.matches.filter((match) => match.group_id === group.id).map((match) => match.id));
-                              const groupAssignedTeams = new Set((roadmap.assignments || []).filter((assignment) => groupMatchIds.has(assignment.match_id)).map((assignment) => assignment.tournament_team_id));
-                              const groupCapacity = Math.max(0, ...groupRooms.map((room) => Number(room.capacity) || 0));
-                              const isExpandedGroup = expandedGroups[group.id];
-                              return (
-                                <div key={group.id} className="border border-white/5 rounded-lg overflow-hidden">
-                                  <button
-                                    onClick={() => toggleGroup(group.id)}
-                                    className="w-full flex items-center gap-3 p-2.5 text-left hover:bg-white/5 transition-colors bg-white/[0.02]"
-                                  >
-                                    {isExpandedGroup ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
-                                    <Layers className="w-4 h-4 text-emerald-400" />
-                                    <span className="font-semibold text-gray-200 flex-1">{group.group_name}</span>
-                                    <span className="text-xs bg-white/10 px-2 py-0.5 rounded text-gray-300">{groupCapacity || '—'} teams · {groupRooms.length} matches</span>
-                                    {groupAssignedTeams.size > 0 && <span className="text-[10px] text-emerald-300">{groupAssignedTeams.size} allocated</span>}
-                                  </button>
-
-                                  {isExpandedGroup && (
-                                    <div className="p-2 pl-9 space-y-2">
-                                      {groupRooms.map((room) => {
-                                        const roomMatches = roadmap.matches
-                                          .filter((m) => m.room_id === room.id)
-                                          .sort((a, b) => a.match_number - b.match_number);
-                                        const isExpandedRoom = expandedRooms[room.id];
-                                        return (
-                                          <div key={room.id} className="border border-white/5 rounded-lg overflow-hidden">
-                                            <button
-                                              onClick={() => toggleRoom(room.id)}
-                                              className="w-full flex items-center gap-3 p-2 text-left hover:bg-white/5 transition-colors"
-                                            >
-                                              {isExpandedRoom ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />}
-                                              <LayoutGrid className="w-4 h-4 text-amber-400" />
-                                              <span className="font-medium text-sm text-gray-300 flex-1">Match {roomMatches[0]?.match_number ?? '—'}</span>
-                                              <span className="text-[10px] uppercase tracking-wide text-amber-300">BGMI Room {room.room_number}</span>
-                                              <span className="flex items-center gap-1 text-xs text-gray-500">
-                                                <Users className="w-3 h-3" /> {room.capacity} team slots
-                                              </span>
-                                            </button>
-
-                                            {isExpandedRoom && (
-                                              <div className="p-2 pl-9 grid grid-cols-1 sm:grid-cols-2 gap-2 bg-black/20 rounded-b-lg">
-                                                {roomMatches.map((match) => {
-                                                  const isEditing = editingMatchId === match.id;
-                                                  const stagedTime = staged.matches[match.id];
-                                                  const assigned = assignmentCounts.get(match.id) || 0;
-                                                  const matchDay = roadmap.days.find((scheduledDay) => scheduledDay.id === match.day_id);
-                                                  const matchRound = roundOf.get(match.round_id);
-                                                  return (
-                                                    <div key={match.id} className="bg-white/5 border border-white/10 p-2 rounded flex items-center justify-between gap-2">
-                                                      <div className="min-w-0">
-                                                        <span className="text-xs font-semibold text-gray-200">{matchRound?.name?.toLowerCase().includes('final') ? 'Final' : matchRound?.round_number === 1 ? 'Qualifier' : 'Match'} {match.match_number}</span>
-                                                        <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-gray-500">
-                                                          <span>{matchDay?.date || 'Date TBD'}</span>
-                                                          {matchRound?.map && <span>{matchRound.map}</span>}
-                                                          <span>{match.status || 'Scheduled'}</span>
-                                                        </div>
-                                                      </div>
-                                                      <span className="flex items-center gap-1.5">
-                                                        {isEditing ? (
-                                                          <span className="flex items-center gap-1 text-xs text-gray-400 bg-black/30 px-2 py-0.5 rounded">
-                                                            <Clock className="w-3 h-3" />
-                                                            <input
-                                                              type="time"
-                                                              className={`${inputCls} !py-0.5 !px-1.5`}
-                                                              value={stagedTime ?? match.start_time}
-                                                              onChange={(e) => stageMatch(match.id, e.target.value)}
-                                                            />
-                                                            <button
-                                                              onClick={() => { setEditingMatchId(null); clearStageMatch(match.id); }}
-                                                              className="text-gray-400 hover:text-rose-400"
-                                                              aria-label="Cancel match edit"
-                                                            >
-                                                              <XCircle className="w-3.5 h-3.5" />
-                                                            </button>
-                                                          </span>
-                                                        ) : (
-                                                          <span className="flex items-center gap-1 text-xs text-gray-400 bg-black/30 px-2 py-0.5 rounded">
-                                                            <Clock className="w-3 h-3" />
-                                                            {stagedTime || match.start_time} - {match.end_time}
-                                                            {assigned > 0 && (
-                                                              <span className="text-[10px] bg-white/10 text-gray-300 px-1.5 py-0.5 rounded ml-1">{assigned} teams</span>
-                                                            )}
-                                                          </span>
-                                                        )}
-                                                        {isDraftMode && !isEditing && (
-                                                          <button
-                                                            onClick={() => setEditingMatchId(match.id)}
-                                                            className="p-1 text-gray-500 hover:text-indigo-300 rounded hover:bg-white/5"
-                                                            aria-label="Edit match start time"
-                                                          >
-                                                            <Pencil className="w-3 h-3" />
-                                                          </button>
-                                                        )}
-                                                      </span>
-                                                    </div>
-                                                  );
-                                                })}
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        {roadmap && roadmapStatus === 'draft' && (
-          <div className="bg-white/5 border-t border-white/10 p-4 shrink-0 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={handleValidate}
-                disabled={validating}
-                className="text-sm text-gray-300 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-lg"
-              >
-                {validating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <BadgeCheck className="w-4 h-4" />}
-                Validate
-              </button>
-              <button
-                onClick={handleSaveDraft}
-                disabled={saving}
-                className="text-sm text-gray-300 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-lg"
-              >
-                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save Draft
-              </button>
-              <button
-                onClick={() => setConfirmDialog('regenerate')}
-                disabled={generating}
-                className="text-sm text-amber-400/80 hover:text-amber-300 transition-colors flex items-center gap-2 disabled:opacity-50 bg-white/5 hover:bg-white/10 border border-white/10 px-3 py-2 rounded-lg"
-              >
-                <Trash2 className="w-4 h-4" />
-                Regenerate
-              </button>
-            </div>
-            <div className="flex items-center gap-3">
-              <p className="text-xs text-gray-500 hidden sm:block">
-                {validation !== null && !validation.valid
-                  ? 'Resolve blocking errors to approve.'
-                  : 'Approval is required before slot allocation.'}
-              </p>
-              <button
-                onClick={() => setConfirmDialog('approve')}
-                disabled={approving || (validation !== null && !validation.valid)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-              >
-                {approving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Approve Roadmap
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Confirm dialog */}
-        <AnimatePresence>
-          {confirmDialog && (
-            <div
-              className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-2xl"
-              onClick={() => setConfirmDialog(null)}
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-[#0A0B10] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  {confirmDialog === 'approve' ? (
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                  ) : (
-                    <AlertCircle className="w-6 h-6 text-amber-400" />
-                  )}
-                  <h3 className="text-lg font-bold text-white">
-                    {confirmDialog === 'approve' ? 'Approve Roadmap?' : 'Regenerate Roadmap?'}
-                  </h3>
-                </div>
-                <p className="text-sm text-gray-400 leading-relaxed">
-                  {confirmDialog === 'approve'
-                    ? 'Approving locks the roadmap and makes it available for team allocation. Pending edits will be saved first. An approved roadmap cannot be edited in place.'
-                    : 'Regenerating replaces the current draft with a freshly generated schedule. Any pending edits will be discarded. An approved roadmap cannot be regenerated.'}
-                </p>
-                <div className="flex gap-3 mt-6">
-                  <button
-                    onClick={() => setConfirmDialog(null)}
-                    className="flex-1 py-2.5 rounded-lg border border-white/10 text-gray-300 hover:text-white hover:bg-white/5 transition-colors text-sm font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmDialog === 'approve' ? handleApprove : handleGenerate}
-                    disabled={confirmDialog === 'approve' ? approving : generating}
-                    className={`flex-1 py-2.5 rounded-lg text-white text-sm font-semibold transition-colors disabled:opacity-50 ${
-                      confirmDialog === 'approve'
-                        ? 'bg-emerald-600 hover:bg-emerald-500'
-                        : 'bg-amber-600 hover:bg-amber-500'
-                    }`}
-                  >
-                    {confirmDialog === 'approve' ? 'Approve' : 'Regenerate'}
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+      </div>
     </div>
-  );
+  )
+}
+
+// ─── Public Day Card ──────────────────────────────────────────────────────────
+function RoadmapDayCard({ day, qualInfo }) {
+  const isFinalDay = day.groups.every(g => g.isGrandFinal)
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className={`px-5 sm:px-7 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 ${isFinalDay ? "bg-gradient-to-r from-blue-600 to-blue-700" : "bg-slate-50"}`}>
+        <div className="flex items-center gap-3">
+          <span className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-lg border shadow-sm ${isFinalDay ? "bg-white/20 text-white border-white/30" : "bg-blue-600 text-white border-blue-700"}`}>{day.displayDay}</span>
+          {day.date && <span className={`text-xs font-semibold ${isFinalDay ? "text-blue-100" : "text-slate-600"}`}>{formatDateLabel(day.date)}</span>}
+        </div>
+        {isFinalDay
+          ? <span className="flex items-center gap-1 text-xs font-black text-white uppercase tracking-wider"><Trophy className="w-4 h-4" />Grand Final</span>
+          : <span className="text-xs font-semibold text-slate-500">Group Stage — {day.groups.map(g => g.group_name).join(" + ")}</span>}
+      </div>
+      <div className="divide-y divide-slate-100">
+        {day.groups.map((group, gIdx) => <ReadOnlyGroupSection key={group.id} group={group} groupIndex={gIdx} />)}
+      </div>
+      {qualInfo && !isFinalDay && <div className="mx-4 mb-4 mt-2"><QualificationBanner qualInfo={qualInfo} /></div>}
+    </div>
+  )
+}
+
+function ReadOnlyGroupSection({ group, groupIndex }) {
+  const isGF = group.isGrandFinal
+  return (
+    <div className={`${groupIndex > 0 ? "pt-4" : "pt-5"} pb-5 px-5 sm:px-7 space-y-4`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className={`w-2 h-2 rounded-full ${isGF ? "bg-amber-500" : "bg-blue-500"}`} />
+          <h3 className={`font-black uppercase tracking-wider text-sm ${isGF ? "text-amber-700" : "text-slate-900"}`}>{group.group_name}</h3>
+          {group.capacity > 0 && <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">{group.capacity} Teams</span>}
+        </div>
+        <span className="text-[11px] font-semibold text-slate-400">{group.matches.length} Match{group.matches.length !== 1 ? "es" : ""}</span>
+      </div>
+      <div className="hidden sm:block rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-400">
+              <th className="py-2.5 px-4">Match</th><th className="py-2.5 px-4">Group</th><th className="py-2.5 px-4">Map</th><th className="py-2.5 px-4">ID/PWD Release</th><th className="py-2.5 px-4 text-right">Start Time</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {group.matches.map(match => (
+              <tr key={match.id} className="hover:bg-blue-50/40 transition-colors text-xs">
+                <td className="py-3 px-4 font-black text-slate-900">Match {match.match_number}</td>
+                <td className="py-3 px-4 font-bold text-slate-600 uppercase text-[11px]">{group.group_name}</td>
+                <td className="py-3 px-4"><span className="font-black text-blue-600 uppercase tracking-wide text-[11px]">{match.map || "Erangel"}</span></td>
+                <td className="py-3 px-4 text-slate-500 font-semibold text-[11px]">{match.id_pwd_release_time || "15m prior"}</td>
+                <td className="py-3 px-4 font-black text-slate-900 text-right">{formatTime12h(match.start_time)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="sm:hidden grid grid-cols-1 gap-2.5">
+        {group.matches.map(match => (
+          <div key={match.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-slate-900 uppercase">Match {match.match_number}</span>
+              <span className="text-[11px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">{match.map || "Erangel"}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200 text-[11px]">
+              <div><span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">ID/PWD Release</span><span className="font-semibold text-slate-700">{match.id_pwd_release_time || "15m prior"}</span></div>
+              <div className="text-right"><span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Start Time</span><span className="font-black text-slate-900">{formatTime12h(match.start_time)}</span></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Organizer Day Card ───────────────────────────────────────────────────────
+function OrganizerDayCard({ day, onUpdateDate, onUpdateMatchField, onAddMatch, onDeleteMatch, qualInfo }) {
+  const isFinalDay = day.groups.every(g => g.isGrandFinal)
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className={`px-5 sm:px-6 py-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 ${isFinalDay ? "bg-gradient-to-r from-blue-600 to-blue-700" : "bg-slate-50"}`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-lg border shadow-sm ${isFinalDay ? "bg-white/20 text-white border-white/30" : "bg-blue-600 text-white border-blue-700"}`}>{day.displayDay}</span>
+          {isFinalDay && <span className="flex items-center gap-1 text-xs font-black text-white uppercase tracking-wider"><Trophy className="w-4 h-4" />Grand Final</span>}
+          {!isFinalDay && <span className="text-xs font-semibold text-slate-500">{day.groups.map(g => g.group_name).join(" + ")}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          <Calendar className={`w-3.5 h-3.5 ${isFinalDay ? "text-blue-200" : "text-slate-400"}`} />
+          <input type="date" value={day.date || ""} onChange={e => onUpdateDate(day.id, e.target.value)}
+            className={`text-xs font-bold rounded-lg border px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 ${isFinalDay ? "bg-white/15 text-white border-white/20" : "bg-white border-slate-200 text-slate-800"}`} />
+        </div>
+      </div>
+      <div className="p-4 sm:p-5 space-y-5">
+        {day.groups.map((group, gIdx) => (
+          <React.Fragment key={group.id}>
+            {gIdx > 0 && <div className="flex items-center gap-3 py-1"><div className="flex-1 h-px bg-slate-100" /><ArrowDown className="w-4 h-4 text-slate-300 shrink-0" /><div className="flex-1 h-px bg-slate-100" /></div>}
+            <OrganizerGroupSection group={group} onUpdateMatchField={onUpdateMatchField} onAddMatch={onAddMatch} onDeleteMatch={onDeleteMatch} />
+          </React.Fragment>
+        ))}
+      </div>
+      {qualInfo && !isFinalDay && <div className="px-5 pb-5"><QualificationBanner qualInfo={qualInfo} /></div>}
+    </div>
+  )
+}
+
+function OrganizerGroupSection({ group, onUpdateMatchField, onAddMatch, onDeleteMatch }) {
+  const isGF = group.isGrandFinal
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className={`w-2 h-2 rounded-full ${isGF ? "bg-amber-500" : "bg-blue-500"}`} />
+          <h3 className={`font-black uppercase tracking-wider text-sm ${isGF ? "text-amber-700" : "text-slate-900"}`}>{group.group_name}</h3>
+          <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">{group.capacity} Teams</span>
+        </div>
+        <button type="button" onClick={() => onAddMatch(group.day_id, group.id, group.room_id)}
+          className="flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 px-3 py-1.5 rounded-lg transition-colors">
+          <Plus className="w-3.5 h-3.5" />Add Match
+        </button>
+      </div>
+      <div className="space-y-2.5">
+        {group.matches.map(match => (
+          <motion.div key={match.id} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end hover:border-blue-300 hover:shadow-sm transition-all">
+            <div className="sm:col-span-2 flex items-center">
+              <span className="px-2.5 py-1.5 bg-white border border-slate-200 text-slate-800 font-black text-xs rounded-lg shadow-sm shrink-0">Match {match.match_number}</span>
+            </div>
+            <div className="sm:col-span-3">
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Map</label>
+              <div className="relative">
+                <select value={match.map || "Erangel"} onChange={e => onUpdateMatchField(match.id, "map", e.target.value)}
+                  className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 pr-7 appearance-none focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                  {MAP_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+            <div className="sm:col-span-3">
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">ID/PWD Release</label>
+              <input type="text" placeholder="e.g. 12:45 PM" value={match.id_pwd_release_time || ""} onChange={e => onUpdateMatchField(match.id, "id_pwd_release_time", e.target.value)}
+                className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div className="sm:col-span-3">
+              <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Start Time</label>
+              <input type="time" value={match.start_time || "13:00"} onChange={e => onUpdateMatchField(match.id, "start_time", e.target.value)}
+                className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+            </div>
+            <div className="sm:col-span-1 flex sm:justify-end">
+              <button type="button" onClick={() => onDeleteMatch(match.id)} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="Delete match">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        ))}
+        {group.matches.length === 0 && (
+          <div className="text-center py-6 text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">No matches yet. Click <strong>Add Match</strong> to add one.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Qualification Banner ─────────────────────────────────────────────────────
+function QualificationBanner({ qualInfo }) {
+  const { stageGroups, topPerGroup, qualified } = qualInfo
+  const formula = stageGroups.map(g => `Top ${topPerGroup} from ${g.group_name}`).join(" + ")
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3.5 space-y-1.5">
+      <div className="flex items-center gap-2">
+        <Trophy className="w-4 h-4 text-blue-600 shrink-0" />
+        <span className="text-[11px] font-black uppercase tracking-widest text-blue-700">Qualification</span>
+      </div>
+      <p className="text-xs sm:text-sm font-extrabold text-blue-900 leading-snug">{formula}</p>
+      <p className="text-[11px] text-blue-700 font-semibold">{`\u2192 ${qualified} teams advance to the Grand Final`}</p>
+    </div>
+  )
+}
+
+// ─── Grand Final Summary ──────────────────────────────────────────────────────
+function GrandFinalSummary({ qualInfo, roadmapMeta, structure }) {
+  const grandFinalDay = structure[structure.length - 1]
+  const grandFinalGroup = grandFinalDay?.groups?.find(g => g.isGrandFinal)
+  const gfMatches = grandFinalGroup?.matches || []
+  const maps = [...new Set(gfMatches.map(m => m.map || "Erangel"))]
+  return (
+    <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl p-5 sm:p-7 shadow-md text-white space-y-4">
+      <div className="flex items-center gap-3">
+        <Trophy className="w-6 h-6 text-yellow-300" />
+        <h3 className="text-lg font-black uppercase tracking-wider">Grand Final</h3>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[["Qualified Teams", qualInfo.qualified], ["Final Matches", gfMatches.length], ["Groups", qualInfo.stageGroups.length], ["Top Per Group", qualInfo.topPerGroup]].map(([label, value]) => (
+          <div key={label} className="bg-white/10 border border-white/20 rounded-xl p-3 text-center">
+            <p className="text-xl font-black text-white leading-none">{value}</p>
+            <p className="text-[10px] font-semibold text-blue-200 uppercase tracking-wider mt-1">{label}</p>
+          </div>
+        ))}
+      </div>
+      {maps.length > 0 && (
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-widest text-blue-200 mb-2">Maps</p>
+          <div className="flex flex-wrap gap-2">
+            {maps.map(map => <span key={map} className="text-xs font-black uppercase tracking-wider bg-white/15 border border-white/20 px-3 py-1 rounded-lg">{map}</span>)}
+          </div>
+        </div>
+      )}
+      <div className="pt-2 border-t border-white/20">
+        <p className="text-sm font-black uppercase tracking-widest text-yellow-300 text-center">Highest Total Points = Champion</p>
+      </div>
+    </div>
+  )
 }

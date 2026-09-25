@@ -25,7 +25,7 @@ import { finalizeTournament, TournamentFinalizationError } from './server/tourna
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
-import { buildGroups, normalizeTeamsPerGroup, validateGroupConfig, computeGroupCount, generateGroupName, assignGroups, predictedGroupFor, groupForGlobalSlot, groupLabelForSlot } from './server/groupService.js';
+import { buildGroups, normalizeTeamsPerGroup, validateGroupConfig, computeGroupCount, generateGroupName, assignGroups, predictedGroupFor, groupForGlobalSlot, groupLabelForSlot, DEFAULT_TEAMS_PER_GROUP } from './server/groupService.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -854,7 +854,8 @@ async function initDb() {
           expected_teams INTEGER NOT NULL DEFAULT 0,
           maximum_teams INTEGER NOT NULL DEFAULT 0,
           players_per_team INTEGER NOT NULL DEFAULT 4,
-          teams_per_room INTEGER NOT NULL DEFAULT 25,
+          teams_per_room INTEGER NOT NULL DEFAULT 16,
+          teams_per_group INTEGER NOT NULL DEFAULT 16,
           max_simultaneous_rooms INTEGER NOT NULL DEFAULT 1,
           matches_per_team INTEGER NOT NULL DEFAULT 3,
           match_duration_minutes INTEGER NOT NULL DEFAULT 25,
@@ -867,6 +868,7 @@ async function initDb() {
           updated_at TIMESTAMPTZ DEFAULT NOW(),
           UNIQUE(tournament_id)
         );
+        ALTER TABLE tournament_planning_config ADD COLUMN IF NOT EXISTS teams_per_group INTEGER DEFAULT 16;
         CREATE INDEX IF NOT EXISTS idx_tournament_planning_config_tournament ON tournament_planning_config(tournament_id);
       `);
       console.log('📦 [MATCH DISTRICT DB] tournament_planning_config table initialized.');
@@ -983,6 +985,9 @@ async function initDb() {
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_identifier VARCHAR(100);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_password VARCHAR(100);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS credential_status VARCHAR(30) DEFAULT 'Not Configured';
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS map VARCHAR(100);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS id_pwd_release_time VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS group_name VARCHAR(100);
       `);
       console.log('📦 [MATCH DISTRICT DB] Roadmap tables (days, groups, rooms, matches) initialized.');
     } catch (roadmapErr) {
@@ -6224,7 +6229,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7k_road1. POST /api/tournaments/:id/roadmap/generate — Generate roadmap (Phase 3)
+  // 7k_road1. POST /api/tournaments/:id/roadmap/generate — Generate roadmap (group-based, no planning result required)
   const roadmapGenerateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/generate$/);
   if (roadmapGenerateMatch && req.method === 'POST') {
     const tId = decodeURIComponent(roadmapGenerateMatch[1]);
@@ -6243,56 +6248,21 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
       }
-
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
       }
 
-      // An approved roadmap is immutable: regenerating would silently wipe the
-      // approved schedule. Return a clear conflict instead of writing anything.
-      if (oRes.rows[0].roadmap_status === 'approved') {
-        res.writeHead(409, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({
-          success: false,
-          error: 'ROADMAP_APPROVED',
-          message: 'The roadmap is already approved. Generate a new planning proposal before regenerating the roadmap.'
-        }));
-      }
-
-      // 1. Fetch tournament
+      // 1. Fetch full tournament row — generator reads slotsTotal + teams_per_group directly
       const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
       const tournament = tRes.rows[0];
 
-      // 2. Fetch config & approved planning result
-      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
-      const planRes = await pool.query(`
-        SELECT * FROM tournament_planning_result 
-        WHERE tournament_id = $1 AND plan_status = 'approved'
-        ORDER BY plan_version DESC LIMIT 1
-      `, [tId]);
-
-      if (cfgRes.rows.length === 0 || planRes.rows.length === 0) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'NO_APPROVED_PLAN', message: 'An approved capacity plan is required to generate a roadmap.' }));
-      }
-      const config = cfgRes.rows[0];
-      const planningResult = planRes.rows[0];
-
-      // 3. Materialize Round/Stage definitions (idempotent one-way sync from the
-      //    Step 6 timeline), then generate the structural roadmap against them.
-      const roundRows = await syncTournamentRounds(pool, tournament);
-      let roadmapProposal = null;
-      if (planningResult.round_plan) {
-        try {
-          roadmapProposal = typeof planningResult.round_plan === 'string'
-            ? JSON.parse(planningResult.round_plan)
-            : planningResult.round_plan;
-        } catch (proposalErr) {
-          roadmapProposal = null;
-        }
-      }
-      const result = generateTournamentRoadmap(config, planningResult, tournament, roundRows, roadmapProposal);
+      // 2. Generate roadmap — purely group-based, no planningResult required
+      const result = generateTournamentRoadmap(tournament);
       if (!result.ok) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'ROADMAP_ERROR', message: result.error }));
@@ -6300,7 +6270,7 @@ const server = http.createServer(async (req, res) => {
 
       const { days, groups, rooms, matches } = result.roadmap;
 
-      // 4. Atomic Database Transaction
+      // 3. Atomic Database Transaction
       const dbClient = await pool.connect();
       try {
         await dbClient.query('BEGIN');
@@ -6312,45 +6282,38 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
         }
 
-        // Delete any existing draft roadmap components (they cascade down)
+        // Delete any existing draft roadmap (cascade: days → groups → rooms → matches)
         await dbClient.query('DELETE FROM tournament_days WHERE tournament_id = $1', [tId]);
 
-        // Insert Days
         for (const d of days) {
           await dbClient.query(`
             INSERT INTO tournament_days (id, tournament_id, day_number, date, round_id)
             VALUES ($1, $2, $3, $4, $5)
-          `, [d.id, d.tournament_id, d.day_number, d.date, d.round_id]);
+          `, [d.id, d.tournament_id, d.day_number, d.date || null, d.round_id || null]);
         }
 
-        // Insert Groups
         for (const g of groups) {
           await dbClient.query(`
             INSERT INTO tournament_groups (id, day_id, tournament_id, group_name, sequence, round_id)
             VALUES ($1, $2, $3, $4, $5, $6)
-          `, [g.id, g.day_id, g.tournament_id, g.group_name, g.sequence, g.round_id]);
+          `, [g.id, g.day_id, g.tournament_id, g.group_name, g.sequence, g.round_id || null]);
         }
 
-        // Insert Rooms
         for (const r of rooms) {
           await dbClient.query(`
             INSERT INTO tournament_rooms (id, group_id, day_id, tournament_id, room_number, capacity, status, round_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-          `, [r.id, r.group_id, r.day_id, r.tournament_id, r.room_number, r.capacity, r.status, r.round_id]);
+          `, [r.id, r.group_id, r.day_id, r.tournament_id, r.room_number, r.capacity || 16, r.status || 'DRAFT', r.round_id || null]);
         }
 
-        // Insert Matches
         for (const m of matches) {
           await dbClient.query(`
-            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-          `, [m.id, m.room_id, m.group_id, m.day_id, m.tournament_id, m.match_number, m.start_time, m.end_time, m.status, m.round_id]);
+            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          `, [m.id, m.room_id, m.group_id, m.day_id, m.tournament_id, m.match_number, m.start_time, m.end_time || '', m.status || 'PENDING', m.round_id || null, m.map || 'Erangel', m.id_pwd_release_time || null]);
         }
 
-        // Update tournament status
-        await dbClient.query(`
-          UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1
-        `, [tId]);
+        await dbClient.query(`UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1`, [tId]);
 
         await dbClient.query('COMMIT');
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -6368,18 +6331,125 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 7k_road1b. POST /api/tournaments/:id/roadmap/save — Save full roadmap structure
+  const roadmapSaveMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/save$/);
+  if (roadmapSaveMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapSaveMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        const oRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status, timeline FROM tournaments WHERE id = $1', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+        if (oRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const roadmapData = payload.roadmap || payload;
+        const days = Array.isArray(roadmapData.days) ? roadmapData.days : [];
+        const groups = Array.isArray(roadmapData.groups) ? roadmapData.groups : [];
+        const rooms = Array.isArray(roadmapData.rooms) ? roadmapData.rooms : [];
+        const matches = Array.isArray(roadmapData.matches) ? roadmapData.matches : [];
+
+        const dbClient = await pool.connect();
+        try {
+          await dbClient.query('BEGIN');
+
+          await dbClient.query('DELETE FROM tournament_days WHERE tournament_id = $1', [tId]);
+
+          for (const d of days) {
+            await dbClient.query(`
+              INSERT INTO tournament_days (id, tournament_id, day_number, date, round_id)
+              VALUES ($1, $2, $3, $4, $5)
+            `, [d.id || `DAY-${crypto.randomBytes(8).toString('hex')}`, tId, d.day_number || 1, d.date || null, d.round_id || null]);
+          }
+
+          for (const g of groups) {
+            await dbClient.query(`
+              INSERT INTO tournament_groups (id, day_id, tournament_id, group_name, sequence, round_id)
+              VALUES ($1, $2, $3, $4, $5, $6)
+            `, [g.id || `GRP-${crypto.randomBytes(8).toString('hex')}`, g.day_id, tId, g.group_name || 'Group A', g.sequence || 1, g.round_id || null]);
+          }
+
+          for (const r of rooms) {
+            await dbClient.query(`
+              INSERT INTO tournament_rooms (id, group_id, day_id, tournament_id, room_number, capacity, status, round_id)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `, [r.id || `RM-${crypto.randomBytes(8).toString('hex')}`, r.group_id || null, r.day_id, tId, r.room_number || 1, r.capacity || 16, r.status || 'DRAFT', r.round_id || null]);
+          }
+
+          for (const m of matches) {
+            await dbClient.query(`
+              INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
+              m.id || `MAT-${crypto.randomBytes(8).toString('hex')}`,
+              m.room_id,
+              m.group_id || null,
+              m.day_id,
+              tId,
+              m.match_number || 1,
+              m.start_time || '10:00',
+              m.end_time || '10:30',
+              m.status || 'PENDING',
+              m.round_id || null,
+              m.map || 'Erangel',
+              m.id_pwd_release_time || null
+            ]);
+          }
+
+          let existingTimeline = {};
+          try {
+            existingTimeline = oRes.rows[0].timeline ? (typeof oRes.rows[0].timeline === 'string' ? JSON.parse(oRes.rows[0].timeline) : oRes.rows[0].timeline) : {};
+          } catch {
+            existingTimeline = {};
+          }
+          const updatedTimeline = { ...existingTimeline, roadmap: matches };
+
+          await dbClient.query(`
+            UPDATE tournaments 
+            SET roadmap_status = 'approved', timeline = $1, version = version + 1 
+            WHERE id = $2
+          `, [JSON.stringify(updatedTimeline), tId]);
+
+          await dbClient.query('COMMIT');
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Roadmap saved successfully.' }));
+        } catch (saveTxnErr) {
+          await dbClient.query('ROLLBACK');
+          throw saveTxnErr;
+        } finally {
+          dbClient.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // 7k_road2. GET /api/tournaments/:id/roadmap — Fetch structural roadmap
-  // Two visibility modes, enforced server-side:
-  //   ORGANIZER  (admin or owner): the full approved roadmap (also draft/pending
-  //               preview) — identical shape to legacy consumers.
-  //   NON-OWNER  (incl. anonymous): ONLY their own allocated team's schedule.
-  //               Draft/pending → 403; approved → participant slice with no
-  //               credential fields, or an empty roadmap when not allocated.
   const roadmapGetMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap$/);
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, game FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -6390,45 +6460,47 @@ const server = http.createServer(async (req, res) => {
       const isOrganizer = !!(authUser && (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id));
       const nowMs = Date.now();
 
-      // Non-owners get placement data ONLY from an approved roadmap. Draft and
-      // pending roadmaps are organizer-only (same rule as before for draft, now
-      // extended to 'pending' so a generated-but-unapproved roadmap never leaks).
-      if (!isOrganizer && t.roadmap_status !== 'approved') {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Roadmap is not approved yet.' }));
-      }
-
       const rounds = await getTournamentRounds(pool, tId);
+      const roundOrder = new Map(rounds.map((r, i) => [r.id, i]));
+      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
+      const days = daysQuery.rows
+        .sort((a, b) =>
+          (roundOrder.get(a.round_id) ?? -1) - (roundOrder.get(b.round_id) ?? -1) ||
+          a.day_number - b.day_number
+        )
+        .map((d) => ({
+          ...d,
+          round_number: rounds.find((r) => r.id === d.round_id)?.round_number ?? null
+        }));
+      const groups = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY sequence ASC', [tId]);
+      const rooms = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tId]);
+      const matches = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tId]);
 
-      // ── ORGANIZER MODE: full structural snapshot (unchanged contract) ──
+      // Phase 7: Fetch assignments to count allocated teams
+      const assignments = await pool.query(`
+        SELECT match_id, room_id, tournament_team_id
+        FROM tournament_match_assignments
+        WHERE tournament_id = $1
+      `, [tId]);
+
+      // ── ORGANIZER MODE: full structural snapshot ──
+      const slotsTotal = parseInt(t.slotsTotal, 10) || 64;
+      const teamsPerGroup = parseInt(t.teams_per_group, 10) || 16;
+      const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
+      const roadmapMeta = {
+        total_slots: slotsTotal,
+        teams_per_group: teamsPerGroup,
+        num_groups: groupLayout.length,
+        group_names: groupLayout.map(g => `Group ${g.name}`),
+        top_per_group: Math.max(1, Math.ceil(teamsPerGroup / 4)),
+        game: t.game || 'bgmi'
+      };
       if (isOrganizer) {
-        const roundOrder = new Map(rounds.map((r, i) => [r.id, i]));
-        const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
-        const days = daysQuery.rows
-          .sort((a, b) =>
-            (roundOrder.get(a.round_id) ?? -1) - (roundOrder.get(b.round_id) ?? -1) ||
-            a.day_number - b.day_number
-          )
-          .map((d) => ({
-            ...d,
-            round_number: rounds.find((r) => r.id === d.round_id)?.round_number ?? null
-          }));
-        const groups = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY sequence ASC', [tId]);
-        const rooms = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tId]);
-        const matches = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tId]);
-
-        // Phase 7: Fetch assignments to count allocated teams
-        const assignments = await pool.query(`
-          SELECT match_id, room_id, tournament_team_id
-          FROM tournament_match_assignments
-          WHERE tournament_id = $1
-        `, [tId]);
-
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           mode: 'organizer',
-          roadmap_status: t.roadmap_status,
+          roadmap_status: t.roadmap_status || (days.length > 0 ? 'draft' : 'pending'),
           participant: null,
           roadmap: {
             rounds,
@@ -6436,15 +6508,15 @@ const server = http.createServer(async (req, res) => {
             groups: groups.rows,
             rooms: rooms.rows,
             matches: matches.rows,
-            assignments: assignments.rows
+            assignments: assignments.rows,
+            meta: roadmapMeta
           }
         }));
         return;
       }
 
-      // ── PARTICIPANT MODE: derive team from the authenticated session ──
-      // Never trust a client-supplied teamId. The caller's membership row is the
-      // only allowed way to resolve a team.
+      // ── PUBLIC / PARTICIPANT MODE ──
+      // If roadmap is approved or has scheduled matches, return the public schedule
       let team = null;
       if (authUser) {
         const teamRes = await pool.query(`
@@ -6457,46 +6529,35 @@ const server = http.createServer(async (req, res) => {
         if (teamRes.rows.length > 0) team = teamRes.rows[0];
       }
 
-      const access = participantAccessMode({ team });
-
-      // No allocated team (anonymous, no team, or not-yet-allocated) → an empty
-      // participant roadmap. Success + empty shape keeps the public roadmap tab
-      // rendering its friendly "not available" state instead of an error.
-      let roadmap = emptyParticipantRoadmap();
-      if (access.mode === 'participant') {
-        const [daysQuery, groupsQuery, roomsQuery, matchesQuery, assignmentsQuery] = await Promise.all([
-          pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]),
-          pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY sequence ASC', [tId]),
-          pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tId]),
-          pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tId]),
-          pool.query(`
-            SELECT a.id, a.match_id, a.room_id, a.group_id, a.day_id, a.tournament_team_id, a.status
-            FROM tournament_match_assignments a
-            WHERE a.tournament_id = $1 AND a.tournament_team_id = $2
-          `, [tId, team.id])
-        ]);
-
-        roadmap = buildParticipantRoadmap(
-          {
-            rounds,
-            days: daysQuery.rows,
-            groups: groupsQuery.rows,
-            rooms: roomsQuery.rows,
-            matches: matchesQuery.rows,
-            assignments: assignmentsQuery.rows
-          },
-          team.id,
-          { releaseMinutes: t.room_credentials_release_minutes, nowMs }
-        );
-      }
-
+      // Return public structured schedule
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
-        mode: access.mode,
-        roadmap_status: t.roadmap_status,
+        mode: team ? 'participant' : 'public',
+        roadmap_status: t.roadmap_status || 'draft',
         participant: team ? { team_id: team.id, team_name: team.team_name, team_status: team.status } : null,
-        roadmap
+        roadmap: {
+          rounds,
+          days,
+          groups: groups.rows,
+          rooms: rooms.rows,
+          matches: matches.rows.map(m => ({
+            id: m.id,
+            room_id: m.room_id,
+            group_id: m.group_id,
+            day_id: m.day_id,
+            match_number: m.match_number,
+            start_time: m.start_time,
+            end_time: m.end_time,
+            status: m.status,
+            round_id: m.round_id,
+            map: m.map || 'Erangel',
+            id_pwd_release_time: m.id_pwd_release_time || null,
+            ...(isOrganizer ? { room_identifier: m.room_identifier, room_password: m.room_password } : {})
+          })),
+          assignments: assignments.rows,
+          meta: roadmapMeta
+        }
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -6528,39 +6589,6 @@ const server = http.createServer(async (req, res) => {
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
-      }
-
-      if (oRes.rows[0].roadmap_status !== 'draft') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'INVALID_STATE', message: 'Roadmap must be in draft status to approve.' }));
-      }
-
-      // Structural gate: a roadmap with blocking errors must NOT be approved.
-      // Non-blocking warnings are surfaced but do not prevent approval.
-      const cfgRes = await pool.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
-      const rounds = await getTournamentRounds(pool, tId);
-      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
-      const groupsQuery = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1', [tId]);
-      const roomsQuery = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1', [tId]);
-      const matchesQuery = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1', [tId]);
-
-      const validation = validateRoadmapStructure({
-        days: daysQuery.rows,
-        groups: groupsQuery.rows,
-        rooms: roomsQuery.rows,
-        matches: matchesQuery.rows,
-        config: cfgRes.rows[0] || {},
-        rounds
-      });
-
-      if (validation.errors.length > 0) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({
-          success: false,
-          error: 'ROADMAP_STRUCTURE_INVALID',
-          message: 'The roadmap has blocking structural errors. Fix or regenerate before approving.',
-          details: { errors: validation.errors, warnings: validation.warnings }
-        }));
       }
 
       const approveClient = await pool.connect();
@@ -6640,7 +6668,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7k_road3c. PUT /api/tournaments/:id/roadmap/matches/:matchId — Edit a match start time
+  // 7k_road3c. PUT /api/tournaments/:id/roadmap/matches/:matchId — Edit match details
   const roadmapMatchEditMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/matches\/([^/]+)$/);
   if (roadmapMatchEditMatch && req.method === 'PUT') {
     const tId = decodeURIComponent(roadmapMatchEditMatch[1]);
@@ -6676,28 +6704,8 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
           return;
         }
-        if (oRes.rows[0].roadmap_status === 'approved') {
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'ROADMAP_APPROVED', message: 'An approved roadmap is locked. Regenerate a new draft to edit.' }));
-          return;
-        }
 
         const payload = JSON.parse(body || '{}');
-        const start_time = payload.start_time;
-        if (typeof start_time !== 'string') {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'start_time is required.' }));
-          return;
-        }
-
-        const cfgRes = await editClient.query('SELECT * FROM tournament_planning_config WHERE tournament_id = $1', [tId]);
-        if (cfgRes.rows.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NO_CONFIG', message: 'Tournament planning configuration is missing.' }));
-          return;
-        }
-        const config = cfgRes.rows[0];
-
         const matchRes = await editClient.query('SELECT * FROM tournament_matches WHERE id = $1 AND tournament_id = $2 FOR UPDATE', [matchId, tId]);
         if (matchRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -6706,33 +6714,27 @@ const server = http.createServer(async (req, res) => {
         }
         const match = matchRes.rows[0];
 
-        const siblingsRes = await editClient.query(
-          `SELECT * FROM tournament_matches
-           WHERE tournament_id = $1 AND day_id = $2 AND room_id = $3 AND id <> $4`,
-          [tId, match.day_id, match.room_id, matchId]
-        );
+        const start_time = payload.start_time !== undefined ? payload.start_time : match.start_time;
+        const end_time = payload.end_time !== undefined ? payload.end_time : match.end_time;
+        const map = payload.map !== undefined ? payload.map : match.map;
+        const id_pwd_release_time = payload.id_pwd_release_time !== undefined ? payload.id_pwd_release_time : match.id_pwd_release_time;
+        const match_number = payload.match_number !== undefined ? payload.match_number : match.match_number;
+        const status = payload.status !== undefined ? payload.status : match.status;
 
-        const gate = validateSingleMatchEdit({
-          match: { ...match, start_time },
-          siblings: siblingsRes.rows,
-          config
-        });
-        if (!gate.ok) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_EDIT', message: gate.error }));
-          return;
-        }
-
-        const end_time = computeMatchEndTime(start_time, config.match_duration_minutes);
         await editClient.query(
-          `UPDATE tournament_matches SET start_time = $1, end_time = $2 WHERE id = $3`,
-          [start_time, end_time, matchId]
+          `UPDATE tournament_matches 
+           SET start_time = $1, end_time = $2, map = $3, id_pwd_release_time = $4, match_number = $5, status = $6
+           WHERE id = $7`,
+          [start_time, end_time, map, id_pwd_release_time, match_number, status, matchId]
         );
         await editClient.query('COMMIT');
         editTxnOpen = false;
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, match: { ...match, start_time, end_time } }));
+        res.end(JSON.stringify({
+          success: true,
+          match: { ...match, start_time, end_time, map, id_pwd_release_time, match_number, status }
+        }));
       } catch (err) {
         if (editClient && editTxnOpen) await editClient.query('ROLLBACK').catch(() => {});
         editTxnOpen = false;

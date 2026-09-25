@@ -13,13 +13,12 @@ import Step3Slots from './steps/Step3Slots'
 import Step4PrizePool from './steps/Step4PrizePool'
 import Step5Media from './steps/Step5Media'
 import Step6Schedule from './steps/Step6Schedule'
-import Step7RoadmapImage from './steps/Step7RoadmapImage'
 import Step7Rules from './steps/Step7Rules'
 import Step8Preview from './steps/Step8Preview'
 import Step9Publish from './steps/Step9Publish'
 import { buildPlanningConfigPayload, DEFAULT_ROADMAP_PLANNING, deriveTournamentPlanningConfig } from './planningConfigModel'
 
-const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 const LS_KEY = 'md_tournament_draft'
 
 function emptyForm() {
@@ -51,39 +50,13 @@ function emptyForm() {
     registrationOpenDate: '',
     registrationCloseDate: '',
     startDate: '',
-    roadmap: [],
     sponsors: [],
     rules: '',
     teams_per_group: '',
-    roadmap_image_url: '',
     unique_amount_suffix_enabled: false,
     card_color: 'white',
-    rounds_published: true,
     planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
   }
-}
-
-function roundOrderingErrors(data) {
-  const errs = {}
-  const closeTs = data.registrationCloseDate ? new Date(data.registrationCloseDate).getTime() : null
-  data.roadmap.forEach((r, i) => {
-    if (!r.date || !r.time) return
-    const rTs = new Date(r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`).getTime()
-    if (isNaN(rTs)) return
-    if (i === 0 && closeTs && rTs <= closeTs) {
-      errs.startDate = 'Round 1 must start after registration closes.'
-    }
-    if (i > 0) {
-      const prev = data.roadmap[i - 1]
-      if (prev.date && prev.time) {
-        const prevTs = new Date(`${prev.date}T${prev.time}`).getTime()
-        if (!isNaN(prevTs) && rTs <= prevTs) {
-          errs.roadmap = `Round ${i + 1} must start after Round ${i}.`
-        }
-      }
-    }
-  })
-  return errs
 }
 
 function validateStep(step, data, planLimits, orgName, userTier, userRole) {
@@ -154,21 +127,11 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       }
       break
     }
-    case 7: {
-      const hasImage = !!data.roadmap_image_url
-      const hasRounds = !!data.roadmap && data.roadmap.length > 0
-      if (data.rounds_published !== false && !hasRounds && !hasImage) {
-        errs.roadmap = 'Add a roadmap image or at least one round before publishing rounds.'
-      } else {
-        if (hasRounds && data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
-      }
+    case 7:
       break
-    }
     case 8:
       break
-    case 9:
-      break
-    case 10: {
+    case 9: {
       if (!isSystemAdmin({ role: userRole }) && (!orgName || orgName === 'Match District Organizer')) {
         errs.publish = 'Organization profile required. Please create your organization profile before publishing tournaments.'
       }
@@ -180,11 +143,6 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       if (!data.registrationCloseDate) errs.registrationCloseDate = 'Registration close date is required.'
       else if (data.registrationOpenDate && new Date(data.registrationCloseDate) <= new Date(data.registrationOpenDate)) {
         errs.registrationCloseDate = 'Registration close must be after registration opens.'
-      }
-      if (!data.roadmap || data.roadmap.length === 0) {
-        if (data.rounds_published !== false && !data.roadmap_image_url) errs.roadmap = 'Add a roadmap image or at least one round before publishing rounds.'
-      } else {
-        if (data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
       }
       if (!data.cover_image_url) errs.cover_image_url = 'Cover image required. Please upload a banner in the Media step.'
       if (!data.slotsTotal || parseInt(data.slotsTotal) < 2) errs.slotsTotal = 'Minimum 2 slots required.'
@@ -296,12 +254,6 @@ export default function CreationWizard() {
       const json = await res.json()
       if (json.success && json.tournament) {
         const t = json.tournament
-        let roadmap = []
-        try {
-          const timeline = typeof t.timeline === 'string' ? JSON.parse(t.timeline) : t.timeline
-          roadmap = timeline?.roadmap || timeline || []
-          if (!Array.isArray(roadmap)) roadmap = []
-        } catch { roadmap = [] }
         setFormData({
           title: t.title || '',
           game: t.game || '',
@@ -326,14 +278,11 @@ export default function CreationWizard() {
           registrationOpenDate: t.registrationOpenDate || '',
           registrationCloseDate: t.registrationCloseDate || '',
           startDate: t.startDate || '',
-          roadmap,
           sponsors: Array.isArray(t.sponsors_data) ? t.sponsors_data : (typeof t.sponsors_data === 'string' ? (() => { try { return JSON.parse(t.sponsors_data) } catch { return [] } })() : []),
           rules: t.rules || '',
           teams_per_group: t.teams_per_group ? String(t.teams_per_group) : '',
-          roadmap_image_url: t.roadmap_image_url || '',
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
           card_color: t.card_color || 'white',
-          rounds_published: t.rounds_published !== false && t.rounds_published !== 'false',
           planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
         })
         setDraftId(id)
@@ -397,12 +346,7 @@ export default function CreationWizard() {
       const rawPlacementPool = parseInt(formData.availablePlacementPool) || 0
       const netPrizePool = rawPlacementPool > 0 ? rawPlacementPool + sponsorContribs : finalPrizePool
 
-const firstRound = (formData.roadmap || [])[0]
-  const derivedStartDate = (firstRound?.date && firstRound?.time)
-    ? `${firstRound.date}T${firstRound.time}`
-    : formData.startDate || ''
-
-      const body = {
+const body = {
         title: formData.title,
         game: formData.game,
         isDraft,
@@ -415,10 +359,9 @@ const firstRound = (formData.roadmap || [])[0]
         featured: false,
         prize: netPrizePool > 0 ? `₹${netPrizePool.toLocaleString('en-IN')}` : 'TBD',
         entry: formData.entry_fee_amount ? `₹${parseInt(formData.entry_fee_amount)}` : 'Free',
-        timeline: JSON.stringify({ roadmap: formData.roadmap || [] }),
         registrationOpenDate: formData.registrationOpenDate || '',
         registrationCloseDate: formData.registrationCloseDate || '',
-        startDate: derivedStartDate,
+        startDate: formData.startDate || '',
         match_type: formData.match_type || 'squad',
         perspective: formData.perspective || 'tpp',
         reserved_slots: parseInt(formData.reserved_slots) || 0,
@@ -441,10 +384,8 @@ const firstRound = (formData.roadmap || [])[0]
         rules: formData.rules || '',
         teams_per_group: formData.teams_per_group ? parseInt(formData.teams_per_group) : null,
         max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
-        roadmap_image_url: formData.roadmap_image_url || '',
         unique_amount_suffix_enabled: formData.unique_amount_suffix_enabled || false,
         card_color: formData.card_color || 'white',
-        rounds_published: formData.rounds_published !== false,
       }
 
       // Use pre-uploaded Cloudinary URL from Step9Publish if provided
@@ -550,7 +491,7 @@ const firstRound = (formData.roadmap || [])[0]
   }, [])
 
   const hasFormData = useMemo(() => {
-    return !!(formData.title || formData.game || formData.description || formData.cover_image_url || (formData.roadmap && formData.roadmap.length > 0))
+    return !!(formData.title || formData.game || formData.description || formData.cover_image_url)
   }, [formData])
 
   const handleWizardBack = useCallback(() => {
@@ -712,10 +653,9 @@ const firstRound = (formData.roadmap || [])[0]
       case 4: return <Step4PrizePool {...props} />
       case 5: return <Step5Media {...props} />
       case 6: return <Step6Schedule {...props} />
-      case 7: return <Step7RoadmapImage {...props} onSavePlanningConfig={handleSavePlanningConfig} planningConfigStatus={formData.planningConfig?.config_status} />
-      case 8: return <Step7Rules {...props} />
-      case 9: return <Step8Preview {...props} />
-      case 10: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} isEditMode={isEditMode} />
+      case 7: return <Step7Rules {...props} />
+      case 8: return <Step8Preview {...props} />
+      case 9: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} isEditMode={isEditMode} />
       default: return null
     }
   }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError, handleSavePlanningConfig])

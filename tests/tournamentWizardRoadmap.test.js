@@ -9,29 +9,32 @@ import {
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
 
-test('wizard ends at Publish with ten steps and no standalone planning step', async () => {
+test('wizard ends at Publish with nine steps and no roadmap step', async () => {
   const [wizard, indicator] = await Promise.all([
     read('../src/components/tournament-creation/CreationWizard.jsx'),
     read('../src/components/tournament-creation/StepIndicator.jsx'),
   ])
-  assert.match(wizard, /const STEPS = \[1, 2, 3, 4, 5, 6, 7, 8, 9, 10\]/)
-  assert.doesNotMatch(wizard, /case 11\s*:/)
-  assert.match(wizard, /case 10: return <Step9Publish/)
-  assert.doesNotMatch(indicator, /Planning Config|num:\s*11/)
+  assert.match(wizard, /const STEPS = \[1, 2, 3, 4, 5, 6, 7, 8, 9\]/)
+  assert.doesNotMatch(wizard, /case 10\s*:/)
+  assert.match(wizard, /case 9: return <Step9Publish/)
+  assert.match(wizard, /case 7: return <Step7Rules/)
+  assert.doesNotMatch(indicator, /Planning Config|Roadmap|num:\s*11/)
 });
 
-test('Roadmap step owns operational planning controls and round progression', async () => {
-  const [step, planning] = await Promise.all([
-    read('../src/components/tournament-creation/steps/Step7Roadmap.jsx'),
-    read('../src/components/tournament-creation/steps/RoadmapPlanningConfig.jsx'),
+test('wizard never references roadmap authoring, schedule views, or rounds_published', async () => {
+  const [wizard, preview] = await Promise.all([
+    read('../src/components/tournament-creation/CreationWizard.jsx'),
+    read('../src/components/tournament-creation/steps/Step8Preview.jsx'),
   ])
-  assert.match(step, /<RoadmapPlanningConfig/)
-  assert.match(step, /Round Progression/)
-  assert.match(planning, /Capacity/)
-  assert.match(planning, /Players \/ team/)
-  assert.match(planning, /Teams per group/)
-  assert.match(planning, /requiredRoomCount\(capacity, teamsPerGroup\)/)
-  assert.doesNotMatch(planning, />\s*(Expected Teams|Maximum Teams|Players Per Team)\s*</)
+  assert.doesNotMatch(wizard, /Step7Roadmap/)
+  assert.doesNotMatch(wizard, /Step7RoadmapImage/)
+  assert.doesNotMatch(wizard, /RoadmapScheduleEditor/)
+  assert.doesNotMatch(wizard, /roadmap_image_url/)
+  assert.doesNotMatch(wizard, /rounds_published/)
+  assert.doesNotMatch(wizard, /roundOrderingErrors/)
+  assert.doesNotMatch(preview, /const rounds = data\.roadmap/)
+  const roadmapFileExists = await import('node:fs').then(fs => fs.existsSync(new URL('../src/components/tournament-creation/steps/Step7Roadmap.jsx', import.meta.url)))
+  assert.equal(roadmapFileExists, false)
 });
 
 test('capacity and roster size derive from Slots & Entry and Match Setup', () => {

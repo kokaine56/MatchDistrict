@@ -2,21 +2,12 @@
 import { useCallback } from 'react'
 import { motion } from 'framer-motion'
 
-function getRoundTs(r) {
-  if (!r.date) return null
-  const s = r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`
-  return new Date(s).getTime()
-}
-
-// Kept for backward compatibility: previously this step combined the
-// registration window and round progression. Schedule is now its own step and
-// round authoring lives in Step7Roadmap, but any existing caller of
-// validateStep6 still receives the same keys.
+// Kept for backward compatibility: Schedule captures only the registration
+// window. Round/roadmap authoring is done in Tournament Management, not here.
 export const validateStep6 = (data) => {
   if (!data) return { regOpen: 'Form data is not available' }
   const errors = {}
-  const { registrationOpenDate, registrationCloseDate, roadmap } = data
-  const roundsPublishing = data.rounds_published !== false
+  const { registrationOpenDate, registrationCloseDate } = data
 
   if (!registrationOpenDate) errors.regOpen = 'Registration open date is required'
   if (!registrationCloseDate) errors.regClose = 'Registration close date is required'
@@ -24,41 +15,6 @@ export const validateStep6 = (data) => {
     if (new Date(registrationCloseDate).getTime() <= new Date(registrationOpenDate).getTime()) {
       errors.regClose = 'Registration close must be after registration open'
     }
-  }
-
-  if (!roadmap || roadmap.length === 0) {
-    if (roundsPublishing) errors.roadmap = 'At least one round is required'
-  } else if (roundsPublishing) {
-    const roundErrors = []
-    roadmap.forEach((r, i) => {
-      const err = {}
-      if (!r.date) err.date = 'Date required'
-      if (!r.time) err.time = 'Time required'
-      if (!r.name) err.name = 'Round name required'
-      if (!r.map) err.map = 'Map required'
-      if (!r.qualified && r.qualified !== 0) err.qualified = 'Teams advancing required'
-
-      if (r.date && r.time && registrationCloseDate) {
-        const rTs = getRoundTs(r)
-        const closeTs = new Date(registrationCloseDate).getTime()
-        if (rTs && rTs <= closeTs) err.date = 'Round start must be after registration close'
-      }
-
-      if (i > 0) {
-        const prev = roadmap[i - 1]
-        if (r.date && r.time && prev.date && prev.time) {
-          if (getRoundTs(r) <= getRoundTs(prev)) err.date = 'Must be after previous round'
-        }
-      }
-
-      if (r.qualified && !['','0'].includes(String(r.qualified)) && roadmap.length > i + 1) {
-        const remaining = roadmap.slice(i + 1).some(pr => !pr.date || !pr.time)
-        if (remaining) err.qualified = 'Set dates/times for remaining rounds first'
-      }
-
-      roundErrors.push(Object.keys(err).length > 0 ? err : null)
-    })
-    errors.rounds = roundErrors
   }
 
   return errors

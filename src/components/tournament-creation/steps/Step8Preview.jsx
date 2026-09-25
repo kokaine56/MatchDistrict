@@ -39,7 +39,6 @@ export default function Step8Preview({ data, orgName, orgTier }) {
   const isFullyAllocated = totalAllocatedPct === 100 && availablePlacementPool >= 0
 
   const availableSlots = Math.max(0, totalSlots - (parseInt(data.reserved_slots) || 0))
-  const rounds = data.roadmap || []
 
   const matchLabel = data.match_type === 'solo' ? 'Solo'
     : data.match_type === 'duo' ? 'Duo' : 'Squad'
@@ -177,24 +176,6 @@ export default function Step8Preview({ data, orgName, orgTier }) {
             <DetailRow label="Registration Closes" value={data.registrationCloseDate ? formatDateTime(data.registrationCloseDate) : '—'} />
             <DetailRow label="Match Starts" value={data.startDate ? formatDateTime(data.startDate) : '—'} />
           </div>
-
-          {rounds.length > 0 && (
-            <div className="pt-2 border-t border-outline-variant/20">
-              <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">Roadmap</h4>
-              <div className="space-y-1">
-                {rounds.map((r, idx) => (
-                  <div key={r.id || idx} className="flex items-center gap-2 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-primary/60" />
-                    <span className="text-on-background font-medium">{r.name || `Round ${idx + 1}`}</span>
-                    {r.date && <span className="text-on-surface-variant text-xs">{r.date}</span>}
-                    {r.time && <span className="text-on-surface-variant text-xs">{formatTime12hIST(r.time)}</span>}
-                    {r.qualified && <span className="text-on-surface-variant text-xs">• {r.qualified} teams</span>}
-                    {idx < rounds.length - 1 && <span className="text-on-surface-variant ml-auto">↓</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </motion.div>

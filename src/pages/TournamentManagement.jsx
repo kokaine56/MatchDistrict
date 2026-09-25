@@ -681,9 +681,9 @@ export default function TournamentManagement({ onNavigate }) {
                                         )}
                                         {t.status !== 'archived' && t.status !== 'completed' && (
                                           <>
+                                            <MenuButton icon="map" label="Roadmap" onClick={() => { setMenuOpenId(null); handleAction('roadmap', t) }} />
                                             <MenuButton icon="calendar" label="Roadmap Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
                                             <MenuButton icon="clipboard" label="View Planning Result" onClick={() => { setMenuOpenId(null); handleAction('planning-result', t) }} />
-                                            <MenuButton icon="map" label="View Roadmap" onClick={() => { setMenuOpenId(null); handleAction('roadmap', t) }} />
                                             <MenuButton icon="calendar" label="Allocation Management" onClick={() => { setMenuOpenId(null); handleAction('allocations', t) }} />
                                           </>
                                         )}

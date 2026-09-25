@@ -19,7 +19,7 @@ import GroupSlotGrid from '../components/GroupSlotGrid.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
-import Phase3RoadmapViewer from '../components/Phase3RoadmapViewer.jsx';
+import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder.jsx';
 import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
 import { isSystemAdmin } from '../utils/iamRoles.js';
 
@@ -218,14 +218,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     } catch (_) {}
   }, [tournamentId]);
 
-  useEffect(() => {
-    fetchRegistrations();
-    fetchSlots();
-  }, [fetchRegistrations, fetchSlots]);
-
-  useRefetchOnFocus(fetchRegistrations, !!tournamentId);
-  useRefetchOnFocus(fetchSlots, !!tournamentId);
-
   const [tournamentsList, setTournamentsList] = useState([]);
   const [tournamentRow, setTournamentRow] = useState(null);
   const [isTournamentsLoading, setIsTournamentsLoading] = useState(true);
@@ -254,8 +246,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useEffect(() => { loadTournament(); }, [loadTournament]);
   useEffect(() => { loadTournamentsList(); }, [loadTournamentsList]);
 
+  useEffect(() => {
+    fetchRegistrations();
+    fetchSlots();
+  }, [fetchRegistrations, fetchSlots]);
+
   useRefetchOnFocus(loadTournament, !!tournamentId);
   useRefetchOnFocus(loadTournamentsList);
+  useRefetchOnFocus(fetchRegistrations, !!tournamentId);
 
   // Fetch approved sponsor data for public wall
   const fetchSponsors = useCallback(async () => {
@@ -1669,40 +1667,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               )
             )}
             {activeTab === 'roadmap' && (
-              <>
-                {tourney?.roadmap_image_url ? (
-                  <div className="w-full">
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Roadmap</span>
-                    </div>
-                    <div className={`overflow-hidden rounded-2xl border ${
-                      isGoldTheme ? 'border-[#D4A017]/35' : 'border-slate-200'
-                    } shadow-sm`}>
-                      <img
-                        src={tourney.roadmap_image_url}
-                        alt="Tournament roadmap"
-                        className="w-full h-auto object-contain bg-white"
-                        loading="lazy"
-                      />
-                    </div>
-                  </div>
-                ) : null}
-                {tourney?.roadmap_status === 'approved' || isTournamentOwner ? (
-                  <div className="w-full mt-4">
-                    <Phase3RoadmapViewer tournamentId={tourney.id} />
-                  </div>
-                ) : (
-                  <div className="w-full mt-4">
-                    <TournamentRoadmap
-                      roadmap={parsedTimeline.roadmap}
-                      isGoldTheme={isGoldTheme}
-                      roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
-                      isOwner={isTournamentOwner}
-                      onSaveCredentials={handleSaveRoundCredentials}
-                    />
-                  </div>
-                )}
-              </>
+              <div className="w-full">
+                <TournamentRoadmapBuilder
+                  tournamentId={tourney?.id}
+                  tournamentTitle={tourney?.title}
+                  isOrganizer={isTournamentOwner}
+                />
+              </div>
             )}
             {activeTab === 'my_team' && currentUser && (
               <TournamentTeamHub
