@@ -13,7 +13,7 @@ import Step3Slots from './steps/Step3Slots'
 import Step4PrizePool from './steps/Step4PrizePool'
 import Step5Media from './steps/Step5Media'
 import Step6Schedule from './steps/Step6Schedule'
-import Step7Roadmap from './steps/Step7Roadmap'
+import Step7RoadmapImage from './steps/Step7RoadmapImage'
 import Step7Rules from './steps/Step7Rules'
 import Step8Preview from './steps/Step8Preview'
 import Step9Publish from './steps/Step9Publish'
@@ -54,7 +54,8 @@ function emptyForm() {
     roadmap: [],
     sponsors: [],
     rules: '',
-    max_slots_per_room: '',
+    teams_per_group: '',
+    roadmap_image_url: '',
     unique_amount_suffix_enabled: false,
     card_color: 'white',
     rounds_published: true,
@@ -154,10 +155,12 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       break
     }
     case 7: {
-      if (!data.roadmap || data.roadmap.length === 0) {
-        if (data.rounds_published !== false) errs.roadmap = 'At least one round is required.'
+      const hasImage = !!data.roadmap_image_url
+      const hasRounds = !!data.roadmap && data.roadmap.length > 0
+      if (data.rounds_published !== false && !hasRounds && !hasImage) {
+        errs.roadmap = 'Add a roadmap image or at least one round before publishing rounds.'
       } else {
-        if (data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
+        if (hasRounds && data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
       }
       break
     }
@@ -179,7 +182,7 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
         errs.registrationCloseDate = 'Registration close must be after registration opens.'
       }
       if (!data.roadmap || data.roadmap.length === 0) {
-        if (data.rounds_published !== false) errs.roadmap = 'At least one round is required.'
+        if (data.rounds_published !== false && !data.roadmap_image_url) errs.roadmap = 'Add a roadmap image or at least one round before publishing rounds.'
       } else {
         if (data.rounds_published !== false) Object.assign(errs, roundOrderingErrors(data))
       }
@@ -326,7 +329,8 @@ export default function CreationWizard() {
           roadmap,
           sponsors: Array.isArray(t.sponsors_data) ? t.sponsors_data : (typeof t.sponsors_data === 'string' ? (() => { try { return JSON.parse(t.sponsors_data) } catch { return [] } })() : []),
           rules: t.rules || '',
-          max_slots_per_room: t.max_slots_per_room ? String(t.max_slots_per_room) : '',
+          teams_per_group: t.teams_per_group ? String(t.teams_per_group) : '',
+          roadmap_image_url: t.roadmap_image_url || '',
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
           card_color: t.card_color || 'white',
           rounds_published: t.rounds_published !== false && t.rounds_published !== 'false',
@@ -393,10 +397,10 @@ export default function CreationWizard() {
       const rawPlacementPool = parseInt(formData.availablePlacementPool) || 0
       const netPrizePool = rawPlacementPool > 0 ? rawPlacementPool + sponsorContribs : finalPrizePool
 
-      const firstRound = (formData.roadmap || [])[0]
-      const derivedStartDate = (firstRound?.date && firstRound?.time)
-        ? `${firstRound.date}T${firstRound.time}`
-        : formData.startDate || ''
+const firstRound = (formData.roadmap || [])[0]
+  const derivedStartDate = (firstRound?.date && firstRound?.time)
+    ? `${firstRound.date}T${firstRound.time}`
+    : formData.startDate || ''
 
       const body = {
         title: formData.title,
@@ -435,7 +439,9 @@ export default function CreationWizard() {
         slotsTotal: parseInt(formData.slotsTotal) || 100,
         sponsors_enabled: formData.sponsors_enabled ?? false,
         rules: formData.rules || '',
+        teams_per_group: formData.teams_per_group ? parseInt(formData.teams_per_group) : null,
         max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
+        roadmap_image_url: formData.roadmap_image_url || '',
         unique_amount_suffix_enabled: formData.unique_amount_suffix_enabled || false,
         card_color: formData.card_color || 'white',
         rounds_published: formData.rounds_published !== false,
@@ -706,7 +712,7 @@ export default function CreationWizard() {
       case 4: return <Step4PrizePool {...props} />
       case 5: return <Step5Media {...props} />
       case 6: return <Step6Schedule {...props} />
-      case 7: return <Step7Roadmap {...props} onSavePlanningConfig={handleSavePlanningConfig} planningConfigStatus={formData.planningConfig?.config_status} />
+      case 7: return <Step7RoadmapImage {...props} onSavePlanningConfig={handleSavePlanningConfig} planningConfigStatus={formData.planningConfig?.config_status} />
       case 8: return <Step7Rules {...props} />
       case 9: return <Step8Preview {...props} />
       case 10: return <Step9Publish {...props} isSubmitting={isSubmitting} uploadingMedia={uploadingMedia} onPublishStep9={handlePublishStep9} publishError={publishError} isEditMode={isEditMode} />

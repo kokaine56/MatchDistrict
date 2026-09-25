@@ -1,25 +1,28 @@
 import { motion } from 'framer-motion'
 import SlotCalculator from '../SlotCalculator'
 import { OptimizedInput } from '../../OptimizedInput'
+import { computeGroupCount, buildGroups } from '../../../utils/groupUtils'
 
 const PLAN_MAX_SLOTS = { Free: 100, Basic: 300, Pro: 1000 }
-const ROOM_MAX_SLOTS = { solo: 100, duo: 50, squad: 25 }
+const DEFAULT_TEAMS_PER_GROUP = 16
 
 export default function Step3Slots({ data, onChange, errors, planLimits, userTier, onNavigateToSubscription }) {
   const tier = userTier || 'Free'
   const maxSlots = planLimits?.maxSlots || PLAN_MAX_SLOTS[tier] || 100
 
-  const matchType = data.match_type || 'squad'
-  const roomMax = ROOM_MAX_SLOTS[matchType] || 25
-
   const enteredSlots = parseInt(data.slotsTotal) || 0
   const slotsExceedPlan = enteredSlots > maxSlots
 
-  const roomError = (() => {
-    const v = data.max_slots_per_room
+  const teamsPerGroup = parseInt(data.teams_per_group) || DEFAULT_TEAMS_PER_GROUP
+  const groupLayout = buildGroups(enteredSlots > 0 ? enteredSlots : maxSlots, teamsPerGroup)
+  const groupCount = computeGroupCount(enteredSlots > 0 ? enteredSlots : maxSlots, teamsPerGroup)
+
+  const groupError = (() => {
+    const v = data.teams_per_group
     if (!v) return ''
     const n = parseInt(v)
-    if (n > roomMax) return `${matchType.charAt(0).toUpperCase() + matchType.slice(1)} tournaments allow at most ${roomMax} slots per room.`
+    if (n <= 0) return 'Teams per group must be at least 1.'
+    if (n > enteredSlots && enteredSlots > 0) return 'Teams per group cannot exceed total slots.'
     return ''
   })()
 
@@ -36,9 +39,9 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
     }
   }
 
-  const handleRoomChange = (v) => {
-    if (v === '' || (parseInt(v) > 0 && parseInt(v) <= roomMax)) {
-      onChange({ ...data, max_slots_per_room: v })
+  const handleGroupChange = (v) => {
+    if (v === '' || (parseInt(v) > 0 && parseInt(v) <= (enteredSlots || maxSlots))) {
+      onChange({ ...data, teams_per_group: v })
     }
   }
 
@@ -115,54 +118,59 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
 
       <SlotCalculator total={data.slotsTotal} reserved={data.reserved_slots} />
 
-      {/* Room Configuration */}
+      {/* Group Configuration */}
       <div className="pt-4 border-t border-slate-100 dark:border-outline-variant/20">
         <div className="flex items-center gap-2 mb-3">
           <svg className="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-            <path d="M8 21h8" /><path d="M12 17v4" />
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
-          <h3 className="text-sm font-bold text-on-background">Room Configuration</h3>
+          <h3 className="text-sm font-bold text-on-background">Group Configuration</h3>
         </div>
 
         <p className="text-xs text-on-surface-variant mb-3">
-          Optionally split slots across multiple game lobbies.
-          Leave blank to use the match type's default maximum per room.
+          Automatically split the lobby into lettered groups (Group A, B, C ...) for organized matches.
         </p>
 
         <div className="space-y-2">
           <label className="block text-sm font-medium text-on-surface-variant">
-            Max Slots Per Room <span className="text-on-surface-variant/50">(optional)</span>
+            Teams Per Group <span className="text-on-surface-variant/50">(optional)</span>
           </label>
           <OptimizedInput
             type="number"
             min={1}
-            max={roomMax}
-            value={data.max_slots_per_room || ''}
-            onChange={handleRoomChange}
-            placeholder="e.g. 16"
+            max={enteredSlots || maxSlots}
+            value={data.teams_per_group || ''}
+            onChange={handleGroupChange}
+            placeholder={`e.g. ${DEFAULT_TEAMS_PER_GROUP}`}
             className={`w-full px-4 py-3 rounded-xl bg-surface-container border ${
-              roomError ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
+              groupError ? 'border-error/60' : 'border-slate-200 dark:border-outline-variant/30'
             } text-on-background text-sm placeholder-on-surface-variant focus:outline-none focus:border-primary/40 transition-colors`}
           />
           <div className="flex items-center justify-between mt-1">
             <span className="text-xs text-on-surface-variant">
-              <strong className="text-on-background capitalize">{matchType}</strong>
-              {' '}— max <strong>{roomMax}</strong> per room
+              {groupCount > 0 ? (
+                <><strong className="text-on-background">{groupCount}</strong> group{groupCount > 1 ? 's' : ''} needed</>
+              ) : (
+                'Enter total slots to preview groups'
+              )}
             </span>
-            {data.max_slots_per_room && parseInt(data.max_slots_per_room) > 0 && data.slotsTotal && (
-              <span className="text-xs text-on-surface-variant">
-                {Math.ceil(parseInt(data.slotsTotal) / parseInt(data.max_slots_per_room))} room{Math.ceil(parseInt(data.slotsTotal) / parseInt(data.max_slots_per_room)) > 1 ? 's' : ''} needed
+            {groupLayout.length > 0 && (
+              <span className="text-xs text-on-surface-variant max-w-[60%] text-right truncate" title={groupLayout.map(g => `Group ${g.name} · ${g.capacity}`).join(', ')}>
+                {groupLayout.slice(0, 4).map(g => `Group ${g.name} (${g.capacity})`).join(' · ')}
+                {groupLayout.length > 4 ? ' …' : ''}
               </span>
             )}
           </div>
-          {roomError && <p className="text-xs" style={{ color: '#ef4444' }}>{roomError}</p>}
+          {groupError && <p className="text-xs" style={{ color: '#ef4444' }}>{groupError}</p>}
           <div className="mt-2 flex items-start gap-2 p-3 rounded-md bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40">
             <svg className="w-4 h-4 mt-0.5 shrink-0 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
             <p className="text-xs text-indigo-700 dark:text-indigo-300">
-              Maximum {roomMax} slots per room for {matchType} format. Additional rooms are created automatically as needed.
+              Leave blank to use the default of {DEFAULT_TEAMS_PER_GROUP} teams per group. Registered teams are assigned to groups automatically once confirmed.
             </p>
           </div>
         </div>

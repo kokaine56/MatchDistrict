@@ -25,6 +25,7 @@ import { finalizeTournament, TournamentFinalizationError } from './server/tourna
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
+import { buildGroups, normalizeTeamsPerGroup, validateGroupConfig, computeGroupCount, generateGroupName, assignGroups, predictedGroupFor, groupForGlobalSlot, groupLabelForSlot } from './server/groupService.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -506,6 +507,8 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS card_color VARCHAR(50) DEFAULT 'white';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rounds_published BOOLEAN DEFAULT true;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_per_group INTEGER DEFAULT 16;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS roadmap_image_url TEXT DEFAULT '';
       `);
       console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
     } catch (alterErr) {
@@ -549,10 +552,35 @@ async function initDb() {
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
         ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_id VARCHAR(50);
+        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_name VARCHAR(50);
       `);
       console.log('📦 [MATCH DISTRICT DB] tournament_registrations payment columns verified.');
     } catch (alterRegErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournament_registrations:', alterRegErr.message);
+    }
+
+    // CREATE tournament_registration_groups table for group-based slot layout
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_registration_groups (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL,
+          group_index INTEGER NOT NULL,
+          name VARCHAR(5) NOT NULL,
+          capacity INTEGER NOT NULL DEFAULT 16,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE (tournament_id, group_index)
+        );
+      `);
+      await client.query(`
+        ALTER TABLE tournament_registration_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+        CREATE INDEX IF NOT EXISTS idx_registration_groups_tournament ON tournament_registration_groups(tournament_id);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] tournament_registration_groups table ensured.');
+    } catch (groupsErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_registration_groups:', groupsErr.message);
     }
 
     // CREATE registration_sessions table for temporary form data
@@ -4203,6 +4231,7 @@ const server = http.createServer(async (req, res) => {
           const ceilings = { solo: 100, duo: 50, squad: 25 };
           const ceiling = ceilings[adminMatchType] || 25;
           const adminSlotsTotal = slotsTotal < 2 ? 100 : slotsTotal;
+          const adminTeamsPerGroup = normalizeTeamsPerGroup(t.teams_per_group, 16);
           let maxSlotsPerRoom = t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== ''
             ? parseInt(t.max_slots_per_room) : ceiling;
           if (maxSlotsPerRoom > ceiling) maxSlotsPerRoom = ceiling;
@@ -4228,10 +4257,10 @@ const server = http.createServer(async (req, res) => {
               match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
               prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url,
               lobby_start_time, mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions,
-              sponsors_enabled, max_slots_per_room, card_color, rounds_published
+              sponsors_enabled, max_slots_per_room, card_color, rounds_published, teams_per_group, roadmap_image_url
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
               $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56)
+              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58)
             RETURNING *`,
             [
               tournamentId, t.title, t.game, 'live', 'bg-primary', 'LIVE', now.toISOString(),
@@ -4249,7 +4278,8 @@ const server = http.createServer(async (req, res) => {
               t.mvp_enabled || false, t.mvp_amount ? parseInt(t.mvp_amount) : 0,
               t.kill_reward_enabled || false, t.kill_reward_per_kill ? parseInt(t.kill_reward_per_kill) : 0,
               t.prize_positions || '[]', t.sponsors_enabled || false, maxSlotsPerRoom,
-              t.card_color || 'white', coerceBool(t.rounds_published, true)
+              t.card_color || 'white', coerceBool(t.rounds_published, true),
+              adminTeamsPerGroup, sanitizeImageUrlForDb(t.roadmap_image_url) || ''
             ]
           );
           const createdTournament = dbRes.rows[0];
@@ -4345,6 +4375,15 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Validate teams-per-group config for the group-based layout
+        const orgTeamsPerGroup = normalizeTeamsPerGroup(t.teams_per_group, 16);
+        const groupValidation = validateGroupConfig(slotsTotal, orgTeamsPerGroup);
+        if (!groupValidation.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: groupValidation.error, message: 'Teams per group must be a positive number that does not exceed total slots.' }));
+          return;
+        }
+
         const dbRes = await pool.query(
           `INSERT INTO tournaments (
             id, title, game, status, "badgeBg", "badgeText", date, prize, entry, "teamsCount", featured, "orgName",
@@ -4354,9 +4393,9 @@ const server = http.createServer(async (req, res) => {
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
             mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room,
-            unique_amount_suffix_enabled, card_color, rounds_published
+            unique_amount_suffix_enabled, card_color, rounds_published, teams_per_group, roadmap_image_url
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -4377,7 +4416,9 @@ const server = http.createServer(async (req, res) => {
             max_slots_per_room = COALESCE(EXCLUDED.max_slots_per_room, tournaments.max_slots_per_room),
             unique_amount_suffix_enabled = COALESCE(EXCLUDED.unique_amount_suffix_enabled, tournaments.unique_amount_suffix_enabled),
             card_color = COALESCE(EXCLUDED.card_color, tournaments.card_color),
-            rounds_published = COALESCE(EXCLUDED.rounds_published, tournaments.rounds_published)
+            rounds_published = COALESCE(EXCLUDED.rounds_published, tournaments.rounds_published),
+            teams_per_group = COALESCE(EXCLUDED.teams_per_group, tournaments.teams_per_group),
+            roadmap_image_url = COALESCE(EXCLUDED.roadmap_image_url, tournaments.roadmap_image_url)
           RETURNING *`,
           [
             t.id || `TRN-${Date.now().toString(36).slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -4436,7 +4477,9 @@ const server = http.createServer(async (req, res) => {
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
             t.unique_amount_suffix_enabled || false,
             t.card_color || 'white',
-            coerceBool(t.rounds_published, true)
+            coerceBool(t.rounds_published, true),
+            orgTeamsPerGroup,
+            sanitizeImageUrlForDb(t.roadmap_image_url) || ''
           ]
         );
         console.log(`\n📦 [MATCH DISTRICT DB] Tournament "${t.id}" created in Supabase PostgreSQL.\n`);
@@ -4790,8 +4833,10 @@ const server = http.createServer(async (req, res) => {
               max_slots_per_room = COALESCE($48, max_slots_per_room),
               unique_amount_suffix_enabled = COALESCE($49, unique_amount_suffix_enabled),
               card_color = COALESCE($50, card_color),
-              rounds_published = COALESCE($51, rounds_published)
-            WHERE id = $52 RETURNING *`,
+              rounds_published = COALESCE($51, rounds_published),
+              teams_per_group = COALESCE($52, teams_per_group),
+              roadmap_image_url = COALESCE($53, roadmap_image_url)
+            WHERE id = $54 RETURNING *`,
             [
               t.title || null,
               t.game || null,
@@ -4844,6 +4889,8 @@ const server = http.createServer(async (req, res) => {
               t.unique_amount_suffix_enabled !== undefined ? !!t.unique_amount_suffix_enabled : null,
               t.card_color || null,
               t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null,
+              t.teams_per_group !== undefined ? normalizeTeamsPerGroup(t.teams_per_group, 16) : null,
+              t.roadmap_image_url !== undefined ? sanitizeImageUrlForDb(t.roadmap_image_url) : null,
               id
             ]
             );
@@ -4980,6 +5027,42 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Group-config validation + lock-guard: once teams are confirmed, the
+        // slot layout and teams-per-group are immutable (never silently move
+        // or re-group already-confirmed teams).
+        const newTpgRaw = t.teams_per_group !== undefined && t.teams_per_group !== null && t.teams_per_group !== ''
+          ? normalizeTeamsPerGroup(t.teams_per_group, 16)
+          : normalizeTeamsPerGroup(existing.teams_per_group, 16);
+        const newTotalRaw = t.slotsTotal !== undefined ? parseInt(t.slotsTotal) : parseInt(existing.slotsTotal) || 100;
+        const groupValidation = validateGroupConfig(newTotalRaw, newTpgRaw);
+        if (!groupValidation.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: groupValidation.error, message: 'Teams per group must be a positive number that does not exceed total slots.' }));
+          return;
+        }
+        const configChanged =
+          (t.slotsTotal !== undefined && parseInt(t.slotsTotal) !== parseInt(existing.slotsTotal)) ||
+          (t.teams_per_group !== undefined && t.teams_per_group !== null && t.teams_per_group !== '' &&
+            normalizeTeamsPerGroup(t.teams_per_group, 16) !== normalizeTeamsPerGroup(existing.teams_per_group, 16));
+        if (configChanged && !hasRole(authUser, ROLES.ADMIN)) {
+          const confirmedRes = await pool.query(
+            `SELECT COUNT(*) FROM tournament_registrations
+             WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')`,
+            [id]
+          );
+          const confirmedCount = parseInt(confirmedRes.rows[0].count) || 0;
+          if (confirmedCount > 0) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'GROUP_CONFIG_LOCKED',
+              message: 'Slot layout and group sizes are locked because teams are already confirmed. Contact support to reformat this tournament.'
+            }));
+            return;
+          }
+        }
+        const orgTeamsPerGroup = newTpgRaw;
+
         const configClient = await pool.connect();
         let dbRes;
         try {
@@ -5047,7 +5130,9 @@ const server = http.createServer(async (req, res) => {
             max_slots_per_room = COALESCE($52, max_slots_per_room),
             unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled),
             card_color = COALESCE($54, card_color),
-            rounds_published = COALESCE($56, rounds_published)
+            rounds_published = COALESCE($56, rounds_published),
+            teams_per_group = COALESCE($57, teams_per_group),
+            roadmap_image_url = COALESCE($58, roadmap_image_url)
            WHERE id = $55 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
@@ -5105,7 +5190,9 @@ const server = http.createServer(async (req, res) => {
             t.unique_amount_suffix_enabled !== undefined ? !!t.unique_amount_suffix_enabled : null,
             t.card_color || null,
             id,
-            t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null
+            t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null,
+            orgTeamsPerGroup,
+            t.roadmap_image_url !== undefined ? sanitizeImageUrlForDb(t.roadmap_image_url) : null
           ]
           );
           await configClient.query('COMMIT');
@@ -7935,9 +8022,21 @@ const server = http.createServer(async (req, res) => {
           [session.tournament_id, authUser.id, session.idempotency_key]
         );
         const tRes = await pool.query(
-          'SELECT id, title, game, "cover_image_url", prize, entry, entry_fee_amount, "orgName", status, "slotsTotal", "slotsFilled" FROM tournaments WHERE id = $1',
+          'SELECT id, title, game, "cover_image_url", prize, entry, entry_fee_amount, "orgName", status, "slotsTotal", "slotsFilled", teams_per_group FROM tournaments WHERE id = $1',
           [session.tournament_id]
         );
+        let predictedGroup = null;
+        if (regRes.rows[0] && tRes.rows[0]) {
+          const tRow = tRes.rows[0];
+          const tpg = normalizeTeamsPerGroup(tRow.teams_per_group, 16);
+          const cRes = await pool.query(
+            `SELECT COUNT(*) FROM tournament_registrations
+             WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')`,
+            [session.tournament_id]
+          );
+          const cCount = parseInt(cRes.rows[0].count) || 0;
+          predictedGroup = predictedGroupFor(cCount, tRow.slotsTotal, tpg);
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
@@ -7949,6 +8048,7 @@ const server = http.createServer(async (req, res) => {
             status: 'completed'
           },
           registration: regRes.rows[0] || null,
+          predicted_group: predictedGroup,
           tournament: tRes.rows[0] || null
         }));
         return;
@@ -8048,7 +8148,7 @@ const server = http.createServer(async (req, res) => {
 
         // Verify tournament is still open
         const tRes = await client.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate" FROM tournaments WHERE id = $1',
+          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group FROM tournaments WHERE id = $1',
           [session.tournament_id]
         );
         if (tRes.rows.length === 0) {
@@ -8152,12 +8252,24 @@ const server = http.createServer(async (req, res) => {
           [sessionId]
         );
 
+        // Predicted group: where this (not-yet-confirmed) team will land once
+        // approved, given the current confirmed/verified count.
+        const tpgPredicted = normalizeTeamsPerGroup(tournament.teams_per_group, 16);
+        const confirmedCountRes = await client.query(
+          `SELECT COUNT(*) FROM tournament_registrations
+           WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')`,
+          [session.tournament_id]
+        );
+        const confirmedCount = parseInt(confirmedCountRes.rows[0].count) || 0;
+        const predictedGroup = predictedGroupFor(confirmedCount, tournament.slotsTotal, tpgPredicted);
+
         await client.query('COMMIT');
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           registration: regRes.rows[0],
+          predicted_group: predictedGroup,
           payment: paymentRecord,
           requiresPayment: isPaid,
           amount_to_pay: isPaid ? amountToPay : null
@@ -9474,7 +9586,7 @@ const server = http.createServer(async (req, res) => {
     const parts = req.url.split('/');
     const id = parts[3];
     try {
-      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room FROM tournaments WHERE id = $1', [id]);
+      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room, teams_per_group FROM tournaments WHERE id = $1', [id]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
@@ -9486,6 +9598,8 @@ const server = http.createServer(async (req, res) => {
       const maxSlotsPerRoom = tRes.rows[0].max_slots_per_room
         ? parseInt(tRes.rows[0].max_slots_per_room)
         : null;
+      const teamsPerGroup = normalizeTeamsPerGroup(tRes.rows[0].teams_per_group, 16);
+      const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
 
       // Authoritative payment/registration verification statuses
       // (mirrors workers/slotManagerWorker.js).
@@ -9501,6 +9615,8 @@ const server = http.createServer(async (req, res) => {
       const slots = [];
       for (let i = 1; i <= slotsTotal; i++) {
         const booked = regs.find(r => r.slot_number === i);
+        const groupSlot = groupForGlobalSlot(i, groupLayout);
+        const groupLabel = groupSlot ? groupLabelForSlot(i, groupLayout) : null;
         if (booked) {
           const verified = VERIFIED_REG_STATUSES.includes(booked.status);
           slots.push({
@@ -9509,7 +9625,9 @@ const server = http.createServer(async (req, res) => {
             teamName: booked.team_name,
             captain: booked.captain,
             registrationId: booked.id,
-            paymentVerified: verified
+            paymentVerified: verified,
+            groupName: groupSlot ? groupSlot.name : null,
+            groupLabel: groupLabel
           });
         } else {
           slots.push({
@@ -9518,7 +9636,9 @@ const server = http.createServer(async (req, res) => {
             teamName: null,
             captain: null,
             registrationId: null,
-            paymentVerified: null
+            paymentVerified: null,
+            groupName: groupSlot ? groupSlot.name : null,
+            groupLabel: groupLabel
           });
         }
       }
@@ -9598,6 +9718,16 @@ const server = http.createServer(async (req, res) => {
         slotsFilled,
         slotsAvailable: Math.max(0, slotsTotal - slotsFilled),
         slots,
+        teamsPerGroup,
+        groupMeta: {
+          matchType,
+          teamsPerGroup,
+          groupCount: groupLayout.length,
+          groups: groupLayout,
+          perGroupFilled: groupLayout.map(g => (
+            slots.filter(s => s.groupName === g.name && s.paymentVerified === true).length
+          )),
+        },
         roomMeta: {
           matchType,
           maxSlotsPerRoom: effectiveMaxPerRoom,
@@ -9743,7 +9873,9 @@ const server = http.createServer(async (req, res) => {
           prize_split_3rd: 'prize_split_3rd', prize_split_mvp: 'prize_split_mvp',
           description: 'description', cover_image_url: 'cover_image_url',
           lobby_start_time: 'lobby_start_time',
-          sponsors_enabled: 'sponsors_enabled'
+          sponsors_enabled: 'sponsors_enabled',
+          teams_per_group: 'teams_per_group',
+          roadmap_image_url: 'roadmap_image_url'
         };
 
         for (const [key, col] of Object.entries(fieldMap)) {

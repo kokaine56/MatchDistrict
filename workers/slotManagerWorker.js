@@ -1,4 +1,6 @@
 // --- SLOT RECONCILIATION MANAGER WORKER DAEMON ---
+import { assignGroups } from '../server/groupService.js';
+
 export async function reconcileTournamentSlots(pool, tournamentId) {
   const client = await pool.connect();
   try {
@@ -65,6 +67,9 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
         console.log(`🤖 [SLOT WORKER] No slots left in tournament ${tournamentId}. Downgraded registration ${reg.id} to waitlisted.`);
       }
     }
+
+    // Assign groups to verified slot-holders (idempotent, same transaction).
+    await assignGroups(client, tournamentId);
 
     // 3. Update the slotsFilled count — count only truly confirmed/approved registrations
     const approvedCountRes = await client.query(

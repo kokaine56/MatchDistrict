@@ -1,55 +1,64 @@
 import React, { useState, useMemo } from 'react';
 import {
-  computeRooms,
-  getRoomSlots,
-  getOccupiedRoomSlots,
-  getHardCeiling,
-  getFloorConstraint,
-} from '../utils/roomSplitter';
+  buildGroups,
+  normalizeGroupsFromServer,
+  DEFAULT_TEAMS_PER_GROUP,
+} from '../utils/groupUtils';
 
-export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: customMax }) {
-  const [currentRoom, setCurrentRoom] = useState(1);
+export default function GroupSlotGrid({ slotsData, matchType }) {
+  const [currentGroup, setCurrentGroup] = useState(1);
 
-  const roomMeta = useMemo(() => {
-    if (!slotsData) return null;
-    const total = slotsData.slotsTotal || 0;
-    const ceiling = getHardCeiling(matchType);
-    const m = customMax
-      || slotsData?.roomMeta?.maxSlotsPerRoom
-      || ceiling;
-    return computeRooms(total, m, ceiling);
-  }, [slotsData, matchType, customMax]);
+  // Server-authoritative group layout (groupMeta), with a defensive client
+  // fallback so the grid still renders for stale payloads.
+  const groups = useMemo(() => {
+    if (!slotsData) return [];
+    if (Array.isArray(slotsData?.groupMeta?.groups) && slotsData.groupMeta.groups.length > 0) {
+      return normalizeGroupsFromServer(slotsData.groupMeta.groups);
+    }
+    const teamsPerGroup =
+      slotsData?.teamsPerGroup ||
+      slotsData?.groupMeta?.teamsPerGroup ||
+      DEFAULT_TEAMS_PER_GROUP;
+    const total = slotsData?.slotsTotal || 0;
+    return buildGroups(total, teamsPerGroup);
+  }, [slotsData]);
 
-  const currentRoomSlots = useMemo(() => {
-    if (!slotsData?.slots || !roomMeta) return [];
-    return getRoomSlots(slotsData.slots, currentRoom, roomMeta.rooms);
-  }, [slotsData, currentRoom, roomMeta]);
+  const currentGroupDef = groups[Math.min(Math.max(1, currentGroup), Math.max(1, groups.length)) - 1];
+
+  const currentGroupSlots = useMemo(() => {
+    if (!slotsData?.slots || !currentGroupDef) return [];
+    return slotsData.slots.filter((s) => {
+      const slotGroup = s.groupName || (s.groupLabel ? s.groupLabel.replace(/[0-9]+$/, '') : null);
+      return slotGroup === currentGroupDef.name;
+    });
+  }, [slotsData, currentGroupDef]);
 
   const occupiedSlots = useMemo(() => {
-    if (!slotsData?.slots || !roomMeta) return [];
-    return getOccupiedRoomSlots(slotsData.slots, currentRoom, roomMeta.rooms);
-  }, [slotsData, currentRoom, roomMeta]);
+    return currentGroupSlots.filter(
+      (s) => s.status === 'occupied' || s.status === 'confirmed'
+    );
+  }, [currentGroupSlots]);
 
   // Only a confirmed registration occupies a slot. Registrations that are still
   // awaiting payment verification stay visible in the table below but their slot
   // remains available (green) on the map.
   const availableCount = useMemo(() => {
-    return currentRoomSlots.filter(
+    return currentGroupSlots.filter(
       (s) => s.status === 'available' || s.status === 'pending'
     ).length;
-  }, [currentRoomSlots]);
+  }, [currentGroupSlots]);
 
   const filledCount = useMemo(() => {
-    return currentRoomSlots.filter(
+    return currentGroupSlots.filter(
       (s) => s.status === 'occupied' || s.status === 'confirmed'
     ).length;
-  }, [currentRoomSlots]);
+  }, [currentGroupSlots]);
 
   const confirmedCount = useMemo(() => {
-    return occupiedSlots.filter((entry) => entry.paymentVerified).length;
+    return occupiedSlots.filter((slot) => slot.paymentVerified === true).length;
   }, [occupiedSlots]);
 
-  if (!slotsData || !roomMeta || roomMeta.totalRooms === 0) {
+  if (!slotsData || !currentGroupDef || groups.length === 0) {
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm w-full">
         <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest mb-4">
@@ -60,9 +69,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
     );
   }
 
-  const { totalRooms, rooms, maxSlotsPerRoom, floorConstraint } = roomMeta;
-  const currentRoomDef = rooms[currentRoom - 1];
-  const isUnderFloor = currentRoomDef && currentRoomDef.slotsInRoom < floorConstraint;
+  const totalGroups = groups.length;
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 shadow-sm w-full">
@@ -70,27 +77,27 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
         Live Slot Occupancy Map
       </h3>
 
-      {totalRooms > 1 && (
+      {totalGroups > 1 && (
         <div className="max-sm:flex max-sm:overflow-x-auto max-sm:scrollbar-none max-sm:gap-2 max-sm:pb-2 sm:flex sm:flex-wrap sm:gap-2 mb-5">
-          {rooms.map((r) => (
+          {groups.map((g) => (
             <button
-              key={r.roomNumber}
-              onClick={() => setCurrentRoom(r.roomNumber)}
+              key={g.name}
+              onClick={() => setCurrentGroup(g.group_index)}
               className={`max-sm:shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all tracking-wide ${
-                currentRoom === r.roomNumber
+                currentGroup === g.group_index
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
               }`}
             >
-              Room {r.roomNumber}
+              Group {g.name}
             </button>
           ))}
         </div>
       )}
 
-      {totalRooms > 1 ? (
+      {totalGroups > 1 ? (
         <div className="mb-4 text-xs text-slate-500 font-medium">
-          Room {currentRoom} &middot; {currentRoomDef?.slotsInRoom || 0} slots &middot; {filledCount} filled &middot; {availableCount} available
+          Group {currentGroupDef.name} &middot; {currentGroupDef.capacity} slots &middot; {filledCount} filled &middot; {availableCount} available
         </div>
       ) : (
         <div className="mb-4 text-xs text-slate-500 font-medium">
@@ -99,12 +106,12 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
       )}
 
       <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2 sm:gap-2.5 w-full">
-        {currentRoomSlots.map((slot, idx) => {
-          const slotNum = slot.number;
+        {currentGroupSlots.map((slot) => {
+          const slotNum = slot.groupLabel || String(slot.number);
           const isOccupied = slot.status === 'occupied' || slot.status === 'confirmed';
           return (
             <div
-              key={idx}
+              key={slot.groupLabel || slot.number}
               className={`aspect-square rounded-md flex items-center justify-center font-bold text-white text-[10px] sm:text-[11px] shadow-sm ${
                 isOccupied ? 'bg-rose-500' : 'bg-emerald-500'
               }`}
@@ -134,11 +141,11 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
       <div className="mt-8 pt-6 border-t border-slate-200">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">
-            Room Registration Details
+            Group Registration Details
           </h4>
-          {totalRooms > 1 && (
+          {totalGroups > 1 && (
             <span className="text-[11px] font-semibold text-slate-400">
-              Room {currentRoom}
+              Group {currentGroupDef.name}
             </span>
           )}
         </div>
@@ -151,7 +158,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
               <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
               <path d="M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
-            <p className="text-xs font-medium">No teams registered in this room yet.</p>
+            <p className="text-xs font-medium">No teams registered in this group yet.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -165,13 +172,15 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {occupiedSlots.map((entry) => (
-                  <tr key={entry.slotNumber} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">Slot {entry.slotNumber}</td>
-                    <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{entry.teamName}</td>
-                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{entry.captain}</td>
-                    <td className={`py-2.5 font-semibold whitespace-nowrap ${entry.paymentVerified ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {entry.paymentVerified ? 'Confirmed' : 'Not confirmed'}
+                {occupiedSlots.map((slot) => (
+                  <tr key={slot.groupLabel || slot.number} className="hover:bg-slate-50 transition-colors">
+                    <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">
+                      {slot.groupLabel || `Slot ${slot.number}`}
+                    </td>
+                    <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{slot.teamName}</td>
+                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{slot.captain}</td>
+                    <td className={`py-2.5 font-semibold whitespace-nowrap ${slot.paymentVerified ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {slot.paymentVerified ? 'Confirmed' : 'Not confirmed'}
                     </td>
                   </tr>
                 ))}
@@ -182,24 +191,7 @@ export default function RoomSlotGrid({ slotsData, matchType, maxSlotsPerRoom: cu
 
         {occupiedSlots.length > 0 && (
           <div className="mt-3 text-[11px] text-slate-400 font-medium">
-            Showing {confirmedCount} of {currentRoomDef?.slotsInRoom || 0} slots occupied in this room.
-          </div>
-        )}
-
-        {isUnderFloor && (
-          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
-            <svg className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-            <div>
-              <p className="text-xs font-bold text-amber-800">Room Below Minimum Density</p>
-              <p className="text-[11px] text-amber-700 mt-0.5">
-                This room has {currentRoomDef?.slotsInRoom} slots, which is below the {floorConstraint}-slot minimum for{' '}
-                {(matchType || 'squad').charAt(0).toUpperCase() + (matchType || 'squad').slice(1)} matches.
-              </p>
-            </div>
+            Showing {confirmedCount} of {currentGroupDef.capacity} slots occupied in this group.
           </div>
         )}
       </div>

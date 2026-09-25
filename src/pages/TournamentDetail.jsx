@@ -15,7 +15,7 @@ import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
-import RoomSlotGrid from '../components/RoomSlotGrid.jsx';
+import GroupSlotGrid from '../components/GroupSlotGrid.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
 import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
@@ -1669,17 +1669,40 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               )
             )}
             {activeTab === 'roadmap' && (
-              tourney?.roadmap_status === 'approved' || isTournamentOwner ? (
-                <Phase3RoadmapViewer tournamentId={tourney.id} />
-              ) : (
-                <TournamentRoadmap
-                  roadmap={parsedTimeline.roadmap}
-                  isGoldTheme={isGoldTheme}
-                  roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
-                  isOwner={isTournamentOwner}
-                  onSaveCredentials={handleSaveRoundCredentials}
-                />
-              )
+              <>
+                {tourney?.roadmap_image_url ? (
+                  <div className="w-full">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Roadmap</span>
+                    </div>
+                    <div className={`overflow-hidden rounded-2xl border ${
+                      isGoldTheme ? 'border-[#D4A017]/35' : 'border-slate-200'
+                    } shadow-sm`}>
+                      <img
+                        src={tourney.roadmap_image_url}
+                        alt="Tournament roadmap"
+                        className="w-full h-auto object-contain bg-white"
+                        loading="lazy"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+                {tourney?.roadmap_status === 'approved' || isTournamentOwner ? (
+                  <div className="w-full mt-4">
+                    <Phase3RoadmapViewer tournamentId={tourney.id} />
+                  </div>
+                ) : (
+                  <div className="w-full mt-4">
+                    <TournamentRoadmap
+                      roadmap={parsedTimeline.roadmap}
+                      isGoldTheme={isGoldTheme}
+                      roundsPublished={tourney?.rounds_published !== false || (tourney?.orgId && currentUser?.id === tourney.orgId)}
+                      isOwner={isTournamentOwner}
+                      onSaveCredentials={handleSaveRoundCredentials}
+                    />
+                  </div>
+                )}
+              </>
             )}
             {activeTab === 'my_team' && currentUser && (
               <TournamentTeamHub
@@ -1746,7 +1769,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'teams' && (
-              <RoomSlotGrid
+              <GroupSlotGrid
                 slotsData={slotsData}
                 matchType={tourney?.match_type}
               />
