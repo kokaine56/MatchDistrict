@@ -286,9 +286,9 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           let groupId = null;
           let groupNameStr = null;
 
-          // Round 1 matches explicitly map to initial groups (Group A, Group B, Group C...)
+          // Round 1 matches explicitly map to initial District allocations (District 1, District 2, District 3...)
           if (isRound1) {
-            groupNameStr = `Group ${String.fromCharCode(65 + m)}`;
+            groupNameStr = `District ${m + 1}`;
             const groupRec = {
               id: `GRP-${generateId()}`,
               day_id: dayRec.id,

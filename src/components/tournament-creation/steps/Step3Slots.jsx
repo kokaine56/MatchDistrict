@@ -110,26 +110,44 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
         <SlotCalculator total={data.slotsTotal} reserved={data.reserved_slots} />
       </div>
 
-      {/* Match Configuration */}
+      {/* Match & District Configuration */}
       <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-outline-variant/20">
-        <h3 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Match Configuration</h3>
+        <h3 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">District & Match Configuration</h3>
 
         <div className="space-y-3">
           <label className="block text-sm font-medium text-on-surface-variant">
+            Teams Per District <span style={{ color: '#ef4444' }}>*</span>
+          </label>
+          <select
+            value={data.teams_per_group || 16}
+            onChange={(e) => onChange({ ...data, teams_per_group: parseInt(e.target.value) })}
+            className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm focus:outline-none focus:border-primary/40 transition-colors"
+          >
+            {[16, 17, 18, 19, 20, 21, 22, 23, 24, 25].map((val) => (
+              <option key={val} value={val}>{val} Teams per District</option>
+            ))}
+          </select>
+          <p className="text-xs text-on-surface-variant/80 mt-1">
+            Districts organize the initial tournament participants. District size does not determine later-round match capacity.
+          </p>
+        </div>
+
+        <div className="space-y-3 pt-2">
+          <label className="block text-sm font-medium text-on-surface-variant">
             Maximum Teams per Match <span style={{ color: '#ef4444' }}>*</span>
           </label>
-          <p className="text-xs text-on-surface-variant mb-2">
-            Maximum number of teams allowed in a single room/match (16–25).
-          </p>
           <select
             value={data.teams_per_match || 16}
             onChange={(e) => onChange({ ...data, teams_per_match: parseInt(e.target.value) })}
             className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm focus:outline-none focus:border-primary/40 transition-colors"
           >
             {[...Array(10)].map((_, i) => (
-              <option key={i+16} value={i+16}>{i+16} Teams</option>
+              <option key={i+16} value={i+16}>{i+16} Teams Capacity Ceiling</option>
             ))}
           </select>
+          <p className="text-xs text-on-surface-variant/80 mt-1">
+            Maximum number of teams allowed in a single match/room. This is a capacity limit, not the number of teams assigned to each District.
+          </p>
         </div>
 
         {/* Dynamic First-Round Match Count Preview */}

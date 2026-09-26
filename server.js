@@ -6527,8 +6527,9 @@ const server = http.createServer(async (req, res) => {
           dbClient.release();
         }
       } catch (err) {
+        console.error('Roadmap save error:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', message: 'Failed to save roadmap. Please try again.' }));
       }
     });
     return;
@@ -6581,7 +6582,8 @@ const server = http.createServer(async (req, res) => {
         total_slots: slotsTotal,
         teams_per_group: teamsPerGroup,
         num_groups: groupLayout.length,
-        group_names: groupLayout.map(g => `Group ${g.name}`),
+        group_names: groupLayout.map(g => `District ${g.group_index}`),
+        district_names: groupLayout.map(g => `District ${g.group_index}`),
         top_per_group: Math.max(1, Math.ceil(teamsPerGroup / 4)),
         game: t.game || 'bgmi'
       };

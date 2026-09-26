@@ -81,7 +81,7 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
         <div className="max-sm:flex max-sm:overflow-x-auto max-sm:scrollbar-none max-sm:gap-2 max-sm:pb-2 sm:flex sm:flex-wrap sm:gap-2 mb-5">
           {groups.map((g) => (
             <button
-              key={g.name}
+              key={g.name || g.group_index}
               onClick={() => setCurrentGroup(g.group_index)}
               className={`max-sm:shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all tracking-wide ${
                 currentGroup === g.group_index
@@ -89,7 +89,7 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
               }`}
             >
-              Group {g.name}
+              District {g.group_index || g.name}
             </button>
           ))}
         </div>
@@ -97,7 +97,7 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
 
       {totalGroups > 1 ? (
         <div className="mb-4 text-xs text-slate-500 font-medium">
-          Group {currentGroupDef.name} &middot; {currentGroupDef.capacity} slots &middot; {filledCount} filled &middot; {availableCount} available
+          District {currentGroupDef.group_index || currentGroupDef.name} &middot; {currentGroupDef.capacity} slots &middot; {filledCount} filled &middot; {availableCount} available
         </div>
       ) : (
         <div className="mb-4 text-xs text-slate-500 font-medium">
@@ -107,7 +107,8 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
 
       <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-10 gap-2 sm:gap-2.5 w-full">
         {currentGroupSlots.map((slot) => {
-          const slotNum = slot.groupLabel || String(slot.number);
+          const rawLabel = slot.groupLabel || String(slot.number);
+          const slotNum = rawLabel.startsWith('D') ? rawLabel : `D${currentGroupDef.group_index || 1}-${String(slot.number || 1).padStart(2, '0')}`;
           const isOccupied = slot.status === 'occupied' || slot.status === 'confirmed';
           return (
             <div
@@ -141,11 +142,11 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
       <div className="mt-8 pt-6 border-t border-slate-200">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">
-            Group Registration Details
+            District Registration Details
           </h4>
           {totalGroups > 1 && (
             <span className="text-[11px] font-semibold text-slate-400">
-              Group {currentGroupDef.name}
+              District {currentGroupDef.group_index || currentGroupDef.name}
             </span>
           )}
         </div>
@@ -158,7 +159,7 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
               <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
               <path d="M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
-            <p className="text-xs font-medium">No teams registered in this group yet.</p>
+            <p className="text-xs font-medium">No teams registered in this district yet.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -172,18 +173,22 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {occupiedSlots.map((slot) => (
-                  <tr key={slot.groupLabel || slot.number} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">
-                      {slot.groupLabel || `Slot ${slot.number}`}
-                    </td>
-                    <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{slot.teamName}</td>
-                    <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{slot.captain}</td>
-                    <td className={`py-2.5 font-semibold whitespace-nowrap ${slot.paymentVerified ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {slot.paymentVerified ? 'Confirmed' : 'Not confirmed'}
-                    </td>
-                  </tr>
-                ))}
+                {occupiedSlots.map((slot) => {
+                  const rawLabel = slot.groupLabel || String(slot.number);
+                  const slotNum = rawLabel.startsWith('D') ? rawLabel : `D${currentGroupDef.group_index || 1}-${String(slot.number || 1).padStart(2, '0')}`;
+                  return (
+                    <tr key={slot.groupLabel || slot.number} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 pr-4 font-bold text-slate-700 whitespace-nowrap">
+                        {slotNum}
+                      </td>
+                      <td className="py-2.5 pr-4 text-slate-800 font-semibold whitespace-nowrap">{slot.teamName}</td>
+                      <td className="py-2.5 pr-4 text-slate-600 whitespace-nowrap">{slot.captain}</td>
+                      <td className={`py-2.5 font-semibold whitespace-nowrap ${slot.paymentVerified ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {slot.paymentVerified ? 'Confirmed' : 'Not confirmed'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -191,7 +196,7 @@ export default function GroupSlotGrid({ slotsData, matchType }) {
 
         {occupiedSlots.length > 0 && (
           <div className="mt-3 text-[11px] text-slate-400 font-medium">
-            Showing {confirmedCount} of {currentGroupDef.capacity} slots occupied in this group.
+            Showing {confirmedCount} of {currentGroupDef.capacity} slots occupied in this district.
           </div>
         )}
       </div>

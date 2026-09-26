@@ -90,7 +90,7 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
             {matchDetails.round_number != null ? `ROUND ${matchDetails.round_number} · MATCH ${matchDetails.match_number}` : `MATCH ${matchDetails.match_number}`}
           </h3>
           <p className="text-gray-400 text-sm font-medium mt-0.5">
-            {matchDetails.round_name ? `${matchDetails.round_name} · ` : ''}Group {matchDetails.group_name} &bull; Day {matchDetails.day_number} &bull; Match {matchDetails.match_number}
+            {matchDetails.round_name ? `${matchDetails.round_name} · ` : ''}{matchDetails.group_name ? (matchDetails.group_name.startsWith('District') ? matchDetails.group_name : `District ${matchDetails.group_name.replace(/\D+/g, '')}`) + ' • ' : ''}Day {matchDetails.day_number || 1} &bull; Match {matchDetails.match_number}
           </p>
         </div>
         <div className="text-right">

@@ -13,6 +13,22 @@ function parseRoadmap(t) {
   } catch { return [] }
 }
 
+function getRoundTimestamp(r) {
+  if (!r) return null
+  const dateStr = r.date || r.start_date || r.startDate
+  if (!dateStr) return null
+  const timeStr = r.start_time || r.startTime || r.time || '10:00'
+  try {
+    const [h, m] = timeStr.split(':').map(Number)
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return null
+    d.setHours(isNaN(h) ? 10 : h, isNaN(m) ? 0 : m, 0, 0)
+    return d.getTime()
+  } catch {
+    return null
+  }
+}
+
 function getFirstMatchStart(t) {
   if (!t) return null
   const roadmap = parseRoadmap(t)

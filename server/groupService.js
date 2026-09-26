@@ -80,9 +80,52 @@ export function positionWithinGroup(sequenceIndex, slotsTotal, teamsPerGroup) {
   return 1;
 }
 
-// Full label, e.g. "A07".
+export function formatDistrictName(nameOrIndex) {
+  if (nameOrIndex === null || nameOrIndex === undefined) return 'District 1';
+  if (typeof nameOrIndex === 'number') {
+    return `District ${nameOrIndex}`;
+  }
+  const str = String(nameOrIndex).trim();
+  if (/^district\s*\d+/i.test(str)) {
+    const num = str.match(/\d+/)[0];
+    return `District ${num}`;
+  }
+  if (/^group\s*([a-z]+|\d+)/i.test(str)) {
+    const match = str.match(/^group\s*([a-z]+|\d+)/i)[1];
+    if (/^\d+$/.test(match)) return `District ${match}`;
+    let code = 0;
+    for (let i = 0; i < match.length; i++) {
+      code = code * 26 + (match.toUpperCase().charCodeAt(i) - 64);
+    }
+    return `District ${code}`;
+  }
+  if (/^[a-z]+$/i.test(str)) {
+    let code = 0;
+    for (let i = 0; i < str.length; i++) {
+      code = code * 26 + (str.toUpperCase().charCodeAt(i) - 64);
+    }
+    return `District ${code}`;
+  }
+  if (/^\d+$/.test(str)) {
+    return `District ${str}`;
+  }
+  return str;
+}
+
+export function formatDistrictCode(nameOrIndex) {
+  const distName = formatDistrictName(nameOrIndex);
+  const num = distName.replace(/\D+/g, '');
+  return `D${num || '1'}`;
+}
+
+export function padDistrictPosition(nameOrIndex, position) {
+  const code = formatDistrictCode(nameOrIndex);
+  return `${code}-${String(Math.max(1, Math.floor(position))).padStart(2, '0')}`;
+}
+
+// Full label, e.g. "D1-07".
 export function padGroupPosition(name, position) {
-  return `${name}${String(Math.max(1, Math.floor(position))).padStart(2, '0')}`;
+  return padDistrictPosition(name, position);
 }
 
 export function groupLabelForSequence(sequenceIndex, slotsTotal, teamsPerGroup) {
@@ -90,7 +133,7 @@ export function groupLabelForSequence(sequenceIndex, slotsTotal, teamsPerGroup) 
   const idx = groupIndexWithin(groups, sequenceIndex);
   const name = groups[idx] ? groups[idx].name : 'A';
   const pos = positionWithinGroup(sequenceIndex, slotsTotal, teamsPerGroup);
-  return padGroupPosition(name, pos);
+  return padDistrictPosition(name, pos);
 }
 
 function groupIndexWithin(groups, sequenceIndex) {

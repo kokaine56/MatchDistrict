@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, Save, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, Trophy, Swords, Plus } from "lucide-react";
+import { Calendar, Save, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, Trophy, Swords, Plus, Users, LayoutGrid, Clock, Lock } from "lucide-react";
 import { getAuthToken } from "../utils/getAuthToken";
 
 const MAP_OPTIONS = ["Erangel", "Miramar", "Rondo", "Sanhok", "Vikendi", "Livik", "Karakin", "Nusa"];
@@ -20,9 +20,20 @@ function formatDateLabel(dateStr) {
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    return d.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" });
   } catch {
     return dateStr;
+  }
+}
+
+function getDayOfWeek(dateStr) {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleDateString("en-IN", { weekday: "long" });
+  } catch {
+    return "";
   }
 }
 
@@ -132,11 +143,22 @@ export default function TournamentRoadmapBuilder({
     }
   };
 
-  const updateRoundDate = (roundId, newDate) =>
-    setRoadmapData(prev => !prev ? prev : {
-      ...prev,
-      rounds: prev.rounds.map(r => r.id === roundId ? { ...r, date: newDate } : r)
+  const updateDayDate = (dayId, newDate) => {
+    setRoadmapData(prev => {
+      if (!prev) return prev;
+      // Also update the round's date if they align
+      const day = prev.days.find(d => d.id === dayId);
+      let newRounds = prev.rounds;
+      if (day && day.round_id) {
+        newRounds = prev.rounds.map(r => r.id === day.round_id ? { ...r, date: newDate } : r);
+      }
+      return {
+        ...prev,
+        days: prev.days.map(d => d.id === dayId ? { ...d, date: newDate } : d),
+        rounds: newRounds
+      };
     });
+  };
 
   const updateMatchField = (matchId, field, value) => {
     setRoadmapData(prev => {
@@ -163,7 +185,6 @@ export default function TournamentRoadmapBuilder({
     </div>
   );
 
-  // Organizer empty state
   if (isOrganizer && !roadmapData) return (
     <div className="w-full space-y-4">
       <div className="bg-white border border-slate-200 rounded-2xl p-10 sm:p-14 text-center shadow-sm max-w-2xl mx-auto">
@@ -189,34 +210,34 @@ export default function TournamentRoadmapBuilder({
     </div>
   );
 
-  // Public empty state
-  if (!roadmapData || !roadmapData.rounds || roadmapData.rounds.length === 0) return (
+  if (!roadmapData || !roadmapData.days || roadmapData.days.length === 0) return (
     <div className="w-full bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm max-w-2xl mx-auto">
       <Calendar className="w-8 h-8 text-slate-300 mx-auto mb-3" />
       <h3 className="text-base font-bold text-slate-800 mb-1">Tournament Roadmap</h3>
-      <p className="text-sm text-slate-400">The tournament roadmap has not been published yet.</p>
+      <p className="text-sm text-slate-400">The match schedule has not been published yet.</p>
     </div>
   );
 
   const isViewOnly = !isOrganizer || previewMode;
+  const meta = roadmapData.meta || {};
+  const slotsTotal = meta.total_slots || 64;
+  const numDistricts = meta.num_groups || 4;
+  const teamsPerDistrict = meta.teams_per_group || 16;
+  const advanceCount = meta.top_per_group || 4;
+
+  const sortedDays = [...roadmapData.days].sort((a, b) => a.day_number - b.day_number);
 
   return (
     <div className="w-full space-y-6">
-      {/* Header */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-7 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">Roadmap</span>
-            {isOrganizer && (
-              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${roadmapStatus === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                {roadmapStatus === "approved" ? "Live" : "Draft"}
-              </span>
-            )}
+      {/* Action Bar (Organizer Only) */}
+      {isOrganizer && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border ${roadmapStatus === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+              {roadmapStatus === "approved" ? "Live" : "Draft"}
+            </span>
             {previewMode && <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-md">Preview</span>}
           </div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none">Tournament Progression</h2>
-        </div>
-        {isOrganizer && (
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => handleGenerate(true)} disabled={generating} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors">
               <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />Regenerate
@@ -229,8 +250,8 @@ export default function TournamentRoadmapBuilder({
               Save
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {error && (
@@ -247,74 +268,166 @@ export default function TournamentRoadmapBuilder({
         )}
       </AnimatePresence>
 
-      {/* Rounds list */}
-      <div className="space-y-6">
-        {roadmapData.rounds.map((round) => {
-          const roundMatches = roadmapData.matches.filter(m => m.round_id === round.id).sort((a, b) => a.match_number - b.match_number);
+      {/* Main Roadmap Header */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-sm">
+        <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-none mb-6">
+          TOURNAMENT ROADMAP
+        </h2>
+        
+        <div className="flex flex-wrap items-center gap-4 sm:gap-8">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+              <Users className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Slots</p>
+              <p className="text-lg font-black text-slate-900">{slotsTotal}</p>
+            </div>
+          </div>
           
-          if (round.is_grand_final) {
-            // GRAND FINAL DISPLAY
-            return (
-              <div key={round.id} className="bg-white border-2 border-blue-200 rounded-2xl shadow-sm overflow-hidden">
-                <div className="px-5 sm:px-7 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <Trophy className="w-6 h-6 text-yellow-300" />
-                    <h3 className="text-lg font-black uppercase tracking-widest">{round.name}</h3>
-                  </div>
-                  {!isViewOnly ? (
-                    <input type="date" value={round.date || ""} onChange={e => updateRoundDate(round.id, e.target.value)}
-                      className="text-xs font-bold bg-white/20 border border-white/30 text-white rounded-lg px-2.5 py-1 focus:outline-none" />
-                  ) : (
-                    <span className="text-xs font-semibold text-blue-100">{formatDateLabel(round.date)}</span>
-                  )}
-                </div>
-                
-                <div className="p-5 sm:p-7 space-y-4">
-                  <p className="text-sm font-black text-slate-800 uppercase tracking-wider text-center bg-blue-50 py-2 rounded-xl">
-                    Final Participant Pool
-                  </p>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {roundMatches.map(match => (
-                      <MatchCard 
-                        key={match.id} 
-                        match={match} 
-                        isViewOnly={isViewOnly} 
-                        onUpdateMatchField={updateMatchField}
-                        maxCapacity={roadmapData.meta?.max_capacity || 25}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            );
-          }
+          <div className="hidden sm:block w-px h-10 bg-slate-200"></div>
+          
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+              <LayoutGrid className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Districts</p>
+              <p className="text-lg font-black text-slate-900">{numDistricts}</p>
+            </div>
+          </div>
+          
+          <div className="hidden sm:block w-px h-10 bg-slate-200"></div>
 
-          // NORMAL ROUND DISPLAY
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center">
+              <Swords className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Teams Per District</p>
+              <p className="text-lg font-black text-slate-900">{teamsPerDistrict}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Day Sections */}
+      <div className="space-y-6">
+        {sortedDays.map((day) => {
+          // Find matches for this day
+          const dayMatches = roadmapData.matches.filter(m => m.day_id === day.id);
+          if (dayMatches.length === 0) return null;
+
+          // Group by Group/District
+          const groupsForDay = {};
+          dayMatches.forEach(m => {
+            const isGF = m.is_grand_final || roadmapData.rounds.find(r => r.id === m.round_id)?.is_grand_final;
+            const gk = isGF ? 'GRAND_FINAL' : (m.group_id || m.group_name || 'UNKNOWN');
+            if (!groupsForDay[gk]) groupsForDay[gk] = { isGF, matches: [] };
+            groupsForDay[gk].matches.push(m);
+          });
+
           return (
-            <div key={round.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 sm:px-6 py-4 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">{round.name}</h3>
+            <div key={day.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col md:flex-row">
+              
+              {/* Day Sidebar */}
+              <div className="w-full md:w-48 bg-slate-50 border-b md:border-b-0 md:border-r border-slate-200 p-6 flex flex-col justify-start">
+                <h3 className="text-xl font-black text-blue-600 uppercase tracking-widest mb-4">DAY {day.day_number}</h3>
+                
                 {!isViewOnly ? (
-                  <input type="date" value={round.date || ""} onChange={e => updateRoundDate(round.id, e.target.value)}
-                    className="text-xs font-bold bg-white border border-slate-200 text-slate-800 rounded-lg px-2.5 py-1 focus:outline-none" />
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">Edit Date</label>
+                    <input type="date" value={day.date || ""} onChange={e => updateDayDate(day.id, e.target.value)}
+                      className="w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+                  </div>
                 ) : (
-                  <span className="text-xs font-semibold text-slate-600">{formatDateLabel(round.date)}</span>
+                  <>
+                    <div className="flex items-center gap-2 text-slate-800 mb-1">
+                      <Calendar className="w-4 h-4 text-slate-400" />
+                      <span className="font-bold">{formatDateLabel(day.date)}</span>
+                    </div>
+                    {getDayOfWeek(day.date) && (
+                      <span className="text-sm font-semibold text-slate-500 pl-6">{getDayOfWeek(day.date)}</span>
+                    )}
+                  </>
                 )}
               </div>
-              
-              <div className="p-5 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {roundMatches.map(match => (
-                    <MatchCard 
-                      key={match.id} 
-                      match={match} 
-                      isViewOnly={isViewOnly} 
-                      onUpdateMatchField={updateMatchField}
-                      maxCapacity={roadmapData.meta?.max_capacity || 25}
-                    />
-                  ))}
-                </div>
+
+              {/* Day Content */}
+              <div className="flex-1 p-6 space-y-8">
+                {Object.keys(groupsForDay).map((gk, idx) => {
+                  const { isGF, matches: groupMatches } = groupsForDay[gk];
+                  const sortedMatches = [...groupMatches].sort((a, b) => a.match_number - b.match_number);
+                  
+                  if (isGF) {
+                    const totalTeams = advanceCount * numDistricts;
+                    return (
+                      <div key={gk} className={idx > 0 ? "pt-8 border-t border-slate-100" : ""}>
+                        <div className="mb-4">
+                          <h4 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                            <Trophy className="w-6 h-6 text-yellow-500" /> Grand Final
+                          </h4>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold uppercase tracking-wider">
+                              {totalTeams} Qualified Teams
+                            </span>
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 text-xs font-bold uppercase tracking-wider">
+                              {sortedMatches.length} Matches Total
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6 text-center">
+                          <p className="text-sm font-black text-yellow-800 uppercase tracking-widest">Highest Total Points = Champion</p>
+                        </div>
+
+                        <MatchTable 
+                          matches={sortedMatches} 
+                          isViewOnly={isViewOnly} 
+                          onUpdateMatchField={updateMatchField} 
+                        />
+                      </div>
+                    );
+                  }
+
+                  // Normal District
+                  let districtName = sortedMatches[0]?.group_name || `District ${idx + 1}`;
+                  if (districtName.toLowerCase().includes('group')) {
+                    districtName = districtName.replace(/Group/i, 'District');
+                  }
+                  const tAdv = sortedMatches[0]?.teams_advancing || advanceCount;
+
+                  return (
+                    <div key={gk} className={idx > 0 ? "pt-8 border-t border-slate-100" : ""}>
+                      <div className="mb-4">
+                        <h4 className="text-xl font-black text-slate-900 tracking-tight">{districtName}</h4>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-bold uppercase tracking-wider">
+                            {teamsPerDistrict} Teams
+                          </span>
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 text-xs font-bold uppercase tracking-wider">
+                            {sortedMatches.length} Matches Total
+                          </span>
+                        </div>
+                      </div>
+
+                      {tAdv != null && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6">
+                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Qualification</p>
+                          <p className="text-sm font-bold text-slate-800">
+                            Top {tAdv} teams from {districtName} advance to Grand Final
+                          </p>
+                        </div>
+                      )}
+
+                      <MatchTable 
+                        matches={sortedMatches} 
+                        isViewOnly={isViewOnly} 
+                        onUpdateMatchField={updateMatchField} 
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
@@ -324,63 +437,81 @@ export default function TournamentRoadmapBuilder({
   );
 }
 
-function MatchCard({ match, isViewOnly, onUpdateMatchField, maxCapacity }) {
-  const isGF = match.is_grand_final;
-  
+function MatchTable({ matches, isViewOnly, onUpdateMatchField }) {
   return (
-    <div className={`border rounded-xl p-4 space-y-3 ${isGF ? 'border-blue-200 bg-blue-50/30' : 'border-slate-200 bg-white hover:border-blue-300 transition-colors'}`}>
-      <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-        <span className="text-sm font-black text-slate-900 uppercase">Match {match.match_number}</span>
-        {isViewOnly ? (
-          <span className="text-[11px] font-black uppercase text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">{match.map}</span>
-        ) : (
-          <select value={match.map || "Erangel"} onChange={e => onUpdateMatchField(match.id, "map", e.target.value)}
-            className="text-[11px] font-bold text-slate-800 bg-white border border-slate-200 rounded-md px-1.5 py-0.5">
-            {MAP_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        )}
+    <div className="w-full">
+      {/* Desktop Table Header */}
+      <div className="hidden md:grid grid-cols-12 gap-4 pb-3 border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+        <div className="col-span-2">Match</div>
+        <div className="col-span-3">ID / PWD Release</div>
+        <div className="col-span-3">Start Time</div>
+        <div className="col-span-2">Map</div>
+        <div className="col-span-2">Status</div>
       </div>
 
-      <div className="space-y-2 text-xs">
-        <div className="flex justify-between items-center">
-          <span className="font-semibold text-slate-500">Teams:</span>
-          <span className="font-black text-slate-800">{match.assignedCount || 0} / {maxCapacity}</span>
-        </div>
-        
-        <div className="flex justify-between items-center">
-          <span className="font-semibold text-slate-500">Start:</span>
-          {isViewOnly ? (
-            <span className="font-black text-slate-900">{formatTime12h(match.start_time)}</span>
-          ) : (
-            <input type="time" value={match.start_time || "13:00"} onChange={e => onUpdateMatchField(match.id, "start_time", e.target.value)}
-              className="font-bold text-slate-800 bg-white border border-slate-200 rounded px-1 py-0.5" />
-          )}
-        </div>
+      <div className="flex flex-col gap-4 mt-4 md:mt-0 md:gap-0">
+        {matches.map((m, i) => (
+          <div key={m.id} className="flex flex-col md:grid md:grid-cols-12 md:gap-4 md:items-center py-4 border border-slate-200 md:border-0 md:border-b md:border-slate-100 rounded-xl md:rounded-none p-4 md:p-0 bg-white shadow-sm md:shadow-none hover:bg-slate-50 transition-colors">
+            
+            {/* Match Name */}
+            <div className="col-span-2 font-black text-sm text-slate-900 mb-3 md:mb-0">
+              Match {m.match_number || i + 1}
+            </div>
 
-        <div className="flex justify-between items-center">
-          <span className="font-semibold text-slate-500">Release:</span>
-          {isViewOnly ? (
-            <span className="font-semibold text-slate-700">{match.id_pwd_release_time}</span>
-          ) : (
-            <input type="text" value={match.id_pwd_release_time || ""} onChange={e => onUpdateMatchField(match.id, "id_pwd_release_time", e.target.value)}
-              className="font-semibold text-slate-800 bg-white border border-slate-200 rounded px-1 py-0.5 w-24 text-right" />
-          )}
-        </div>
+            {/* ID / PWD Release */}
+            <div className="col-span-3 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center text-sm font-semibold text-slate-600 mb-2 md:mb-0">
+              <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ID/PWD Release</span>
+              <div className="flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-slate-400 hidden md:block" />
+                {isViewOnly ? (
+                  <span>{m.id_pwd_release_time || "TBD"}</span>
+                ) : (
+                  <input type="text" value={m.id_pwd_release_time || ""} onChange={e => onUpdateMatchField(m.id, "id_pwd_release_time", e.target.value)}
+                    className="w-24 px-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500" placeholder="HH:MM" />
+                )}
+              </div>
+            </div>
 
-        <div className="flex justify-between items-center">
-          <span className="font-semibold text-slate-500">Status:</span>
-          <span className="font-bold uppercase text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{match.status || 'Scheduled'}</span>
-        </div>
+            {/* Start Time */}
+            <div className="col-span-3 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center text-sm mb-3 md:mb-0">
+              <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Start Time</span>
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-blue-500 hidden md:block" />
+                {isViewOnly ? (
+                  <span className="font-black text-slate-900">{formatTime12h(m.start_time)}</span>
+                ) : (
+                  <input type="time" value={m.start_time || ""} onChange={e => onUpdateMatchField(m.id, "start_time", e.target.value)}
+                    className="px-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-900 focus:outline-none focus:border-blue-500" />
+                )}
+              </div>
+            </div>
+
+            {/* Map */}
+            <div className="col-span-2 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center mb-3 md:mb-0">
+              <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Map</span>
+              {isViewOnly ? (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black uppercase tracking-wider border border-blue-100">
+                  {m.map || "Erangel"}
+                </span>
+              ) : (
+                <select value={m.map || "Erangel"} onChange={e => onUpdateMatchField(m.id, "map", e.target.value)}
+                  className="px-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500">
+                  {MAP_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              )}
+            </div>
+
+            {/* Status */}
+            <div className="col-span-2 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center">
+              <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</span>
+              <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wider">
+                {m.status || "Upcoming"}
+              </span>
+            </div>
+            
+          </div>
+        ))}
       </div>
-
-      {/* Qualification logic natively driven by backend */}
-      {!isGF && match.teams_advancing != null && (
-        <div className="pt-2 border-t border-slate-100">
-          <span className="block text-center text-[11px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 py-1 rounded-md">
-            Top {match.teams_advancing} Advance
-          </span>
-        </div>
-      )}
     </div>
   );
 }
