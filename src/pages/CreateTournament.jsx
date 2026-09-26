@@ -124,7 +124,7 @@ export default function CreateTournament({ onNavigate, template }) {
         kycRequired: template.kycRequired !== undefined ? template.kycRequired : true,
         emulatorBanned: template.emulatorBanned !== undefined ? template.emulatorBanned : true,
         antiCheatRequired: template.antiCheatRequired !== undefined ? template.antiCheatRequired : true,
-        roadmap: initialRoadmap
+        
       }
     }
     return {
@@ -160,7 +160,7 @@ export default function CreateTournament({ onNavigate, template }) {
       prizeSplit3rd: '₹2,50,000',
       prizeSplitMvp: '₹0',
       slotsReserved: 10,
-      roadmap: []
+      
     }
   })
 
@@ -186,7 +186,7 @@ export default function CreateTournament({ onNavigate, template }) {
       worker.onmessage = (e) => {
         setIsSaving(false)
         if (e.data && e.data.success) {
-          const { rules, roadmap, entry, prize, payoutPercent: pPercent } = e.data
+          const { rules, entry, prize, payoutPercent: pPercent } = e.data
           
           let prizeNum = cleanNum(prize)
           let p1st = '₹' + Math.round((prizeNum * 60) / 100).toLocaleString('en-IN')
@@ -203,8 +203,7 @@ export default function CreateTournament({ onNavigate, template }) {
             prizeSplit2nd: p2nd,
             prizeSplit3rd: p3rd,
             prizeSplitMvp: pMvp,
-            roadmap
-          }))
+                      }))
           
           setPayoutPercent(pPercent)
           setSplit1stPercent(60)
@@ -367,7 +366,7 @@ export default function CreateTournament({ onNavigate, template }) {
       if (startDate < closeDate) return 'Tournament kickoff start date must be on or after registration close date.'
     }
     if (step === 8) {
-      if (!newTourney.roadmap || newTourney.roadmap.length === 0) return 'Please add at least one match round to the roadmap.'
+      
       for (let i = 0; i < newTourney.roadmap.length; i++) {
         const round = newTourney.roadmap[i]
         if (!round.name || !round.name.trim()) return `Please enter a name for Round ${i + 1}.`
@@ -501,7 +500,7 @@ export default function CreateTournament({ onNavigate, template }) {
         { label: 'Credentials Release', date: newTourney.startDate, status: 'pending' },
         { label: 'Tournament Starts', date: newTourney.startDate, status: 'pending' }
       ],
-      roadmap: newTourney.roadmap || []
+      
     })
 
     const draftT = {
@@ -587,8 +586,7 @@ export default function CreateTournament({ onNavigate, template }) {
     }
 
     const finalStart = newTourney.startDate
-    const isLive = finalStart && new Date(finalStart) <= new Date()
-    
+
     const serializedTimeline = JSON.stringify({
       dates: [
         { label: 'Registration Open', date: newTourney.registrationOpenDate, status: 'completed' },
@@ -596,15 +594,14 @@ export default function CreateTournament({ onNavigate, template }) {
         { label: 'Credentials Release', date: newTourney.startDate, status: 'pending' },
         { label: 'Tournament Starts', date: newTourney.startDate, status: 'pending' }
       ],
-      roadmap: newTourney.roadmap || []
     })
 
     const finalT = {
       ...newTourney,
       isDraft: false,
-      status: isLive ? 'live' : 'upcoming',
-      badgeBg: isLive ? 'bg-error' : 'bg-primary',
-      badgeText: isLive ? 'LIVE' : 'UPCOMING',
+      status: 'upcoming',
+      badgeBg: 'bg-primary',
+      badgeText: 'UPCOMING',
       teamsCount: `${newTourney.slotsFilled || 0}/${newTourney.slotsTotal || 64} Teams`,
       date: finalStart ? formatDate(finalStart) : 'TBD',
       orgName: currentUser ? (currentUser.orgName || currentUser.name) : 'Verified Organizer',
@@ -1306,6 +1303,24 @@ export default function CreateTournament({ onNavigate, template }) {
                         <div>
                           <label className={labelClass}>Registration Opens *</label>
                           <input type="datetime-local" required value={newTourney.registrationOpenDate} onChange={(e) => setNewTourney({ ...newTourney, registrationOpenDate: e.target.value })} className={inputClass} />
+                          <div className="mt-2 flex items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const d = new Date()
+                                const pad = (n) => String(n).padStart(2, '0')
+                                const nowISO = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+                                setNewTourney({ ...newTourney, registrationOpenDate: nowISO })
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-surface-container/60 hover:bg-surface-container text-on-surface-variant border border-white/10 hover:text-white transition-all"
+                            >
+                              <span className="text-amber-400 font-bold">⚡</span>
+                              <span>Start right now</span>
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-on-surface-variant/60 mt-1">
+                            Open registration immediately after publishing.
+                          </p>
                         </div>
                         <div>
                           <label className={labelClass}>Registration Closes *</label>

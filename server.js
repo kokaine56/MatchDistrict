@@ -20,7 +20,7 @@ import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistra
 import { allocateTeam, AllocationError, ALLOCATION_SOURCES, ALLOCATION_ERR } from './server/allocationService.js';
 import { matchReleaseEpoch, isMatchReleased, normalizeReleaseMinutes } from './server/matchRelease.js';
 import { buildParticipantRoadmap, participantAccessMode, emptyParticipantRoadmap } from './server/participantRoadmap.js';
-import { qualifyRound, getRoundStandings, resolveQualificationCutoff, ProgressionError, PROGRESSION_ERR } from './server/roundProgressionService.js';
+import { qualifyMatch, ProgressionError, PROGRESSION_ERR } from './server/roundProgressionService.js';
 import { finalizeTournament, TournamentFinalizationError } from './server/tournamentFinalizationService.js';
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
@@ -504,6 +504,7 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_per_match INTEGER DEFAULT 20;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS card_color VARCHAR(50) DEFAULT 'white';
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rounds_published BOOLEAN DEFAULT true;
@@ -988,6 +989,31 @@ async function initDb() {
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS map VARCHAR(100);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS id_pwd_release_time VARCHAR(50);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS group_name VARCHAR(100);
+        
+        -- Decouple Legacy Constraints (Make Nullable)
+        ALTER TABLE tournament_matches ALTER COLUMN room_id DROP NOT NULL;
+        ALTER TABLE tournament_matches ALTER COLUMN group_id DROP NOT NULL;
+        ALTER TABLE tournament_matches ALTER COLUMN day_id DROP NOT NULL;
+        
+        -- Add Match Consistency Constraint
+        -- Drops the existing unique constraint before recreating it with NULLS NOT DISTINCT on round_id
+      `);
+      
+      try {
+        await client.query(`
+          ALTER TABLE tournament_matches DROP CONSTRAINT IF EXISTS tournament_matches_room_id_match_number_key;
+          ALTER TABLE tournament_matches ADD CONSTRAINT uq_tournament_matches_round_match UNIQUE NULLS NOT DISTINCT (tournament_id, round_id, match_number);
+        `);
+      } catch (err) {
+        // Constraints may already be altered
+      }
+      
+      await client.query(`
+        -- Add Deterministic Progression Pairing
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_match_id VARCHAR(50) REFERENCES tournament_matches(id) ON DELETE SET NULL;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_round_id VARCHAR(50) REFERENCES tournament_rounds(id) ON DELETE SET NULL;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS teams_advancing INTEGER;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS progression_processed BOOLEAN DEFAULT false;
       `);
       console.log('📦 [MATCH DISTRICT DB] Roadmap tables (days, groups, rooms, matches) initialized.');
     } catch (roadmapErr) {
@@ -1146,6 +1172,11 @@ async function initDb() {
         CREATE INDEX IF NOT EXISTS idx_match_assignments_room ON tournament_match_assignments(room_id);
 
         ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual';
+        
+        -- Decouple Legacy Constraints (Make Nullable)
+        ALTER TABLE tournament_match_assignments ALTER COLUMN room_id DROP NOT NULL;
+        ALTER TABLE tournament_match_assignments ALTER COLUMN group_id DROP NOT NULL;
+        ALTER TABLE tournament_match_assignments ALTER COLUMN day_id DROP NOT NULL;
       `);
       console.log('📦 [MATCH DISTRICT DB] Tournament Allocation tables (Phase 7) + source column initialized.');
     } catch (allocErr) {
@@ -4262,13 +4293,13 @@ const server = http.createServer(async (req, res) => {
               match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
               prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url,
               lobby_start_time, mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions,
-              sponsors_enabled, max_slots_per_room, card_color, rounds_published, teams_per_group, roadmap_image_url
+              sponsors_enabled, max_slots_per_room, card_color, rounds_published, teams_per_group, teams_per_match, roadmap_image_url
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
               $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58)
+              $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59)
             RETURNING *`,
             [
-              tournamentId, t.title, t.game, 'live', 'bg-primary', 'LIVE', now.toISOString(),
+              tournamentId, t.title, t.game, 'upcoming', 'bg-primary', 'UPCOMING', now.toISOString(),
               prizeDisplay, entryDisplay, '', true, 'Match District', '', 'matchdistrict', 'Admin Hosted',
               regOpen, regClose, startDate,
               t.rules ? (typeof t.rules === 'string' ? t.rules : JSON.stringify(t.rules)) : '[]',
@@ -4284,7 +4315,7 @@ const server = http.createServer(async (req, res) => {
               t.kill_reward_enabled || false, t.kill_reward_per_kill ? parseInt(t.kill_reward_per_kill) : 0,
               t.prize_positions || '[]', t.sponsors_enabled || false, maxSlotsPerRoom,
               t.card_color || 'white', coerceBool(t.rounds_published, true),
-              adminTeamsPerGroup, sanitizeImageUrlForDb(t.roadmap_image_url) || ''
+              adminTeamsPerGroup, t.teams_per_match ? parseInt(t.teams_per_match) : 16, sanitizeImageUrlForDb(t.roadmap_image_url) || ''
             ]
           );
           const createdTournament = dbRes.rows[0];
@@ -4398,9 +4429,9 @@ const server = http.createServer(async (req, res) => {
             match_type, perspective, reserved_slots, entry_fee_amount, prize_pool_type, prize_pool_amount,
             prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, description, cover_image_url, lobby_start_time,
             mvp_enabled, mvp_amount, kill_reward_enabled, kill_reward_per_kill, prize_positions, sponsors_enabled, max_slots_per_room,
-            unique_amount_suffix_enabled, card_color, rounds_published, teams_per_group, roadmap_image_url
+            unique_amount_suffix_enabled, card_color, rounds_published, teams_per_group, teams_per_match, roadmap_image_url
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31,
-            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59)
+            $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60)
           ON CONFLICT (id) DO UPDATE SET
             status = COALESCE(EXCLUDED.status, tournaments.status),
             "isDraft" = COALESCE(EXCLUDED."isDraft", tournaments."isDraft"),
@@ -4423,6 +4454,7 @@ const server = http.createServer(async (req, res) => {
             card_color = COALESCE(EXCLUDED.card_color, tournaments.card_color),
             rounds_published = COALESCE(EXCLUDED.rounds_published, tournaments.rounds_published),
             teams_per_group = COALESCE(EXCLUDED.teams_per_group, tournaments.teams_per_group),
+            teams_per_match = COALESCE(EXCLUDED.teams_per_match, tournaments.teams_per_match),
             roadmap_image_url = COALESCE(EXCLUDED.roadmap_image_url, tournaments.roadmap_image_url)
           RETURNING *`,
           [
@@ -4484,6 +4516,7 @@ const server = http.createServer(async (req, res) => {
             t.card_color || 'white',
             coerceBool(t.rounds_published, true),
             orgTeamsPerGroup,
+            t.teams_per_match ? parseInt(t.teams_per_match) : 16,
             sanitizeImageUrlForDb(t.roadmap_image_url) || ''
           ]
         );
@@ -4840,8 +4873,9 @@ const server = http.createServer(async (req, res) => {
               card_color = COALESCE($50, card_color),
               rounds_published = COALESCE($51, rounds_published),
               teams_per_group = COALESCE($52, teams_per_group),
-              roadmap_image_url = COALESCE($53, roadmap_image_url)
-            WHERE id = $54 RETURNING *`,
+          teams_per_match = COALESCE($53, teams_per_match),
+              roadmap_image_url = COALESCE($54, roadmap_image_url)
+            WHERE id = $55 RETURNING *`,
             [
               t.title || null,
               t.game || null,
@@ -4895,6 +4929,7 @@ const server = http.createServer(async (req, res) => {
               t.card_color || null,
               t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null,
               t.teams_per_group !== undefined ? normalizeTeamsPerGroup(t.teams_per_group, 16) : null,
+      t.teams_per_match !== undefined ? parseInt(t.teams_per_match) : null,
               t.roadmap_image_url !== undefined ? sanitizeImageUrlForDb(t.roadmap_image_url) : null,
               id
             ]
@@ -5135,10 +5170,11 @@ const server = http.createServer(async (req, res) => {
             max_slots_per_room = COALESCE($52, max_slots_per_room),
             unique_amount_suffix_enabled = COALESCE($53, unique_amount_suffix_enabled),
             card_color = COALESCE($54, card_color),
-            rounds_published = COALESCE($56, rounds_published),
-            teams_per_group = COALESCE($57, teams_per_group),
+            rounds_published = COALESCE($55, rounds_published),
+            teams_per_group = COALESCE($56, teams_per_group),
+            teams_per_match = COALESCE($57, teams_per_match),
             roadmap_image_url = COALESCE($58, roadmap_image_url)
-           WHERE id = $55 RETURNING *`,
+           WHERE id = $59 RETURNING *`,
           [
             t.title !== undefined ? t.title : null,
             t.game !== undefined ? t.game : null,
@@ -5194,10 +5230,11 @@ const server = http.createServer(async (req, res) => {
             t.max_slots_per_room !== undefined && t.max_slots_per_room !== null && t.max_slots_per_room !== '' ? parseInt(t.max_slots_per_room) : null,
             t.unique_amount_suffix_enabled !== undefined ? !!t.unique_amount_suffix_enabled : null,
             t.card_color || null,
-            id,
             t.rounds_published !== undefined ? coerceBool(t.rounds_published, true) : null,
             orgTeamsPerGroup,
-            t.roadmap_image_url !== undefined ? sanitizeImageUrlForDb(t.roadmap_image_url) : null
+            t.teams_per_match !== undefined ? parseInt(t.teams_per_match) : null,
+            t.roadmap_image_url !== undefined ? sanitizeImageUrlForDb(t.roadmap_image_url) : null,
+            id
           ]
           );
           await configClient.query('COMMIT');
@@ -6268,7 +6305,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'ROADMAP_ERROR', message: result.error }));
       }
 
-      const { days, groups, rooms, matches } = result.roadmap;
+      const { rounds, days, groups, rooms, matches } = result.roadmap;
 
       // 3. Atomic Database Transaction
       const dbClient = await pool.connect();
@@ -6282,35 +6319,46 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
         }
 
-        // Delete any existing draft roadmap (cascade: days → groups → rooms → matches)
+        // Delete any existing draft roadmap explicitly
+        await dbClient.query('DELETE FROM tournament_matches WHERE tournament_id = $1', [tId]);
+        await dbClient.query('DELETE FROM tournament_rooms WHERE tournament_id = $1', [tId]);
+        await dbClient.query('DELETE FROM tournament_groups WHERE tournament_id = $1', [tId]);
         await dbClient.query('DELETE FROM tournament_days WHERE tournament_id = $1', [tId]);
+        await dbClient.query('DELETE FROM tournament_rounds WHERE tournament_id = $1', [tId]);
 
-        for (const d of days) {
+        for (const r of (rounds || [])) {
+          await dbClient.query(`
+            INSERT INTO tournament_rounds (id, tournament_id, round_number, name, status, teams_advancing, "date", "time", map)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `, [r.id, r.tournament_id, r.round_number, r.name, r.status || 'configured', r.teams_advancing, r.date, r.time, r.map || null]);
+        }
+
+        for (const d of (days || [])) {
           await dbClient.query(`
             INSERT INTO tournament_days (id, tournament_id, day_number, date, round_id)
             VALUES ($1, $2, $3, $4, $5)
           `, [d.id, d.tournament_id, d.day_number, d.date || null, d.round_id || null]);
         }
 
-        for (const g of groups) {
+        for (const g of (groups || [])) {
           await dbClient.query(`
             INSERT INTO tournament_groups (id, day_id, tournament_id, group_name, sequence, round_id)
             VALUES ($1, $2, $3, $4, $5, $6)
           `, [g.id, g.day_id, g.tournament_id, g.group_name, g.sequence, g.round_id || null]);
         }
 
-        for (const r of rooms) {
+        for (const r of (rooms || [])) {
           await dbClient.query(`
             INSERT INTO tournament_rooms (id, group_id, day_id, tournament_id, room_number, capacity, status, round_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           `, [r.id, r.group_id, r.day_id, r.tournament_id, r.room_number, r.capacity || 16, r.status || 'DRAFT', r.round_id || null]);
         }
 
-        for (const m of matches) {
+        for (const m of (matches || [])) {
           await dbClient.query(`
-            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          `, [m.id, m.room_id, m.group_id, m.day_id, m.tournament_id, m.match_number, m.start_time, m.end_time || '', m.status || 'PENDING', m.round_id || null, m.map || 'Erangel', m.id_pwd_release_time || null]);
+            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_match_id, next_round_id, teams_advancing)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          `, [m.id, m.room_id || null, m.group_id || null, m.day_id || null, m.tournament_id, m.match_number, m.start_time, m.end_time || '', m.status || 'PENDING', m.round_id || null, m.map || 'Erangel', m.id_pwd_release_time || null, m.next_match_id || null, m.next_round_id || null, m.teams_advancing || null]);
         }
 
         await dbClient.query(`UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1`, [tId]);
@@ -6449,7 +6497,7 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, game FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -8983,6 +9031,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const { applyMatchResults, MatchResultError } = await import('./server/matchResultService.js');
+        const { qualifyMatch, ProgressionError } = await import('./server/roundProgressionService.js');
 
         // Connection-pinned transaction: every gate + write runs on ONE client so the
         // ROLLBACK is reliable; row locks enforce deterministic ordering (no deadlocks).
@@ -8990,12 +9039,13 @@ const server = http.createServer(async (req, res) => {
         try {
           await client.query('BEGIN');
           const outcome = await applyMatchResults(client, { tournId, matchId, results, actorId: authUser.id });
+          const progOutcome = await qualifyMatch(client, { tournamentId: tournId, matchId, actorId: authUser.id });
           await client.query('COMMIT');
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'Results verified and leaderboard updated.', written: outcome.written }));
+          res.end(JSON.stringify({ success: true, message: 'Results verified and progression processed.', written: outcome.written, progression: progOutcome }));
         } catch (txErr) {
           try { await client.query('ROLLBACK'); } catch (rbErr) { /* already broken */ }
-          if (txErr instanceof MatchResultError) {
+          if (txErr instanceof MatchResultError || txErr instanceof ProgressionError) {
             res.writeHead(txErr.status || 400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: txErr.code, message: txErr.message }));
             return;
@@ -9014,6 +9064,91 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+
+
+  // GET /api/tournaments/:tournId/matches/:matchId/credentials
+  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/matches\/([^/]+)\/credentials$/) && req.method === 'GET') {
+    const parts = req.url.split('/');
+    const tournId = parts[3];
+    const matchId = parts[5];
+    
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        return;
+      }
+
+      const matchRes = await pool.query(
+        `SELECT m.start_time, m.room_identifier, m.room_password, m.day_id,
+                t.room_credentials_release_minutes, t."orgId", t.roadmap_status
+         FROM tournament_matches m
+         JOIN tournaments t ON t.id = m.tournament_id
+         WHERE m.id = $1 AND m.tournament_id = $2`,
+        [matchId, tournId]
+      );
+      if (matchRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Match not found.' }));
+      }
+      const matchData = matchRes.rows[0];
+
+      if (matchData.roadmap_status !== 'approved') {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Roadmap not approved.' }));
+      }
+
+      const isOrganizer = (matchData.orgId === authUser.id || hasRole(authUser, ROLES.ADMIN));
+
+      let isEligibleParticipant = false;
+      if (!isOrganizer) {
+        const allocRes = await pool.query(
+          `SELECT a.status
+           FROM tournament_match_assignments a
+           JOIN tournament_team_members tm ON tm.tournament_team_id = a.tournament_team_id
+           WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3`,
+          [matchId, tournId, authUser.id]
+        );
+        isEligibleParticipant = allocRes.rows.some(r => r.status === 'allocated');
+      }
+
+      if (!isOrganizer && !isEligibleParticipant) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You are not assigned to this match.' }));
+      }
+
+      const dayRes = await pool.query('SELECT date FROM tournament_days WHERE id = $1', [matchData.day_id]);
+      const date = dayRes.rows[0]?.date;
+      
+      const { isMatchReleased, matchReleaseEpoch } = await import('./server/matchRelease.js');
+      const releaseTimeEpoch = matchReleaseEpoch(date, matchData.start_time, matchData.room_credentials_release_minutes);
+      const released = isMatchReleased(date, matchData.start_time, matchData.room_credentials_release_minutes, Date.now());
+
+      if (!isOrganizer && !released) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          status: 'locked',
+          releaseTime: releaseTimeEpoch ? new Date(releaseTimeEpoch).toISOString() : null
+        }));
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        status: 'released',
+        room_identifier: matchData.room_identifier || '',
+        room_password: matchData.room_password || '',
+        releaseTime: releaseTimeEpoch ? new Date(releaseTimeEpoch).toISOString() : null
+      }));
+    } catch (err) {
+      console.error('[CREDENTIALS API]', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR' }));
+    }
+    return;
+  }
 
   // 7k_b. Supabase Get All Registrations for a User (auth + ownership required)
   if (req.url.startsWith('/api/users/') && req.url.endsWith('/registrations') && req.method === 'GET') {
@@ -9588,7 +9723,7 @@ const server = http.createServer(async (req, res) => {
     const parts = req.url.split('/');
     const id = parts[3];
     try {
-      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room, teams_per_group FROM tournaments WHERE id = $1', [id]);
+      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room, teams_per_group, teams_per_match FROM tournaments WHERE id = $1', [id]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
@@ -16206,7 +16341,7 @@ function startAutomationProcessor() {
             );
           } else if (rule.trigger_event === 'auto_close_registration') {
             await pool.query(
-              "UPDATE tournaments SET status = 'live' WHERE id = $1",
+              "UPDATE tournaments SET status = 'upcoming' WHERE id = $1",
               [tournamentId]
             );
           } else if (rule.trigger_event === 'auto_reminder') {

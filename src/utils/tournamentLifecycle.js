@@ -13,57 +13,61 @@ function parseRoadmap(t) {
   } catch { return [] }
 }
 
-function getRoundTimestamp(r) {
-  if (!r?.date) return null
-  const s = r.time ? `${r.date}T${r.time}` : `${r.date}T23:59`
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? null : d.getTime()
+function getFirstMatchStart(t) {
+  if (!t) return null
+  const roadmap = parseRoadmap(t)
+  if (roadmap.length > 0) {
+    const ts = getRoundTimestamp(roadmap[0])
+    if (ts) return ts
+  }
+  const startDate = parseDate(t.startDate || t.start_date || t.date)
+  if (startDate) return startDate.getTime()
+  return null
 }
 
 /**
  * Tournament lifecycle state machine.
  *
  * Timeline:
- *   UPCOMING → OPEN → CLOSED → LIVE → ARCHIVED
+ *   REGISTRATION NOT OPEN → REGISTRATION OPEN → REGISTRATION CLOSED → TOURNAMENT UPCOMING → FIRST MATCH STARTS → LIVE → COMPLETED
  *
  * Rules:
- *   UPCOMING : now < registrationOpenDate
- *   OPEN     : registrationOpenDate <= now <= registrationCloseDate
- *   CLOSED   : registrationCloseDate < now < (Round1Start − 15 min)
- *   LIVE     : (Round1Start − 15 min) <= now < (LastRoundStart + 24 h)
- *   ARCHIVED : now >= (LastRoundStart + 24 h) or server status archived
- *
- * If no roadmap rounds exist, the tournament stays CLOSED after
- * registration closes (no LIVE / ARCHIVED transitions).
+ *   - Opening registration MUST NOT make matches live.
+ *   - LIVE status is strictly derived from actual match/round kickoff timing.
  */
 export function getTournamentLifecycleStatus(t, now = new Date()) {
   if (!t) return 'upcoming'
 
   const stored = (t.status || '').toLowerCase()
-  if (stored === 'archived') return 'archived'
-  if (stored === 'live' || stored === 'active') return 'live'
-  if (stored === 'completed') return 'archived'
+  if (stored === 'archived' || stored === 'completed') return 'archived'
 
+  const nowTs = now instanceof Date ? now.getTime() : new Date(now).getTime()
   const regOpen = parseDate(t.registrationOpenDate || t.registration_open_date)
   const regClose = parseDate(t.registrationCloseDate || t.registration_close_date)
 
   const roadmap = parseRoadmap(t)
-  const firstRoundTs = roadmap.length > 0 ? getRoundTimestamp(roadmap[0]) : null
-  const lastRoundTs = roadmap.length > 1
-    ? getRoundTimestamp(roadmap[roadmap.length - 1])
-    : firstRoundTs
+  const firstMatchTs = getFirstMatchStart(t)
+  const lastMatchTs = roadmap.length > 1 ? getRoundTimestamp(roadmap[roadmap.length - 1]) : firstMatchTs
 
-  if (regOpen && now < regOpen) return 'upcoming'
-  if (regOpen && now >= regOpen && (!regClose || now <= regClose)) return 'open'
+  // Match live check: tournament is LIVE only if actual match start time (or 5 min buffer) has arrived
+  if (firstMatchTs) {
+    const liveStartsAt = firstMatchTs - 5 * 60 * 1000
+    const archivedAt = (lastMatchTs || firstMatchTs) + 24 * 60 * 60 * 1000
 
-  if (regClose && now > regClose) {
-    if (!firstRoundTs) return 'closed'
-    const liveStartsAt = firstRoundTs - 15 * 60 * 1000
-    if (now < liveStartsAt) return 'closed'
-    const archivedAt = lastRoundTs + 24 * 60 * 60 * 1000
-    if (now >= archivedAt) return 'archived'
+    if (nowTs >= liveStartsAt) {
+      if (nowTs >= archivedAt) return 'archived'
+      return 'live'
+    }
+  } else if (stored === 'live' || stored === 'active') {
+    // Fallback if server explicitly set status live and no dates exist
     return 'live'
   }
+
+  // Before first match starts (or while first match has not arrived):
+  // Return registration window status or upcoming
+  if (regOpen && nowTs < regOpen.getTime()) return 'upcoming'
+  if (regOpen && nowTs >= regOpen.getTime() && (!regClose || nowTs <= regClose.getTime())) return 'open'
+  if (regClose && nowTs > regClose.getTime()) return 'closed'
 
   return 'upcoming'
 }

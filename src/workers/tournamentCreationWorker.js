@@ -51,67 +51,10 @@ self.onmessage = (e) => {
       payoutPercent = 100;
     }
 
-    // 4. Roadmap Rounds generation based on slots and game type
-    const rounds = [];
-    const baseDate = startDate ? new Date(startDate) : new Date();
-    
-    let numRounds = 3;
-    if (slotsTotal <= 16) {
-      numRounds = 2;
-    } else if (slotsTotal > 100) {
-      numRounds = 4;
-    }
-
-    for (let i = 1; i <= numRounds; i++) {
-      const roundDate = new Date(baseDate);
-      // Increment days/hours depending on preset
-      if (presetType === 'Speed Run') {
-        // Hourly schedule for speed run
-        roundDate.setHours(roundDate.getHours() + (i - 1) * 2);
-      } else {
-        // Daily schedule
-        roundDate.setDate(roundDate.getDate() + (i - 1));
-      }
-      
-      let roundName = `Round ${i}`;
-      if (i === numRounds) {
-        roundName = 'Grand Finals';
-      } else if (i === numRounds - 1) {
-        roundName = 'Semifinals';
-      } else if (i === 1) {
-        roundName = 'Qualifiers';
-      }
-
-      // Qualification rules
-      let qualifyText = 'Top 4 teams from each group qualify';
-      if (i === numRounds) {
-        qualifyText = 'Champion takes home the grand prize pool';
-      } else if (i === numRounds - 1) {
-        qualifyText = 'Top 8 teams advance to the finals';
-      }
-
-      // Format ISO dates and times
-      const dateStr = roundDate.toISOString().slice(0, 10);
-      const timeStr = roundDate.toTimeString().slice(0, 5);
-
-      rounds.push({
-        id: `rnd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
-        name: roundName,
-        date: dateStr,
-        time: timeStr,
-        map: maps[(i - 1) % maps.length],
-        qualify: qualifyText,
-        room_id: '',
-        room_password: '',
-        id_pass_release_offset_minutes: 15
-      });
-    }
-
     // Post results back
     self.postMessage({
       success: true,
       rules,
-      roadmap: rounds,
       entry,
       prize,
       payoutPercent

@@ -53,6 +53,7 @@ function emptyForm() {
     sponsors: [],
     rules: '',
     teams_per_group: '',
+    teams_per_match: 16,
     unique_amount_suffix_enabled: false,
     card_color: 'white',
     planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
@@ -281,6 +282,7 @@ export default function CreationWizard() {
           sponsors: Array.isArray(t.sponsors_data) ? t.sponsors_data : (typeof t.sponsors_data === 'string' ? (() => { try { return JSON.parse(t.sponsors_data) } catch { return [] } })() : []),
           rules: t.rules || '',
           teams_per_group: t.teams_per_group ? String(t.teams_per_group) : '',
+          teams_per_match: t.teams_per_match ? parseInt(t.teams_per_match) : 16,
           unique_amount_suffix_enabled: t.unique_amount_suffix_enabled || false,
           card_color: t.card_color || 'white',
           planningConfig: { ...DEFAULT_ROADMAP_PLANNING },
@@ -383,6 +385,7 @@ const body = {
         sponsors_enabled: formData.sponsors_enabled ?? false,
         rules: formData.rules || '',
         teams_per_group: formData.teams_per_group ? parseInt(formData.teams_per_group) : null,
+      teams_per_match: formData.teams_per_match ? parseInt(formData.teams_per_match) : 16,
         max_slots_per_room: formData.max_slots_per_room ? parseInt(formData.max_slots_per_room) : null,
         unique_amount_suffix_enabled: formData.unique_amount_suffix_enabled || false,
         card_color: formData.card_color || 'white',
@@ -577,18 +580,13 @@ const body = {
       setPublishError(errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.')
       return
     }
-    const planningSave = await handleSavePlanningConfig(formData.planningConfig || DEFAULT_ROADMAP_PLANNING)
-    if (!planningSave.success) {
-      setPublishError(planningSave.message || 'Save roadmap planning before publishing.')
-      return
-    }
     const result = await saveToServer('PUBLISHED')
     if (result?.tournament) {
       navigate(`/tournaments/${result.tournament.id}`)
     } else if (result?.error) {
       setPublishError(result.message)
     }
-  }, [formData, planLimits, saveToServer, navigate, orgName, userTier, currentUser, handleSavePlanningConfig])
+  }, [formData, planLimits, saveToServer, navigate, orgName, userTier, currentUser])
 
   const handlePublishStep9 = useCallback(async (preUploadedImageUrl) => {
     setPublishError(null)
@@ -605,17 +603,12 @@ const body = {
       const errMessages = Object.values(allErrors).filter(Boolean)
       return { tournament: null, error: 'VALIDATION', message: errMessages.length > 0 ? errMessages.join('. ') : 'Please fix the highlighted errors and try again.' }
     }
-    const planningSave = await handleSavePlanningConfig(formData.planningConfig || DEFAULT_ROADMAP_PLANNING)
-    if (!planningSave.success) {
-      setPublishError(planningSave.message || 'Save roadmap planning before publishing.')
-      return { tournament: null, error: 'PLANNING_CONFIG', message: planningSave.message || 'Save roadmap planning before publishing.' }
-    }
     const result = await saveToServer('PUBLISHED', preUploadedImageUrl)
     if (result?.error) {
       setPublishError(result.message)
     }
     return result
-  }, [formData, planLimits, saveToServer, orgName, userTier, currentUser, handleSavePlanningConfig])
+  }, [formData, planLimits, saveToServer, orgName, userTier, currentUser])
 
   const debounceRef = useRef(null)
   const handleChange = useCallback((newData) => {
