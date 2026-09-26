@@ -173,7 +173,7 @@ export default function TournamentRoadmapBuilder({
         <h2 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">Tournament Roadmap</h2>
         <p className="text-sm font-semibold text-slate-600 mb-2">No roadmap has been generated yet.</p>
         <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed mb-8">
-          Generate a roadmap from this tournament's existing schedule and qualification settings.
+          Generate the tournament roadmap from the saved tournament schedule and match settings.
         </p>
         <button type="button" onClick={() => handleGenerate(false)} disabled={generating}
           className="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-50">
@@ -194,7 +194,7 @@ export default function TournamentRoadmapBuilder({
     <div className="w-full bg-white border border-slate-200 rounded-2xl p-10 text-center shadow-sm max-w-2xl mx-auto">
       <Calendar className="w-8 h-8 text-slate-300 mx-auto mb-3" />
       <h3 className="text-base font-bold text-slate-800 mb-1">Tournament Roadmap</h3>
-      <p className="text-sm text-slate-400">The match schedule has not been published yet.</p>
+      <p className="text-sm text-slate-400">The tournament roadmap has not been published yet.</p>
     </div>
   );
 
@@ -280,7 +280,7 @@ export default function TournamentRoadmapBuilder({
                         key={match.id} 
                         match={match} 
                         isViewOnly={isViewOnly} 
-                        onUpdateMatchField={onUpdateMatchField}
+                        onUpdateMatchField={updateMatchField}
                         maxCapacity={roadmapData.meta?.max_capacity || 25}
                       />
                     ))}
@@ -310,7 +310,7 @@ export default function TournamentRoadmapBuilder({
                       key={match.id} 
                       match={match} 
                       isViewOnly={isViewOnly} 
-                      onUpdateMatchField={onUpdateMatchField}
+                      onUpdateMatchField={updateMatchField}
                       maxCapacity={roadmapData.meta?.max_capacity || 25}
                     />
                   ))}

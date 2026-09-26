@@ -307,7 +307,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
   const isTournamentOwner = useMemo(
-    () => Boolean(currentUser && tourney && (currentUser.id === tourney.orgId || isSystemAdmin(currentUser))),
+    () => Boolean(currentUser && tourney && (
+      currentUser.id === tourney.orgId ||
+      currentUser.id === tourney.organizer_id ||
+      currentUser.id === tourney.organizerId ||
+      currentUser.id === tourney.org_id ||
+      isSystemAdmin(currentUser)
+    )),
     [currentUser, tourney]
   );
   const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';

@@ -40,6 +40,7 @@ export function normalizeTournamentRow(matched) {
   if (!matched) return null
   return {
     ...matched,
+    orgId: matched.orgId || matched.organizer_id || matched.organizerId || matched.org_id || '',
     bannerUrl: matched.bannerUrl || 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80',
     logoUrl: matched.logoUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80',
     region: matched.region || 'Mumbai',

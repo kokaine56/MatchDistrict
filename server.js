@@ -6354,11 +6354,23 @@ const server = http.createServer(async (req, res) => {
           `, [r.id, r.group_id, r.day_id, r.tournament_id, r.room_number, r.capacity || 16, r.status || 'DRAFT', r.round_id || null]);
         }
 
+        // Phase 1: Insert all matches with next_match_id = NULL
         for (const m of (matches || [])) {
           await dbClient.query(`
-            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_match_id, next_round_id, teams_advancing)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-          `, [m.id, m.room_id || null, m.group_id || null, m.day_id || null, m.tournament_id, m.match_number, m.start_time, m.end_time || '', m.status || 'PENDING', m.round_id || null, m.map || 'Erangel', m.id_pwd_release_time || null, m.next_match_id || null, m.next_round_id || null, m.teams_advancing || null]);
+            INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_round_id, teams_advancing)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          `, [m.id, m.room_id || null, m.group_id || null, m.day_id || null, m.tournament_id, m.match_number, m.start_time, m.end_time || '', m.status || 'PENDING', m.round_id || null, m.map || 'Erangel', m.id_pwd_release_time || null, m.next_round_id || null, m.teams_advancing || null]);
+        }
+
+        // Phase 2: Populate progression links (next_match_id) now that destination matches exist
+        for (const m of (matches || [])) {
+          if (m.next_match_id) {
+            await dbClient.query(`
+              UPDATE tournament_matches
+              SET next_match_id = $1
+              WHERE id = $2
+            `, [m.next_match_id, m.id]);
+          }
         }
 
         await dbClient.query(`UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1`, [tId]);
@@ -6408,6 +6420,7 @@ const server = http.createServer(async (req, res) => {
 
         const payload = JSON.parse(body || '{}');
         const roadmapData = payload.roadmap || payload;
+        const rounds = Array.isArray(roadmapData.rounds) ? roadmapData.rounds : [];
         const days = Array.isArray(roadmapData.days) ? roadmapData.days : [];
         const groups = Array.isArray(roadmapData.groups) ? roadmapData.groups : [];
         const rooms = Array.isArray(roadmapData.rooms) ? roadmapData.rooms : [];
@@ -6417,7 +6430,21 @@ const server = http.createServer(async (req, res) => {
         try {
           await dbClient.query('BEGIN');
 
+          // Delete existing draft/saved roadmap records to prevent primary key collisions
+          await dbClient.query('DELETE FROM tournament_matches WHERE tournament_id = $1', [tId]);
+          await dbClient.query('DELETE FROM tournament_rooms WHERE tournament_id = $1', [tId]);
+          await dbClient.query('DELETE FROM tournament_groups WHERE tournament_id = $1', [tId]);
           await dbClient.query('DELETE FROM tournament_days WHERE tournament_id = $1', [tId]);
+          if (rounds.length > 0) {
+            await dbClient.query('DELETE FROM tournament_rounds WHERE tournament_id = $1', [tId]);
+          }
+
+          for (const r of rounds) {
+            await dbClient.query(`
+              INSERT INTO tournament_rounds (id, tournament_id, round_number, name, status, teams_advancing, "date", "time", map)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `, [r.id, tId, r.round_number || 1, r.name || 'Round 1', r.status || 'configured', r.teams_advancing || null, r.date || null, r.time || null, r.map || null]);
+          }
 
           for (const d of days) {
             await dbClient.query(`
@@ -6440,15 +6467,16 @@ const server = http.createServer(async (req, res) => {
             `, [r.id || `RM-${crypto.randomBytes(8).toString('hex')}`, r.group_id || null, r.day_id, tId, r.room_number || 1, r.capacity || 16, r.status || 'DRAFT', r.round_id || null]);
           }
 
+          // Phase 1: Insert all matches with next_match_id = NULL
           for (const m of matches) {
             await dbClient.query(`
-              INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              INSERT INTO tournament_matches (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_round_id, teams_advancing, group_name)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             `, [
               m.id || `MAT-${crypto.randomBytes(8).toString('hex')}`,
-              m.room_id,
+              m.room_id || null,
               m.group_id || null,
-              m.day_id,
+              m.day_id || null,
               tId,
               m.match_number || 1,
               m.start_time || '10:00',
@@ -6456,8 +6484,22 @@ const server = http.createServer(async (req, res) => {
               m.status || 'PENDING',
               m.round_id || null,
               m.map || 'Erangel',
-              m.id_pwd_release_time || null
+              m.id_pwd_release_time || null,
+              m.next_round_id || null,
+              m.teams_advancing || null,
+              m.group_name || null
             ]);
+          }
+
+          // Phase 2: Populate progression links (next_match_id)
+          for (const m of matches) {
+            if (m.next_match_id) {
+              await dbClient.query(`
+                UPDATE tournament_matches
+                SET next_match_id = $1
+                WHERE id = $2
+              `, [m.next_match_id, m.id]);
+            }
           }
 
           let existingTimeline = {};

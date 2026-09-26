@@ -39,11 +39,18 @@ function MatchCard({ match, participant }) {
         </div>
       </dl>
 
-      {!match.isGrandFinal && match.teamsAdvancing != null && (
-        <div className="mt-3 bg-blue-50 text-blue-700 text-[11px] font-black uppercase text-center py-1 rounded-md">
-          Top {match.teamsAdvancing} Advance
-        </div>
-      )}
+      {(() => {
+        const advancing = match.teams_advancing ?? match.teamsAdvancing;
+        const isGF = match.is_grand_final || match.isGrandFinal;
+        if (!isGF && advancing != null) {
+          return (
+            <div className="mt-3 bg-blue-50 text-blue-700 text-[11px] font-black uppercase text-center py-1 rounded-md">
+              Top {advancing} Advance
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {(match.roomIdentifier || match.roomPassword) && (
         <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -124,7 +131,7 @@ export default function Phase3RoadmapViewer({ tournamentId }) {
           <CalendarDays className="w-6 h-6" />
         </div>
         <h3 className="text-base font-bold text-slate-900 mb-1">Tournament Roadmap</h3>
-        <p className="text-xs text-slate-500">The tournament schedule has not been published yet.</p>
+        <p className="text-xs text-slate-500">The tournament roadmap has not been published yet.</p>
       </div>
     )
   }
