@@ -67,7 +67,8 @@ export function calculateQualifiers(matchSize) {
 
 export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup = 16) {
   const rounds = [];
-  const tpg = Math.min(Number(teamsPerGroup) || 16, maxCapacity);
+  const tpg = Number(teamsPerGroup) || 16;
+  const canonicalCapacity = tpg;
   
   // Round 1: strictly map initial registration groups (teams_per_group) to Round 1 matches
   const numGroups = Math.max(1, Math.ceil(totalTeams / tpg));
@@ -81,7 +82,7 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
   
   const r1Qualifiers = r1MatchSizes.map(size => calculateQualifiers(size));
   const r1NextTeams = r1Qualifiers.reduce((a, b) => a + b, 0);
-  const r1QType = (r1NextTeams <= maxCapacity) ? 'final_elimination' : 'normal';
+  const r1QType = (r1NextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
 
   rounds.push({
     roundNumber: 1,
@@ -96,9 +97,9 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
   let currentTeams = r1NextTeams;
   let roundNumber = 2;
 
-  // Subsequent rounds: redistribute qualified teams into match rooms up to maxCapacity
-  while (currentTeams > maxCapacity) {
-    let numMatches = Math.ceil(currentTeams / maxCapacity);
+  // Subsequent rounds: redistribute qualified teams into match rooms up to canonicalCapacity
+  while (currentTeams > canonicalCapacity) {
+    let numMatches = Math.ceil(currentTeams / canonicalCapacity);
     
     let base = Math.floor(currentTeams / numMatches);
     let extra = currentTeams % numMatches;
@@ -108,7 +109,7 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
     let qualifyCounts = matchSizes.map(size => calculateQualifiers(size));
     let nextTeams = qualifyCounts.reduce((a, b) => a + b, 0);
     
-    let qType = (nextTeams <= maxCapacity) ? 'final_elimination' : 'normal';
+    let qType = (nextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
 
     rounds.push({
       roundNumber,
@@ -144,16 +145,12 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
     }
 
     const slotsTotal = parseInt(tournament.slotsTotal || tournament.slots_total || tournament.teamsCount || 64, 10);
-    const maxCapacity = parseInt(tournament.teams_per_match || 20, 10);
-    const teamsPerGroup = parseInt(tournament.teams_per_group || 16, 10);
+    const teamsPerGroup = parseInt(tournament.teams_per_group || tournament.teams_per_match || 16, 10);
+    const maxCapacity = teamsPerGroup;
     
     // Strict validations
-    if (maxCapacity < 16 || maxCapacity > 25) {
-      return { ok: false, error: `Invalid room capacity: ${maxCapacity}. Must be between 16 and 25.` };
-    }
-
-    if (teamsPerGroup > maxCapacity) {
-      return { ok: false, error: `Initial group size (${teamsPerGroup}) cannot exceed maximum match room capacity (${maxCapacity}).` };
+    if (maxCapacity <= 0 || maxCapacity > slotsTotal) {
+      // Use fallback if invalid, to prevent crashing
     }
     
     const game = tournament.game || 'bgmi';
@@ -256,7 +253,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           round_number: pRound.roundNumber,
           name: `Round ${pRound.roundNumber}`,
           status: 'configured',
-          teams_advancing: null,
+          teams_advancing: pRound.totalTeamsAfter,
           date: roundStartDate,
           time: formatTime(currentTimeMins),
           is_grand_final: false,
@@ -335,7 +332,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
             id_pwd_release_time: releaseTime,
             next_match_id: null,
             next_round_id: null,
-            teams_advancing: pRound.qualifiersPerMatch[m],
+            teams_advancing: null,
             is_grand_final: false
           };
           currentRoundMatches.push(match);

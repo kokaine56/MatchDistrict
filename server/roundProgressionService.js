@@ -27,26 +27,50 @@ export async function getMatchStandings(client, tournamentId, matchId) {
   const res = await client.query(
     `SELECT
        tm.team_id,
-       t.team_name,
-       u.name AS leader_name,
-       tm.kills AS total_kills,
-       tm.kill_points AS total_kill_points,
-       tm.placement_points AS total_placement_points,
-       tm.total_points AS total_points,
-       (CASE WHEN tm.wwcd THEN 1 ELSE 0 END)::int AS wwcd_count,
-       tm.placement AS best_placement
+       MAX(t.team_name) as team_name,
+       MAX(u.name) AS leader_name,
+       SUM(tm.kills)::int AS total_kills,
+       SUM(tm.kill_points)::int AS total_kill_points,
+       SUM(tm.placement_points)::int AS total_placement_points,
+       SUM(tm.total_points)::int AS total_points,
+       SUM(CASE WHEN tm.wwcd THEN 1 ELSE 0 END)::int AS wwcd_count,
+       MIN(tm.placement) AS best_placement
      FROM tournament_match_results tm
      JOIN tournament_teams t ON t.id = tm.team_id
      LEFT JOIN users u ON u.id = t.leader_user_id
-     WHERE tm.match_id = $1 AND tm.tournament_id = $2 AND tm.status = 'verified'`,
+     WHERE tm.match_id = $1 AND tm.tournament_id = $2 AND tm.status = 'verified'
+     GROUP BY tm.team_id`,
     [matchId, tournamentId]
   );
   return sortAndRank(res.rows);
 }
 
-export async function processMatchQualifiers(client, tournamentId, sourceMatch) {
-  const standings = await getMatchStandings(client, tournamentId, sourceMatch.id);
-  const cutoff = sourceMatch.teams_advancing || 8;
+export async function getRoundStandings(client, tournamentId, roundId) {
+  const res = await client.query(
+    `SELECT
+       tm.team_id,
+       MAX(t.team_name) as team_name,
+       MAX(u.name) AS leader_name,
+       SUM(tm.kills)::int AS total_kills,
+       SUM(tm.kill_points)::int AS total_kill_points,
+       SUM(tm.placement_points)::int AS total_placement_points,
+       SUM(tm.total_points)::int AS total_points,
+       SUM(CASE WHEN tm.wwcd THEN 1 ELSE 0 END)::int AS wwcd_count,
+       MIN(tm.placement) AS best_placement
+     FROM tournament_match_results tm
+     JOIN tournament_matches m ON m.id = tm.match_id
+     JOIN tournament_teams t ON t.id = tm.team_id
+     LEFT JOIN users u ON u.id = t.leader_user_id
+     WHERE m.round_id = $1 AND tm.tournament_id = $2 AND tm.status = 'verified'
+     GROUP BY tm.team_id`,
+    [roundId, tournamentId]
+  );
+  return sortAndRank(res.rows);
+}
+
+export async function processRoundQualifiers(client, tournamentId, roundId, teamsAdvancing) {
+  const standings = await getRoundStandings(client, tournamentId, roundId);
+  const cutoff = teamsAdvancing || 8;
   const qualifiers = standings
     .filter((row) => row && row.team_id)
     .sort((a, b) => (Number(a.rank) || Infinity) - (Number(b.rank) || Infinity))
@@ -111,34 +135,33 @@ export async function qualifyMatch(client, { tournamentId, matchId, actorId = nu
   // Mark this source match as processed
   await client.query('UPDATE tournament_matches SET progression_processed = true WHERE id = $1', [match.id]);
 
-  let isReadyToAllocate = false;
-  let siblings = [];
-
-  if (match.next_match_id) {
-    const sibRes = await client.query('SELECT id, progression_processed, teams_advancing FROM tournament_matches WHERE next_match_id = $1', [match.next_match_id]);
-    siblings = sibRes.rows;
-    isReadyToAllocate = siblings.every(r => r.progression_processed || r.id === match.id);
-  } else if (match.next_round_id) {
-    const sibRes = await client.query('SELECT id, progression_processed, teams_advancing FROM tournament_matches WHERE next_round_id = $1', [match.next_round_id]);
-    siblings = sibRes.rows;
-    isReadyToAllocate = siblings.every(r => r.progression_processed || r.id === match.id);
+  if (!match.round_id) {
+     return {
+       success: true,
+       alreadyProcessed: false,
+       message: 'Match processed, but it lacks a round_id for global qualification.',
+       status: 'COMPLETED'
+     };
   }
+
+  const sibRes = await client.query('SELECT id, progression_processed FROM tournament_matches WHERE round_id = $1', [match.round_id]);
+  const siblings = sibRes.rows;
+  const isReadyToAllocate = siblings.every(r => r.progression_processed || r.id === match.id);
 
   if (!isReadyToAllocate) {
     return {
       success: true,
       alreadyProcessed: false,
-      message: 'Match processed, waiting for sibling source matches to complete.',
+      message: 'Match processed, waiting for all matches in the round to complete.',
       status: 'WAITING'
     };
   }
 
-  // ALL source matches are ready. We now aggregate exactly once into the destination pool.
-  const allQualifiers = [];
-  for (const sib of siblings) {
-    const qs = await processMatchQualifiers(client, tournamentId, sib);
-    allQualifiers.push(...qs);
-  }
+  const roundRes = await client.query('SELECT id, teams_advancing FROM tournament_rounds WHERE id = $1', [match.round_id]);
+  const round = roundRes.rows[0];
+
+  // ALL source matches in the round are ready. Global aggregation.
+  const allQualifiers = await processRoundQualifiers(client, tournamentId, match.round_id, round.teams_advancing);
 
   let targetMatchIds = [];
   if (match.next_round_id) {
@@ -168,7 +191,7 @@ export async function qualifyMatch(client, { tournamentId, matchId, actorId = nu
     alreadyProcessed: false,
     advancedCount: allQualifiers.length,
     outcomes,
-    message: `All source matches processed. ${allQualifiers.length} total team(s) aggregated and advanced.`,
+    message: `All matches in round processed. ${allQualifiers.length} total team(s) qualified globally and advanced.`,
     status: 'COMPLETED'
   };
 }

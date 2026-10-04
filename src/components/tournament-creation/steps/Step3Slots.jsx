@@ -11,7 +11,7 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
   const enteredSlots = parseInt(data.slotsTotal) || 0;
   const slotsNotMultiple = enteredSlots > 0 && enteredSlots % 16 !== 0;
   const slotsExceedPlan = enteredSlots > maxSlots
-  const teamsPerMatch = parseInt(data.teams_per_match) || 16
+  const teamsPerMatch = parseInt(data.teams_per_group) || 16
 
   const handleSlotsChange = (v) => {
     if (v === '' || (parseInt(v) >= 0 && parseInt(v) <= 1000)) {
@@ -116,37 +116,22 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
 
         <div className="space-y-3">
           <label className="block text-sm font-medium text-on-surface-variant">
-            Teams Per District <span style={{ color: '#ef4444' }}>*</span>
+            Teams Per District / Lobby Capacity <span style={{ color: '#ef4444' }}>*</span>
           </label>
           <select
             value={data.teams_per_group || 16}
-            onChange={(e) => onChange({ ...data, teams_per_group: parseInt(e.target.value) })}
+            onChange={(e) => {
+              const val = parseInt(e.target.value);
+              onChange({ ...data, teams_per_group: val, teams_per_match: val });
+            }}
             className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm focus:outline-none focus:border-primary/40 transition-colors"
           >
             {[16, 17, 18, 19, 20, 21, 22, 23, 24, 25].map((val) => (
-              <option key={val} value={val}>{val} Teams per District</option>
+              <option key={val} value={val}>{val}</option>
             ))}
           </select>
           <p className="text-xs text-on-surface-variant/80 mt-1">
-            Districts organize the initial tournament participants. District size does not determine later-round match capacity.
-          </p>
-        </div>
-
-        <div className="space-y-3 pt-2">
-          <label className="block text-sm font-medium text-on-surface-variant">
-            Maximum Teams per Match <span style={{ color: '#ef4444' }}>*</span>
-          </label>
-          <select
-            value={data.teams_per_match || 16}
-            onChange={(e) => onChange({ ...data, teams_per_match: parseInt(e.target.value) })}
-            className="w-full px-4 py-3 rounded-xl bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-on-background text-sm focus:outline-none focus:border-primary/40 transition-colors"
-          >
-            {[...Array(10)].map((_, i) => (
-              <option key={i+16} value={i+16}>{i+16} Teams Capacity Ceiling</option>
-            ))}
-          </select>
-          <p className="text-xs text-on-surface-variant/80 mt-1">
-            Maximum number of teams allowed in a single match/room. This is a capacity limit, not the number of teams assigned to each District.
+            Defines how many teams can play together in one lobby. Each district represents one match/room. The number of districts is automatically calculated from the total tournament slots.
           </p>
         </div>
 
@@ -159,11 +144,11 @@ export default function Step3Slots({ data, onChange, errors, planLimits, userTie
           >
             <div className="flex items-center justify-between text-xs text-on-surface-variant">
               <span>{enteredSlots} tournament slots</span>
-              <span>{teamsPerMatch} teams per match</span>
+              <span>{teamsPerMatch} teams per district</span>
             </div>
             <p className="text-sm font-bold text-primary flex items-center gap-1.5">
               <span>→</span>
-              <span>{firstRoundMatchCount} match{firstRoundMatchCount !== 1 ? 'es' : ''} in the first round</span>
+              <span>{firstRoundMatchCount} district{firstRoundMatchCount !== 1 ? 's' : ''}/match{firstRoundMatchCount !== 1 ? 'es' : ''}</span>
             </p>
           </motion.div>
         )}
