@@ -26,6 +26,14 @@ import { mapPublicMatchResult } from './server/matchResultService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
 import { buildGroups, normalizeTeamsPerGroup, validateGroupConfig, computeGroupCount, generateGroupName, assignGroups, predictedGroupFor, groupForGlobalSlot, groupLabelForSlot, DEFAULT_TEAMS_PER_GROUP } from './server/groupService.js';
+import {
+  DEFAULT_PROMOTED_LIMIT,
+  PROMOTED_LIMIT_SETTING_KEY,
+  canManagePromotions,
+  resolveRoles,
+  validatePromotionPayload,
+  parseDisplayLimit,
+} from './server/tournamentPromotion.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1467,6 +1475,78 @@ async function initDb() {
     } catch (monErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not create monitoring tables:', monErr.message);
     }
+    // --- TOURNAMENT PROMOTIONS (Trending & Featured) ---
+    // One row per tournament. A UNIQUE index on tournament_id guarantees a
+    // tournament can never receive duplicate promotion records, and therefore
+    // can never render twice in the promoted section. Promotion is purely a
+    // presentation concern: this table never mutates tournament data.
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS tournament_promotions (
+          id VARCHAR(50) PRIMARY KEY,
+          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          placement VARCHAR(32) NOT NULL DEFAULT 'trending_featured',
+          priority INTEGER NOT NULL DEFAULT 0,
+          display_order INTEGER NOT NULL DEFAULT 0,
+          starts_at TIMESTAMPTZ,
+          ends_at TIMESTAMPTZ,
+          created_by VARCHAR(50),
+          updated_by VARCHAR(50),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tournament_promotions_tournament ON tournament_promotions(tournament_id)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_tournament_promotions_active ON tournament_promotions(is_active, priority DESC, display_order ASC)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_tournament_promotions_window ON tournament_promotions(starts_at, ends_at)`);
+      console.log('📦 [MATCH DISTRICT DB] tournament_promotions table ensured.');
+
+      // One-time backfill marker: if the marker exists, skip backfilling
+      // tournaments with featured=true (so that deleting a promotion later is
+      // not automatically undone on restart).
+      let shouldBackfill = true;
+      try {
+        const marker = await client.query("SELECT 1 FROM site_settings WHERE key = 'promotions_featured_backfilled' LIMIT 1");
+        if (marker.rows.length > 0) shouldBackfill = false;
+      } catch { /* ignore */ }
+      if (shouldBackfill) {
+        try {
+          const backfill = await client.query(`
+            INSERT INTO tournament_promotions (id, tournament_id, is_active, placement, priority, display_order)
+            SELECT 'PRM-' || UPPER(SUBSTR(MD5(RANDOM()::TEXT || t.id), 1, 16)), t.id, true, 'trending_featured', 0, 0
+            FROM tournaments t
+            WHERE t.featured = true
+              AND NOT EXISTS (SELECT 1 FROM tournament_promotions p WHERE p.tournament_id = t.id)
+            ON CONFLICT (tournament_id) DO NOTHING
+          `);
+          await client.query(
+            `INSERT INTO site_settings (key, value, updated_at) VALUES ('promotions_featured_backfilled', '1', NOW())
+             ON CONFLICT (key) DO NOTHING`
+          );
+          if (backfill.rowCount > 0) {
+            console.log(`📦 [MATCH DISTRICT DB] Backfilled ${backfill.rowCount} featured tournament(s) into tournament_promotions.`);
+          }
+        } catch (backfillErr) {
+          console.warn('⚠️ [MATCH DISTRICT DB] Promotion backfill skipped:', backfillErr.message);
+        }
+      }
+    } catch (promoErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_promotions table:', promoErr.message);
+    }
+
+    // Seed the central promoted-section display limit (safe if site_settings
+    // already exists; wrapped so a missing table never breaks startup).
+    try {
+      await client.query(
+        `INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO NOTHING`,
+        [PROMOTED_LIMIT_SETTING_KEY, String(DEFAULT_PROMOTED_LIMIT)]
+      );
+    } catch (settingsErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not seed promoted_section_limit setting:', settingsErr.message);
+    }
+
     // --- ENABLE REALTIME REPLICATION ---
     try {
       await client.query(`
@@ -1486,7 +1566,8 @@ async function initDb() {
         'tournament_registrations',
         'tournament_notices',
         'tournament_messages',
-        'wallet_transactions'
+        'wallet_transactions',
+        'tournament_promotions'
       ];
 
       for (const table of tables) {
@@ -2015,6 +2096,87 @@ async function requireApprovedOrganizer(req, res, authUser, pool) {
     res.end(JSON.stringify({ success: false, error: err.message }));
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tournament Promotion authorization + display helpers
+// ─────────────────────────────────────────────────────────────
+
+// Admin guard for promotion management. Authorization is derived from the
+// server-side user record (roles loaded from the database), never from a
+// client-supplied role claim or the (potentially stale) JWT payload alone.
+async function requireAdminFromDb(req, res) {
+  const authUser = getAuthUser(req);
+  if (!authUser) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+    return null;
+  }
+  try {
+    const result = await pool.query(
+      'SELECT id, name, roles, role FROM users WHERE id = $1 OR uid = $1 LIMIT 1',
+      [authUser.id]
+    );
+    if (result.rows.length === 0) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Account not found.' }));
+      return null;
+    }
+    const dbUser = result.rows[0];
+    if (!canManagePromotions(dbUser)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only administrators can manage tournament promotions.' }));
+      return null;
+    }
+    return { id: dbUser.id, name: dbUser.name, roles: resolveRoles(dbUser) };
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+    return null;
+  }
+}
+
+// Shared projection for public tournament rows (listing + promoted section).
+// Computes sponsor revenue and the display prize string exactly once.
+function withTournamentDisplay(r) {
+  let sponsorRevenue = 0;
+  let hasApprovedSponsors = false;
+  try {
+    const sd = typeof r.sponsors_data === 'string' ? JSON.parse(r.sponsors_data) : (r.sponsors_data || []);
+    if (Array.isArray(sd)) {
+      const approved = sd.filter((s) => s.status === 'approved');
+      sponsorRevenue = approved.reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0);
+      hasApprovedSponsors = approved.length > 0;
+    }
+  } catch { /* malformed sponsor JSON is treated as no sponsors */ }
+  const basePrize = parseInt(r.prize_pool_amount) || 0;
+  const totalPrize = basePrize + sponsorRevenue;
+  return {
+    ...r,
+    timeline: sanitizeTimelineForUser(r.timeline),
+    cover_image_url: r.cover_image_url || '',
+    orgName: r.orgName || r.userOrgName || r.userName || 'Match District Organizer',
+    orgLogo: r.orgLogo || r.userOrgImage || '',
+    sponsorRevenue,
+    hasApprovedSponsors,
+    basePrize,
+    totalPrize,
+    prize: (() => {
+      if (r.prize && r.prize.startsWith('\u20B9') && !hasApprovedSponsors) return r.prize;
+      if (totalPrize > 0) return `\u20B9${totalPrize.toLocaleString('en-IN')}`;
+      if (r.prize && r.prize !== 'TBD' && r.prize !== 'TBA') return r.prize;
+      return 'TBD';
+    })(),
+  };
+}
+
+// Reads the centrally configured promoted-section display limit.
+async function getPromotedSectionLimit() {
+  try {
+    const res = await pool.query('SELECT value FROM site_settings WHERE key = $1', [PROMOTED_LIMIT_SETTING_KEY]);
+    if (res.rows[0]?.value != null) return parseDisplayLimit(res.rows[0].value, DEFAULT_PROMOTED_LIMIT);
+  } catch {}
+  return DEFAULT_PROMOTED_LIMIT;
 }
 
 // Plan definitions moved to server/subscriptionMiddleware.js (imported above)
@@ -4119,44 +4281,267 @@ const server = http.createServer(async (req, res) => {
         ORDER BY t.created_at DESC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      const normalized = (dbRes.rows || []).map((r) => {
-        // Compute sponsor contributions from sponsors_data
-        let sponsorRevenue = 0;
-        let hasApprovedSponsors = false;
-        try {
-          const sd = typeof r.sponsors_data === 'string' ? JSON.parse(r.sponsors_data) : (r.sponsors_data || []);
-          if (Array.isArray(sd)) {
-            const approved = sd.filter(s => s.status === 'approved');
-            sponsorRevenue = approved.reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0);
-            hasApprovedSponsors = approved.length > 0;
-          }
-        } catch {}
-        const basePrize = parseInt(r.prize_pool_amount) || 0;
-        const totalPrize = basePrize + sponsorRevenue;
-        return {
-          ...r,
-          timeline: sanitizeTimelineForUser(r.timeline),
-          cover_image_url: r.cover_image_url || '',
-          orgName: r.orgName || r.userOrgName || r.userName || 'Match District Organizer',
-          orgLogo: r.orgLogo || r.userOrgImage || '',
-          sponsorRevenue,
-          hasApprovedSponsors,
-          basePrize,
-          totalPrize,
-          prize: (() => {
-            if (r.prize && r.prize.startsWith('\u20B9') && !hasApprovedSponsors) return r.prize;
-            if (totalPrize > 0) return `\u20B9${totalPrize.toLocaleString('en-IN')}`;
-            if (r.prize && r.prize !== 'TBD' && r.prize !== 'TBA') return r.prize;
-            return 'TBD';
-          })(),
-        };
-      });
+      const normalized = (dbRes.rows || []).map(withTournamentDisplay);
       res.end(JSON.stringify({ success: true, tournaments: normalized }));
     } catch (err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Supabase fetch tournaments failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 7e-p. Tournament Promotion (Trending & Featured)
+  // Public read of the promoted section + admin-only management.
+  // NOTE: this must precede the generic GET /api/tournaments/:id
+  // matcher so "promoted" is not treated as a tournament id.
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /api/tournaments/promoted — public promoted section payload
+  if (urlPath === '/api/tournaments/promoted' && req.method === 'GET') {
+    try {
+      let limit = await getPromotedSectionLimit();
+      try {
+        const requested = new URL(req.url, 'http://localhost').searchParams.get('limit');
+        if (requested !== null && requested !== '') limit = parseDisplayLimit(requested, limit);
+      } catch { /* ignore a malformed ?limit query string */ }
+      const dbRes = await pool.query(
+        `SELECT
+           p.id AS promotion_id, p.placement, p.priority, p.display_order,
+           p.starts_at, p.ends_at,
+           t.*,
+           u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
+         FROM tournament_promotions p
+         JOIN tournaments t ON t.id = p.tournament_id
+         LEFT JOIN users u ON t."orgId" = u.id
+         WHERE p.is_active = true
+           AND (p.starts_at IS NULL OR p.starts_at <= NOW())
+           AND (p.ends_at IS NULL OR p.ends_at >= NOW())
+           AND (t."isDraft" = false OR t."isDraft" IS NULL)
+           AND LOWER(COALESCE(t.status, '')) NOT IN ('completed', 'archived')
+         ORDER BY p.priority DESC, p.display_order ASC, p.created_at ASC, p.id ASC
+         LIMIT $1`,
+        [limit]
+      );
+      const normalized = (dbRes.rows || []).map(withTournamentDisplay);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, tournaments: normalized, limit }));
+    } catch (err) {
+      console.warn('⚠️ [PROMOTION] Failed to fetch promoted tournaments:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/admin/tournament-promotions — every promotion record (admin)
+  // Lets the admin UI show accurate status (including inactive promotions).
+  if (urlPath === '/api/admin/tournament-promotions' && req.method === 'GET') {
+    const admin = await requireAdminFromDb(req, res);
+    if (!admin) return;
+    try {
+      const dbRes = await pool.query(
+        `SELECT id, tournament_id, is_active, placement, priority, display_order,
+                starts_at, ends_at, created_by, updated_by, created_at, updated_at
+         FROM tournament_promotions
+         ORDER BY priority DESC, display_order ASC, created_at ASC, id ASC`
+      );
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, promotions: dbRes.rows }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET/PUT/DELETE /api/admin/tournaments/:id/promotion
+  const adminPromotionMatch = urlPath.match(/^\/api\/admin\/tournaments\/([^/]+)\/promotion$/);
+  if (adminPromotionMatch && req.method === 'GET') {
+    const admin = await requireAdminFromDb(req, res);
+    if (!admin) return;
+    const tournamentId = decodeURIComponent(adminPromotionMatch[1]);
+    try {
+      const dbRes = await pool.query('SELECT * FROM tournament_promotions WHERE tournament_id = $1 LIMIT 1', [tournamentId]);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, promotion: dbRes.rows[0] || null }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  if (adminPromotionMatch && req.method === 'PUT') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      const admin = await requireAdminFromDb(req, res);
+      if (!admin) return;
+      const tournamentId = decodeURIComponent(adminPromotionMatch[1]);
+      try {
+        let payload;
+        try {
+          payload = JSON.parse(body || '{}');
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Request body must be valid JSON.' }));
+          return;
+        }
+
+        // The tournament must exist (never create promotions for unknown ids).
+        const tRes = await pool.query('SELECT id FROM tournaments WHERE id = $1', [tournamentId]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+
+        const validation = validatePromotionPayload(payload);
+        if (!validation.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: validation.errors.join(' '), errors: validation.errors }));
+          return;
+        }
+        const { is_active, placement, priority, display_order, starts_at, ends_at } = validation.value;
+
+        const existing = await pool.query('SELECT id FROM tournament_promotions WHERE tournament_id = $1 LIMIT 1', [tournamentId]);
+        const isNew = existing.rows.length === 0;
+        const promotionId = isNew ? `PRM-${crypto.randomBytes(8).toString('hex').toUpperCase()}` : existing.rows[0].id;
+
+        // Atomic upsert — a single record per tournament is enforced by the
+        // UNIQUE index on tournament_id, so concurrent admin writes cannot
+        // create duplicate promotions.
+        const dbRes = await pool.query(
+          `INSERT INTO tournament_promotions
+             (id, tournament_id, is_active, placement, priority, display_order, starts_at, ends_at, created_by, updated_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, NOW(), NOW())
+           ON CONFLICT (tournament_id) DO UPDATE SET
+             is_active = EXCLUDED.is_active,
+             placement = EXCLUDED.placement,
+             priority = EXCLUDED.priority,
+             display_order = EXCLUDED.display_order,
+             starts_at = EXCLUDED.starts_at,
+             ends_at = EXCLUDED.ends_at,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = NOW()
+           RETURNING *`,
+          [promotionId, tournamentId, is_active, placement, priority, display_order, starts_at, ends_at, admin.id]
+        );
+
+        // Audit trail (non-fatal).
+        try {
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            [
+              'ADM-' + crypto.randomBytes(6).toString('hex').toUpperCase(),
+              admin.id,
+              isNew ? 'tournament_promotion_create' : 'tournament_promotion_update',
+              'tournament',
+              tournamentId,
+              JSON.stringify({ placement, priority, display_order, is_active, starts_at, ends_at }),
+            ]
+          );
+        } catch { /* audit failure must never block the promotion */ }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, created: isNew, promotion: dbRes.rows[0] }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  if (adminPromotionMatch && req.method === 'DELETE') {
+    const admin = await requireAdminFromDb(req, res);
+    if (!admin) return;
+    const tournamentId = decodeURIComponent(adminPromotionMatch[1]);
+    try {
+      // Capture the removed configuration for the audit trail before deleting.
+      const existing = await pool.query('SELECT * FROM tournament_promotions WHERE tournament_id = $1 LIMIT 1', [tournamentId]);
+      const removed = await pool.query('DELETE FROM tournament_promotions WHERE tournament_id = $1 RETURNING id', [tournamentId]);
+      if (removed.rowCount > 0) {
+        try {
+          const prev = existing.rows[0] || {};
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details, created_at)
+             VALUES ($1, $2, 'tournament_promotion_delete', 'tournament', $3, $4, NOW())`,
+            [
+              'ADM-' + crypto.randomBytes(6).toString('hex').toUpperCase(),
+              admin.id,
+              tournamentId,
+              JSON.stringify({ placement: prev.placement, priority: prev.priority, display_order: prev.display_order, is_active: prev.is_active, starts_at: prev.starts_at, ends_at: prev.ends_at }),
+            ]
+          );
+        } catch { /* non-fatal */ }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, removed: removed.rowCount > 0 }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/settings/promotion-limit — public: current promoted-section limit
+  if (urlPath === '/api/settings/promotion-limit' && req.method === 'GET') {
+    try {
+      const limit = await getPromotedSectionLimit();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, limit }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // PUT /api/admin/settings/promotion-limit — admin: configure display limit
+  if (urlPath === '/api/admin/settings/promotion-limit' && req.method === 'PUT') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      const admin = await requireAdminFromDb(req, res);
+      if (!admin) return;
+      try {
+        let payload;
+        try { payload = JSON.parse(body || '{}'); } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Request body must be valid JSON.' }));
+          return;
+        }
+        const raw = payload.limit;
+        const parsed = parseInt(raw, 10);
+        if (!Number.isFinite(parsed)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: 'limit must be a number.' }));
+          return;
+        }
+        const limit = parseDisplayLimit(parsed, DEFAULT_PROMOTED_LIMIT);
+        await pool.query(
+          `INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+          [PROMOTED_LIMIT_SETTING_KEY, String(limit)]
+        );
+        try {
+          await pool.query(
+            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details, created_at)
+             VALUES ($1, $2, 'promoted_section_limit_update', 'site_settings', $3, $4, NOW())`,
+            ['ADM-' + crypto.randomBytes(6).toString('hex').toUpperCase(), admin.id, PROMOTED_LIMIT_SETTING_KEY, JSON.stringify({ limit })]
+          );
+        } catch { /* non-fatal */ }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, limit }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
@@ -4341,6 +4726,18 @@ const server = http.createServer(async (req, res) => {
                JSON.stringify({ title: t.title, game: t.game, slotsTotal: adminSlotsTotal, maxSlotsPerRoom, numRooms })]
             );
           } catch (logErr) { /* non-critical */ }
+          // Admin-hosted tournaments are promoted to the Trending & Featured
+          // section by default (previously via tournaments.featured = true).
+          // ON CONFLICT keeps any existing/scheduled promotion untouched.
+          try {
+            await pool.query(
+              `INSERT INTO tournament_promotions
+                 (id, tournament_id, is_active, placement, priority, display_order, created_by, updated_by)
+               VALUES ($1, $2, true, 'trending_featured', 0, 0, $3, $3)
+               ON CONFLICT (tournament_id) DO NOTHING`,
+              ['PRM-' + crypto.randomBytes(8).toString('hex').toUpperCase(), tournamentId, authUser.id]
+            );
+          } catch { /* promotion is non-critical to tournament creation */ }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, tournament: createdTournament }));
           return;
@@ -4468,7 +4865,7 @@ const server = http.createServer(async (req, res) => {
             t.prize || '',
             t.entry || '',
             t.teamsCount || '',
-            t.featured || false,
+            false, // `featured` is never client-settable; promotion is admin-managed via tournament_promotions
             orgName,
             orgLogo,
             orgHandle,
@@ -5185,7 +5582,7 @@ const server = http.createServer(async (req, res) => {
             t.prize !== undefined ? t.prize : null,
             t.entry !== undefined ? t.entry : null,
             t.teamsCount !== undefined ? t.teamsCount : null,
-            t.featured !== undefined ? t.featured : null,
+            null, // `featured` is never client-settable; promotion is admin-managed via tournament_promotions
             t.orgName !== undefined ? t.orgName : null,
             t.orgLogo !== undefined ? t.orgLogo : null,
             t.orgHandle !== undefined ? t.orgHandle : null,
@@ -10042,7 +10439,7 @@ const server = http.createServer(async (req, res) => {
         const fieldMap = {
           title: 'title', game: 'game', status: 'status', badgeBg: '"badgeBg"',
           badgeText: '"badgeText"', date: 'date', prize: 'prize', entry: 'entry',
-          teamsCount: '"teamsCount"', featured: 'featured', orgName: '"orgName"',
+          teamsCount: '"teamsCount"', orgName: '"orgName"',
           registrationOpenDate: '"registrationOpenDate"', registrationCloseDate: '"registrationCloseDate"',
           startDate: '"startDate"', rules: 'rules', region: 'region', format: 'format',
           slotsTotal: '"slotsTotal"', roomID: '"roomID"', roomPassword: '"roomPassword"',

@@ -4,17 +4,87 @@ import LoadingScreen from '../components/LoadingScreen.jsx'
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
 import { supabase } from '../utils/supabaseClient'
+import { useUser } from '../UserContext.jsx'
+import { isSystemAdmin } from '../utils/iamRoles.js'
+import { getAuthToken } from '../utils/getAuthToken.js'
+import { DEFAULT_BANNER } from '../utils/defaults.js'
 import TournamentCard from '../components/TournamentCard'
+import TournamentPromotionControl from '../components/admin/TournamentPromotionControl.jsx'
+import TournamentPromotionModal from '../components/admin/TournamentPromotionModal.jsx'
 import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 
 const STATUS_OPTIONS = ['All', 'Upcoming', 'Registrations Open', 'Registration Closed', 'Live']
 const GAME_OPTIONS = ['All Games', 'BGMI', 'Valorant', 'Free Fire', 'COD Mobile']
 const ENTRY_OPTIONS = ['All', 'Free', 'Paid']
 
+const FALLBACK_IMG = DEFAULT_BANNER
+
+// Shared projection from a raw tournament row (listing or promoted payload)
+// into the shape consumed by the wallet-pass tournament cards.
+function mapTournament(t) {
+  return {
+    id: t.id,
+    title: t.title,
+    game: t.game,
+    status: t.status || 'upcoming',
+    startDate: t.startDate || t.date || null,
+    registrationOpenDate: t.registrationOpenDate || t.registration_open_date || null,
+    registrationCloseDate: t.registrationCloseDate || t.registration_close_date || null,
+    badgeBg: '',
+    badgeText: '',
+    date: t.startDate || t.date || new Date().toISOString(),
+    prize: t.prize,
+    entry: t.entry,
+    entryFeeAmount: parseInt(t.entry_fee_amount) || 0,
+    orgName: t.orgName || 'Match District Arena',
+    slotsTotal: parseInt(t.slotsTotal) || 100,
+    slotsFilled: parseInt(t.slotsFilled) || 0,
+    cover_image_url: t.cover_image_url || '',
+    bannerUrl: t.cover_image_url || t.bannerUrl || FALLBACK_IMG,
+    logoUrl: t.logoUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80',
+    featured: t.featured || false,
+    region: t.region || 'Online',
+    format: t.format || 'Squad',
+    match_type: t.match_type || t.matchType || 'squad',
+    perspective: t.perspective || 'tpp',
+    orgTier: ['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro',
+    coverImage: t.coverImage || '',
+    card_color: t.card_color || t.cardColor || t.theme || 'white',
+    cardColor: t.card_color || t.cardColor || t.theme || 'white',
+    theme: t.theme || t.card_color || t.cardColor || 'white',
+    hasApprovedSponsors: t.hasApprovedSponsors || false,
+    totalSponsorContributions: t.totalSponsorContributions || 0,
+    // Promotion metadata (present only for rows from the promoted endpoint)
+    promotion_id: t.promotion_id || null,
+    placement: t.placement || null,
+    priority: t.priority,
+    display_order: t.display_order,
+  }
+}
+
+// Frontend lifecycle guard mirroring the server filter: hide drafts and any
+// tournament that has completed or been archived.
+function isDiscoverable(t, now) {
+  if (t.isDraft) return false
+  const stored = (t.status || '').toLowerCase()
+  const lifecycle = getTournamentLifecycleStatus(t, now)
+  return lifecycle !== 'completed' && stored !== 'completed' && stored !== 'archived'
+}
+
 
 function Tournaments({ onNavigate }) {
+  const { currentUser } = useUser();
+  const isAdmin = isSystemAdmin(currentUser);
+
   const [dbTournaments, setDbTournaments] = useState([]);
+  const [promotedTournaments, setPromotedTournaments] = useState([]);
+  const [adminPromotions, setAdminPromotions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const [managingTournament, setManagingTournament] = useState(null);
+  const [managingPromotion, setManagingPromotion] = useState(null);
+  const [toast, setToast] = useState('');
+  const [showToast, setShowToast] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -39,11 +109,45 @@ function Tournaments({ onNavigate }) {
     setIsLoading(false)
   }, [])
 
-  useRefetchOnFocus(loadTournaments)
+  // Public promoted section (active + within schedule, ordered server-side).
+  const loadPromoted = React.useCallback(async () => {
+    const { ok, data } = await fetchJsonWithRetry('/api/tournaments/promoted')
+    if (ok && data?.success && data.tournaments) {
+      setPromotedTournaments(data.tournaments)
+    }
+  }, [])
+
+  // Admin-only: accurate promotion records (including inactive/scheduled ones).
+  const loadAdminPromotions = React.useCallback(async () => {
+    if (!isAdmin) {
+      setAdminPromotions([])
+      return
+    }
+    const token = await getAuthToken()
+    const { ok, data } = await fetchJsonWithRetry('/api/admin/tournament-promotions', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (ok && data?.success) {
+      setAdminPromotions(Array.isArray(data.promotions) ? data.promotions : [])
+    }
+  }, [isAdmin])
+
+  const loadAll = React.useCallback(() => {
+    loadTournaments()
+    loadPromoted()
+    loadAdminPromotions()
+  }, [loadTournaments, loadPromoted, loadAdminPromotions])
+
+  useRefetchOnFocus(loadAll)
 
   useEffect(() => {
-    setIsLoading(true)
-    loadTournaments()
+    const load = () => {
+      setIsLoading(true)
+      loadTournaments()
+      loadPromoted()
+      loadAdminPromotions()
+    }
+    load()
 
     const channel = supabase
       .channel('tournaments-realtime')
@@ -70,59 +174,65 @@ function Tournaments({ onNavigate }) {
       )
       .subscribe();
 
+    const promoChannel = supabase
+      .channel('promotions-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tournament_promotions' },
+        () => {
+          loadPromoted();
+          loadAdminPromotions();
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(promoChannel);
     };
-  }, [loadTournaments]);
+  }, [loadTournaments, loadPromoted, loadAdminPromotions]);
 
   const tournaments = useMemo(() => {
-    const processedDb = dbTournaments
-      .filter(t => !t.isDraft)
-      .filter(t => {
-        const stored = (t.status || '').toLowerCase()
-        const s = getTournamentLifecycleStatus(t, now)
-        return s !== 'completed' && stored !== 'completed' && stored !== 'archived'
-      })
-      .map(t => ({
-        id: t.id,
-        title: t.title,
-        game: t.game,
-        status: t.status || 'upcoming',
-        startDate: t.startDate || t.date || null,
-        registrationOpenDate: t.registrationOpenDate || t.registration_open_date || null,
-        registrationCloseDate: t.registrationCloseDate || t.registration_close_date || null,
-        badgeBg: '',
-        badgeText: '',
-        date: t.startDate || t.date || new Date().toISOString(),
-        prize: t.prize,
-        entry: t.entry,
-        entryFeeAmount: parseInt(t.entry_fee_amount) || 0,
-        orgName: t.orgName || 'Match District Arena',
-        slotsTotal: parseInt(t.slotsTotal) || 100,
-        slotsFilled: parseInt(t.slotsFilled) || 0,
-        cover_image_url: t.cover_image_url || '',
-        bannerUrl: t.cover_image_url || t.bannerUrl || FALLBACK_IMG,
-        logoUrl: t.logoUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80',
-        featured: t.featured || false,
-        region: t.region || 'Online',
-        format: t.format || 'Squad',
-        match_type: t.match_type || t.matchType || 'squad',
-        perspective: t.perspective || 'tpp',
-        orgTier: ['pro', 'elite', 'basic'].includes((t.orgTier || '').toLowerCase()) ? t.orgTier : 'Pro',
-        coverImage: t.coverImage || '',
-        card_color: t.card_color || t.cardColor || t.theme || 'white',
-        cardColor: t.card_color || t.cardColor || t.theme || 'white',
-        theme: t.theme || t.card_color || t.cardColor || 'white',
-        hasApprovedSponsors: t.hasApprovedSponsors || false,
-        totalSponsorContributions: t.totalSponsorContributions || 0
-      }));
+    return dbTournaments
+      .filter((t) => isDiscoverable(t, now))
+      .map(mapTournament);
+  }, [dbTournaments, now]);
 
-    return processedDb;
-  }, [dbTournaments]);
+  // Trending & Featured section — driven entirely by the promotion system.
+  const promotedList = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const t of promotedTournaments) {
+      if (!isDiscoverable(t, now)) continue;
+      const mapped = mapTournament(t);
+      if (seen.has(mapped.id)) continue; // never render a tournament twice
+      seen.add(mapped.id);
+      out.push(mapped);
+    }
+    return out;
+  }, [promotedTournaments, now]);
 
-  const featuredTournaments = useMemo(() => {
-    return tournaments.filter(t => t.featured);
-  }, [tournaments, now]);
+  const promotionByTournamentId = useMemo(() => {
+    const map = new Map();
+    for (const p of adminPromotions) map.set(p.tournament_id, p);
+    return map;
+  }, [adminPromotions]);
+
+  const openPromotionManager = (tournament) => {
+    setManagingTournament(tournament);
+    setManagingPromotion(promotionByTournamentId.get(tournament.id) || null);
+  };
+
+  const triggerToast = (msg) => {
+    setToast(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 2600);
+  };
+
+  const handlePromotionSaved = async (action) => {
+    triggerToast(action === 'removed' ? 'Promotion removed' : 'Promotion updated');
+    await Promise.all([loadPromoted(), loadAdminPromotions()]);
+  };
 
   const filteredTournaments = useMemo(() => {
     return tournaments.filter(t => {
@@ -214,67 +324,90 @@ function Tournaments({ onNavigate }) {
           </div>
         </section>
 
-        {featuredTournaments.length > 0 && (
+        {(promotedList.length > 0 || isAdmin) && (
           <section className="space-y-3 pt-2 overflow-visible">
-            <h3 className="font-headline-md text-xs font-bold text-white uppercase tracking-widest flex items-center gap-1.5">
-              <span className="material-symbols-outlined text-secondary text-sm">local_fire_department</span>
-              Trending &amp; Featured Events
-            </h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="font-headline-md text-xs font-bold text-white uppercase tracking-widest flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-secondary text-sm">local_fire_department</span>
+                Trending &amp; Featured Events
+              </h3>
+              {isAdmin && (
+                <span className="text-[9px] font-bold uppercase tracking-widest text-amber-400/80 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[13px]">admin_panel_settings</span>
+                  Admin controls
+                </span>
+              )}
+            </div>
 
-            {/* ── CAROUSEL: bleed wrapper removes page padding via negative margin ── */}
-            <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
-              {/* ── SCROLL VIEWPORT: controls the scrollable window, width anchored to 100% ── */}
-              <div
-                className="pb-8 pt-4 custom-scrollbar scroll-pl-1 md:scroll-pl-2 !touch-auto"
-                style={{
-                  overflowX: 'auto',
-                  overflowY: 'visible',
-                  WebkitOverflowScrolling: 'touch',
-                  touchAction: 'pan-x pan-y',
-                  width: '100%',
-                }}
-              >
-                {/* ── INNER TRACK: expands to true max-content so browser sees overflow ── */}
+            {promotedList.length > 0 ? (
+              /* ── CAROUSEL: bleed wrapper removes page padding via negative margin ── */
+              <div className="-mx-4 sm:-mx-6 lg:-mx-8" style={{ overflowY: 'visible' }}>
+                {/* ── SCROLL VIEWPORT: controls the scrollable window, width anchored to 100% ── */}
                 <div
-                  className="flex flex-row gap-4 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
-                  style={{ width: 'max-content' }}
+                  className="pb-8 pt-4 custom-scrollbar scroll-pl-1 md:scroll-pl-2 !touch-auto"
+                  style={{
+                    overflowX: 'auto',
+                    overflowY: 'visible',
+                    WebkitOverflowScrolling: 'touch',
+                    touchAction: 'pan-x pan-y',
+                    width: '100%',
+                  }}
                 >
-                  {featuredTournaments.map((t, idx) => (
-                    <div
-                      key={`featured-${t.id}`}
-                      className="snap-start flex items-start first:ml-3"
-                      style={{ flexShrink: 0, minWidth: '150px' }}
-                    >
-                      <TournamentCard
-                        id={t.id}
-                        title={t.title}
-                        game={t.game}
-                        status={t.status}
-                        badgeTextColor="text-white"
-                        imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
-                        imgAlt={t.title}
-                        prizePool={t.prize}
-                        entryFee={t.entry}
-                        matchType={t.match_type}
-                        perspective={t.perspective}
-                        slotsTotal={t.slotsTotal}
-                        slotsFilled={t.slotsFilled}
-                        entryFeeAmount={t.entryFeeAmount}
-                        orgName={t.orgName}
-                        orgTier={t.orgTier}
-                        onNavigate={onNavigate}
-                        registrationOpenDate={t.registrationOpenDate}
-                        registrationCloseDate={t.registrationCloseDate}
-                        startDate={t.startDate}
-                        hasSponsors={t.hasApprovedSponsors}
-                        sponsoredAmount={t.totalSponsorContributions}
-                        cardColor={t.card_color || t.cardColor || t.theme || 'white'}
-                      />
-                    </div>
-                  ))}
+                  {/* ── INNER TRACK: expands to true max-content so browser sees overflow ── */}
+                  <div
+                    className="flex flex-row gap-4 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
+                    style={{ width: 'max-content' }}
+                  >
+                    {promotedList.map((t) => (
+                      <div
+                        key={`promoted-${t.id}`}
+                        className="snap-start relative flex items-start first:ml-3"
+                        style={{ flexShrink: 0, minWidth: '150px' }}
+                      >
+                        {isAdmin && (
+                          <TournamentPromotionControl
+                            promotion={promotionByTournamentId.get(t.id) || null}
+                            onManage={() => openPromotionManager(t)}
+                          />
+                        )}
+                        <TournamentCard
+                          id={t.id}
+                          title={t.title}
+                          game={t.game}
+                          status={t.status}
+                          badgeTextColor="text-white"
+                          imgSrc={t.cover_image_url || t.coverImage || FALLBACK_IMG}
+                          imgAlt={t.title}
+                          prizePool={t.prize}
+                          entryFee={t.entry}
+                          matchType={t.match_type}
+                          perspective={t.perspective}
+                          slotsTotal={t.slotsTotal}
+                          slotsFilled={t.slotsFilled}
+                          entryFeeAmount={t.entryFeeAmount}
+                          orgName={t.orgName}
+                          orgTier={t.orgTier}
+                          onNavigate={onNavigate}
+                          registrationOpenDate={t.registrationOpenDate}
+                          registrationCloseDate={t.registrationCloseDate}
+                          startDate={t.startDate}
+                          hasSponsors={t.hasApprovedSponsors}
+                          sponsoredAmount={t.totalSponsorContributions}
+                          cardColor={t.card_color || t.cardColor || t.theme || 'white'}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low/30 px-4 py-6 text-center">
+                <span className="material-symbols-outlined text-secondary/70 text-2xl">local_fire_department</span>
+                <p className="text-[11px] text-on-surface-variant/70 mt-1">
+                  No tournaments are promoted yet. Use the <span className="text-amber-400 font-bold">Promote</span> control on any card below to feature it here.
+                </p>
+              </div>
+            )}
           </section>
         )}
 
@@ -557,12 +690,18 @@ function Tournaments({ onNavigate }) {
                     className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-6 lg:pl-8"
                     style={{ width: 'max-content' }}
                   >
-                    {filteredTournaments.map((t, idx) => (
+                    {filteredTournaments.map((t) => (
                       <div
                         key={`explore-${t.id}`}
-                        className="snap-start first:ml-3"
+                        className="snap-start relative first:ml-3"
                         style={{ flexShrink: 0, minWidth: '150px' }}
                       >
+                        {isAdmin && (
+                          <TournamentPromotionControl
+                            promotion={promotionByTournamentId.get(t.id) || null}
+                            onManage={() => openPromotionManager(t)}
+                          />
+                        )}
                         <TournamentCard
                           id={t.id}
                           title={t.title}
@@ -616,6 +755,35 @@ function Tournaments({ onNavigate }) {
         </section>
 
       </main>
+
+      {/* Admin promotion manager (keyed so form state resets per tournament) */}
+      {isAdmin && managingTournament && (
+        <TournamentPromotionModal
+          key={managingTournament.id}
+          isOpen
+          tournament={managingTournament}
+          promotion={managingPromotion}
+          onClose={() => setManagingTournament(null)}
+          onSaved={handlePromotionSaved}
+        />
+      )}
+
+      {/* Admin toast */}
+      <AnimatePresence>
+        {showToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] px-4 py-2.5 rounded-xl text-xs font-bold text-white"
+            style={{ background: 'rgba(10,11,18,0.95)', border: '1px solid rgba(192,193,255,0.25)', boxShadow: '0 12px 40px rgba(0,0,0,0.7)' }}
+          >
+            <span className="material-symbols-outlined text-[14px] align-middle mr-1 text-emerald-400">check_circle</span>
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   )
