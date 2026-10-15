@@ -1,9 +1,32 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Calendar, Save, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, Trophy, Swords, Plus, Users, LayoutGrid, Clock, Lock } from "lucide-react";
+import { Calendar, Save, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, Trophy, Swords, Plus, Users, LayoutGrid, Clock, Lock, Trash2, Copy, ChevronUp, ChevronDown, Settings, X } from "lucide-react";
 import { getAuthToken } from "../utils/getAuthToken";
 
-const MAP_OPTIONS = ["Erangel", "Miramar", "Rondo", "Sanhok", "Vikendi", "Livik", "Karakin", "Nusa"];
+// Map options per game. Mirrors the backend's getDefaultMap() game map so the
+// dropdown stays consistent across games; falls back to the BGMI roster.
+const GAME_MAP_OPTIONS = {
+  bgmi: ["Erangel", "Miramar", "Rondo", "Sanhok", "Vikendi", "Livik", "Karakin", "Nusa"],
+  "battlegrounds mobile india": ["Erangel", "Miramar", "Rondo", "Sanhok", "Vikendi", "Livik", "Karakin", "Nusa"],
+  freefire: ["Bermuda", "Purgatory", "Kalahari", "Alpine", "NexTerra"],
+  "free fire": ["Bermuda", "Purgatory", "Kalahari", "Alpine", "NexTerra"],
+  codm: ["Crash", "Standoff", "Raid", "Crossfire", "Summit"],
+  "cod mobile": ["Crash", "Standoff", "Raid", "Crossfire", "Summit"],
+  valorant: ["Ascent", "Haven", "Bind", "Split", "Sunset"],
+};
+function getMapOptions(game) {
+  const key = (game || "bgmi").toLowerCase().trim();
+  return GAME_MAP_OPTIONS[key] || GAME_MAP_OPTIONS.bgmi;
+}
+
+const DEFAULT_SETTINGS = {
+  matches_per_day: "",
+  first_match_time: "13:00",
+  match_gap_minutes: 60,
+  match_duration_minutes: 30,
+  teams_advancing_per_district: "",
+  enable_semi_finals: false,
+};
 
 function formatTime12h(timeStr) {
   if (!timeStr) return "TBD";
@@ -63,6 +86,39 @@ export default function TournamentRoadmapBuilder({
   const [previewMode, setPreviewMode] = useState(false);
   const [roadmapStatus, setRoadmapStatus] = useState("pending");
   const [roadmapData, setRoadmapData] = useState(null);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addSaving, setAddSaving] = useState(false);
+  const [matchBusyId, setMatchBusyId] = useState(null);
+  const [addForm, setAddForm] = useState({
+    round_id: "", day_id: "", group_name: "", start_time: "13:00", end_time: "", map: "Erangel", status: "PENDING",
+  });
+
+  const fetchSettings = useCallback(async () => {
+    if (!tournamentId || !isOrganizer) return;
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/settings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (data.success) {
+        const s = data.settings || {};
+        setSettings({
+          matches_per_day: s.matches_per_day ?? "",
+          first_match_time: s.first_match_time || "13:00",
+          match_gap_minutes: s.match_gap_minutes ?? 60,
+          match_duration_minutes: s.match_duration_minutes ?? 30,
+          teams_advancing_per_district: s.teams_advancing_per_district ?? "",
+          enable_semi_finals: !!s.enable_semi_finals,
+        });
+      }
+    } catch {
+      /* settings are best-effort; the roadmap itself still loads */
+    }
+  }, [tournamentId, isOrganizer]);
 
   const fetchRoadmap = useCallback(async () => {
     if (!tournamentId) return;
@@ -91,12 +147,26 @@ export default function TournamentRoadmapBuilder({
 
   useEffect(() => {
     fetchRoadmap();
-  }, [fetchRoadmap]);
+    fetchSettings();
+  }, [fetchRoadmap, fetchSettings]);
 
-  const handleGenerate = async (isRegenerate = false) => {
-    if (isRegenerate && roadmapData) {
-      const confirmed = window.confirm("Regenerating the roadmap will replace the current generated progression structure. Continue?");
-      if (!confirmed) return;
+  const handleGenerate = async (mode = null) => {
+    const hasManual = !!(roadmapData && roadmapData.matches && roadmapData.matches.some(m => m.origin === "manual"));
+    let regenMode = mode;
+    if (roadmapData) {
+      if (mode === "regenerate_all") {
+        const ok = window.confirm("Regenerate ALL matches?\n\nThis permanently deletes every match, including manually added ones. Continue?");
+        if (!ok) return;
+      } else if (mode === "auto_only") {
+        const msg = hasManual
+          ? "Update automatic matches? Manually added matches will be preserved."
+          : "Regenerate the automatic roadmap?";
+        if (!window.confirm(msg)) return;
+        regenMode = "auto_only";
+      } else if (!regenMode) {
+        const ok = window.confirm("Generating will replace the current generated progression structure. Continue?");
+        if (!ok) return;
+      }
     }
     setGenerating(true);
     setError(null);
@@ -105,17 +175,176 @@ export default function TournamentRoadmapBuilder({
       const token = await getAuthToken();
       const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(regenMode ? { mode: regenMode } : {}),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.message || data.error || "Failed to generate roadmap.");
       setRoadmapStatus("draft");
       setRoadmapData(data.roadmap);
-      setSuccess("Roadmap generated successfully.");
+      const preserved = data.preserved_manual || 0;
+      setSuccess(preserved > 0
+        ? `Roadmap generated. ${preserved} manual match${preserved === 1 ? "" : "es"} preserved.`
+        : "Roadmap generated successfully.");
     } catch (err) {
       setError(err.message);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getAuthToken();
+      const payload = {
+        first_match_time: settings.first_match_time || "13:00",
+        match_gap_minutes: Number(settings.match_gap_minutes) || 0,
+        match_duration_minutes: Number(settings.match_duration_minutes) || 30,
+        enable_semi_finals: !!settings.enable_semi_finals,
+      };
+      if (settings.matches_per_day !== "" && settings.matches_per_day != null) payload.matches_per_day = Number(settings.matches_per_day);
+      if (settings.teams_advancing_per_district !== "" && settings.teams_advancing_per_district != null) {
+        payload.teams_advancing_per_district = Number(settings.teams_advancing_per_district);
+      }
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error || "Failed to save settings.");
+      setSuccess("Roadmap settings saved. Regenerate to apply them.");
+      setSettingsOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const openAddMatch = () => {
+    const rounds = roadmapData?.rounds || [];
+    const firstRound = rounds[0];
+    setAddForm({
+      round_id: firstRound?.id || "",
+      day_id: "",
+      group_name: "",
+      start_time: settings.first_match_time || "13:00",
+      end_time: "",
+      map: getMapOptions(roadmapData?.meta?.game)[0],
+      status: "PENDING",
+    });
+    setAddOpen(true);
+  };
+
+  const handleAddMatch = async () => {
+    if (!addForm.round_id || !addForm.start_time) {
+      setError("Round and start time are required to add a match.");
+      return;
+    }
+    setAddSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/matches`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({
+          round_id: addForm.round_id,
+          day_id: addForm.day_id || undefined,
+          group_name: addForm.group_name || undefined,
+          start_time: addForm.start_time,
+          end_time: addForm.end_time || undefined,
+          map: addForm.map,
+          status: addForm.status,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error || "Failed to add match.");
+      setSuccess("Manual match added.");
+      setAddOpen(false);
+      await fetchRoadmap();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
+  const handleDeleteMatch = async (match) => {
+    if (!window.confirm(`Delete Match ${match.match_number}? This cannot be undone.`)) return;
+    setMatchBusyId(match.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/matches/${match.id}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error || "Failed to delete match.");
+      setSuccess("Match deleted.");
+      await fetchRoadmap();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMatchBusyId(null);
+    }
+  };
+
+  const handleDuplicateMatch = async (match) => {
+    setMatchBusyId(match.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/matches/${match.id}/duplicate`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error || "Failed to duplicate match.");
+      setSuccess("Match duplicated.");
+      await fetchRoadmap();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMatchBusyId(null);
+    }
+  };
+
+  // Move a match up/down within its round by swapping match_number.
+  const handleMoveMatch = async (match, direction) => {
+    if (!roadmapData) return;
+    const roundMatches = roadmapData.matches
+      .filter(m => m.round_id === match.round_id)
+      .sort((a, b) => a.match_number - b.match_number);
+    const idx = roundMatches.findIndex(m => m.id === match.id);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= roundMatches.length) return;
+    const reordered = [...roundMatches];
+    [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
+    setMatchBusyId(match.id);
+    setError(null);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/matches/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ordered_ids: reordered.map(m => m.id) }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error || "Failed to reorder matches.");
+      await fetchRoadmap();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMatchBusyId(null);
     }
   };
 
@@ -196,7 +425,7 @@ export default function TournamentRoadmapBuilder({
         <p className="text-sm text-slate-400 max-w-sm mx-auto leading-relaxed mb-8">
           Generate the tournament roadmap from the saved tournament schedule and match settings.
         </p>
-        <button type="button" onClick={() => handleGenerate(false)} disabled={generating}
+        <button type="button" onClick={() => handleGenerate()} disabled={generating}
           className="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all disabled:opacity-50">
           {generating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
           {generating ? "Generating..." : "+ Generate Roadmap"}
@@ -239,8 +468,17 @@ export default function TournamentRoadmapBuilder({
             {previewMode && <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-md">Preview</span>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => handleGenerate(true)} disabled={generating} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors">
-              <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />Regenerate
+            <button type="button" onClick={() => setSettingsOpen(v => !v)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors">
+              <Settings className="w-3.5 h-3.5" />Settings
+            </button>
+            <button type="button" onClick={openAddMatch} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 hover:bg-blue-50 text-blue-700 text-xs font-bold transition-colors">
+              <Plus className="w-3.5 h-3.5" />Add Match
+            </button>
+            <button type="button" onClick={() => handleGenerate("auto_only")} disabled={generating} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors">
+              <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />Update Auto
+            </button>
+            <button type="button" onClick={() => handleGenerate("regenerate_all")} disabled={generating} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-rose-200 hover:bg-rose-50 text-rose-700 text-xs font-bold transition-colors">
+              <RefreshCw className={`w-3.5 h-3.5 ${generating ? "animate-spin" : ""}`} />Regenerate All
             </button>
             <button type="button" onClick={() => setPreviewMode(!previewMode)} className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-blue-200 hover:bg-blue-50 text-blue-700 transition-colors">
               {previewMode ? <><EyeOff className="w-3.5 h-3.5" />Editor</> : <><Eye className="w-3.5 h-3.5" />Preview</>}
@@ -248,6 +486,62 @@ export default function TournamentRoadmapBuilder({
             <button type="button" onClick={handleSave} disabled={saving} className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-all">
               {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
               Save
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Roadmap Settings Panel (Organizer Only) */}
+      {isOrganizer && settingsOpen && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">Roadmap Settings</h3>
+            <button type="button" onClick={() => setSettingsOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Matches Per Day</span>
+              <input type="number" min="1" max="50" value={settings.matches_per_day}
+                onChange={e => setSettings(s => ({ ...s, matches_per_day: e.target.value }))}
+                placeholder="Auto (2)"
+                className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">First Match Time</span>
+              <input type="time" value={settings.first_match_time}
+                onChange={e => setSettings(s => ({ ...s, first_match_time: e.target.value }))}
+                className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Start-to-Start Gap (min)</span>
+              <input type="number" min="0" value={settings.match_gap_minutes}
+                onChange={e => setSettings(s => ({ ...s, match_gap_minutes: e.target.value }))}
+                className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Match Duration (min)</span>
+              <input type="number" min="5" value={settings.match_duration_minutes}
+                onChange={e => setSettings(s => ({ ...s, match_duration_minutes: e.target.value }))}
+                className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Teams Advancing / District</span>
+              <input type="number" min="1" value={settings.teams_advancing_per_district}
+                onChange={e => setSettings(s => ({ ...s, teams_advancing_per_district: e.target.value }))}
+                placeholder="Auto (half)"
+                className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+            </label>
+            <label className="flex items-center gap-2 mt-5">
+              <input type="checkbox" checked={!!settings.enable_semi_finals}
+                onChange={e => setSettings(s => ({ ...s, enable_semi_finals: e.target.checked }))}
+                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+              <span className="text-xs font-bold text-slate-700">Enable Semi-Finals</span>
+            </label>
+          </div>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            <button type="button" onClick={() => setSettingsOpen(false)} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50">Cancel</button>
+            <button type="button" onClick={handleSaveSettings} disabled={settingsSaving} className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold disabled:opacity-50">
+              {settingsSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save Settings
             </button>
           </div>
         </div>
@@ -384,7 +678,13 @@ export default function TournamentRoadmapBuilder({
                         <MatchTable 
                           matches={sortedMatches} 
                           isViewOnly={isViewOnly} 
-                          onUpdateMatchField={updateMatchField} 
+                          onUpdateMatchField={updateMatchField}
+                          onDelete={handleDeleteMatch}
+                          onDuplicate={handleDuplicateMatch}
+                          onMoveUp={(m) => handleMoveMatch(m, "up")}
+                          onMoveDown={(m) => handleMoveMatch(m, "down")}
+                          busyId={matchBusyId}
+                          mapOptions={getMapOptions(meta.game)}
                         />
                       </div>
                     );
@@ -424,6 +724,12 @@ export default function TournamentRoadmapBuilder({
                         matches={sortedMatches} 
                         isViewOnly={isViewOnly} 
                         onUpdateMatchField={updateMatchField} 
+                        onDelete={handleDeleteMatch}
+                        onDuplicate={handleDuplicateMatch}
+                        onMoveUp={(m) => handleMoveMatch(m, "up")}
+                        onMoveDown={(m) => handleMoveMatch(m, "down")}
+                        busyId={matchBusyId}
+                        mapOptions={getMapOptions(meta.game)}
                       />
                     </div>
                   );
@@ -433,20 +739,93 @@ export default function TournamentRoadmapBuilder({
           );
         })}
       </div>
+
+      {/* Add Match Modal (Organizer Only) */}
+      <AnimatePresence>
+        {isOrganizer && addOpen && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4"
+            onClick={() => setAddOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">Add Manual Match</h3>
+                <button type="button" onClick={() => setAddOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="block sm:col-span-2">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Round *</span>
+                  <select value={addForm.round_id} onChange={e => setAddForm(f => ({ ...f, round_id: e.target.value, day_id: "" }))}
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500">
+                    <option value="">Select round…</option>
+                    {(roadmapData.rounds || []).map(r => <option key={r.id} value={r.id}>{r.name || `Round ${r.round_number}`}</option>)}
+                  </select>
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Day</span>
+                  <select value={addForm.day_id} onChange={e => setAddForm(f => ({ ...f, day_id: e.target.value }))}
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500">
+                    <option value="">Auto (first day of round)</option>
+                    {(roadmapData.days || []).filter(d => !addForm.round_id || d.round_id === addForm.round_id).map(d => (
+                      <option key={d.id} value={d.id}>Day {d.day_number}{d.date ? ` — ${d.date}` : ""}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Start Time *</span>
+                  <input type="time" value={addForm.start_time} onChange={e => setAddForm(f => ({ ...f, start_time: e.target.value }))}
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">End Time</span>
+                  <input type="time" value={addForm.end_time} onChange={e => setAddForm(f => ({ ...f, end_time: e.target.value }))}
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">District / Label</span>
+                  <input type="text" value={addForm.group_name} onChange={e => setAddForm(f => ({ ...f, group_name: e.target.value }))}
+                    placeholder="e.g. District 9"
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500" />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Map</span>
+                  <select value={addForm.map} onChange={e => setAddForm(f => ({ ...f, map: e.target.value }))}
+                    className="mt-1 w-full text-xs font-bold bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-2 focus:outline-none focus:border-blue-500">
+                    {getMapOptions(roadmapData?.meta?.game).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button type="button" onClick={() => setAddOpen(false)} className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50">Cancel</button>
+                <button type="button" onClick={handleAddMatch} disabled={addSaving} className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold disabled:opacity-50">
+                  {addSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add Match
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function MatchTable({ matches, isViewOnly, onUpdateMatchField }) {
+function MatchTable({ matches, isViewOnly, onUpdateMatchField, onDelete, onDuplicate, onMoveUp, onMoveDown, busyId, mapOptions }) {
+  const options = mapOptions && mapOptions.length ? mapOptions : GAME_MAP_OPTIONS.bgmi;
   return (
     <div className="w-full">
       {/* Desktop Table Header */}
       <div className="hidden md:grid grid-cols-12 gap-4 pb-3 border-b border-slate-200 text-[10px] font-black text-slate-400 uppercase tracking-widest">
         <div className="col-span-2">Match</div>
         <div className="col-span-3">ID / PWD Release</div>
-        <div className="col-span-3">Start Time</div>
+        <div className="col-span-2">Start Time</div>
         <div className="col-span-2">Map</div>
-        <div className="col-span-2">Status</div>
+        <div className="col-span-1">Status</div>
+        <div className="col-span-2 text-right">{isViewOnly ? "" : "Actions"}</div>
       </div>
 
       <div className="flex flex-col gap-4 mt-4 md:mt-0 md:gap-0">
@@ -454,8 +833,11 @@ function MatchTable({ matches, isViewOnly, onUpdateMatchField }) {
           <div key={m.id} className="flex flex-col md:grid md:grid-cols-12 md:gap-4 md:items-center py-4 border border-slate-200 md:border-0 md:border-b md:border-slate-100 rounded-xl md:rounded-none p-4 md:p-0 bg-white shadow-sm md:shadow-none hover:bg-slate-50 transition-colors">
             
             {/* Match Name */}
-            <div className="col-span-2 font-black text-sm text-slate-900 mb-3 md:mb-0">
-              Match {m.match_number || i + 1}
+            <div className="col-span-2 font-black text-sm text-slate-900 mb-3 md:mb-0 flex items-center gap-2">
+              <span>Match {m.match_number || i + 1}</span>
+              {m.origin === "manual" && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-black uppercase tracking-wider">Manual</span>
+              )}
             </div>
 
             {/* ID / PWD Release */}
@@ -473,7 +855,7 @@ function MatchTable({ matches, isViewOnly, onUpdateMatchField }) {
             </div>
 
             {/* Start Time */}
-            <div className="col-span-3 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center text-sm mb-3 md:mb-0">
+            <div className="col-span-2 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center text-sm mb-3 md:mb-0">
               <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Start Time</span>
               <div className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-blue-500 hidden md:block" />
@@ -496,17 +878,45 @@ function MatchTable({ matches, isViewOnly, onUpdateMatchField }) {
               ) : (
                 <select value={m.map || "Erangel"} onChange={e => onUpdateMatchField(m.id, "map", e.target.value)}
                   className="px-2 py-1 bg-white border border-slate-300 rounded text-xs font-bold text-slate-800 focus:outline-none focus:border-blue-500">
-                  {MAP_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               )}
             </div>
 
             {/* Status */}
-            <div className="col-span-2 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center">
+            <div className="col-span-1 flex md:flex-row flex-col justify-between md:justify-start items-start md:items-center mb-3 md:mb-0">
               <span className="md:hidden text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Status</span>
               <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wider">
                 {m.status || "Upcoming"}
               </span>
+            </div>
+
+            {/* Actions (Organizer only) */}
+            <div className="col-span-2 flex items-center justify-end gap-1">
+              {!isViewOnly && (
+                <>
+                  <button type="button" title="Move up" disabled={busyId === m.id}
+                    onClick={() => onMoveUp && onMoveUp(m)}
+                    className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </button>
+                  <button type="button" title="Move down" disabled={busyId === m.id}
+                    onClick={() => onMoveDown && onMoveDown(m)}
+                    className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  <button type="button" title="Duplicate" disabled={busyId === m.id}
+                    onClick={() => onDuplicate && onDuplicate(m)}
+                    className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                  <button type="button" title="Delete" disabled={busyId === m.id}
+                    onClick={() => onDelete && onDelete(m)}
+                    className="p-1.5 rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50 disabled:opacity-40">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
             </div>
             
           </div>

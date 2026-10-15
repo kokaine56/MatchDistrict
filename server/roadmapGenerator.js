@@ -1,4 +1,13 @@
 import crypto from 'crypto';
+import {
+  normalizeRoadmapConfig,
+  validateRoadmapConfig,
+  distributeDistrictSizes,
+  computeDistrictCount,
+  defaultTeamsAdvancing,
+  parseTimeToMinutes,
+  DEFAULT_TEAMS_PER_GROUP,
+} from './roadmapConfig.js';
 
 export function getDefaultMap(game, matchNumber) {
   const gameKey = (game || 'bgmi').toLowerCase().trim();
@@ -38,11 +47,13 @@ function formatTime(mins) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-function parseTimeMins(timeStr) {
-  if (!timeStr) return 13 * 60; // 1:00 PM default
-  const parts = timeStr.split(':').map(Number);
-  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return 13 * 60;
-  return parts[0] * 60 + parts[1];
+function pickFirst(source, keys) {
+  if (!source || typeof source !== 'object') return undefined;
+  for (const k of keys) {
+    const v = source[k];
+    if (v !== undefined && v !== null && v !== '') return v;
+  }
+  return undefined;
 }
 
 function addDays(dateStr, n) {
@@ -57,19 +68,32 @@ function addDays(dateStr, n) {
   }
 }
 
-const DEFAULT_START_TIME = '13:00';
-const MATCH_GAP_MINUTES = 60;
 const GRAND_FINAL_MATCHES = 3;
 
 export function calculateQualifiers(matchSize) {
   return Math.ceil(matchSize / 2);
 }
 
-export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup = 16) {
+export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup = 16, options = {}) {
   const rounds = [];
   const tpg = Number(teamsPerGroup) || 16;
+  const cap = Number(maxCapacity) || tpg;
   const canonicalCapacity = tpg;
-  
+  const total = Number(totalTeams);
+
+  // Everything fits in a single match — no elimination rounds are needed.
+  if (!Number.isFinite(total) || total <= cap) return rounds;
+  const advancePerMatch = Number.isFinite(Number(options.teamsAdvancingPerDistrict)) && Number(options.teamsAdvancingPerDistrict) > 0
+    ? Math.floor(Number(options.teamsAdvancingPerDistrict))
+    : null;
+
+  // Advance count for a match of `size` teams: organizer override (capped at the
+  // match size) or the historical default of half the field.
+  const qualifiersFor = (size) => {
+    if (advancePerMatch == null) return calculateQualifiers(size);
+    return Math.min(size, Math.max(1, advancePerMatch));
+  };
+
   // Round 1: strictly map initial registration groups (teams_per_group) to Round 1 matches
   const numGroups = Math.max(1, Math.ceil(totalTeams / tpg));
   const baseSize = Math.floor(totalTeams / numGroups);
@@ -80,7 +104,7 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
     r1MatchSizes.push(baseSize + (i < extraSize ? 1 : 0));
   }
   
-  const r1Qualifiers = r1MatchSizes.map(size => calculateQualifiers(size));
+  const r1Qualifiers = r1MatchSizes.map(size => qualifiersFor(size));
   const r1NextTeams = r1Qualifiers.reduce((a, b) => a + b, 0);
   const r1QType = (r1NextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
 
@@ -106,7 +130,7 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
     let matchSizes = [];
     for (let i = 0; i < numMatches; i++) matchSizes.push(base + (i < extra ? 1 : 0));
     
-    let qualifyCounts = matchSizes.map(size => calculateQualifiers(size));
+    let qualifyCounts = matchSizes.map(size => qualifiersFor(size));
     let nextTeams = qualifyCounts.reduce((a, b) => a + b, 0);
     
     let qType = (nextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
@@ -144,17 +168,45 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
       return { ok: false, error: 'Tournament data is required.' };
     }
 
-    const slotsTotal = parseInt(tournament.slotsTotal || tournament.slots_total || tournament.teamsCount || 64, 10);
-    const teamsPerGroup = parseInt(tournament.teams_per_group || tournament.teams_per_match || 16, 10);
+    const rawSlots = pickFirst(tournament, ['slotsTotal', 'slots_total', 'teamsCount']);
+    const slotsTotal = rawSlots === undefined ? 64 : parseInt(rawSlots, 10);
+    const rawTpg = pickFirst(tournament, ['teams_per_group', 'teams_per_match']);
+    const teamsPerGroup = rawTpg === undefined ? DEFAULT_TEAMS_PER_GROUP : parseInt(rawTpg, 10);
     const maxCapacity = teamsPerGroup;
-    
+
+    // Organizer configuration (scheduling + qualification). Defaults reproduce
+    // the platform's historical behavior, so existing tournaments are unchanged.
+    const cfg = normalizeRoadmapConfig(tournament);
+    const cfgValidation = validateRoadmapConfig(cfg, { slotsTotal, teamsPerGroup });
+    const configErrors = [...cfg.errors, ...cfgValidation.errors];
+
+    const firstMatchTime = cfg.firstMatchTime;
+    const gapMinutes = cfg.matchGapMinutes;          // start-to-start interval
+    const durationMinutes = cfg.matchDurationMinutes; // match length
+    const releaseMinutes = cfg.releaseOffsetMinutes;
+    const explicitMatchesPerDay = cfg.matchesPerDayProvided;
+    const matchesPerDayCfg = cfg.matchesPerDay;
+    const advanceOverride = cfg.teamsAdvancingPerDistrict; // null → derive per match
+    const enableSemiFinals = cfg.enableSemiFinals;
+
     // Strict validations
-    if (maxCapacity <= 0 || maxCapacity > slotsTotal) {
-      // Use fallback if invalid, to prevent crashing
+    if (!Number.isFinite(slotsTotal) || slotsTotal <= 0) {
+      return { ok: false, error: 'Tournament slot capacity must be a positive number.' };
     }
-    
+    if (!Number.isFinite(teamsPerGroup) || teamsPerGroup <= 0) {
+      return { ok: false, error: 'Teams per district must be a positive number.' };
+    }
+
     const game = tournament.game || 'bgmi';
-    const releaseMinutes = parseInt(tournament.room_credentials_release_minutes, 10) || 15;
+
+    // District plan — the single source of truth for district count/sizing.
+    // Empty planned districts still appear because the count derives from the
+    // configured slot capacity, not from the number of registered teams.
+    const districtSizes = distributeDistrictSizes(slotsTotal, teamsPerGroup);
+    const districtCount = districtSizes.length || computeDistrictCount(slotsTotal, teamsPerGroup);
+    const teamsAdvancingPerDistrict = advanceOverride != null
+      ? Math.min(teamsPerGroup, Math.max(1, advanceOverride))
+      : defaultTeamsAdvancing(districtSizes.length ? Math.max(...districtSizes) : teamsPerGroup);
 
     let startDate = null;
     const rawDate = tournament.startDate || tournament.date || tournament.start_date || tournament.registrationCloseDate || legacyPlan?.daily_plan?.[0]?.date || legacyPlan?.tournament_start_date || '2026-10-10';
@@ -178,7 +230,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
     if (slotsTotal <= maxCapacity) {
       const gfRoundId = `RND-${generateId()}`;
       const dayId = `DAY-${generateId()}`;
-      let currentTimeMins = parseTimeMins(DEFAULT_START_TIME);
+      let currentTimeMins = parseTimeToMinutes(firstMatchTime) ?? 13 * 60;
       
       const gfRound = {
         id: gfRoundId,
@@ -206,7 +258,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         const mapName = (m === 0 ? 'Erangel' : (m === 1 ? 'Miramar' : 'Rondo'));
         
         const startTimeStr = formatTime(currentTimeMins);
-        const endTimeStr = formatTime(currentTimeMins + 30);
+        const endTimeStr = formatTime(currentTimeMins + durationMinutes);
         const releaseTime = computeReleaseTime12h(startTimeStr, releaseMinutes);
 
         matches.push({
@@ -228,10 +280,25 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           is_grand_final: true
         });
 
-        currentTimeMins += MATCH_GAP_MINUTES;
+        currentTimeMins += gapMinutes;
       }
     } else {
-      const plan = calculateProgressionPlan(slotsTotal, maxCapacity, teamsPerGroup);
+      const plan = calculateProgressionPlan(slotsTotal, maxCapacity, teamsPerGroup, {
+        teamsAdvancingPerDistrict: advanceOverride,
+      });
+
+      // Strict final-stage capacity check: when the organizer explicitly
+      // disables semi-finals, the district qualifiers must fit directly into a
+      // single Grand Final. Otherwise refuse with an actionable message rather
+      // than silently inserting extra rounds or dropping teams.
+      if (cfg.enableSemiFinalsProvided && !enableSemiFinals && plan.length > 1) {
+        const qualifiers = plan[0] ? plan[0].totalTeamsAfter : 0;
+        return {
+          ok: false,
+          error: `FINAL_STAGE_CAPACITY_MISMATCH: ${qualifiers} teams qualify from ${plan[0] ? plan[0].matchCount : 0} districts but the Grand Final holds ${maxCapacity}. Enable semi-finals or change the number of teams advancing per district.`,
+        };
+      }
+
       let dayCounter = 1;
       let previousRoundMatches = [];
 
@@ -239,13 +306,16 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         const pRound = plan[pIdx];
         const roundId = `RND-${generateId()}`;
         
-        // Schedule first round across days if there are multiple initial groups (max 2 groups per day)
+        // Daily capacity: organizer-selected matches/day when provided, otherwise
+        // the legacy behavior (first round spread 2/day, later rounds on one day).
         const isRound1 = (pRound.roundNumber === 1);
-        const matchesPerDay = isRound1 ? 2 : pRound.matchCount;
+        const matchesPerDay = explicitMatchesPerDay
+          ? matchesPerDayCfg
+          : (isRound1 ? 2 : pRound.matchCount);
         const totalDaysForRound = Math.ceil(pRound.matchSizes.length / matchesPerDay);
         
         const roundStartDate = addDays(startDate, dayCounter - 1);
-        let currentTimeMins = parseTimeMins(DEFAULT_START_TIME);
+        const firstMins = parseTimeToMinutes(firstMatchTime) ?? 13 * 60;
 
         const roundData = {
           id: roundId,
@@ -255,7 +325,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           status: 'configured',
           teams_advancing: pRound.totalTeamsAfter,
           date: roundStartDate,
-          time: formatTime(currentTimeMins),
+          time: formatTime(firstMins),
           is_grand_final: false,
         };
         rounds.push(roundData);
@@ -313,8 +383,12 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           const matchId = `MAT-${generateId()}`;
           const mapName = getDefaultMap(game, m + 1);
           
-          const startTimeStr = formatTime(currentTimeMins);
-          const endTimeStr = formatTime(currentTimeMins + 30);
+          // Each day restarts at the configured first-match time; consecutive
+          // matches in the same day step by the configured start-to-start gap.
+          const slotInDay = m % matchesPerDay;
+          const startMins = firstMins + slotInDay * gapMinutes;
+          const startTimeStr = formatTime(startMins);
+          const endTimeStr = formatTime(startMins + durationMinutes);
           const releaseTime = computeReleaseTime12h(startTimeStr, releaseMinutes);
 
           const match = {
@@ -337,8 +411,6 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           };
           currentRoundMatches.push(match);
           matches.push(match);
-
-          currentTimeMins += MATCH_GAP_MINUTES;
         }
 
         dayCounter += totalDaysForRound;
@@ -360,7 +432,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
       const gfRoundId = `RND-${generateId()}`;
       const gfDayNumber = dayCounter;
       const gfRoundDate = addDays(startDate, gfDayNumber - 1);
-      let currentTimeMins = parseTimeMins(DEFAULT_START_TIME);
+      let currentTimeMins = parseTimeToMinutes(firstMatchTime) ?? 13 * 60;
       
       const gfRound = {
         id: gfRoundId,
@@ -389,7 +461,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         const mapName = (m === 0 ? 'Erangel' : (m === 1 ? 'Miramar' : 'Rondo'));
         
         const startTimeStr = formatTime(currentTimeMins);
-        const endTimeStr = formatTime(currentTimeMins + 30);
+        const endTimeStr = formatTime(currentTimeMins + durationMinutes);
         const releaseTime = computeReleaseTime12h(startTimeStr, releaseMinutes);
 
         matches.push({
@@ -411,7 +483,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           is_grand_final: true
         });
 
-        currentTimeMins += MATCH_GAP_MINUTES;
+        currentTimeMins += gapMinutes;
       }
       
       for (const prevMatch of previousRoundMatches) {
@@ -431,7 +503,17 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           total_slots: slotsTotal,
           max_capacity: maxCapacity,
           teams_per_group: teamsPerGroup,
+          num_groups: districtCount,
+          top_per_group: teamsAdvancingPerDistrict,
+          matches_per_day: explicitMatchesPerDay ? matchesPerDayCfg : null,
+          first_match_time: firstMatchTime,
+          match_gap_minutes: gapMinutes,
+          match_duration_minutes: durationMinutes,
+          release_offset_minutes: releaseMinutes,
+          enable_semi_finals: enableSemiFinals,
+          district_sizes: districtSizes,
           game,
+          config_errors: configErrors.length ? configErrors : undefined,
         },
       },
     };

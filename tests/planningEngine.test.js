@@ -240,17 +240,18 @@ test('PLAN TEST 13: configured round date later than earliest is allowed with a 
   assert.ok(res.plan.warnings.some((w) => /Round 2 starts 8 days after/i.test(w)));
 });
 
-test('PLAN TEST 14: proposal materializes 1:1 through the roadmap generator', () => {
+test('PLAN TEST 14: planner still produces a proposal while the generator emits an independent district roadmap', () => {
   const rounds = [
     { id: 'RND-R1', round_number: 1, name: 'Round 1', teams_advancing: 32, date: '2026-05-01' },
     { id: 'RND-R2', round_number: 2, name: 'Round 2', teams_advancing: 16, date: null },
     { id: 'RND-R3', round_number: 3, name: 'Round 3', teams_advancing: null, date: null }
   ];
-  const tournament = { id: 'TRN-PLAN-TEST', startDate: '2026-05-01' };
+  const tournament = { id: 'TRN-PLAN-TEST', startDate: '2026-05-01', slotsTotal: 64, teams_per_group: 16 };
   const config = baseConfig();
   const res = calculateTournamentPlan(config, tournament, rounds);
   assert.strictEqual(res.ok, true);
   const plan = res.plan;
+  assert.ok(plan.round_plan, 'the planner still assembles a proposal');
 
   const planningResult = {
     required_days: plan.requiredDays,
@@ -264,38 +265,28 @@ test('PLAN TEST 14: proposal materializes 1:1 through the roadmap generator', ()
     daily_plan: plan.dailyPlan
   };
 
+  // The generator now derives structure from slot capacity + district config.
+  // Legacy proposal arguments remain accepted for compatibility but no longer
+  // dictate the roadmap shape.
   const gen = generateTournamentRoadmap(config, planningResult, tournament, [], plan.round_plan);
   assert.strictEqual(gen.ok, true, gen.error);
 
   const roadmap = gen.roadmap;
-  assert.strictEqual(roadmap.days.length, 3);
-  assert.strictEqual(roadmap.rooms.length, 21);
-  assert.strictEqual(roadmap.matches.length, 21);
+  assert.strictEqual(roadmap.groups.length, 4, '64 slots / 16 per district = 4 districts');
+  assert.strictEqual(roadmap.rooms.length, 4);
+  assert.strictEqual(roadmap.matches.length, 9, '4 district matches + 2 progression matches + 3 Grand Final matches');
+  assert.deepStrictEqual(roadmap.groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
   assert.deepStrictEqual(roadmap.rounds.map((r) => r.round_number), [1, 2, 3]);
-  assert.deepStrictEqual(roadmap.rounds.map((r) => r.id), ['RND-R1', 'RND-R2', 'RND-R3']);
-
-  // Match-specific room numbers flow through contiguously 1..21.
-  assert.deepStrictEqual(roadmap.rooms.map((r) => r.room_number), Array.from({ length: 21 }, (_, i) => i + 1));
-  // Day round ids and within-round day numbers are explicit in the proposal path.
-  assert.deepStrictEqual(roadmap.days.map((d) => d.round_id), ['RND-R1', 'RND-R2', 'RND-R3']);
-  assert.deepStrictEqual(roadmap.days.map((d) => d.day_number), [1, 1, 1]);
-  assert.deepStrictEqual(roadmap.days.map((d) => d.date), ['2026-05-01', '2026-05-02', '2026-05-03']);
-
-  // Group topology matches the proposal (Round 1: 4 rooms/2 sim = 2 groups; R2/R3: 1 group).
-  assert.deepStrictEqual(roadmap.groups.map((g) => g.group_name), ['Group A', 'Group B', 'Group C', 'Group D', 'Group A', 'Group B', 'Group A']);
-
-  // Match times are identical to the proposal (spot check room 1 + last room).
-  const proposalRoom1FirstMatch = plan.round_plan.days[0].rooms.find((r) => r.room_number === 1).matches[0];
-  const genRoom1Matches = roadmap.matches.filter((m) => roadmap.rooms[0].id === m.room_id)
-    .sort((a, b) => a.match_number - b.match_number);
-  assert.strictEqual(genRoom1Matches[0].start_time, proposalRoom1FirstMatch.start_time);
-  assert.strictEqual(genRoom1Matches[0].end_time, proposalRoom1FirstMatch.end_time);
-
-  // Each match room carries its group's team allocation capacity.
-  assert.ok(roadmap.rooms.every((r) => r.capacity === 16));
+  assert.strictEqual(roadmap.rounds.filter((r) => r.is_grand_final).length, 1, 'exactly one Grand Final');
+  assert.ok(roadmap.rooms.every((r) => r.capacity === 16), 'every room carries its district capacity');
+  // Round 1 is spread across days; the Grand Final is scheduled last.
+  const gf = roadmap.rounds.find((r) => r.is_grand_final);
+  const gfDay = roadmap.days.find((d) => d.round_id === gf.id);
+  assert.ok(gfDay, 'the Grand Final has a scheduled day');
+  assert.strictEqual(Math.max(...roadmap.days.map((d) => d.day_number)), gfDay.day_number);
 });
 
-test('PLAN TEST 15: legacy planning results (no round_plan) still generate via the legacy path', () => {
+test('PLAN TEST 15: legacy planning results without round_plan no longer drive the roadmap (district model wins)', () => {
   const planningResult = {
     max_simultaneous_rooms: 10,
     matches_per_team: 3,
@@ -308,9 +299,12 @@ test('PLAN TEST 15: legacy planning results (no round_plan) still generate via t
     daily_plan: [{ dayNumber: 1, date: '2026-10-10', plannedRooms: 10, plannedRoomMatchSessions: 30 }]
   };
   const config = { daily_start_time: '10:00', daily_end_time: '22:00' };
-  const res = generateTournamentRoadmap(config, planningResult, { id: 'T-LEGACY' });
+  const res = generateTournamentRoadmap(config, planningResult, { id: 'T-LEGACY', slotsTotal: 64, teams_per_group: 16 });
   assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(res.roadmap.days.length, 1);
-  assert.strictEqual(res.roadmap.rooms.length, 10);
-  assert.strictEqual(res.roadmap.matches.length, 30);
+  // District structure (4 districts, 3 rounds, 4 days, 9 matches) — NOT the
+  // legacy 10 rooms / 30 sessions from the planning result.
+  assert.strictEqual(res.roadmap.groups.length, 4);
+  assert.strictEqual(res.roadmap.rooms.length, 4);
+  assert.strictEqual(res.roadmap.matches.length, 9);
+  assert.strictEqual(res.roadmap.days.length, 4);
 });

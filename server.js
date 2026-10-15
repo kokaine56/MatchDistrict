@@ -14,6 +14,7 @@ import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN
 import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings } from './server/leaderboardService.js';
 import { calculateTournamentPlan } from './server/tournamentPlanner.js';
 import { generateTournamentRoadmap } from './server/roadmapGenerator.js';
+import { normalizeRoadmapConfig, validateRoadmapConfig, distributeDistrictSizes, computeDistrictCount, defaultTeamsAdvancing, isValidTime, releaseTimeFor } from './server/roadmapConfig.js';
 import { syncTournamentRounds, legacyRoundBackfill, getTournamentRounds } from './server/roundsService.js';
 import { validateRoadmapStructure, validateSingleMatchEdit, validateDayDateEdit, computeMatchEndTime } from './server/roadmapValidation.js';
 import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus, createInvitationCredentials } from './server/registrationTeamBridge.js';
@@ -1088,6 +1089,29 @@ async function initDb() {
       console.log('📦 [MATCH DISTRICT DB] Tournament rounds (Round/Stage) initialized.');
     } catch (roundErr) {
       console.warn('⚠️ [MATCH DISTRICT DB] Could not initialise tournament rounds:', roundErr.message);
+    }
+
+    // --- DYNAMIC ROADMAP CONFIG + MANUAL MATCH TRACKING ---
+    // Adds organizer-controlled scheduling/qualification settings on the
+    // tournament and per-match provenance so manual matches can coexist with
+    // (and survive) automatic regeneration. All additive/idempotent.
+    try {
+      await client.query(`
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS matches_per_day INTEGER;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS first_match_time VARCHAR(10);
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS match_gap_minutes INTEGER;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS match_duration_minutes INTEGER;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS enable_semi_finals BOOLEAN;
+
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'automatic';
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS notes TEXT;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Roadmap config + manual match tracking initialized.');
+    } catch (roadmapCfgErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] Could not initialise roadmap config columns:', roadmapCfgErr.message);
     }
 
     // --- CREATE TOURNAMENT TEAMS TABLES (Phase 4) ---
@@ -6687,13 +6711,21 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
       }
 
-      // 1. Fetch full tournament row — generator reads slotsTotal + teams_per_group directly
+      // 1. Fetch full tournament row — generator reads slotsTotal + teams_per_group + config
       const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
       const tournament = tRes.rows[0];
+
+      // Optional body: { mode: 'auto_only' | 'regenerate_all' }
+      const genBody = await new Promise((resolve) => {
+        let b = '';
+        req.on('data', (c) => { b += c; });
+        req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch { resolve({}); } });
+      });
+      const requestedMode = genBody && (genBody.mode === 'regenerate_all' || genBody.mode === 'auto_only') ? genBody.mode : null;
 
       // 2. Generate roadmap — purely group-based, no planningResult required
       const result = generateTournamentRoadmap(tournament);
@@ -6715,6 +6747,15 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
         }
+
+        // Snapshot manual matches + the round each belongs to so they can be
+        // preserved (re-homed) across an automatic regeneration.
+        const exMatchRes = await dbClient.query('SELECT * FROM tournament_matches WHERE tournament_id = $1', [tId]);
+        const exRoundsRes = await dbClient.query('SELECT id, round_number FROM tournament_rounds WHERE tournament_id = $1', [tId]);
+        const oldRoundNumber = new Map(exRoundsRes.rows.map((r) => [r.id, r.round_number]));
+        const manualMatches = exMatchRes.rows.filter((m) => m.origin === 'manual');
+        const mode = requestedMode || (manualMatches.length > 0 ? 'auto_only' : 'regenerate_all');
+        const preserveManual = mode === 'auto_only' && manualMatches.length > 0;
 
         // Delete any existing draft roadmap explicitly
         await dbClient.query('DELETE FROM tournament_matches WHERE tournament_id = $1', [tId]);
@@ -6770,11 +6811,47 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Preserve organizer-authored manual matches: re-home each to the new
+        // round with the same round_number (fallback: last non-final round) and
+        // that round's first day. Configuration is kept; credentials/results are
+        // never carried over.
+        let preservedManual = 0;
+        if (preserveManual) {
+          const nonFinalRounds = rounds.filter((r) => !r.is_grand_final);
+          const nextNumberByRound = new Map();
+          for (const m of (matches || [])) {
+            const cur = nextNumberByRound.get(m.round_id) || 0;
+            nextNumberByRound.set(m.round_id, Math.max(cur, m.match_number || 0));
+          }
+          for (const mm of manualMatches) {
+            const rn = oldRoundNumber.get(mm.round_id);
+            const targetRound = (rn != null && rounds.find((r) => r.round_number === rn))
+              || nonFinalRounds[nonFinalRounds.length - 1]
+              || rounds[rounds.length - 1];
+            if (!targetRound) continue;
+            const targetDay = (days || []).find((d) => d.round_id === targetRound.id) || null;
+            const nextNumber = (nextNumberByRound.get(targetRound.id) || 0) + 1;
+            nextNumberByRound.set(targetRound.id, nextNumber);
+            const newId = `MAT-${crypto.randomBytes(8).toString('hex')}`;
+            await dbClient.query(`
+              INSERT INTO tournament_matches
+                (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_round_id, teams_advancing, group_name, origin, manual_override, notes)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+            `, [
+              newId, null, null, targetDay ? targetDay.id : null, tId, nextNumber,
+              mm.start_time, mm.end_time || '', mm.status || 'PENDING', targetRound.id,
+              mm.map || null, mm.id_pwd_release_time || null, null, mm.teams_advancing || null,
+              mm.group_name || null, 'manual', true, mm.notes || null,
+            ]);
+            preservedManual += 1;
+          }
+        }
+
         await dbClient.query(`UPDATE tournaments SET roadmap_status = 'draft' WHERE id = $1`, [tId]);
 
         await dbClient.query('COMMIT');
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, roadmap: result.roadmap }));
+        res.end(JSON.stringify({ success: true, roadmap: result.roadmap, mode, preserved_manual: preservedManual }));
       } catch (txnErr) {
         await dbClient.query('ROLLBACK');
         throw txnErr;
@@ -6937,7 +7014,7 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", roadmap_status, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -6973,15 +7050,25 @@ const server = http.createServer(async (req, res) => {
 
       // ── ORGANIZER MODE: full structural snapshot ──
       const slotsTotal = parseInt(t.slotsTotal, 10) || 64;
-      const teamsPerGroup = parseInt(t.teams_per_group, 10) || 16;
+      const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
       const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
+      const cfg = normalizeRoadmapConfig(t);
       const roadmapMeta = {
         total_slots: slotsTotal,
         teams_per_group: teamsPerGroup,
         num_groups: groupLayout.length,
         group_names: groupLayout.map(g => `District ${g.group_index}`),
         district_names: groupLayout.map(g => `District ${g.group_index}`),
-        top_per_group: Math.max(1, Math.ceil(teamsPerGroup / 4)),
+        district_sizes: distributeDistrictSizes(slotsTotal, teamsPerGroup),
+        top_per_group: cfg.teamsAdvancingPerDistrict != null
+          ? Math.min(teamsPerGroup, cfg.teamsAdvancingPerDistrict)
+          : defaultTeamsAdvancing(teamsPerGroup),
+        matches_per_day: cfg.matchesPerDayProvided ? cfg.matchesPerDay : null,
+        first_match_time: cfg.firstMatchTime,
+        match_gap_minutes: cfg.matchGapMinutes,
+        match_duration_minutes: cfg.matchDurationMinutes,
+        release_offset_minutes: cfg.releaseOffsetMinutes,
+        enable_semi_finals: cfg.enableSemiFinals,
         game: t.game || 'bgmi'
       };
       if (isOrganizer) {
@@ -7042,6 +7129,7 @@ const server = http.createServer(async (req, res) => {
             round_id: m.round_id,
             map: m.map || 'Erangel',
             id_pwd_release_time: m.id_pwd_release_time || null,
+            origin: m.origin || 'automatic',
             ...(isOrganizer ? { room_identifier: m.room_identifier, room_password: m.room_password } : {})
           })),
           assignments: assignments.rows,
@@ -7321,6 +7409,445 @@ const server = http.createServer(async (req, res) => {
         editClient?.release();
       }
     });
+    return;
+  }
+
+  // ---------------------------------------------------------------------------
+  // DYNAMIC ROADMAP: organizer settings + manual match management
+  // ---------------------------------------------------------------------------
+
+  // 7k_road4. GET /api/tournaments/:id/roadmap/settings — effective roadmap config
+  const roadmapSettingsMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/settings$/);
+  if (roadmapSettingsMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(roadmapSettingsMatch[1]);
+    try {
+      const tRes = await pool.query(
+        `SELECT "orgId", "slotsTotal", teams_per_group, teams_per_match, game,
+                matches_per_day, first_match_time, match_gap_minutes,
+                match_duration_minutes, teams_advancing_per_district, enable_semi_finals
+         FROM tournaments WHERE id = $1`, [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      const t = tRes.rows[0];
+      const authUser = getAuthUser(req);
+      const isOrganizer = !!(authUser && (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id));
+      if (!isOrganizer) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only the organizer can view roadmap settings.' }));
+      }
+      const slotsTotal = parseInt(t.slotsTotal, 10) || 0;
+      const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
+      const cfg = normalizeRoadmapConfig(t);
+      const validation = validateRoadmapConfig(cfg, { slotsTotal, teamsPerGroup });
+      const districtSizes = distributeDistrictSizes(slotsTotal, teamsPerGroup);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        settings: {
+          matches_per_day: t.matches_per_day ?? null,
+          first_match_time: t.first_match_time || null,
+          match_gap_minutes: t.match_gap_minutes ?? null,
+          match_duration_minutes: t.match_duration_minutes ?? null,
+          teams_advancing_per_district: t.teams_advancing_per_district ?? null,
+          enable_semi_finals: t.enable_semi_finals ?? null,
+        },
+        resolved: cfg,
+        validation,
+        districts: { count: districtSizes.length, sizes: districtSizes, teams_per_group: teamsPerGroup },
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+  }
+
+  // 7k_road5. PUT /api/tournaments/:id/roadmap/settings — update roadmap config
+  if (roadmapSettingsMatch && req.method === 'PUT') {
+    const tId = decodeURIComponent(roadmapSettingsMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        const tRes = await pool.query('SELECT "orgId", "slotsTotal", teams_per_group, teams_per_match, finalized_at FROM tournaments WHERE id = $1', [tId]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        const t = tRes.rows[0];
+        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+        if (t.finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+        }
+        const payload = JSON.parse(body || '{}');
+        const slotsTotal = parseInt(t.slotsTotal, 10) || 0;
+        const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
+        const cfg = normalizeRoadmapConfig(payload);
+        const validation = validateRoadmapConfig(cfg, { slotsTotal, teamsPerGroup });
+        if (cfg.errors.length > 0 || !validation.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_CONFIG', message: [...cfg.errors, ...validation.errors].join(' ') }));
+        }
+        await pool.query(
+          `UPDATE tournaments SET
+             matches_per_day = $1, first_match_time = $2, match_gap_minutes = $3,
+             match_duration_minutes = $4, teams_advancing_per_district = $5,
+             enable_semi_finals = $6
+           WHERE id = $7`,
+          [
+            cfg.matchesPerDayProvided ? cfg.matchesPerDay : null,
+            cfg.firstMatchTime,
+            cfg.matchGapMinutes,
+            cfg.matchDurationMinutes,
+            cfg.teamsAdvancingPerDistrict,
+            cfg.enableSemiFinals,
+            tId,
+          ]
+        );
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, settings: {
+          matches_per_day: cfg.matchesPerDayProvided ? cfg.matchesPerDay : null,
+          first_match_time: cfg.firstMatchTime,
+          match_gap_minutes: cfg.matchGapMinutes,
+          match_duration_minutes: cfg.matchDurationMinutes,
+          teams_advancing_per_district: cfg.teamsAdvancingPerDistrict,
+          enable_semi_finals: cfg.enableSemiFinals,
+        } }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // 7k_road6. POST /api/tournaments/:id/roadmap/matches — create a manual match
+  const roadmapMatchesCreateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/matches$/);
+  if (roadmapMatchesCreateMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapMatchesCreateMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let client = null;
+      let txn = false;
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        client = await pool.connect();
+        await client.query('BEGIN');
+        txn = true;
+        const oRes = await client.query('SELECT "orgId", finalized_at, room_credentials_release_minutes FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+        if (oRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+        }
+        const payload = JSON.parse(body || '{}');
+
+        // Round is required and must belong to the tournament.
+        const roundId = payload.round_id;
+        if (!roundId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'round_id is required.' }));
+        }
+        const roundRes = await client.query('SELECT * FROM tournament_rounds WHERE id = $1 AND tournament_id = $2', [roundId, tId]);
+        if (roundRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_ROUND', message: 'Round does not belong to this tournament.' }));
+        }
+
+        const startTime = payload.start_time;
+        if (!isValidTime(startTime)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_TIME', message: 'start_time must be a valid HH:MM time.' }));
+        }
+        const endTime = isValidTime(payload.end_time) ? payload.end_time : startTime;
+
+        // Resolve/create the day for this match.
+        let dayId = payload.day_id || null;
+        if (dayId) {
+          const dRes = await client.query('SELECT id FROM tournament_days WHERE id = $1 AND tournament_id = $2', [dayId, tId]);
+          if (dRes.rows.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'INVALID_DAY', message: 'Day does not belong to this tournament.' }));
+          }
+        } else {
+          const dRes = await client.query('SELECT id FROM tournament_days WHERE tournament_id = $1 AND round_id = $2 ORDER BY day_number ASC LIMIT 1', [tId, roundId]);
+          if (dRes.rows.length > 0) {
+            dayId = dRes.rows[0].id;
+          } else {
+            const nRes = await client.query('SELECT COALESCE(MAX(day_number), 0) AS n FROM tournament_days WHERE tournament_id = $1 AND round_id = $2', [tId, roundId]);
+            const dayNumber = (parseInt(nRes.rows[0].n, 10) || 0) + 1;
+            dayId = `DAY-${crypto.randomBytes(8).toString('hex')}`;
+            await client.query(
+              'INSERT INTO tournament_days (id, tournament_id, day_number, date, round_id) VALUES ($1, $2, $3, $4, $5)',
+              [dayId, tId, dayNumber, payload.date || roundRes.rows[0].date || null, roundId]
+            );
+          }
+        }
+
+        const releaseMinutes = normalizeReleaseMinutes(oRes.rows[0].room_credentials_release_minutes);
+        const releaseTime = payload.id_pwd_release_time !== undefined && payload.id_pwd_release_time !== null
+          ? payload.id_pwd_release_time
+          : releaseTimeFor(startTime, releaseMinutes);
+
+        const nMatch = await client.query('SELECT COALESCE(MAX(match_number), 0) AS n FROM tournament_matches WHERE tournament_id = $1 AND round_id = $2', [tId, roundId]);
+        const matchNumber = Number.isFinite(parseInt(payload.match_number, 10))
+          ? parseInt(payload.match_number, 10)
+          : (parseInt(nMatch.rows[0].n, 10) || 0) + 1;
+
+        const matchId = `MAT-${crypto.randomBytes(8).toString('hex')}`;
+        await client.query(
+          `INSERT INTO tournament_matches
+             (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_round_id, teams_advancing, group_name, origin, manual_override, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [
+            matchId, null, payload.group_id || null, dayId, tId, matchNumber, startTime, endTime,
+            payload.status || 'PENDING', roundId, payload.map || null, releaseTime || null,
+            null, payload.teams_advancing || null, payload.group_name || null,
+            'manual', true, payload.notes || null,
+          ]
+        );
+        await client.query('COMMIT');
+        txn = false;
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, match: { id: matchId, tournament_id: tId, round_id: roundId, day_id: dayId, match_number: matchNumber, start_time: startTime, end_time: endTime, map: payload.map || null, status: payload.status || 'PENDING', id_pwd_release_time: releaseTime || null, origin: 'manual' } }));
+      } catch (err) {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      } finally {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        client?.release();
+      }
+    });
+    return;
+  }
+
+  // 7k_road6b. POST /api/tournaments/:id/roadmap/matches/reorder — reorder matches in a round
+  const roadmapMatchesReorderMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/matches\/reorder$/);
+  if (roadmapMatchesReorderMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapMatchesReorderMatch[1]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let client = null;
+      let txn = false;
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        client = await pool.connect();
+        await client.query('BEGIN');
+        txn = true;
+        const oRes = await client.query('SELECT "orgId", finalized_at FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+        if (oRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+        }
+        const payload = JSON.parse(body || '{}');
+        const ordered = Array.isArray(payload.ordered_ids) ? payload.ordered_ids
+          : Array.isArray(payload.order) ? payload.order.map((o) => (typeof o === 'string' ? o : o?.id)).filter(Boolean)
+          : null;
+        if (!ordered || ordered.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'ordered_ids must be a non-empty array of match ids.' }));
+        }
+        // Two-phase renumber to avoid transient UNIQUE(tournament_id, round_id, match_number) collisions.
+        const owned = await client.query('SELECT id, round_id FROM tournament_matches WHERE tournament_id = $1 AND id = ANY($2::text[])', [tId, ordered]);
+        const ownedIds = new Set(owned.rows.map((r) => r.id));
+        const roundId = owned.rows[0]?.round_id || null;
+        for (const id of ordered) {
+          if (!ownedIds.has(id)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'INVALID_MATCH', message: 'One or more matches do not belong to this tournament.' }));
+          }
+        }
+        // Move to a negative temporary range, then assign the final order.
+        let tmp = -1;
+        for (const id of ordered) {
+          await client.query('UPDATE tournament_matches SET match_number = $1, display_order = $2 WHERE id = $3', [tmp, tmp, id]);
+          tmp -= 1;
+        }
+        let n = 1;
+        for (const id of ordered) {
+          await client.query('UPDATE tournament_matches SET match_number = $1, display_order = $2 WHERE id = $3', [n, n, id]);
+          n += 1;
+        }
+        await client.query('COMMIT');
+        txn = false;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, round_id: roundId, ordered_ids: ordered }));
+      } catch (err) {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      } finally {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        client?.release();
+      }
+    });
+    return;
+  }
+
+  // 7k_road6c. POST /api/tournaments/:id/roadmap/matches/:matchId/duplicate — duplicate a match
+  const roadmapMatchDuplicateMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/roadmap\/matches\/([^/]+)\/duplicate$/);
+  if (roadmapMatchDuplicateMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roadmapMatchDuplicateMatch[1]);
+    const matchId = decodeURIComponent(roadmapMatchDuplicateMatch[2]);
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let client = null;
+      let txn = false;
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        client = await pool.connect();
+        await client.query('BEGIN');
+        txn = true;
+        const oRes = await client.query('SELECT "orgId", finalized_at FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+        if (oRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+        }
+        const mRes = await client.query('SELECT * FROM tournament_matches WHERE id = $1 AND tournament_id = $2', [matchId, tId]);
+        if (mRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Match not found.' }));
+        }
+        const m = mRes.rows[0];
+        const nMatch = await client.query('SELECT COALESCE(MAX(match_number), 0) AS n FROM tournament_matches WHERE tournament_id = $1 AND round_id = $2', [tId, m.round_id]);
+        const matchNumber = (parseInt(nMatch.rows[0].n, 10) || 0) + 1;
+        const newId = `MAT-${crypto.randomBytes(8).toString('hex')}`;
+        // Copy configuration only — never credentials, results or completed status.
+        await client.query(
+          `INSERT INTO tournament_matches
+             (id, room_id, group_id, day_id, tournament_id, match_number, start_time, end_time, status, round_id, map, id_pwd_release_time, next_round_id, teams_advancing, group_name, origin, manual_override, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [
+            newId, null, m.group_id || null, m.day_id || null, tId, matchNumber, m.start_time, m.end_time,
+            'PENDING', m.round_id, m.map || null, m.id_pwd_release_time || null, null,
+            m.teams_advancing || null, m.group_name || null, 'manual', true, m.notes || null,
+          ]
+        );
+        await client.query('COMMIT');
+        txn = false;
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, match: { ...m, id: newId, match_number: matchNumber, status: 'PENDING', room_identifier: null, room_password: null, origin: 'manual' } }));
+      } catch (err) {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      } finally {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        client?.release();
+      }
+    });
+    return;
+  }
+
+  // 7k_road6d. DELETE /api/tournaments/:id/roadmap/matches/:matchId — delete an eligible match
+  if (roadmapMatchEditMatch && req.method === 'DELETE') {
+    const tId = decodeURIComponent(roadmapMatchEditMatch[1]);
+    const matchId = decodeURIComponent(roadmapMatchEditMatch[2]);
+    let client = null;
+    let txn = false;
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      client = await pool.connect();
+      await client.query('BEGIN');
+      txn = true;
+      const oRes = await client.query('SELECT "orgId", finalized_at FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      }
+      if (oRes.rows[0].finalized_at) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
+      }
+      const mRes = await client.query('SELECT * FROM tournament_matches WHERE id = $1 AND tournament_id = $2', [matchId, tId]);
+      if (mRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Match not found.' }));
+      }
+      const m = mRes.rows[0];
+      // Block deletion when dependent records exist.
+      const assignRes = await client.query('SELECT 1 FROM tournament_match_assignments WHERE match_id = $1 LIMIT 1', [matchId]);
+      if (assignRes.rows.length > 0) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'MATCH_HAS_DEPENDENCIES', message: 'This match has assigned teams. Remove the allocations before deleting it.' }));
+      }
+      const completed = String(m.status || '').toLowerCase();
+      if (completed === 'completed' || completed === 'finished' || completed === 'live') {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'MATCH_IN_PROGRESS', message: 'Started or completed matches cannot be deleted.' }));
+      }
+      // Detach progression links so no dangling pointers remain.
+      await client.query('UPDATE tournament_matches SET next_match_id = NULL WHERE next_match_id = $1', [matchId]);
+      await client.query('DELETE FROM tournament_matches WHERE id = $1', [matchId]);
+      await client.query('COMMIT');
+      txn = false;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, deleted: matchId }));
+    } catch (err) {
+      if (client && txn) await client.query('ROLLBACK').catch(() => {});
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    } finally {
+      if (client && txn) await client.query('ROLLBACK').catch(() => {});
+      client?.release();
+    }
     return;
   }
 

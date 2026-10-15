@@ -46,18 +46,18 @@ test('GROUP TEST 3: 48 slots / 12 per group -> exactly 4 groups of 12', () => {
   assert.ok(groups.every(g => g.capacity === 12));
 });
 
-test('GROUP TEST 4: 17th confirmed team lands in group B', () => {
-  // 64 slots / 16 per group. Team #16 sits in A16, team #17 -> B01.
-  assert.strictEqual(groupLabelForSequence(15, 64, 16), 'A16');
-  assert.strictEqual(groupLabelForSequence(16, 64, 16), 'B01');
-  // Predicted group AFTER 16 confirmed = B.
+test('GROUP TEST 4: 17th confirmed team lands in district 2', () => {
+  // 64 slots / 16 per group. Team #16 sits in D1-16, team #17 -> D2-01.
+  assert.strictEqual(groupLabelForSequence(15, 64, 16), 'D1-16');
+  assert.strictEqual(groupLabelForSequence(16, 64, 16), 'D2-01');
+  // Predicted district AFTER 16 confirmed = B (index 2).
   const pred = predictedGroupFor(16, 64, 16);
   assert.strictEqual(pred.name, 'B');
-  assert.strictEqual(pred.label, 'B01');
+  assert.strictEqual(pred.label, 'D2-01');
 });
 
 test('GROUP TEST 5: 64th team fills the last slot, 65th exceeds capacity', () => {
-  assert.strictEqual(groupLabelForSequence(63, 64, 16), 'D16');
+  assert.strictEqual(groupLabelForSequence(63, 64, 16), 'D4-16');
   assert.strictEqual(groupIndexForSequence(64, 64, 16), 3); // clamps to last group
   assert.strictEqual(computeGroupCount(64, 16), 4);
   assert.strictEqual(computeGroupCount(64, 64), 1);
@@ -67,9 +67,9 @@ test('GROUP TEST: global slot numbers map back to groups/labels', () => {
   const groups = buildGroups(64, 16);
   assert.strictEqual(groupForGlobalSlot(1, groups)?.name, 'A');
   assert.strictEqual(groupForGlobalSlot(33, groups)?.name, 'C');
-  assert.strictEqual(groupLabelForSlot(33, groups), 'C01');
-  assert.strictEqual(groupLabelForSlot(40, groups), 'C08');
-  assert.strictEqual(groupLabelForSlot(64, groups), 'D16');
+  assert.strictEqual(groupLabelForSlot(33, groups), 'D3-01');
+  assert.strictEqual(groupLabelForSlot(40, groups), 'D3-08');
+  assert.strictEqual(groupLabelForSlot(64, groups), 'D4-16');
 });
 
 test('GROUP TEST: uneven split puts remainder in the earlier groups', () => {
@@ -93,8 +93,8 @@ test('GROUP TEST: group name generation A..Z -> AA..AB (beyond 26)', () => {
 test('GROUP TEST: position / label helpers stay 1-based and padded', () => {
   assert.strictEqual(positionWithinGroup(0, 64, 16), 1);
   assert.strictEqual(positionWithinGroup(15, 64, 16), 16);
-  assert.strictEqual(padGroupPosition('A', 7), 'A07');
-  assert.strictEqual(padGroupPosition('A', 16), 'A16');
+  assert.strictEqual(padGroupPosition('A', 7), 'D1-07');
+  assert.strictEqual(padGroupPosition('A', 16), 'D1-16');
 });
 
 test('GROUP TEST: validateGroupConfig accepts/rejects', () => {
@@ -107,7 +107,7 @@ test('GROUP TEST: validateGroupConfig accepts/rejects', () => {
 test('GROUP TEST: predictedGroupFor edge cases', () => {
   const zero = predictedGroupFor(0, 64, 16);
   assert.strictEqual(zero.name, 'A');
-  assert.strictEqual(zero.label, 'A01');
+  assert.strictEqual(zero.label, 'D1-01');
   const boundary = predictedGroupFor(16, 64, 16);
   assert.strictEqual(boundary.name, 'B');
   const beyond = predictedGroupFor(1000, 64, 16);

@@ -1,5 +1,10 @@
 import { calculateProgressionPlan } from '../server/roadmapGenerator.js';
 
+// ---------------------------------------------------------------------------
+// District progression planner — capacity/edge scenarios.
+// See progressionPlanner.test.js for the contract description.
+// ---------------------------------------------------------------------------
+
 const scenarios = [
   [64, 25], [128, 25], [256, 25],
   [20, 25], [23, 25], [24, 25], [25, 25],
@@ -15,35 +20,33 @@ function assert(condition, message) {
 }
 
 scenarios.forEach(([totalTeams, maxCap]) => {
-  console.log(`\n==================================================`);
-  console.log(`TOTAL TEAMS: ${totalTeams} | MAX TEAMS/MATCH: ${maxCap}`);
-  console.log(`==================================================`);
-  
   const plan = calculateProgressionPlan(totalTeams, maxCap);
-  
+
   if (totalTeams <= maxCap) {
-    console.log(`No elimination rounds. Direct to Grand Final with ${totalTeams} teams.`);
-    assert(plan.length === 0, `Plan should be empty if totalTeams <= maxCapacity`);
+    assert(plan.length === 0, `Plan should be empty if totalTeams (${totalTeams}) <= maxCapacity (${maxCap})`);
     return;
   }
 
   let expectedTeams = totalTeams;
 
   plan.forEach((round) => {
-    console.log(`Round ${round.roundNumber}: ${round.qualificationType.toUpperCase()}`);
-    console.log(`  match sizes: ${round.matchSizes.join(', ')}`);
-    console.log(`  qualifiers: ${round.qualifiersPerMatch.join(', ')}`);
-    console.log(`  advancing: ${round.totalTeamsAfter}`);
-    
-    // Internal Auditing
-    assert(round.totalTeamsAfter > 16 || round.totalTeamsAfter === 16, 'Check final size'); // Not forcing 16, just auditing
+    assert(round.matchSizes.every((s) => s <= maxCap), `Round ${round.roundNumber} has a match larger than ${maxCap}`);
+    assert(round.qualifiersPerMatch.every((q, i) => q <= round.matchSizes[i]), `Round ${round.roundNumber} qualifies more than it holds`);
+    const sumSizes = round.matchSizes.reduce((a, b) => a + b, 0);
+    const sumQualifiers = round.qualifiersPerMatch.reduce((a, b) => a + b, 0);
+    assert(sumSizes === round.totalTeamsBefore, 'Round size sum must equal the entering pool');
+    assert(sumQualifiers === round.totalTeamsAfter, 'Round qualifier sum must equal the advancing pool');
+    assert(round.totalTeamsBefore === expectedTeams, 'Rounds must chain without losing or duplicating teams');
     expectedTeams = round.totalTeamsAfter;
   });
 
-  console.log(`\nGRAND FINAL PARTICIPANT POOL: ${expectedTeams} teams`);
   assert(expectedTeams <= maxCap, `final participant pool ${expectedTeams} exceeds maxCap ${maxCap}`);
+  assert(expectedTeams >= 1, `final participant pool ${expectedTeams} must be positive`);
 });
 
 if (failedAssertions === 0) {
   console.log(`\n✅ ALL ASSERTIONS PASSED.`);
+} else {
+  console.error(`\n❌ FAILED ASSERTIONS: ${failedAssertions}`);
+  process.exit(1);
 }
