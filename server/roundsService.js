@@ -164,9 +164,15 @@ export async function legacyRoundBackfill(pool) {
   `);
   for (const m of missing.rows) {
     try {
-      const tRes = await pool.query('SELECT id, timeline FROM tournaments WHERE id = $1', [m.tournament_id]);
+      const tRes = await pool.query('SELECT id, timeline, roadmap_status FROM tournaments WHERE id = $1', [m.tournament_id]);
       if (tRes.rows.length === 0) continue;
       const tournament = tRes.rows[0];
+
+      // Never backfill or resurrect a deliberately reset or unpublished draft roadmap
+      if (!tournament.timeline && (tournament.roadmap_status === 'draft' || tournament.roadmap_status === 'pending')) {
+        continue;
+      }
+
       const rounds = await syncTournamentRounds(pool, tournament);
       const dayRes = await pool.query(
         'SELECT id, day_number, date FROM tournament_days WHERE tournament_id = $1 ORDER BY day_number ASC',

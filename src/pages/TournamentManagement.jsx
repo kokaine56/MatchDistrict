@@ -971,6 +971,7 @@ export default function TournamentManagement({ onNavigate }) {
           <TournamentRoadmapBuilder
             tournamentId={roadmapTournament.id}
             tournamentTitle={roadmapTournament.title}
+            isOrganizer={true}
             onClose={() => setRoadmapTournament(null)}
             onApproved={() => {
               showToast('Roadmap approved successfully.')

@@ -259,34 +259,17 @@ export default function CreateTournament({ onNavigate, template }) {
       payout = 100
     }
 
-    const rounds = []
     const baseDate = newTourney.startDate ? new Date(newTourney.startDate) : new Date()
-    let numRounds = 3
-    if (newTourney.slotsTotal <= 16) numRounds = 2
-    else if (newTourney.slotsTotal > 64) numRounds = 4
-
-    for (let i = 1; i <= numRounds; i++) {
-      const roundDate = new Date(baseDate)
-      if (presetType === 'Speed Run') {
-        roundDate.setHours(roundDate.getHours() + (i - 1) * 2)
-      } else {
-        roundDate.setDate(roundDate.getDate() + (i - 1))
-      }
-      
-      let roundName = `Round ${i}`
-      if (i === numRounds) roundName = 'Grand Finals'
-      else if (i === numRounds - 1) roundName = 'Semifinals'
-      else if (i === 1) roundName = 'Qualifiers'
-
-      rounds.push({
-        id: `rnd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 5)}`,
-        name: roundName,
-        date: roundDate.toISOString().slice(0, 10),
-        time: roundDate.toTimeString().slice(0, 5),
-        map: maps[(i - 1) % maps.length],
-        qualify: i === numRounds ? 'Champion takes all' : 'Top teams advance'
-      })
-    }
+    const rounds = [
+      {
+        id: 'rnd-preset-1',
+        name: 'Round 1',
+        date: baseDate.toISOString().slice(0, 10),
+        time: baseDate.toTimeString().slice(0, 5),
+        map: maps[0] || 'Erangel',
+        qualify: 'Top teams advance',
+      },
+    ]
 
     let prizeNum = cleanNum(prize)
     setNewTourney(prev => ({
