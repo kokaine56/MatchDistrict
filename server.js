@@ -32,9 +32,15 @@ import {
 import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus, createInvitationCredentials } from './server/registrationTeamBridge.js';
 import { allocateTeam, AllocationError, ALLOCATION_SOURCES, ALLOCATION_ERR } from './server/allocationService.js';
 import { matchReleaseEpoch, isMatchReleased, normalizeReleaseMinutes } from './server/matchRelease.js';
-import { buildParticipantRoadmap, participantAccessMode, emptyParticipantRoadmap } from './server/participantRoadmap.js';
-import { qualifyMatch, ProgressionError, PROGRESSION_ERR } from './server/roundProgressionService.js';
-import { finalizeTournament, TournamentFinalizationError } from './server/tournamentFinalizationService.js';
+import {
+  qualifyMatch,
+  qualifyRound,
+  advanceTeamsManually,
+  getDetailedRoundStandings,
+  resolveQualificationCutoff,
+  ProgressionError,
+  PROGRESSION_ERR,
+} from './server/roundProgressionService.js';
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
@@ -5089,7 +5095,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const roundRes = await pool.query(
-          'SELECT id, round_number, name, status, teams_advancing FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2',
+          'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2',
           [tId, roundNumber]
         );
         if (roundRes.rows.length === 0) {
@@ -5099,32 +5105,38 @@ const server = http.createServer(async (req, res) => {
         }
         const round = roundRes.rows[0];
         const nextRes = await pool.query(
-          'SELECT id, round_number FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',
+          'SELECT id, round_number, name FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',
           [tId, roundNumber]
         );
-        const nextRoundId = nextRes.rows.length > 0 ? nextRes.rows[0].id : null;
+        const nextRound = nextRes.rows.length > 0 ? nextRes.rows[0] : null;
+
+        // Fetch detailed round standings (overall standings, per-district breakdowns, advancement status)
+        const detailed = await getDetailedRoundStandings(pool, tId, round.id);
         const cutoff = resolveQualificationCutoff(round.teams_advancing);
-        const standings = await getRoundStandings(pool, tId, round.id);
-        const advancedByTeam = new Set();
-        if (nextRoundId) {
-          const advRes = await pool.query(
-            `SELECT DISTINCT a.tournament_team_id
-             FROM tournament_match_assignments a
-             JOIN tournament_matches m ON m.id = a.match_id AND m.tournament_id = $1
-             WHERE a.tournament_id = $1 AND m.round_id = $2`,
-            [tId, nextRoundId]
-          );
-          for (const row of advRes.rows) advancedByTeam.add(row.tournament_team_id);
+
+        // Fetch target round groups/districts if next round exists
+        let nextRoundGroups = [];
+        if (nextRound) {
+          const gRes = await pool.query('SELECT id, group_name, district_id, sequence FROM tournament_groups WHERE round_id = $1 AND tournament_id = $2 ORDER BY sequence ASC', [nextRound.id, tId]);
+          nextRoundGroups = gRes.rows;
         }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
           round,
           cutoff,
-          nextRoundNumber: nextRes.rows.length > 0 ? nextRes.rows[0].round_number : null,
-          standings: standings.map((r) => ({ ...r, advanced: advancedByTeam.has(r.team_id) })),
+          nextRoundNumber: nextRound ? nextRound.round_number : null,
+          nextRoundId: nextRound ? nextRound.id : null,
+          nextRoundName: nextRound ? nextRound.name : null,
+          nextRoundGroups,
+          standings: detailed.overallStandings,
+          districts: detailed.districts,
+          totalTeams: detailed.totalTeams,
+          advancedCount: detailed.advancedCount,
         }));
       } catch (err) {
+        console.error('Error fetching round standings:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
@@ -5132,10 +5144,90 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 7g0b. Manual / Configured Team Advancement endpoint
+  const roundAdvanceMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/(?:(\d+)\/)?advance$/);
+  if (roundAdvanceMatch && req.method === 'POST') {
+    const tId = decodeURIComponent(roundAdvanceMatch[1]);
+    const routeRoundNum = roundAdvanceMatch[2] ? parseInt(roundAdvanceMatch[2], 10) : null;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+        const existRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        if (existRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const teamIds = Array.isArray(payload.team_ids) ? payload.team_ids : [];
+        let targetRoundId = payload.target_round_id;
+        const targetGroupId = payload.target_group_id || null;
+        const sourceRoundId = payload.source_round_id || null;
+
+        if (!targetRoundId && routeRoundNum) {
+          const nextRnd = await pool.query(
+            'SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',
+            [tId, routeRoundNum]
+          );
+          if (nextRnd.rows.length > 0) targetRoundId = nextRnd.rows[0].id;
+        }
+
+        if (!targetRoundId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Target round ID is required.' }));
+        }
+
+        if (teamIds.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Please select at least one team to advance.' }));
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const result = await advanceTeamsManually(client, {
+            tournamentId: tId,
+            sourceRoundId,
+            targetRoundId,
+            targetGroupId,
+            teamIds,
+            actorId: authUser.id,
+          });
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: true, ...result }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txnErr;
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        console.error('Advancement error:', err);
+        const code = err instanceof ProgressionError ? err.code : 'ADVANCEMENT_ERROR';
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: code, message: err.message || 'Failed to advance teams.' }));
+      }
+    });
+    return;
+  }
+
   const roundQualifyMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/(\d+)\/qualify$/);
   if (roundQualifyMatch && req.method === 'POST') {
     const tId = decodeURIComponent(roundQualifyMatch[1]);
     const roundNumber = parseInt(roundQualifyMatch[2], 10);
+    let qBody = '';
+    req.on('data', (chunk) => { qBody += chunk; });
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
@@ -5156,10 +5248,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const options = JSON.parse(qBody || '{}');
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
-          const result = await qualifyRound(client, { tournamentId: tId, roundNumber, actorId: authUser.id });
+          const result = await qualifyRound(client, { tournamentId: tId, roundNumber, actorId: authUser.id, options });
           await client.query('COMMIT');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, ...result }));
@@ -7268,7 +7361,7 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, "prizeSplit1st", "prizeSplit2nd", "prizeSplit3rd", "prizeSplitMvp", prize_positions FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -7345,7 +7438,17 @@ const server = http.createServer(async (req, res) => {
         release_offset_minutes: cfg.releaseOffsetMinutes,
         enable_semi_finals: cfg.enableSemiFinals,
         game: t.game || 'bgmi',
+        registration_close_date: t.registrationCloseDate || null,
+        registration_open_date: t.registrationOpenDate || null,
+        start_date: t.startDate || t.date || null,
         total_teams: districtsData.meta.total_teams,
+        prize: t.prize || null,
+        prize_pool_amount: t.prize_pool_amount || null,
+        prize_split_1st: t.prizeSplit1st || null,
+        prize_split_2nd: t.prizeSplit2nd || null,
+        prize_split_3rd: t.prizeSplit3rd || null,
+        prize_split_mvp: t.prizeSplitMvp || null,
+        prize_positions: t.prize_positions || null,
       };
 
       if (isOrganizer) {

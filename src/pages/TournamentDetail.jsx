@@ -1678,6 +1678,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   tournamentId={tourney?.id}
                   tournamentTitle={tourney?.title}
                   isOrganizer={isTournamentOwner}
+                  registrationCloseDate={tourney?.registrationCloseDate || tourney?.registration_close_date}
                 />
               </div>
             )}

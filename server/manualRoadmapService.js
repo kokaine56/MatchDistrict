@@ -69,7 +69,7 @@ export function generateRandomId(prefix = '') {
  */
 export async function getTournamentDistricts(poolOrClient, tournamentId) {
   const tRes = await poolOrClient.query(
-    'SELECT id, title, "slotsTotal", "slotsFilled", teams_per_group, teams_per_match, game, status, roadmap_status FROM tournaments WHERE id = $1',
+    'SELECT id, title, "slotsTotal", "slotsFilled", teams_per_group, teams_per_match, game, status, roadmap_status, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, "prizeSplit1st", "prizeSplit2nd", "prizeSplit3rd", "prizeSplitMvp", prize_positions FROM tournaments WHERE id = $1',
     [tournamentId]
   );
   if (tRes.rows.length === 0) {
@@ -202,6 +202,16 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
       total_teams: totalRegisteredTeams,
       slots_filled: tourney.slotsFilled || totalRegisteredTeams,
       game: tourney.game || 'bgmi',
+      registration_close_date: tourney.registrationCloseDate || null,
+      registration_open_date: tourney.registrationOpenDate || null,
+      start_date: tourney.startDate || tourney.date || null,
+      prize: tourney.prize || null,
+      prize_pool_amount: tourney.prize_pool_amount || null,
+      prize_split_1st: tourney.prizeSplit1st || null,
+      prize_split_2nd: tourney.prizeSplit2nd || null,
+      prize_split_3rd: tourney.prizeSplit3rd || null,
+      prize_split_mvp: tourney.prizeSplitMvp || null,
+      prize_positions: tourney.prize_positions || null,
       has_empty_districts: emptyDistricts.length > 0,
       is_consistent: true,
       warnings,
@@ -210,10 +220,76 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
 }
 
 /**
+ * Dynamically parse configured prize distribution from tournament metadata.
+ * Does not hardcode 4 ranks; returns configured ranks with percentages and amounts.
+ */
+export function getPrizePositions(meta) {
+  if (!meta) return [];
+
+  // 1. If structured prize_positions JSON is available
+  if (meta.prize_positions) {
+    try {
+      const raw = typeof meta.prize_positions === 'string' ? JSON.parse(meta.prize_positions) : meta.prize_positions;
+      if (Array.isArray(raw) && raw.length > 0) {
+        return raw.map((p, idx) => {
+          const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
+          const pct = p.percentage != null ? Number(p.percentage) : null;
+          let calculatedAmount = p.prize_amount != null ? Number(p.prize_amount) : null;
+          if (calculatedAmount == null && pct != null && pool > 0) {
+            calculatedAmount = Math.round((pct / 100) * pool);
+          }
+          return {
+            rank: idx + 1,
+            name: p.name || `Rank ${idx + 1}`,
+            percentage: pct,
+            prize_amount: calculatedAmount,
+          };
+        });
+      }
+    } catch {
+      // Fallback below
+    }
+  }
+
+  // 2. Fallback to individual splits (prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp)
+  const splits = [];
+  const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
+
+  if (meta.prize_split_1st) {
+    const pct = Number(meta.prize_split_1st);
+    splits.push({ rank: 1, name: '1st Place (Champion)', percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_2nd) {
+    const pct = Number(meta.prize_split_2nd);
+    splits.push({ rank: 2, name: '2nd Place (Runner-up)', percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_3rd) {
+    const pct = Number(meta.prize_split_3rd);
+    splits.push({ rank: 3, name: '3rd Place', percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_mvp) {
+    const pct = Number(meta.prize_split_mvp);
+    splits.push({ rank: 4, name: 'MVP / 4th Place', percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+
+  if (splits.length > 0) return splits;
+
+  // 3. Fallback: default placement distribution
+  return [
+    { rank: 1, name: '1st Place (Champion)', percentage: 50, prize_amount: pool ? Math.round(pool * 0.5) : null },
+    { rank: 2, name: '2nd Place', percentage: 25, prize_amount: pool ? Math.round(pool * 0.25) : null },
+    { rank: 3, name: '3rd Place', percentage: 15, prize_amount: pool ? Math.round(pool * 0.15) : null },
+    { rank: 4, name: '4th Place', percentage: 10, prize_amount: pool ? Math.round(pool * 0.10) : null },
+  ];
+}
+
+/**
  * Pure calculation of advancing teams for a round based on configuration.
+ * Grand Finals is the terminal stage and produces 0 advancing teams.
  */
 export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
   if (!roundConfig) return 0;
+  if (roundConfig.round_type === 'grand_final') return 0;
   const advType = roundConfig.advancement_type || 'per_district';
 
   if (advType === 'per_district') {
@@ -342,8 +418,13 @@ export function validateManualRoadmap(roadmapData, options = {}) {
       errors.push(`Round "${rName || `Round ${rNum}`}" has no matches scheduled.`);
     }
 
-    // Progression / advancement validation
-    if (round.advancement_target_round_id) {
+    // Progression / advancement validation (only for qualifying/non-final rounds)
+    const isGrandFinal = round.round_type === 'grand_final';
+    if (isGrandFinal && rIdx < rounds.length - 1) {
+      warnings.push(`"${rName}" is designated as Grand Finals (terminal stage). Subsequent rounds configured after it will not be reached in standard progression.`);
+    }
+
+    if (!isGrandFinal && round.advancement_target_round_id) {
       const targetRound = rounds.find((r) => r.id === round.advancement_target_round_id);
       if (!targetRound) {
         errors.push(`Round "${rName}" targets next round "${round.advancement_target_round_id}" which does not exist in the roadmap.`);
@@ -408,12 +489,13 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
 
     const roundNumber = rIdx + 1;
     const roundName = (r.name || `Round ${roundNumber}`).trim();
-    const roundType = r.round_type || (rIdx === rounds.length - 1 && rounds.length > 1 ? 'grand_final' : 'qualifier');
-    const advType = r.advancement_type || 'per_district';
-    const teamsAdv = r.teams_advancing ? Number(r.teams_advancing) : null;
-    const teamsAdvPerDist = r.teams_advancing_per_district ? Number(r.teams_advancing_per_district) : null;
-    const teamsAdvPerMatch = r.teams_advancing_per_match ? Number(r.teams_advancing_per_match) : null;
-    const nextRoundId = r.advancement_target_round_id || null;
+    const isGrandFinal = r.round_type === 'grand_final' || (!r.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
+    const roundType = isGrandFinal ? 'grand_final' : (r.round_type || 'qualifier');
+    const advType = isGrandFinal ? null : (r.advancement_type || 'per_district');
+    const teamsAdv = (!isGrandFinal && r.teams_advancing) ? Number(r.teams_advancing) : null;
+    const teamsAdvPerDist = (!isGrandFinal && r.teams_advancing_per_district) ? Number(r.teams_advancing_per_district) : null;
+    const teamsAdvPerMatch = (!isGrandFinal && r.teams_advancing_per_match) ? Number(r.teams_advancing_per_match) : null;
+    const nextRoundId = isGrandFinal ? null : (r.advancement_target_round_id || null);
 
     await client.query(
       `INSERT INTO tournament_rounds (
@@ -712,7 +794,7 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
   const roundOrderMap = new Map(rounds.map((r, i) => [r.id, i]));
   const sortedRounds = rounds.slice().sort((a, b) => (a.round_number || 0) - (b.round_number || 0));
 
-  return sortedRounds.map((rnd) => {
+  return sortedRounds.map((rnd, rIdx) => {
     const roundDays = days
       .filter((d) => d.round_id === rnd.id)
       .sort((a, b) => (a.day_number || 0) - (b.day_number || 0));
@@ -802,17 +884,18 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
       };
     });
 
+    const isGrandFinal = rnd.round_type === 'grand_final' || (!rnd.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
     return {
       id: rnd.id,
       round_number: rnd.round_number,
       name: rnd.name,
-      round_type: rnd.round_type || 'qualifier',
+      round_type: rnd.round_type || (isGrandFinal ? 'grand_final' : 'qualifier'),
       status: rnd.status || 'configured',
-      advancement_type: rnd.advancement_type || 'per_district',
-      teams_advancing: rnd.teams_advancing,
-      teams_advancing_per_district: rnd.teams_advancing_per_district,
-      teams_advancing_per_match: rnd.teams_advancing_per_match,
-      advancement_target_round_id: rnd.advancement_target_round_id,
+      advancement_type: isGrandFinal ? null : (rnd.advancement_type || 'per_district'),
+      teams_advancing: isGrandFinal ? null : rnd.teams_advancing,
+      teams_advancing_per_district: isGrandFinal ? null : rnd.teams_advancing_per_district,
+      teams_advancing_per_match: isGrandFinal ? null : rnd.teams_advancing_per_match,
+      advancement_target_round_id: isGrandFinal ? null : rnd.advancement_target_round_id,
       days: daysHierarchy,
     };
   });

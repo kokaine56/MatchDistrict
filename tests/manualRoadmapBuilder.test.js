@@ -1267,6 +1267,197 @@ test('Test X: publishManualRoadmap and unpublishManualRoadmap keep rounds_publis
   assert.ok(delTourneyQuery, 'Should set rounds_published = false on master delete');
 });
 
+// ---------------------------------------------------------------------------
+// TEST Y: Grand Finals is terminal — requires NO advancement rules
+// ---------------------------------------------------------------------------
+test('Test Y: Grand Finals round is recognized as terminal stage without requiring advancement rules', async () => {
+  // 1. calculateAdvancingTeams returns 0 for grand_final
+  const grandFinalConfig = {
+    round_type: 'grand_final',
+    advancement_type: 'per_district',
+    teams_advancing_per_district: 4,
+    teams_advancing: 16,
+    days: [
+      {
+        day_number: 1,
+        allocations: [{ district_id: 'GRP-GF', match_count: 5 }],
+      },
+    ],
+  };
+  assert.strictEqual(
+    calculateAdvancingTeams(grandFinalConfig, 1),
+    0,
+    'calculateAdvancingTeams must return 0 for grand_final stage'
+  );
+
+  // 2. validateManualRoadmap accepts Grand Finals with NO advancement rules or next round
+  const roadmapWithGF = {
+    rounds: [
+      {
+        id: 'RND-1',
+        round_number: 1,
+        name: 'Round 1 (Districts)',
+        round_type: 'qualifier',
+        advancement_type: 'per_district',
+        teams_advancing_per_district: 2,
+        advancement_target_round_id: 'RND-GF',
+        days: [
+          {
+            id: 'DAY-1',
+            day_number: 1,
+            date: '2026-11-01',
+            allocations: [
+              { district_id: 'GRP-01', district_name: 'District 1', match_count: 2 },
+              { district_id: 'GRP-02', district_name: 'District 2', match_count: 2 },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'RND-GF',
+        round_number: 2,
+        name: 'Grand Finals',
+        round_type: 'grand_final',
+        advancement_type: null,
+        teams_advancing: null,
+        advancement_target_round_id: null,
+        days: [
+          {
+            id: 'DAY-2',
+            day_number: 1,
+            date: '2026-11-02',
+            allocations: [
+              { district_id: 'GRP-GF', district_name: 'Championship District', match_count: 6 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const validation = validateManualRoadmap(roadmapWithGF);
+  assert.strictEqual(validation.valid, true, 'Roadmap with terminal Grand Finals must be valid');
+  assert.strictEqual(validation.errors.length, 0, 'Must have zero errors');
+
+  // 3. validateManualRoadmap warns if a round is added after Grand Finals
+  const invalidRoundsAfterGF = {
+    rounds: [
+      {
+        id: 'RND-GF',
+        round_number: 1,
+        name: 'Grand Finals',
+        round_type: 'grand_final',
+        days: [
+          {
+            id: 'DAY-1',
+            day_number: 1,
+            allocations: [{ district_id: 'GRP-GF', match_count: 3 }],
+          },
+        ],
+      },
+      {
+        id: 'RND-POST',
+        round_number: 2,
+        name: 'Extra Round',
+        round_type: 'qualifier',
+        days: [
+          {
+            id: 'DAY-2',
+            day_number: 1,
+            allocations: [{ district_id: 'GRP-EX', match_count: 3 }],
+          },
+        ],
+      },
+    ],
+  };
+  const valAfterGF = validateManualRoadmap(invalidRoundsAfterGF);
+  assert.ok(
+    valAfterGF.warnings.some((w) => w.includes('terminal stage') || w.includes('Grand Finals')),
+    'Should warn when a round is placed after Grand Finals'
+  );
+
+  // 4. saveManualRoadmapDraft zeroes out advancement columns for Grand Finals
+  const insertedRounds = [];
+  const mockClient = {
+    query: async (sql, params = []) => {
+      if (sql.includes('SELECT DISTINCT match_id FROM tournament_match_results')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM tournament_rounds')) {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM tournament_days') || sql.includes('SELECT * FROM tournament_groups') || sql.includes('SELECT * FROM tournament_rooms') || sql.includes('SELECT * FROM tournament_matches')) {
+        return { rows: [] };
+      }
+      if (sql.includes('INSERT INTO tournament_rounds')) {
+        insertedRounds.push({ sql, params });
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await saveManualRoadmapDraft(mockClient, 'TOUR-GF', roadmapWithGF);
+  const gfInsert = insertedRounds.find((r) => r.params[0] === 'RND-GF');
+  assert.ok(gfInsert, 'Grand Finals round should be inserted');
+  // Check parameters: roundType is 'grand_final' (index 6), advType is null (index 7), nextRoundId is null (index 8)
+  assert.strictEqual(gfInsert.params[6], 'grand_final', 'round_type must be grand_final');
+  assert.strictEqual(gfInsert.params[7], null, 'advancement_type must be null for Grand Finals');
+  assert.strictEqual(gfInsert.params[8], null, 'advancement_target_round_id must be null for Grand Finals');
+  assert.strictEqual(gfInsert.params[5], null, 'teams_advancing must be null for Grand Finals');
+});
+
+// ---------------------------------------------------------------------------
+// TEST Z: Dynamic Prize Pool & Pre-Match Roadmap Overview Consistency
+// ---------------------------------------------------------------------------
+test('Test Z: Pre-match roadmap creation does not fabricate qualifiers and exposes dynamic prize metadata', async () => {
+  // Test dynamic prize parsing helper
+  const { getPrizePositions } = await import('../server/manualRoadmapService.js');
+
+  // Case 1: Custom 3-rank prize pool distribution
+  const customMeta3 = {
+    prize_pool_amount: 100000,
+    prize_positions: JSON.stringify([
+      { rank: 1, name: 'Champion', percentage: 60, prize_amount: 60000 },
+      { rank: 2, name: 'Runner-up', percentage: 30, prize_amount: 30000 },
+      { rank: 3, name: '3rd Place', percentage: 10, prize_amount: 10000 },
+    ]),
+  };
+  const positions3 = getPrizePositions(customMeta3);
+  assert.strictEqual(positions3.length, 3, 'Should dynamically return exactly 3 configured prize positions');
+  assert.strictEqual(positions3[0].prize_amount, 60000);
+  assert.strictEqual(positions3[1].prize_amount, 30000);
+  assert.strictEqual(positions3[2].prize_amount, 10000);
+
+  // Case 2: 5-rank configured prize pool distribution
+  const customMeta5 = {
+    prize_pool_amount: 50000,
+    prize_positions: JSON.stringify([
+      { rank: 1, name: '1st', percentage: 40 },
+      { rank: 2, name: '2nd', percentage: 25 },
+      { rank: 3, name: '3rd', percentage: 15 },
+      { rank: 4, name: '4th', percentage: 10 },
+      { rank: 5, name: '5th', percentage: 10 },
+    ]),
+  };
+  const positions5 = getPrizePositions(customMeta5);
+  assert.strictEqual(positions5.length, 5, 'Should dynamically return 5 configured prize positions');
+  assert.strictEqual(positions5[0].prize_amount, 20000);
+  assert.strictEqual(positions5[4].prize_amount, 5000);
+
+  // Case 3: buildHierarchicalRoadmap preserves Grand Finals as terminal stage
+  const flatRounds = [
+    { id: 'R-1', round_number: 1, name: 'Round 1', round_type: 'qualifier' },
+    { id: 'R-2', round_number: 2, name: 'Grand Finals', round_type: 'grand_final' },
+  ];
+  const hierarchical = buildHierarchicalRoadmap(flatRounds, [], [], []);
+  assert.strictEqual(hierarchical.length, 2);
+  assert.strictEqual(hierarchical[1].round_type, 'grand_final');
+  assert.strictEqual(hierarchical[1].advancement_type, null);
+  assert.strictEqual(hierarchical[1].advancement_target_round_id, null);
+});
+
+
 
 
 

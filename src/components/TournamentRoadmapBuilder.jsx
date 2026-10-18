@@ -24,6 +24,11 @@ import {
   X,
   GripVertical,
   Map,
+  Check,
+  Search,
+  SlidersHorizontal,
+  Filter,
+  Medal,
 } from "lucide-react";
 import { getAuthToken } from "../utils/getAuthToken";
 
@@ -53,21 +58,130 @@ function formatTime12h(timeStr) {
   return `${String(hour12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${period}`;
 }
 
+export function getDayOfWeek(dateStr) {
+  if (!dateStr) return "";
+  try {
+    const clean = String(dateStr).slice(0, 10);
+    const parts = clean.split("-").map(Number);
+    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return "";
+    const [y, m, d] = parts;
+    const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    return date.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  } catch {
+    return "";
+  }
+}
+
+export function addDaysToDateStr(dateStr, daysToAdd = 1) {
+  if (!dateStr) return "";
+  try {
+    const clean = String(dateStr).slice(0, 10);
+    const parts = clean.split("-").map(Number);
+    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return "";
+    const [y, m, d] = parts;
+    const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    date.setUTCDate(date.getUTCDate() + daysToAdd);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  } catch {
+    return "";
+  }
+}
+
+export function computeMinSelectableDate(regCloseDate) {
+  if (!regCloseDate) return "";
+  try {
+    const baseStr = String(regCloseDate).slice(0, 10);
+    return addDaysToDateStr(baseStr, 1);
+  } catch {
+    return "";
+  }
+}
+
 function formatDateDisplay(dateStr) {
   if (!dateStr) return "Date TBD";
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString("en-IN", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+    const dayOfWeek = getDayOfWeek(dateStr);
+    const formatted = d.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" });
+    return dayOfWeek ? `${dayOfWeek}, ${formatted}` : formatted;
   } catch {
     return dateStr;
   }
+}
+
+/**
+ * Dynamically parse configured prize distribution from tournament metadata.
+ * Does not hardcode 4 ranks; returns configured ranks with percentages and amounts.
+ */
+export function getPrizePositions(meta) {
+  if (!meta) return [];
+
+  // 1. If structured prize_positions JSON is available
+  if (meta.prize_positions) {
+    try {
+      const raw = typeof meta.prize_positions === "string" ? JSON.parse(meta.prize_positions) : meta.prize_positions;
+      if (Array.isArray(raw) && raw.length > 0) {
+        return raw.map((p, idx) => {
+          const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
+          const pct = p.percentage != null ? Number(p.percentage) : null;
+          let calculatedAmount = p.prize_amount != null ? Number(p.prize_amount) : null;
+          if (calculatedAmount == null && pct != null && pool > 0) {
+            calculatedAmount = Math.round((pct / 100) * pool);
+          }
+          return {
+            rank: idx + 1,
+            name: p.name || `Rank ${idx + 1}`,
+            percentage: pct,
+            prize_amount: calculatedAmount,
+          };
+        });
+      }
+    } catch {
+      // Fallback below
+    }
+  }
+
+  // 2. Fallback to individual splits (prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp)
+  const splits = [];
+  const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
+
+  if (meta.prize_split_1st) {
+    const pct = Number(meta.prize_split_1st);
+    splits.push({ rank: 1, name: "1st Place (Champion)", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_2nd) {
+    const pct = Number(meta.prize_split_2nd);
+    splits.push({ rank: 2, name: "2nd Place (Runner-up)", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_3rd) {
+    const pct = Number(meta.prize_split_3rd);
+    splits.push({ rank: 3, name: "3rd Place", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+  if (meta.prize_split_mvp) {
+    const pct = Number(meta.prize_split_mvp);
+    splits.push({ rank: 4, name: "MVP / 4th Place", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
+  }
+
+  if (splits.length > 0) return splits;
+
+  // 3. Fallback: default placement distribution
+  return [
+    { rank: 1, name: "1st Place (Champion)", percentage: 50, prize_amount: pool ? Math.round(pool * 0.5) : null },
+    { rank: 2, name: "2nd Place", percentage: 25, prize_amount: pool ? Math.round(pool * 0.25) : null },
+    { rank: 3, name: "3rd Place", percentage: 15, prize_amount: pool ? Math.round(pool * 0.15) : null },
+    { rank: 4, name: "4th Place", percentage: 10, prize_amount: pool ? Math.round(pool * 0.10) : null },
+  ];
 }
 
 export default function TournamentRoadmapBuilder({
   tournamentId,
   tournamentTitle = "Tournament Roadmap",
   isOrganizer = false,
+  registrationCloseDate = null,
   onClose = null,
   onApproved = null,
 }) {
@@ -99,6 +213,34 @@ export default function TournamentRoadmapBuilder({
   const [selectedRoundIdx, setSelectedRoundIdx] = useState(0);
   const [expandedMatches, setExpandedMatches] = useState(new Set());
   const [draggedAllocIdx, setDraggedAllocIdx] = useState(null);
+
+  // Min selectable date derived from meta or prop (registration close date + 1 day)
+  const minSelectableDate = useMemo(() => {
+    const rawDate = meta?.registration_close_date || registrationCloseDate;
+    return computeMinSelectableDate(rawDate);
+  }, [meta?.registration_close_date, registrationCloseDate]);
+
+  // Grand Finals / Custom District Modal State
+  const [showCustomDistrictModal, setShowCustomDistrictModal] = useState(false);
+  const [customDistrictRoundIdx, setCustomDistrictRoundIdx] = useState(0);
+  const [customDistrictDayIdx, setCustomDistrictDayIdx] = useState(0);
+  const [customDistrictName, setCustomDistrictName] = useState("Grand Finals");
+  const [customDistrictCapacity, setCustomDistrictCapacity] = useState(16);
+
+  // Team Qualification & Advancement Modal State
+  const [showAdvancementModal, setShowAdvancementModal] = useState(false);
+  const [advancementSourceRound, setAdvancementSourceRound] = useState(null);
+  const [advancementTargetRoundId, setAdvancementTargetRoundId] = useState("");
+  const [advancementTargetGroupId, setAdvancementTargetGroupId] = useState("");
+  const [advancementStandings, setAdvancementStandings] = useState(null);
+  const [selectedTeamIds, setSelectedTeamIds] = useState(new Set());
+  const [advancementLoading, setAdvancementLoading] = useState(false);
+  const [advancingExecuting, setAdvancingExecuting] = useState(false);
+  const [advancementSearch, setAdvancementSearch] = useState("");
+  const [advancementDistrictFilter, setAdvancementDistrictFilter] = useState("all");
+  const [advancementPreset, setAdvancementPreset] = useState("round_total");
+  const [customTopCount, setCustomTopCount] = useState(16);
+  const [customPerDistrictCount, setCustomPerDistrictCount] = useState(2);
 
   // Fetch districts from database
   const fetchDistricts = useCallback(async () => {
@@ -167,19 +309,23 @@ export default function TournamentRoadmapBuilder({
         ) {
           // If flat saved rounds exist, construct manual hierarchy preserving all saved rounds
           setRounds(
-            rm.rounds.map((r, i) => ({
-              id: r.id || `RND-${i + 1}`,
-              round_number: r.round_number || i + 1,
-              name: r.name || `Round ${i + 1}`,
-              round_type: r.round_type || "qualifier",
-              status: r.status || "configured",
-              advancement_type: r.advancement_type || "per_district",
-              teams_advancing: r.teams_advancing || 16,
-              teams_advancing_per_district: r.teams_advancing_per_district || 2,
-              days: Array.isArray(r.days) && r.days.length > 0 ? r.days : [
-                { id: `DAY-${i + 1}-1`, day_number: 1, date: "", allocations: [] }
-              ],
-            }))
+            rm.rounds.map((r, i) => {
+              const isGrandFinal = r.round_type === "grand_final" || (!r.round_type && i === rm.rounds.length - 1 && rm.rounds.length > 1) || (r.name || "").toLowerCase().includes("grand final");
+              return {
+                id: r.id || `RND-${i + 1}`,
+                round_number: r.round_number || i + 1,
+                name: r.name || `Round ${i + 1}`,
+                round_type: isGrandFinal ? "grand_final" : (r.round_type || "qualifier"),
+                status: r.status || "configured",
+                advancement_type: isGrandFinal ? null : (r.advancement_type || "per_district"),
+                teams_advancing: isGrandFinal ? null : (r.teams_advancing || 16),
+                teams_advancing_per_district: isGrandFinal ? null : (r.teams_advancing_per_district || 2),
+                advancement_target_round_id: isGrandFinal ? null : (r.advancement_target_round_id || null),
+                days: Array.isArray(r.days) && r.days.length > 0 ? r.days : [
+                  { id: `DAY-${i + 1}-1`, day_number: 1, date: "", allocations: [] }
+                ],
+              };
+            })
           );
         } else {
           setRounds([]);
@@ -254,7 +400,8 @@ export default function TournamentRoadmapBuilder({
         errs.push(`Round "${rName || `Round ${rNum}`}" has no matches configured.`);
       }
 
-      if (round.advancement_target_round_id) {
+      const isGrandFinal = round.round_type === "grand_final" || (round.name || "").toLowerCase().includes("grand final");
+      if (!isGrandFinal && round.advancement_target_round_id) {
         const targetRound = rounds.find((r) => r.id === round.advancement_target_round_id);
         const targetIdx = rounds.findIndex((r) => r.id === round.advancement_target_round_id);
         if (!targetRound) {
@@ -273,6 +420,7 @@ export default function TournamentRoadmapBuilder({
     if (!effectiveOrganizer || rounds.length === 0) return [];
     const warns = [];
     rounds.forEach((round, rIdx) => {
+      const isGrandFinal = round.round_type === "grand_final" || (round.name || "").toLowerCase().includes("grand final");
       const rNum = round.round_number || rIdx + 1;
       const rName = (round.name || `Round ${rNum}`).trim();
       (round.days || []).forEach((day, dIdx) => {
@@ -281,7 +429,8 @@ export default function TournamentRoadmapBuilder({
           const matchingDist = districts.find((d) => d.id === a.district_id || d.name === a.district_name);
           const regCount = matchingDist?.registered_teams_count ?? matchingDist?.team_count ?? 0;
           const mCount = Number(a.match_count) || (a.matches ? a.matches.length : 0);
-          if (regCount === 0 && mCount > 0) {
+          // Pre-tournament: Grand Finals reserved slots should not trigger a 0-team error
+          if (regCount === 0 && mCount > 0 && !isGrandFinal) {
             warns.push(`District "${a.district_name || 'District'}" on Day ${dNum} of "${rName}" has 0 registered teams for ${mCount} scheduled match(es).`);
           }
         });
@@ -293,15 +442,39 @@ export default function TournamentRoadmapBuilder({
   // Round Management Actions
   const handleAddRound = () => {
     const nextNum = rounds.length + 1;
+    let defaultDate = "";
+    if (rounds.length > 0) {
+      const prevRound = rounds[rounds.length - 1];
+      const prevDays = prevRound?.days || [];
+      for (let i = prevDays.length - 1; i >= 0; i--) {
+        if (prevDays[i]?.date) {
+          defaultDate = addDaysToDateStr(prevDays[i].date, 1);
+          break;
+        }
+      }
+    }
+    if (!defaultDate) {
+      defaultDate = minSelectableDate || new Date().toISOString().slice(0, 10);
+    }
+
+    const isFinalRound = nextNum === 2 && rounds.length === 1;
     const newRound = {
       id: `RND-${Date.now()}-${nextNum}`,
       round_number: nextNum,
-      name: `Round ${nextNum}`,
-      round_type: "qualifier", // fallback for legacy DB schema compatibility
+      name: isFinalRound ? "Grand Finals" : `Round ${nextNum}`,
+      round_type: isFinalRound ? "grand_final" : "qualifier",
       status: "configured",
       advancement_type: "per_district",
+      teams_advancing: 16,
       teams_advancing_per_district: 2,
-      days: [], // requirement: "Initialize only the required empty round configuration. Do not automatically add match days, district allocations, matches, or a Grand Final."
+      days: [
+        {
+          id: `DAY-${Date.now()}-1`,
+          day_number: 1,
+          date: defaultDate,
+          allocations: [],
+        },
+      ],
     };
     setRounds((prev) => [...prev, newRound]);
     setSelectedRoundIdx(rounds.length);
@@ -366,7 +539,23 @@ export default function TournamentRoadmapBuilder({
   const handleUpdateRound = (idx, field, value) => {
     setRounds((prev) => {
       const updated = [...prev];
-      updated[idx] = { ...updated[idx], [field]: value };
+      const target = { ...updated[idx], [field]: value };
+      if (field === "round_type") {
+        if (value === "grand_final") {
+          target.advancement_target_round_id = "";
+          target.advancement_type = null;
+          target.teams_advancing = null;
+          target.teams_advancing_per_district = null;
+          target.teams_advancing_per_match = null;
+          if (!target.name || target.name.startsWith("Round ")) {
+            target.name = "Grand Finals";
+          }
+        } else if (!target.advancement_type) {
+          target.advancement_type = "per_district";
+          target.teams_advancing_per_district = 2;
+        }
+      }
+      updated[idx] = target;
       return updated;
     });
   };
@@ -498,10 +687,33 @@ export default function TournamentRoadmapBuilder({
       const round = { ...updated[roundIdx] };
       const days = [...(round.days || [])];
       const nextDayNum = days.length + 1;
+
+      // Automatically determine the next date from the last day in current round or previous rounds
+      let nextDate = "";
+      if (days.length > 0) {
+        const lastDay = days[days.length - 1];
+        if (lastDay.date) {
+          nextDate = addDaysToDateStr(lastDay.date, 1);
+        }
+      }
+      if (!nextDate && roundIdx > 0) {
+        const prevRound = updated[roundIdx - 1];
+        const prevDays = prevRound?.days || [];
+        for (let i = prevDays.length - 1; i >= 0; i--) {
+          if (prevDays[i]?.date) {
+            nextDate = addDaysToDateStr(prevDays[i].date, 1);
+            break;
+          }
+        }
+      }
+      if (!nextDate) {
+        nextDate = minSelectableDate || new Date().toISOString().slice(0, 10);
+      }
+
       days.push({
         id: `DAY-${Date.now()}-${nextDayNum}`,
         day_number: nextDayNum,
-        date: "",
+        date: nextDate,
         allocations: [],
       });
       round.days = days;
@@ -511,6 +723,10 @@ export default function TournamentRoadmapBuilder({
   };
 
   const handleUpdateDay = (roundIdx, dayIdx, field, value) => {
+    if (field === "date" && minSelectableDate && value && value < minSelectableDate) {
+      setError(`Match day date cannot be on or before registration closes (${minSelectableDate}). Date clamped to earliest available date.`);
+      value = minSelectableDate;
+    }
     setRounds((prev) => {
       const updated = [...prev];
       const round = { ...updated[roundIdx] };
@@ -520,6 +736,196 @@ export default function TournamentRoadmapBuilder({
       updated[roundIdx] = round;
       return updated;
     });
+  };
+
+  // Grand Finals / Custom District Handlers
+  const handleOpenCustomDistrictModal = (roundIdx, dayIdx) => {
+    setCustomDistrictRoundIdx(roundIdx);
+    setCustomDistrictDayIdx(dayIdx);
+    const round = rounds[roundIdx];
+    const isFinalOrGrand = (round?.name || "").toLowerCase().includes("final") || roundIdx === rounds.length - 1;
+    setCustomDistrictName(isFinalOrGrand ? "Grand Finals" : `District ${districts.length + 1}`);
+    setCustomDistrictCapacity(16);
+    setShowCustomDistrictModal(true);
+  };
+
+  const handleConfirmCreateCustomDistrict = () => {
+    const cleanName = (customDistrictName || "").trim() || "Grand Finals";
+    const cap = Math.max(2, Math.min(64, Number(customDistrictCapacity) || 16));
+    const newDistrictId = `GRP-CUSTOM-${Date.now()}`;
+    const newDistrict = {
+      id: newDistrictId,
+      name: cleanName,
+      capacity: cap,
+      team_count: 0,
+      registered_teams_count: 0,
+    };
+
+    setDistricts((prev) => [...prev, newDistrict]);
+    handleAddDistrictToDay(customDistrictRoundIdx, customDistrictDayIdx, newDistrictId, 1);
+    setShowCustomDistrictModal(false);
+    setSuccess(`Created and scheduled "${cleanName}" district for Day ${customDistrictDayIdx + 1}!`);
+  };
+
+  // Team Qualification & Advancement Modal Handlers
+  const openAdvancementModal = async (sourceRound) => {
+    if (!sourceRound) return;
+    setAdvancementSourceRound(sourceRound);
+    setShowAdvancementModal(true);
+    setAdvancementLoading(true);
+    setError(null);
+
+    // Pick target round: sourceRound.advancement_target_round_id or subsequent round
+    const nextRound =
+      rounds.find((r) => r.id === sourceRound.advancement_target_round_id) ||
+      rounds.find((r) => (r.round_number || 0) > (sourceRound.round_number || 0)) ||
+      null;
+
+    const initialTargetRoundId = nextRound ? nextRound.id : "";
+    setAdvancementTargetRoundId(initialTargetRoundId);
+
+    let initialGroupId = "";
+    if (nextRound && Array.isArray(nextRound.days)) {
+      for (const d of nextRound.days) {
+        if (Array.isArray(d.allocations) && d.allocations.length > 0) {
+          initialGroupId = d.allocations[0].id || d.allocations[0].group_id || d.allocations[0].district_id;
+          break;
+        }
+      }
+    }
+    setAdvancementTargetGroupId(initialGroupId);
+
+    try {
+      const token = await getAuthToken();
+      const roundNum = sourceRound.round_number || 1;
+      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/${roundNum}/standings`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || data.error || "Failed to load round standings.");
+      }
+
+      setAdvancementStandings(data);
+
+      const advType = sourceRound.advancement_type || "per_district";
+      const preSelected = new Set();
+
+      if (advType === "per_district" && Array.isArray(data.districts)) {
+        const perDist = Number(sourceRound.teams_advancing_per_district) || 2;
+        data.districts.forEach((d) => {
+          (d.teams || []).slice(0, perDist).forEach((t) => {
+            if (t.team_id) preSelected.add(t.team_id);
+          });
+        });
+        setAdvancementPreset("per_district");
+        setCustomPerDistrictCount(perDist);
+      } else if (Array.isArray(data.overallStandings)) {
+        const topCount = Number(sourceRound.teams_advancing) || 16;
+        data.overallStandings.slice(0, topCount).forEach((t) => {
+          if (t.team_id) preSelected.add(t.team_id);
+        });
+        setAdvancementPreset("round_total");
+        setCustomTopCount(topCount);
+      }
+
+      setSelectedTeamIds(preSelected);
+
+      if (!initialGroupId && Array.isArray(data.nextRoundGroups) && data.nextRoundGroups.length > 0) {
+        setAdvancementTargetGroupId(data.nextRoundGroups[0].id);
+      }
+    } catch (err) {
+      console.error("Error loading standings:", err);
+      setError(err.message || "Failed to load standings.");
+    } finally {
+      setAdvancementLoading(false);
+    }
+  };
+
+  const applyPresetOverall = (count) => {
+    if (!advancementStandings?.overallStandings) return;
+    const n = Math.max(1, Number(count) || 16);
+    const set = new Set();
+    advancementStandings.overallStandings.slice(0, n).forEach((t) => {
+      if (t.team_id) set.add(t.team_id);
+    });
+    setSelectedTeamIds(set);
+    setAdvancementPreset("round_total");
+  };
+
+  const applyPresetPerDistrict = (count) => {
+    if (!advancementStandings?.districts) return;
+    const n = Math.max(1, Number(count) || 2);
+    const set = new Set();
+    advancementStandings.districts.forEach((d) => {
+      (d.teams || []).slice(0, n).forEach((t) => {
+        if (t.team_id) set.add(t.team_id);
+      });
+    });
+    setSelectedTeamIds(set);
+    setAdvancementPreset("per_district");
+  };
+
+  const toggleSelectTeam = (teamId) => {
+    setSelectedTeamIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) {
+        next.delete(teamId);
+      } else {
+        next.add(teamId);
+      }
+      return next;
+    });
+    setAdvancementPreset("manual");
+  };
+
+  const handleExecuteAdvancement = async () => {
+    if (selectedTeamIds.size === 0) {
+      setError("Please select at least 1 team to advance.");
+      return;
+    }
+    if (!advancementTargetRoundId) {
+      setError("Please select a target round for the advancing teams.");
+      return;
+    }
+
+    setAdvancingExecuting(true);
+    setError(null);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/advance`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          sourceRoundId: advancementSourceRound?.id,
+          targetRoundId: advancementTargetRoundId,
+          targetGroupId: advancementTargetGroupId || undefined,
+          teamIds: Array.from(selectedTeamIds),
+          advancementType: advancementPreset,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || data.error || "Failed to advance teams.");
+      }
+
+      const targetRoundObj = rounds.find((r) => r.id === advancementTargetRoundId);
+      const targetName = targetRoundObj ? targetRoundObj.name : "Next Round";
+
+      setSuccess(`🎉 Successfully qualified and advanced ${data.advanced_count || selectedTeamIds.size} teams to "${targetName}"!`);
+      setShowAdvancementModal(false);
+
+      await fetchDistricts();
+      await fetchRoadmap();
+    } catch (err) {
+      setError(err.message || "Failed to advance teams.");
+    } finally {
+      setAdvancingExecuting(false);
+    }
   };
 
   const handleDeleteDay = (roundIdx, dayIdx) => {
@@ -846,10 +1252,22 @@ export default function TournamentRoadmapBuilder({
   };
 
   const activeRound = rounds[selectedRoundIdx] || rounds[0];
+  const isGrandFinal = Boolean(
+    activeRound && (
+      activeRound.round_type === "grand_final" ||
+      (!activeRound.round_type && selectedRoundIdx === rounds.length - 1 && rounds.length > 1) ||
+      (activeRound.name || "").toLowerCase().includes("grand final")
+    )
+  );
 
-  // Helper calculating total advancing teams
+  const configuredPrizePositions = useMemo(() => {
+    return getPrizePositions(meta);
+  }, [meta]);
+
+  // Helper calculating total advancing teams (0 for Grand Finals)
   const calculateTotalAdvancing = (round) => {
     if (!round) return 0;
+    if (round.round_type === "grand_final" || (round.name || "").toLowerCase().includes("grand final")) return 0;
     if (round.advancement_type === "per_district") {
       const scheduledDistCount = new Set((round.days || []).flatMap((d) => (d.allocations || []).map((a) => a.district_id))).size;
       return scheduledDistCount * (Number(round.teams_advancing_per_district) || 0);
@@ -1369,15 +1787,36 @@ export default function TournamentRoadmapBuilder({
           <div className="p-4 sm:p-6 bg-white border border-[#E4E7EC] rounded-2xl space-y-6 shadow-xs">
             {/* Round Settings Bar */}
             <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[#E4E7EC] pb-5">
-              <div className="flex-1 min-w-[240px]">
-                <label className="block text-xs font-semibold text-[#667085] mb-1.5">Round Name</label>
-                <input
-                  type="text"
-                  value={activeRound.name}
-                  onChange={(e) => handleUpdateRound(selectedRoundIdx, "name", e.target.value)}
-                  className="w-full sm:w-96 px-3.5 py-2.5 bg-white border border-[#E4E7EC] rounded-xl text-[#172033] font-bold text-sm sm:text-base placeholder:text-[#98A2B3] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none transition shadow-2xs"
-                  placeholder="e.g. Round 1, Qualifier 1, Semifinal, Grand Final"
-                />
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4 flex-1 min-w-[280px]">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-xs font-semibold text-[#667085] mb-1.5">Round Name</label>
+                  <input
+                    type="text"
+                    value={activeRound.name}
+                    onChange={(e) => handleUpdateRound(selectedRoundIdx, "name", e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-[#E4E7EC] rounded-xl text-[#172033] font-bold text-sm sm:text-base placeholder:text-[#98A2B3] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none transition shadow-2xs"
+                    placeholder="e.g. Round 1, Qualifier 1, Semifinals, Grand Finals"
+                  />
+                </div>
+
+                <div className="w-56 shrink-0">
+                  <label className="block text-xs font-semibold text-[#667085] mb-1.5">Round Stage Type</label>
+                  <select
+                    value={activeRound.round_type || "qualifier"}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      handleUpdateRound(selectedRoundIdx, "round_type", newType);
+                    }}
+                    className={`w-full px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm border transition focus:outline-none ${
+                      isGrandFinal
+                        ? "bg-amber-50 text-amber-900 border-amber-300 focus:ring-2 focus:ring-amber-500/20"
+                        : "bg-white text-[#172033] border-[#E4E7EC] focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                    }`}
+                  >
+                    <option value="qualifier">Qualifier / Group Stage</option>
+                    <option value="grand_final">🏆 Grand Finals (Terminal Stage)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
@@ -1466,15 +1905,22 @@ export default function TournamentRoadmapBuilder({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3">
                           <div className="flex items-center gap-1.5 text-xs text-[#667085]">
                             <label className="font-semibold text-[#172033]">Date:</label>
                             <input
                               type="date"
+                              min={minSelectableDate || undefined}
                               value={day.date || ""}
                               onChange={(e) => handleUpdateDay(selectedRoundIdx, dIdx, "date", e.target.value)}
                               className="px-2.5 py-1.5 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] text-xs font-medium focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none transition shadow-2xs"
                             />
+                            {day.date && getDayOfWeek(day.date) && (
+                              <span className="px-2.5 py-1 rounded-md bg-blue-50 text-[#2563EB] font-bold text-xs border border-blue-200 flex items-center gap-1 shadow-2xs">
+                                <Calendar className="w-3.5 h-3.5" />
+                                {getDayOfWeek(day.date)}
+                              </span>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -1620,13 +2066,19 @@ export default function TournamentRoadmapBuilder({
 
                                       {/* District Name — Registered-team count display */}
                                       <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-[#F8FAFC] border border-[#E4E7EC] text-[#172033] shrink-0">
-                                        {alloc.district_name} — <strong className={registeredCount === 0 ? "text-amber-600 font-bold" : "text-[#16A34A] font-bold"}>{registeredCount}</strong> registered team{registeredCount === 1 ? "" : "s"}
+                                        {alloc.district_name} — <strong className={registeredCount === 0 && !isGrandFinal ? "text-amber-600 font-bold" : "text-[#16A34A] font-bold"}>{registeredCount}</strong> registered team{registeredCount === 1 ? "" : "s"}
                                       </span>
 
-                                      {registeredCount === 0 && alloc.match_count > 0 && (
-                                        <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1 shrink-0" title="This district has 0 registered teams">
-                                          <AlertCircle className="w-3 h-3 text-amber-600" /> 0 registered teams
+                                      {isGrandFinal ? (
+                                        <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md flex items-center gap-1.5 shrink-0" title="Finalist slots reserved for Round 1 / Qualifier winners">
+                                          <Sparkles className="w-3 h-3 text-blue-600" /> 16 Finalist Slots Reserved • Awaiting Qualifier Results
                                         </span>
+                                      ) : (
+                                        registeredCount === 0 && alloc.match_count > 0 && (
+                                          <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1 shrink-0" title="This district has 0 registered teams">
+                                            <AlertCircle className="w-3 h-3 text-amber-600" /> 0 registered teams
+                                          </span>
+                                        )
                                       )}
                                     </div>
 
@@ -1737,14 +2189,23 @@ export default function TournamentRoadmapBuilder({
                         </div>
                       )}
 
-                      {/* [+ Add District] button */}
-                      <div className="pt-1">
+                      {/* [+ Add District] and [+ Add Grand Finals / Custom District] buttons */}
+                      <div className="pt-1 flex flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={() => handleAddNextDistrictToDay(selectedRoundIdx, dIdx)}
                           className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-semibold text-xs sm:text-sm rounded-lg shadow-xs transition"
                         >
                           <Plus className="w-4 h-4" /> Add District
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCustomDistrictModal(selectedRoundIdx, dIdx)}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 font-semibold text-xs sm:text-sm rounded-lg border border-purple-200 shadow-2xs transition"
+                          title="Create a single new district (e.g. Grand Finals) for this day"
+                        >
+                          <Trophy className="w-4 h-4 text-purple-600" />
+                          <span>+ Add Grand Finals / Custom District</span>
                         </button>
                       </div>
                     </div>
@@ -1764,92 +2225,192 @@ export default function TournamentRoadmapBuilder({
               </button>
             </div>
 
-            {/* 5. ROUND PROGRESSION & ADVANCEMENT SETTINGS */}
-            <div className="p-4 sm:p-5 bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl space-y-3">
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-[#2563EB]" />
-                <h4 className="font-bold text-sm text-[#172033]">Round Advancement Rules</h4>
-              </div>
+            {/* 5. ROUND PROGRESSION & ADVANCEMENT SETTINGS OR GRAND FINALS PRIZE DISTRIBUTION */}
+            {isGrandFinal ? (
+              <div className="p-4 sm:p-6 bg-gradient-to-br from-amber-50/70 via-white to-blue-50/40 border border-amber-200/80 rounded-2xl space-y-4 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200/60 pb-3.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 border border-amber-300 flex items-center justify-center font-bold shadow-2xs">
+                      🏆
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm sm:text-base text-[#172033]">
+                        Grand Finals — Terminal Stage & Prize Pool Distribution
+                      </h4>
+                      <p className="text-xs text-[#667085] mt-0.5">
+                        This is the final stage of the tournament. No teams advance beyond Grand Finals. The completed Grand Finals leaderboard determines official rankings and prize winners.
+                      </p>
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-xs">
-                <div>
-                  <label className="block text-[#667085] mb-1.5 font-semibold">Advancement Method</label>
-                  <select
-                    value={activeRound.advancement_type || "per_district"}
-                    onChange={(e) => handleUpdateRound(selectedRoundIdx, "advancement_type", e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="per_district">Top Teams Per District</option>
-                    <option value="per_match">Top Teams Per Match</option>
-                    <option value="round_total">Total Teams from Round</option>
-                    <option value="manual">Manual Advancement</option>
-                  </select>
+                  {rounds.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => openAdvancementModal(rounds[0] || activeRound)}
+                      className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition shrink-0"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Manage Finalist Qualifiers</span>
+                    </button>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-[#667085] mb-1.5 font-semibold">
-                    {activeRound.advancement_type === "per_district"
-                      ? "Teams Advancing Per District"
-                      : activeRound.advancement_type === "per_match"
-                      ? "Teams Advancing Per Match"
-                      : "Total Advancing Teams"}
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="64"
-                    value={
-                      activeRound.advancement_type === "per_district"
-                        ? activeRound.teams_advancing_per_district || 2
+                {/* Configured Prize Distribution Grid */}
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-bold text-[#172033] uppercase tracking-wider flex items-center gap-1.5">
+                      <Medal className="w-4 h-4 text-amber-600" />
+                      Official Prize Distribution ({configuredPrizePositions.length} Prize Ranks)
+                    </span>
+                    {(meta?.prize_pool_amount || meta?.prize) && (
+                      <span className="font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                        Total Prize Pool: {meta?.prize_pool_amount ? `₹${Number(meta.prize_pool_amount).toLocaleString('en-IN')}` : meta?.prize}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                    {configuredPrizePositions.map((pos) => {
+                      const medalEmoji = pos.rank === 1 ? "🥇" : pos.rank === 2 ? "🥈" : pos.rank === 3 ? "🥉" : "🎖️";
+                      return (
+                        <div
+                          key={pos.rank}
+                          className="p-3.5 rounded-xl bg-white border border-[#E4E7EC] shadow-2xs space-y-1 hover:border-amber-300 transition"
+                        >
+                          <div className="flex items-center justify-between text-xs font-bold">
+                            <span className="text-[#172033] flex items-center gap-1.5">
+                              <span>{medalEmoji}</span>
+                              <span>{pos.name || `Rank ${pos.rank}`}</span>
+                            </span>
+                            {pos.percentage != null && (
+                              <span className="text-[#2563EB] bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">
+                                {pos.percentage}%
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-base font-extrabold text-[#16A34A]">
+                            {pos.prize_amount != null
+                              ? `₹${Number(pos.prize_amount).toLocaleString('en-IN')}`
+                              : `Rank ${pos.rank} Prize`}
+                          </div>
+                          <div className="text-[11px] text-[#667085] leading-tight">
+                            Determined by final leaderboard standings
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50/60 border border-amber-200/70 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 leading-relaxed">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Leaderboard Rules: </strong>
+                    Cumulative match points (placement points + kill points) decide the winner ranks.
+                    Verified match results are finalized securely through official result verification, and tie-breaking rules follow the tournament regulation.
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 sm:p-5 bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#2563EB]" />
+                  <h4 className="font-bold text-sm text-[#172033]">Round Advancement Rules</h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-xs">
+                  <div>
+                    <label className="block text-[#667085] mb-1.5 font-semibold">Advancement Method</label>
+                    <select
+                      value={activeRound.advancement_type || "per_district"}
+                      onChange={(e) => handleUpdateRound(selectedRoundIdx, "advancement_type", e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="per_district">Top Teams Per District</option>
+                      <option value="per_match">Top Teams Per Match</option>
+                      <option value="round_total">Total Teams from Round</option>
+                      <option value="manual">Manual Advancement</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[#667085] mb-1.5 font-semibold">
+                      {activeRound.advancement_type === "per_district"
+                        ? "Teams Advancing Per District"
                         : activeRound.advancement_type === "per_match"
-                        ? activeRound.teams_advancing_per_match || 8
-                        : activeRound.teams_advancing || 16
-                    }
-                    onChange={(e) => {
-                      const val = Number(e.target.value) || 0;
-                      if (activeRound.advancement_type === "per_district") {
-                        handleUpdateRound(selectedRoundIdx, "teams_advancing_per_district", val);
-                      } else if (activeRound.advancement_type === "per_match") {
-                        handleUpdateRound(selectedRoundIdx, "teams_advancing_per_match", val);
-                      } else {
-                        handleUpdateRound(selectedRoundIdx, "teams_advancing", val);
+                        ? "Teams Advancing Per Match"
+                        : "Total Advancing Teams"}
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="64"
+                      value={
+                        activeRound.advancement_type === "per_district"
+                          ? activeRound.teams_advancing_per_district || 2
+                          : activeRound.advancement_type === "per_match"
+                          ? activeRound.teams_advancing_per_match || 8
+                          : activeRound.teams_advancing || 16
                       }
-                    }}
-                    className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#2563EB] font-bold text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
-                  />
+                      onChange={(e) => {
+                        const val = Number(e.target.value) || 0;
+                        if (activeRound.advancement_type === "per_district") {
+                          handleUpdateRound(selectedRoundIdx, "teams_advancing_per_district", val);
+                        } else if (activeRound.advancement_type === "per_match") {
+                          handleUpdateRound(selectedRoundIdx, "teams_advancing_per_match", val);
+                        } else {
+                          handleUpdateRound(selectedRoundIdx, "teams_advancing", val);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#2563EB] font-bold text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[#667085] mb-1.5 font-semibold">Advancing Target Round</label>
+                    <select
+                      value={activeRound.advancement_target_round_id || ""}
+                      onChange={(e) => handleUpdateRound(selectedRoundIdx, "advancement_target_round_id", e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">None (Final Stage)</option>
+                      {rounds
+                        .filter((_, idx) => idx > selectedRoundIdx)
+                        .map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name || `Round ${r.round_number || ""}`}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-[#667085] mb-1.5 font-semibold">Advancing Target Round</label>
-                  <select
-                    value={activeRound.advancement_target_round_id || ""}
-                    onChange={(e) => handleUpdateRound(selectedRoundIdx, "advancement_target_round_id", e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] text-xs sm:text-sm focus:border-blue-500 focus:outline-none"
-                  >
-                    <option value="">None (Final Stage)</option>
-                    {rounds
-                      .filter((_, idx) => idx > selectedRoundIdx)
-                      .map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name || `Round ${r.round_number || ""}`}
-                        </option>
-                      ))}
-                  </select>
+                {/* Advancement summary & Qualify Action Button */}
+                <div className="p-3 bg-white border border-[#E4E7EC] rounded-lg text-xs flex flex-wrap items-center justify-between gap-3 text-[#667085]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>
+                      Calculated Advancement: <strong className="text-[#2563EB] font-bold">{calculateTotalAdvancing(activeRound)} teams</strong> will advance from this round.
+                    </span>
+                    {activeRound.advancement_target_round_id && (
+                      <span className="text-[#16A34A] font-semibold flex items-center gap-1">
+                        <ArrowRight className="w-3.5 h-3.5" /> Next stage capacity validated
+                      </span>
+                    )}
+                  </div>
+
+                  {rounds.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => openAdvancementModal(activeRound)}
+                      className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs transition"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Qualify & Advance Teams</span>
+                    </button>
+                  )}
                 </div>
               </div>
-
-              {/* Advancement summary calculation */}
-              <div className="p-3 bg-white border border-[#E4E7EC] rounded-lg text-xs flex flex-wrap items-center justify-between gap-2 text-[#667085]">
-                <span>
-                  Calculated Advancement: <strong className="text-[#2563EB] font-bold">{calculateTotalAdvancing(activeRound)} teams</strong> will advance from this round.
-                </span>
-                {activeRound.advancement_target_round_id && (
-                  <span className="text-[#16A34A] font-semibold flex items-center gap-1">
-                    <ArrowRight className="w-3.5 h-3.5" /> Next stage capacity validated
-                  </span>
-                )}
-              </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -2012,6 +2573,492 @@ export default function TournamentRoadmapBuilder({
                 ) : (
                   <span>Delete Round</span>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TEAM QUALIFICATION & ADVANCEMENT MODAL */}
+      {showAdvancementModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={() => !advancingExecuting && setShowAdvancementModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-6 shadow-2xl border border-[#E4E7EC] space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                  <Trophy className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-[#172033] flex items-center gap-2">
+                    Team Qualification & Stage Advancement
+                  </h3>
+                  <p className="text-xs text-[#667085]">
+                    Select and promote qualified teams from {advancementSourceRound?.name || "current round"} to the next round / Grand Finals.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={advancingExecuting}
+                onClick={() => setShowAdvancementModal(false)}
+                className="p-1.5 rounded-lg text-[#667085] hover:text-[#172033] hover:bg-[#F2F4F7] transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Qualification Mode & Match Status Banner */}
+            {(() => {
+              const hasRecordedResults = (advancementStandings?.overallStandings || []).some(
+                (t) => (t.matches_played || 0) > 0 || (t.total_points || 0) > 0
+              );
+              return hasRecordedResults ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-[#16A34A] shrink-0" />
+                  <span>
+                    <strong>Leaderboard Active:</strong> Standings reflect verified match scores from completed matches. Select qualifying teams below to populate the target round.
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#2563EB] shrink-0" />
+                  <span>
+                    <strong>Roadmap Overview Mode:</strong> Matches have not taken place yet. All registered teams are listed below. Once matches are hosted and results are verified on the leaderboard, official standings and top qualifiers will be computed automatically.
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Target Destination Selectors */}
+            <div className="p-3.5 bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block text-[#172033] font-bold mb-1">
+                  1. Target Next Round:
+                </label>
+                <select
+                  value={advancementTargetRoundId}
+                  onChange={(e) => {
+                    const newTargetId = e.target.value;
+                    setAdvancementTargetRoundId(newTargetId);
+                    const tr = rounds.find((r) => r.id === newTargetId);
+                    let grpId = "";
+                    if (tr && Array.isArray(tr.days)) {
+                      for (const d of tr.days) {
+                        if (Array.isArray(d.allocations) && d.allocations.length > 0) {
+                          grpId = d.allocations[0].id || d.allocations[0].group_id || d.allocations[0].district_id;
+                          break;
+                        }
+                      }
+                    }
+                    setAdvancementTargetGroupId(grpId);
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] font-bold focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="" disabled>-- Select Target Round --</option>
+                  {rounds
+                    .filter((r) => r.id !== advancementSourceRound?.id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name} (Round {r.round_number})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[#172033] font-bold">
+                    2. Target Group / District:
+                  </label>
+                  {advancementTargetRoundId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetRoundIdx = rounds.findIndex((r) => r.id === advancementTargetRoundId);
+                        if (targetRoundIdx >= 0) {
+                          handleOpenCustomDistrictModal(targetRoundIdx, 0);
+                        }
+                      }}
+                      className="text-xs text-[#2563EB] hover:underline font-semibold"
+                    >
+                      + Create Grand Finals District
+                    </button>
+                  )}
+                </div>
+                {(() => {
+                  const targetRound = rounds.find((r) => r.id === advancementTargetRoundId);
+                  const availableAllocations = [];
+                  if (targetRound && Array.isArray(targetRound.days)) {
+                    targetRound.days.forEach((d) => {
+                      (d.allocations || []).forEach((a) => {
+                        availableAllocations.push({
+                          id: a.id || a.group_id || a.district_id,
+                          name: a.district_name || a.name || `District ${a.district_id}`,
+                          capacity: a.capacity || 16,
+                        });
+                      });
+                    });
+                  }
+                  const combined = [
+                    ...availableAllocations,
+                    ...(advancementStandings?.nextRoundGroups || []).filter(
+                      (g) => !availableAllocations.some((a) => a.id === g.id)
+                    ),
+                  ];
+
+                  return (
+                    <select
+                      value={advancementTargetGroupId}
+                      onChange={(e) => setAdvancementTargetGroupId(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-[#172033] font-bold focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="">Auto-Assign / Default Group</option>
+                      {combined.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} (Capacity: {g.capacity || 16})
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Presets and Quick Actions Bar */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#667085] uppercase tracking-wider">
+                  Quick Qualification Presets:
+                </span>
+                <span className="text-xs font-bold text-[#172033]">
+                  Selected: <strong className="text-[#2563EB] text-sm">{selectedTeamIds.size}</strong> teams
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => applyPresetOverall(16)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border ${
+                    advancementPreset === "round_total" && selectedTeamIds.size === 16
+                      ? "bg-[#2563EB] text-white border-[#2563EB] shadow-xs"
+                      : "bg-white text-[#172033] hover:bg-slate-50 border-[#E4E7EC]"
+                  }`}
+                  title="Pick top 16 performing teams across all 8 districts"
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                  Top 16 Overall (from 128)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyPresetPerDistrict(2)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border ${
+                    advancementPreset === "per_district"
+                      ? "bg-purple-600 text-white border-purple-600 shadow-xs"
+                      : "bg-white text-[#172033] hover:bg-slate-50 border-[#E4E7EC]"
+                  }`}
+                  title="Pick top 2 teams from each of the 8 districts = 16 teams"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  Top 2 from Each District (16 Teams)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyPresetOverall(8)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-[#475467] hover:bg-slate-50 border border-[#E4E7EC] transition"
+                >
+                  Top 8 Overall
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => applyPresetOverall(32)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-[#475467] hover:bg-slate-50 border border-[#E4E7EC] transition"
+                >
+                  Top 32 Overall
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = new Set((advancementStandings?.overallStandings || []).map((t) => t.team_id).filter(Boolean));
+                    setSelectedTeamIds(allIds);
+                    setAdvancementPreset("manual");
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-[#475467] hover:bg-slate-50 border border-[#E4E7EC] transition ml-auto"
+                >
+                  Select All
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTeamIds(new Set());
+                    setAdvancementPreset("manual");
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 border border-red-200 transition"
+                >
+                  Clear All
+                </button>
+              </div>
+            </div>
+
+            {/* Filter by District & Search */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              {/* District Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full scrollbar-thin">
+                <button
+                  type="button"
+                  onClick={() => setAdvancementDistrictFilter("all")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+                    advancementDistrictFilter === "all"
+                      ? "bg-slate-800 text-white"
+                      : "bg-[#F8FAFC] text-[#667085] hover:text-[#172033] border border-[#E4E7EC]"
+                  }`}
+                >
+                  All Districts ({advancementStandings?.totalTeams || 0})
+                </button>
+                {(advancementStandings?.districts || []).map((d) => (
+                  <button
+                    key={d.district_id || d.district_name}
+                    type="button"
+                    onClick={() => setAdvancementDistrictFilter(d.district_name)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+                      advancementDistrictFilter === d.district_name
+                        ? "bg-[#2563EB] text-white"
+                        : "bg-[#F8FAFC] text-[#667085] hover:text-[#172033] border border-[#E4E7EC]"
+                    }`}
+                  >
+                    {d.district_name} ({(d.teams || []).length})
+                  </button>
+                ))}
+              </div>
+
+              {/* Search input */}
+              <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+                <Search className="w-3.5 h-3.5 text-[#98A2B3] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search registered team..."
+                  value={advancementSearch}
+                  onChange={(e) => setAdvancementSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-white border border-[#E4E7EC] rounded-lg text-xs text-[#172033] focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Scrollable Teams Table / List */}
+            <div className="flex-1 overflow-y-auto border border-[#E4E7EC] rounded-xl divide-y divide-[#E4E7EC] min-h-[220px] max-h-[360px] bg-white">
+              {advancementLoading ? (
+                <div className="p-12 text-center text-[#667085] space-y-2">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-[#2563EB]" />
+                  <p className="text-xs font-medium">Loading standings and registered teams...</p>
+                </div>
+              ) : (() => {
+                const query = (advancementSearch || "").toLowerCase().trim();
+                let list = advancementStandings?.overallStandings || [];
+
+                if (advancementDistrictFilter !== "all") {
+                  list = list.filter((t) => (t.district_name || "").toLowerCase() === advancementDistrictFilter.toLowerCase());
+                }
+
+                if (query) {
+                  list = list.filter((t) =>
+                    (t.team_name || "").toLowerCase().includes(query) ||
+                    (t.district_name || "").toLowerCase().includes(query)
+                  );
+                }
+
+                if (list.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-xs text-[#667085]">
+                      No registered teams found matching current filters.
+                    </div>
+                  );
+                }
+
+                return list.map((team, tIdx) => {
+                  const isChecked = selectedTeamIds.has(team.team_id);
+                  const isAdvanced = Boolean(team.is_advanced);
+
+                  return (
+                    <div
+                      key={team.team_id || tIdx}
+                      onClick={() => !isAdvanced && toggleSelectTeam(team.team_id)}
+                      className={`p-3 flex items-center justify-between gap-3 hover:bg-[#F8FAFC] transition cursor-pointer select-none ${
+                        isChecked ? "bg-blue-50/50" : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={isAdvanced}
+                          onChange={() => !isAdvanced && toggleSelectTeam(team.team_id)}
+                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 pointer-events-none"
+                        />
+                        <div className="w-7 h-7 rounded-lg bg-slate-100 text-[#172033] font-bold text-xs flex items-center justify-center shrink-0">
+                          #{team.rank || tIdx + 1}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-xs sm:text-sm text-[#172033]">
+                              {team.team_name}
+                            </span>
+                            {isAdvanced && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#16A34A] border border-emerald-200">
+                                Already Advanced
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-[#667085] flex items-center gap-2">
+                            <span>{team.district_name}</span>
+                            {team.district_rank && (
+                              <span className="text-[#2563EB] font-semibold">
+                                (District #{team.district_rank})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs font-mono text-right shrink-0">
+                        <div>
+                          <div className="text-[#172033] font-bold">{team.total_points || 0} pts</div>
+                          <div className="text-[10px] text-[#667085]">{team.kill_points || 0} kills • {team.matches_played || 0} m</div>
+                        </div>
+                        <div className="w-6 text-center">
+                          {isChecked && <Check className="w-4 h-4 text-[#2563EB]" />}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Modal Actions Footer */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#E4E7EC]">
+              <div className="text-xs text-[#667085]">
+                Advancing <strong className="text-[#172033] font-bold">{selectedTeamIds.size} teams</strong> to{" "}
+                <strong className="text-[#2563EB] font-bold">
+                  {rounds.find((r) => r.id === advancementTargetRoundId)?.name || "Target Round"}
+                </strong>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  disabled={advancingExecuting}
+                  onClick={() => setShowAdvancementModal(false)}
+                  className="px-4 py-2 bg-white hover:bg-slate-50 text-[#344054] font-semibold text-xs rounded-lg border border-[#D0D5DD] shadow-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={advancingExecuting || selectedTeamIds.size === 0 || !advancementTargetRoundId}
+                  onClick={handleExecuteAdvancement}
+                  className="flex items-center gap-2 px-5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-50 text-white font-bold text-xs rounded-lg shadow-xs transition"
+                >
+                  {advancingExecuting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Promoting Teams...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Confirm & Advance {selectedTeamIds.size} Teams</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM / GRAND FINALS DISTRICT CREATION MODAL */}
+      {showCustomDistrictModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+          onClick={() => setShowCustomDistrictModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-[#E4E7EC] space-y-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 border border-purple-200 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-[#172033]">
+                  Add District / Finals Group
+                </h3>
+                <p className="text-xs text-[#667085]">
+                  Create a new group for Round {rounds[customDistrictRoundIdx]?.round_number || customDistrictRoundIdx + 1}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[#172033] font-bold mb-1.5">District / Group Name</label>
+                <input
+                  type="text"
+                  value={customDistrictName}
+                  onChange={(e) => setCustomDistrictName(e.target.value)}
+                  placeholder="e.g. Grand Finals, Championship District, Group Final"
+                  className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-sm text-[#172033] font-bold focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[#172033] font-bold mb-1.5">Team Capacity</label>
+                <input
+                  type="number"
+                  min="2"
+                  max="64"
+                  value={customDistrictCapacity}
+                  onChange={(e) => setCustomDistrictCapacity(Number(e.target.value) || 16)}
+                  className="w-full px-3 py-2 bg-white border border-[#E4E7EC] rounded-lg text-sm text-[#2563EB] font-bold focus:border-blue-500 focus:outline-none"
+                />
+                <span className="text-[11px] text-[#667085] mt-1 block">
+                  Typically 16 teams for Grand Finals Battle Royale matches.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E4E7EC]">
+              <button
+                type="button"
+                onClick={() => setShowCustomDistrictModal(false)}
+                className="px-4 py-2 bg-white hover:bg-slate-50 text-[#344054] font-semibold text-xs rounded-lg border border-[#D0D5DD] shadow-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCreateCustomDistrict}
+                className="flex items-center gap-1.5 px-4 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs rounded-lg shadow-xs transition"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Create & Schedule District</span>
               </button>
             </div>
           </div>

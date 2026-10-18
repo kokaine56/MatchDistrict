@@ -198,7 +198,7 @@ export async function legacyRoundBackfill(pool) {
 // Read a tournament's persisted rounds (used by the roadmap GET endpoint).
 export async function getTournamentRounds(pool, tournamentId) {
   const res = await pool.query(
-    'SELECT id, round_number, name, teams_advancing, "date", "time", map, status FROM tournament_rounds WHERE tournament_id = $1 ORDER BY round_number ASC',
+    'SELECT id, round_number, name, teams_advancing, "date", "time", map, status, round_type, advancement_type, advancement_target_round_id, teams_advancing_per_district, teams_advancing_per_match, round_order FROM tournament_rounds WHERE tournament_id = $1 ORDER BY round_number ASC',
     [tournamentId]
   );
   return res.rows;

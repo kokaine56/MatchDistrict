@@ -71,6 +71,37 @@ const getISOString = (offsetDays = 0) => {
   return d.toISOString().slice(0, 16)
 }
 
+function getDayOfWeek(dateStr) {
+  if (!dateStr) return ''
+  try {
+    const parts = String(dateStr).slice(0, 10).split('-')
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10))
+      if (!isNaN(d.getTime())) return d.toLocaleDateString('en-US', { weekday: 'long' })
+    }
+    const d = new Date(dateStr)
+    if (!isNaN(d.getTime())) return d.toLocaleDateString('en-US', { weekday: 'long' })
+  } catch { /* ignore */ }
+  return ''
+}
+
+function addDaysToDateStr(dateStr, daysToAdd = 1) {
+  if (!dateStr) return ''
+  try {
+    const parts = String(dateStr).slice(0, 10).split('-')
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + daysToAdd)
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const dt = String(d.getDate()).padStart(2, '0')
+        return `${y}-${m}-${dt}`
+      }
+    }
+  } catch { /* ignore */ }
+  return ''
+}
+
 export default function CreateTournament({ onNavigate, template }) {
   const { theme } = useTheme()
   const [currentUser] = useCurrentUser()
@@ -661,10 +692,26 @@ export default function CreateTournament({ onNavigate, template }) {
       CS2: 'Mirage',
     }
     const selectedGame = String(newTourney.game || 'BGMI').toUpperCase()
+    let nextDate = ''
+    if (newTourney.roadmap && newTourney.roadmap.length > 0) {
+      const lastRnd = newTourney.roadmap[newTourney.roadmap.length - 1]
+      if (lastRnd.date) {
+        nextDate = addDaysToDateStr(lastRnd.date, 1)
+      }
+    }
+    if (!nextDate) {
+      if (newTourney.registrationCloseDate) {
+        nextDate = addDaysToDateStr(newTourney.registrationCloseDate.slice(0, 10), 1)
+      } else if (newTourney.startDate) {
+        nextDate = newTourney.startDate.slice(0, 10)
+      } else {
+        nextDate = getISOString(0).slice(0, 10)
+      }
+    }
     const newRound = {
       id: `rnd-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
       name: `Round ${newTourney.roadmap.length + 1}`,
-      date: newTourney.startDate ? newTourney.startDate.slice(0, 10) : getISOString(0).slice(0, 10),
+      date: nextDate,
       time: '18:00',
       map: defaultMaps[selectedGame] || 'Map Pool A',
       qualify: 'Top teams qualify'
@@ -1365,7 +1412,27 @@ export default function CreateTournament({ onNavigate, template }) {
                                 <div className="w-full lg:w-1/4 flex gap-2">
                                   <div className="w-3/5">
                                     <label className="text-[9px] font-bold text-slate-500 dark:text-white/40 uppercase tracking-widest mb-1 block">Date</label>
-                                    <input type="date" value={round.date} onChange={(e) => handleUpdateRound(idx, 'date', e.target.value)} className={`${inputClass} py-2 text-xs`} />
+                                    <input
+                                      type="date"
+                                      min={newTourney.registrationCloseDate ? addDaysToDateStr(newTourney.registrationCloseDate.slice(0, 10), 1) : undefined}
+                                      value={round.date || ''}
+                                      onChange={(e) => {
+                                        const minD = newTourney.registrationCloseDate ? addDaysToDateStr(newTourney.registrationCloseDate.slice(0, 10), 1) : '';
+                                        const val = e.target.value;
+                                        if (minD && val && val < minD) {
+                                          triggerToast(`Date cannot be before registration closes (${minD}). Clamped to earliest date.`);
+                                          handleUpdateRound(idx, 'date', minD);
+                                          return;
+                                        }
+                                        handleUpdateRound(idx, 'date', val);
+                                      }}
+                                      className={`${inputClass} py-2 text-xs`}
+                                    />
+                                    {round.date && getDayOfWeek(round.date) && (
+                                      <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 mt-0.5 block">
+                                        {getDayOfWeek(round.date)}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="w-2/5">
                                     <label className="text-[9px] font-bold text-slate-500 dark:text-white/40 uppercase tracking-widest mb-1 block">Time</label>
