@@ -35,6 +35,7 @@ export default function RoadmapDistrictSettingsModal({
   const [selectedMap, setSelectedMap] = useState(
     allocation?.matches?.[0]?.map || 'Erangel'
   );
+  const [customMap, setCustomMap] = useState('');
   const initialDuration = (() => {
     const m = allocation?.matches?.[0];
     if (m?.start_time && m?.end_time) {
@@ -115,13 +116,13 @@ export default function RoadmapDistrictSettingsModal({
           className={`w-full max-w-lg rounded-2xl ${theme.modalBg} overflow-hidden shadow-2xl`}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-5 border-b border-slate-700/50">
+          <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-200">
             <div className="flex items-center gap-2.5">
-              <div className={`p-2 rounded-xl ${theme.isGold ? 'bg-amber-500/20 text-amber-400' : 'bg-cyan-500/20 text-cyan-400'}`}>
+              <div className={`p-2 rounded-xl ${theme.isGold ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                 <Sliders className="w-5 h-5" />
               </div>
               <div>
-                <h3 className={`text-lg font-bold ${theme.headingText}`}>
+                <h3 className={`text-base sm:text-lg font-bold ${theme.headingText}`}>
                   {allocation.district_name || allocation.name || 'District'} Settings
                 </h3>
                 <p className={`text-xs ${theme.mutedText}`}>
@@ -131,14 +132,14 @@ export default function RoadmapDistrictSettingsModal({
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition cursor-pointer"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
 
           {/* Form */}
-          <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+          <div className="p-4 sm:p-6 space-y-4 max-h-[75vh] overflow-y-auto">
             {/* Match Count & Start Time */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -187,11 +188,11 @@ export default function RoadmapDistrictSettingsModal({
                 className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold ${theme.inputBg}`}
               >
                 {mapOptions.map((m) => (
-                  <option key={m} value={m} className="bg-slate-900 text-white">
+                  <option key={m} value={m} className="bg-white text-slate-900">
                     {m}
                   </option>
                 ))}
-                <option value="custom" className="bg-slate-900 text-white">
+                <option value="custom" className="bg-white text-slate-900">
                   Other / Custom Map...
                 </option>
               </select>
@@ -259,23 +260,23 @@ export default function RoadmapDistrictSettingsModal({
               <button
                 type="button"
                 onClick={handleApplyToAll}
-                className={`w-full py-2.5 px-4 rounded-xl border border-dashed flex items-center justify-center gap-2 text-xs font-extrabold transition cursor-pointer ${
+                className={`w-full py-2.5 px-4 rounded-xl border border-dashed flex items-center justify-center gap-2 text-xs font-extrabold transition cursor-pointer min-h-[38px] ${
                   appliedNotice
-                    ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300'
+                    ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
                     : theme.isGold
-                    ? 'border-amber-500/40 text-amber-300 hover:bg-amber-950/30'
-                    : 'border-cyan-500/40 text-cyan-300 hover:bg-cyan-950/30'
+                    ? 'border-amber-300 text-amber-800 hover:bg-amber-50'
+                    : 'border-blue-300 text-blue-700 hover:bg-blue-50'
                 }`}
               >
                 {appliedNotice ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    Applied to all districts on Day {dayNumber}!
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span>Applied to all districts on Day {dayNumber}!</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    Apply settings to all districts on Day {dayNumber}
+                    <span>Apply settings to all districts on Day {dayNumber}</span>
                   </>
                 )}
               </button>
@@ -286,16 +287,16 @@ export default function RoadmapDistrictSettingsModal({
           </div>
 
           {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 p-4 border-t border-slate-700/50 bg-black/20">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 p-4 border-t border-slate-200 bg-slate-50/80">
             <button
               onClick={onClose}
-              className={`px-4 py-2 rounded-xl font-bold text-xs ${theme.secondaryBtn}`}
+              className={`w-full sm:w-auto px-4 py-2 rounded-xl font-bold text-xs min-h-[38px] ${theme.secondaryBtn}`}
             >
               Cancel
             </button>
             <button
               onClick={handleSaveIndividual}
-              className={`px-5 py-2 rounded-xl font-extrabold text-xs ${theme.primaryBtn}`}
+              className={`w-full sm:w-auto px-5 py-2 rounded-xl font-extrabold text-xs min-h-[38px] ${theme.primaryBtn}`}
             >
               Save District Settings
             </button>

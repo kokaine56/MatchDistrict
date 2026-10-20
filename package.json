@@ -9,7 +9,7 @@
                     "lint":  "eslint .",
                     "preview":  "vite preview",
                     "start":  "node server.js",
-                    "test":  "node --test tests/tournamentPlanner.test.js tests/tournamentPromotion.test.js tests/roadmapConfig.test.js tests/roadmapDistrictGeneration.test.js tests/roadmapGenerator.test.js tests/roadmapValidation.test.js tests/roadmapViewModel.test.js tests/roundsStructure.test.js tests/planningEngine.test.js tests/groupUtils.test.js tests/progressionPlanner.test.js tests/progressionPlanner_v2.test.js tests/tournamentWizardRoadmap.test.js tests/roundsMigration.test.js tests/manualRoadmapBuilder.test.js tests/phase1RoadmapFixes.test.js tests/phase2ABackend.test.js tests/phase3ParticipantAndLocks.test.js"
+                    "test":  "node --test tests/tournamentPlanner.test.js tests/tournamentPromotion.test.js tests/roadmapConfig.test.js tests/roadmapDistrictGeneration.test.js tests/roadmapGenerator.test.js tests/roadmapValidation.test.js tests/roadmapViewModel.test.js tests/roundsStructure.test.js tests/planningEngine.test.js tests/groupUtils.test.js tests/progressionPlanner.test.js tests/progressionPlanner_v2.test.js tests/tournamentWizardRoadmap.test.js tests/roundsMigration.test.js tests/manualRoadmapBuilder.test.js tests/phase1RoadmapFixes.test.js tests/phase2ABackend.test.js tests/phase3ParticipantAndLocks.test.js tests/phase4AAdvancementDb.test.js tests/qualificationLogic.test.js tests/phase5Hardening.test.js tests/testDbGuard.test.js"
                 },
     "dependencies":  {
                          "@floating-ui/react":  "^0.27.19",

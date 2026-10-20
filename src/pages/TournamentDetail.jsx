@@ -1680,6 +1680,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   tournamentTitle={tourney?.title}
                   isOrganizer={isTournamentOwner}
                   registrationCloseDate={tourney?.registrationCloseDate || tourney?.registration_close_date}
+                  onNavigateToLeaderboard={() => setActiveTab('leaderboard')}
                 />
               </div>
             )}

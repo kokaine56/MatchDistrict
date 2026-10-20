@@ -4,7 +4,10 @@ import {
   buildHierarchicalRoadmap,
   validateManualRoadmap,
   saveManualRoadmapDraft,
+  deleteEntireRoadmap,
+  getTournamentRoadmapResponse,
 } from '../server/manualRoadmapService.js';
+import { assertSafeTestDb } from './testDbGuard.js';
 
 test('PHASE 3 ROUND-TRIP: saves full roadmap and reads back unchanged', async () => {
   // Mock DB tables in-memory
@@ -466,7 +469,7 @@ test('PHASE 3 EDIT LOCKS: blocks structural edits when round has verified result
           {
             id: 'DAY-1',
             day_number: 1,
-            date: '2026-10-30', // Attempt to alter Day 1 date (should be ignored / protected)
+            date: '2026-10-25', // Day 1 date kept unchanged
             allocations: [
               {
                 id: 'GRP-1',
@@ -474,10 +477,10 @@ test('PHASE 3 EDIT LOCKS: blocks structural edits when round has verified result
                 matches: [
                   {
                     id: 'MAT-1',
-                    start_time: '19:00', // Attempt to alter MAT-1 time (should be ignored / protected)
-                    end_time: '19:30',
-                    map: 'Sanhok', // Attempt to alter MAT-1 map (should be ignored / protected)
-                    notes: 'Altered Day 1 notes',
+                    start_time: '14:00', // MAT-1 time kept unchanged
+                    end_time: '14:30',
+                    map: 'Erangel', // MAT-1 map kept unchanged
+                    notes: 'Day 1 original notes',
                   },
                 ],
               },
@@ -526,8 +529,34 @@ test('PHASE 3 EDIT LOCKS: blocks structural edits when round has verified result
   const mat1 = granularDb.matches.find((m) => m.id === 'MAT-1');
   assert.equal(day1.date, '2026-10-25', 'Day 1 date must remain protected');
   assert.equal(mat1.start_time, '14:00', 'MAT-1 start_time must remain protected');
-  assert.equal(mat1.map, 'Erangel', 'MAT-1 map must remain protected');
-  assert.equal(mat1.notes, 'Day 1 original notes', 'MAT-1 notes must remain protected');
+
+  // Explicit test for Q1: Server must reject modifying a locked day with DAY_LOCKED
+  const lockedDayEdit = JSON.parse(JSON.stringify(day2Update));
+  lockedDayEdit.rounds[0].days[0].date = '2026-10-31';
+  await assert.rejects(
+    async () => {
+      await saveManualRoadmapDraft(granularClient, 'T-LOCKED', lockedDayEdit);
+    },
+    (err) => {
+      assert.equal(err.code, 'DAY_LOCKED');
+      assert.match(err.message, /Day 1.*contains verified results and is locked/i);
+      return true;
+    }
+  );
+
+  // Explicit test for Q1: Server must reject modifying a locked match with MATCH_LOCKED
+  const lockedMatchEdit = JSON.parse(JSON.stringify(day2Update));
+  lockedMatchEdit.rounds[0].days[0].allocations[0].matches[0].start_time = '19:00';
+  await assert.rejects(
+    async () => {
+      await saveManualRoadmapDraft(granularClient, 'T-LOCKED', lockedMatchEdit);
+    },
+    (err) => {
+      assert.equal(err.code, 'MATCH_LOCKED');
+      assert.match(err.message, /Match 1.*has verified results and is locked/i);
+      return true;
+    }
+  );
 });
 
 test('PHASE 3 PUBLISH VALIDATION: enforces blocking rules for publish', () => {
@@ -692,11 +721,12 @@ test('PHASE 3 PUBLISH VALIDATION: enforces blocking rules for publish', () => {
 });
 
 test('PHASE 3 ROUND-TRIP REAL-DB: supports PGTEST_URL for real PostgreSQL persistence verification', async (t) => {
-  const testUrl = process.env.PGTEST_URL || process.env.SUPABASE_TEST_URL;
+  const testUrl = process.env.PGTEST_URL;
   if (!testUrl) {
     t.skip('Skipping real-DB round-trip test: PGTEST_URL environment variable is not set.');
     return;
   }
+  assertSafeTestDb(testUrl);
 
   const pg = await import('pg');
   const client = new pg.default.Client({
@@ -774,102 +804,174 @@ test('PHASE 3 ROUND-TRIP REAL-DB: supports PGTEST_URL for real PostgreSQL persis
   }
 });
 
-test('PHASE 3 PARTICIPANT PRIVACY: participant response contains no organizer-only fields, draft data, or team names', () => {
-  // 1. Published participant roadmap projection
-  const organizerPayload = {
-    rounds: [{ id: 'R1', name: 'Round 1' }],
-    days: [{ id: 'D1', date: '2026-10-25' }],
-    groups: [{ id: 'G1', group_name: 'District 1' }],
-    rooms: [{ id: 'RM1', capacity: 16 }],
+test('PHASE 3 DELETE ROADMAP: refuses when team assignments exist (HTTP 409 ROADMAP_HAS_ASSIGNMENTS)', async () => {
+  const mockDb = {
+    tournament: { id: 'T-ASSIGNED', orgId: 'ORG-1', roadmap_status: 'draft', finalized_at: null },
+    results: [],
+    assignments: [{ id: 'ASN-1', match_id: 'M-1', tournament_team_id: 'TT-1' }],
+  };
+
+  const mockClient = {
+    query: async (sql, params = []) => {
+      const s = sql.trim().toUpperCase();
+      if (s.includes('FROM TOURNAMENTS')) {
+        return { rows: [mockDb.tournament] };
+      }
+      if (s.includes('FROM TOURNAMENT_MATCH_RESULTS')) {
+        return { rows: mockDb.results };
+      }
+      if (s.includes('FROM TOURNAMENT_MATCH_ASSIGNMENTS')) {
+        return { rows: mockDb.assignments };
+      }
+      return { rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    async () => {
+      await deleteEntireRoadmap(mockClient, 'T-ASSIGNED');
+    },
+    (err) => {
+      assert.equal(err.code, 'ROADMAP_HAS_ASSIGNMENTS');
+      assert.match(err.message, /Cannot delete roadmap because teams are already assigned to matches/i);
+      return true;
+    }
+  );
+});
+
+test('PHASE 3 PARTICIPANT PRIVACY: real GET /roadmap handler suppresses organizer-only fields, assignments, and team names for participants', async () => {
+  // Setup mock database for real getTournamentRoadmapResponse handler
+  const mockDb = {
+    tournament: {
+      id: 'T-PRIVACY',
+      orgId: 'ORG-REAL-1',
+      roadmap_status: 'approved',
+      rounds_published: true,
+      slotsTotal: 64,
+      teams_per_group: 16,
+      teams_per_match: 16,
+      game: 'bgmi',
+      room_credentials_release_minutes: 15,
+      date: '2026-10-25',
+    },
+    rounds: [{ id: 'R1', tournament_id: 'T-PRIVACY', round_number: 1, name: 'Round 1 Qualifier', status: 'configured', teams_advancing: 16 }],
+    days: [{ id: 'D1', tournament_id: 'T-PRIVACY', day_number: 1, date: '2026-10-25', round_id: 'R1' }],
+    groups: [{ id: 'G1', tournament_id: 'T-PRIVACY', day_id: 'D1', group_name: 'District 1', sequence: 1, round_id: 'R1' }],
+    rooms: [{ id: 'RM1', tournament_id: 'T-PRIVACY', group_id: 'G1', day_id: 'D1', room_number: 1, capacity: 16, round_id: 'R1' }],
     matches: [
       {
         id: 'M1',
-        start_time: '14:00',
-        end_time: '14:30',
+        tournament_id: 'T-PRIVACY',
+        day_id: 'D1',
+        group_id: 'G1',
+        room_id: 'RM1',
+        match_number: 1,
+        start_time: '23:59', // future match time: credentials not released
+        end_time: '00:29',
+        status: 'PENDING',
+        round_id: 'R1',
+        group_name: 'District 1',
         map: 'Erangel',
-        credentials_available: false,
+        room_identifier: 'SECRET_ROOM_ID',
+        room_password: 'SECRET_PASSWORD',
       },
     ],
     assignments: [
-      { match_id: 'M1', tournament_team_id: 'TEAM-SECRET-1' },
-      { match_id: 'M1', tournament_team_id: 'TEAM-SECRET-2' },
+      { id: 'A1', match_id: 'M1', room_id: 'RM1', tournament_team_id: 'TEAM-SECRET-1' },
+      { id: 'A2', match_id: 'M1', room_id: 'RM1', tournament_team_id: 'TEAM-SECRET-2' },
     ],
-    districts: [
-      {
-        id: 'D1',
-        name: 'District 1',
-        capacity: 16,
-        teams: [
-          { id: 'T1', team_name: 'Secret Alpha Clan' },
-          { id: 'T2', team_name: 'Secret Bravo Squad' },
-        ],
-      },
+    registrationGroups: [
+      { id: 'RG1', tournament_id: 'T-PRIVACY', group_index: 0, name: 'District 1', capacity: 16 },
     ],
-    meta: {
-      total_slots: 64,
-      teams_per_group: 16,
-      capacity_warning: 'Roadmap was built for 32 teams, but tournament capacity is now 64.',
-      capacity_mismatch: { planned: 32, current: 64 },
-      validation: { valid: true, errors: [], warnings: [] },
+    registrations: [
+      { id: 'REG1', team_name: 'Secret Bravo Squad', status: 'confirmed', slot_number: 1, group_id: 'RG1', group_name: 'District 1' },
+    ],
+    teams: [
+      { id: 'TEAM-1', team_name: 'Participant Lions', status: 'confirmed', tournament_id: 'T-PRIVACY', user_id: 'USER-PLAYER-1' },
+    ],
+  };
+
+  const faithfulMockClient = {
+    query: async (sql, params = []) => {
+      const s = sql.trim().toUpperCase();
+      if (s.includes('FROM TOURNAMENTS')) {
+        return { rows: [mockDb.tournament] };
+      }
+      if (s.includes('FROM TOURNAMENT_ROUNDS')) {
+        return { rows: mockDb.rounds };
+      }
+      if (s.includes('FROM TOURNAMENT_DAYS')) {
+        return { rows: mockDb.days };
+      }
+      if (s.includes('FROM TOURNAMENT_GROUPS')) {
+        return { rows: mockDb.groups };
+      }
+      if (s.includes('FROM TOURNAMENT_ROOMS')) {
+        return { rows: mockDb.rooms };
+      }
+      if (s.includes('FROM TOURNAMENT_MATCHES')) {
+        return { rows: mockDb.matches };
+      }
+      if (s.includes('FROM TOURNAMENT_MATCH_ASSIGNMENTS')) {
+        return { rows: mockDb.assignments };
+      }
+      if (s.includes('FROM TOURNAMENT_REGISTRATION_GROUPS')) {
+        return { rows: mockDb.registrationGroups };
+      }
+      if (s.includes('FROM TOURNAMENT_REGISTRATIONS')) {
+        return { rows: mockDb.registrations };
+      }
+      if (s.includes('FROM TOURNAMENT_TEAMS')) {
+        const matchingTeam = mockDb.teams.filter((t) => t.user_id === params[1] || t.id === params[0]);
+        return { rows: matchingTeam };
+      }
+      return { rows: [] };
     },
   };
 
-  // Participant endpoint projection as implemented in server.js
-  const participantMeta = { ...organizerPayload.meta };
-  delete participantMeta.capacity_warning;
-  delete participantMeta.capacity_mismatch;
-  delete participantMeta.validation;
+  // 1. Participant requests published roadmap via the real handler
+  const participantAuth = { id: 'USER-PLAYER-1', role: 'user' };
+  const participantRes = await getTournamentRoadmapResponse(faithfulMockClient, 'T-PRIVACY', participantAuth, Date.now());
 
-  const participantResponse = {
-    success: true,
-    mode: 'participant',
-    viewer_is_organizer: false,
-    is_organizer: false,
-    roadmap_status: 'published',
-    published: true,
-    participant: { team_id: 'T1', team_name: 'Secret Alpha Clan', team_status: 'confirmed' },
-    roadmap: {
-      rounds: organizerPayload.rounds,
-      days: organizerPayload.days,
-      groups: organizerPayload.groups,
-      rooms: organizerPayload.rooms,
-      matches: organizerPayload.matches,
-      districts: organizerPayload.districts.map((d) => ({
-        id: d.id,
-        name: d.name,
-        capacity: d.capacity,
-      })),
-      meta: participantMeta,
-    },
-  };
+  assert.equal(participantRes.statusCode, 200);
+  assert.equal(participantRes.body.mode, 'participant');
+  assert.equal(participantRes.body.viewer_is_organizer, false);
+  assert.equal(participantRes.body.is_organizer, false);
 
   // Assertions for participant safety:
-  assert.equal(participantResponse.roadmap.assignments, undefined, 'assignments must not be returned');
-  assert.equal(participantResponse.roadmap.meta.capacity_warning, undefined, 'capacity_warning must not be in participant meta');
-  assert.equal(participantResponse.roadmap.meta.capacity_mismatch, undefined, 'capacity_mismatch must not be in participant meta');
-  assert.equal(participantResponse.roadmap.meta.validation, undefined, 'validation messages must not be in participant meta');
-  assert.equal(participantResponse.roadmap.districts[0].teams, undefined, 'district teams array must not be in participant response');
+  assert.equal(participantRes.body.roadmap.assignments, undefined, 'assignments table must not be returned to participants');
+  assert.equal(participantRes.body.roadmap.meta.capacity_warning, undefined, 'capacity_warning must not be in participant meta');
+  assert.equal(participantRes.body.roadmap.meta.capacity_mismatch, undefined, 'capacity_mismatch must not be in participant meta');
+  assert.equal(participantRes.body.roadmap.districts[0].teams, undefined, 'district teams array must not be in participant response');
 
-  // Verify that team names inside the tournament districts are not leaked in the JSON
-  const jsonStr = JSON.stringify(participantResponse.roadmap);
+  // Verify room credentials are NOT released for future matches
+  const matchObj = participantRes.body.roadmap.matches[0];
+  assert.equal(matchObj.credentials_available, false);
+  assert.equal(matchObj.room_identifier, undefined);
+  assert.equal(matchObj.room_password, undefined);
+
+  // Verify that internal secret team rosters are not leaked anywhere in the JSON
+  const jsonStr = JSON.stringify(participantRes.body.roadmap);
   assert.equal(jsonStr.includes('capacity_warning'), false);
   assert.equal(jsonStr.includes('capacity_mismatch'), false);
+  assert.equal(jsonStr.includes('SECRET_ROOM_ID'), false);
   assert.equal(jsonStr.includes('Secret Bravo Squad'), false);
 
-  // 2. Unpublished roadmap gate: ordinary participants and visitors receive NO roadmap draft data
-  const unpublishedResponse = {
-    success: true,
-    mode: 'public',
-    viewer_is_organizer: false,
-    is_organizer: false,
-    roadmap_status: 'draft',
-    published: false,
-    message: 'Roadmap will be published soon.',
-    participant: null,
-    roadmap: null,
-  };
+  // 2. Organizer requests the same roadmap via real handler
+  const organizerAuth = { id: 'ORG-REAL-1', role: 'organizer' };
+  const organizerRes = await getTournamentRoadmapResponse(faithfulMockClient, 'T-PRIVACY', organizerAuth, Date.now());
+  assert.equal(organizerRes.statusCode, 200);
+  assert.equal(organizerRes.body.mode, 'organizer');
+  assert.equal(organizerRes.body.viewer_is_organizer, true);
+  assert.ok(Array.isArray(organizerRes.body.roadmap.assignments), 'organizer must see assignments');
 
-  assert.equal(unpublishedResponse.published, false);
-  assert.equal(unpublishedResponse.roadmap, null, 'Unpublished roadmap must return null roadmap to non-organizers');
-  assert.equal(unpublishedResponse.message, 'Roadmap will be published soon.');
+  // 3. Unpublished roadmap gate: ordinary participants and visitors receive NO roadmap draft data
+  mockDb.tournament.roadmap_status = 'draft';
+  mockDb.tournament.rounds_published = false;
+  const unpubRes = await getTournamentRoadmapResponse(faithfulMockClient, 'T-PRIVACY', participantAuth, Date.now());
+  assert.equal(unpubRes.statusCode, 200);
+  assert.equal(unpubRes.body.published, false);
+  assert.equal(unpubRes.body.roadmap, null, 'Unpublished roadmap must return null roadmap to non-organizers');
+  assert.equal(unpubRes.body.message, 'Roadmap will be published soon.');
 });
+

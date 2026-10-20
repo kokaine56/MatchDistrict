@@ -96,16 +96,31 @@ test('advanceTeamsManually: validates required inputs and inserts advancement as
       executedQueries.push({ sql, params });
 
       if (sql.includes('FROM tournaments WHERE id = $1')) {
-        return { rows: [{ id: 'TRN-1', roadmap_status: 'published', finalized_at: null }] };
+        return { rows: [{ id: 'TRN-1', orgId: 'org-user-1', roadmap_status: 'published', finalized_at: null }] };
       }
       if (sql.includes('FROM tournament_rounds WHERE id = $1 AND tournament_id = $2')) {
+        if (params[0] === 'RND-1') {
+          return { rows: [{ id: 'RND-1', round_number: 1, name: 'Round 1 Qualifiers' }] };
+        }
         return { rows: [{ id: 'RND-2', round_number: 2, name: 'Grand Finals' }] };
+      }
+      if (sql.includes('FROM tournament_matches') && sql.includes('COUNT(mr.id)')) {
+        return { rows: [{ id: 'M-1', match_number: 1, status: 'COMPLETED', result_count: 1 }] };
+      }
+      if (sql.includes('FROM tournament_match_assignments') && sql.includes('UNION') && sql.includes('tournament_match_results')) {
+        return { rows: [{ team_id: 'team-a' }, { team_id: 'team-b' }] };
       }
       if (sql.includes('FROM tournament_matches WHERE round_id = $1 AND tournament_id = $2')) {
         return { rows: [{ id: 'M-10', round_id: 'RND-2', group_id: 'GRP-1', day_id: 'DAY-1' }] };
       }
-      if (sql.includes('FROM tournament_teams WHERE id = $1 AND tournament_id = $2')) {
-        return { rows: [{ id: params[0], team_name: `Team ${params[0]}` }] };
+      if (sql.includes('FROM tournament_groups WHERE round_id = $1 AND tournament_id = $2')) {
+        return { rows: [{ id: 'GRP-1', group_name: 'District 1', sequence: 1 }] };
+      }
+      if (sql.includes('FROM tournament_teams WHERE id = ANY($1::text[])') || sql.includes('FROM tournament_teams WHERE id = $1')) {
+        return { rows: [{ id: 'team-a', team_name: 'Team A', status: 'verified' }, { id: 'team-b', team_name: 'Team B', status: 'verified' }] };
+      }
+      if (sql.includes('FROM tournament_match_results mr')) {
+        return { rows: [] };
       }
       if (sql.includes('INSERT INTO tournament_match_assignments')) {
         return { rows: [] };

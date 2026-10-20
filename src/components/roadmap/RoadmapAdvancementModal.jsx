@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Trophy, CheckCircle, Sparkles, X, Users, RefreshCw } from 'lucide-react';
+import { Trophy, CheckCircle, Sparkles, X, Users, RefreshCw, Search, Filter } from 'lucide-react';
 import { getAuthToken } from '../../utils/getAuthToken';
 
 export default function RoadmapAdvancementModal({
@@ -218,7 +218,7 @@ export default function RoadmapAdvancementModal({
       aria-modal="true"
     >
       <div
-        className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-6 shadow-2xl border border-[#E4E7EC] space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col"
+        className="bg-white rounded-2xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-[#E4E7EC] space-y-4 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -228,7 +228,7 @@ export default function RoadmapAdvancementModal({
               <Trophy className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-[#172033] flex items-center gap-2">
+              <h3 className="text-sm sm:text-lg font-bold text-[#172033] flex items-center gap-2">
                 Team Qualification & Stage Advancement
               </h3>
               <p className="text-xs text-[#667085]">
@@ -336,14 +336,44 @@ export default function RoadmapAdvancementModal({
           </div>
         </div>
 
+        {/* Search & Filter Toolbar */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <div className="relative">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search team name or tag..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl text-slate-800 placeholder-slate-400 text-xs focus:bg-white focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-slate-400 shrink-0" />
+            <select
+              value={districtFilter}
+              onChange={(e) => setDistrictFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl text-slate-800 text-xs font-bold focus:bg-white focus:border-blue-500 focus:outline-none"
+            >
+              <option value="all">All Districts</option>
+              {standingsData?.districts?.map((d) => (
+                <option key={d.district_id || d.id} value={d.district_id || d.id}>
+                  {d.district_name || d.name || `District ${d.district_id || d.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         {/* Quick Selection Presets */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <span className="font-bold text-[#344054]">Quick Select:</span>
             <button
               type="button"
               onClick={() => applyPresetOverall(customTopCount)}
-              className={`px-3 py-1.5 rounded-lg font-bold border transition ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold border transition ${
                 preset === 'round_total'
                   ? 'bg-blue-50 border-blue-300 text-[#2563EB]'
                   : 'bg-white border-[#D0D5DD] text-[#344054] hover:bg-slate-50'
@@ -354,7 +384,7 @@ export default function RoadmapAdvancementModal({
             <button
               type="button"
               onClick={() => applyPresetPerDistrict(customPerDistrictCount)}
-              className={`px-3 py-1.5 rounded-lg font-bold border transition ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg font-bold border transition ${
                 preset === 'per_district'
                   ? 'bg-blue-50 border-blue-300 text-[#2563EB]'
                   : 'bg-white border-[#D0D5DD] text-[#344054] hover:bg-slate-50'
@@ -368,13 +398,13 @@ export default function RoadmapAdvancementModal({
                 setSelectedTeamIds(new Set());
                 setPreset('manual');
               }}
-              className="px-2.5 py-1.5 rounded-lg font-semibold text-[#667085] hover:text-[#172033] hover:bg-slate-100 transition"
+              className="px-2 py-1.5 rounded-lg font-semibold text-[#667085] hover:text-[#172033] hover:bg-slate-100 transition"
             >
-              Clear Selection
+              Clear
             </button>
           </div>
 
-          <div className="font-bold text-[#172033] bg-blue-50/70 border border-blue-200 px-3 py-1.5 rounded-lg">
+          <div className="font-bold text-[#172033] bg-blue-50/70 border border-blue-200 px-3 py-1.5 rounded-lg self-start sm:self-auto">
             Selected: <span className="text-[#2563EB]">{selectedTeamIds.size}</span> teams
           </div>
         </div>
@@ -461,12 +491,12 @@ export default function RoadmapAdvancementModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E4E7EC]">
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 pt-3 border-t border-[#E4E7EC]">
           <button
             type="button"
             disabled={executing}
             onClick={onClose}
-            className="px-4 py-2 bg-white hover:bg-slate-50 text-[#344054] font-semibold text-xs rounded-lg border border-[#D0D5DD] shadow-xs transition cursor-pointer"
+            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-white hover:bg-slate-50 text-[#344054] font-semibold text-xs rounded-xl border border-[#D0D5DD] shadow-xs transition cursor-pointer min-h-[38px]"
           >
             Cancel
           </button>
@@ -474,7 +504,7 @@ export default function RoadmapAdvancementModal({
             type="button"
             disabled={executing || selectedTeamIds.size === 0 || !targetRoundId}
             onClick={handleExecuteAdvancement}
-            className="flex items-center gap-1.5 px-5 py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs rounded-lg shadow-xs transition disabled:opacity-50 cursor-pointer"
+            className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-5 py-2.5 sm:py-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white font-bold text-xs rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer min-h-[38px]"
           >
             {executing ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trophy className="w-4 h-4" />}
             <span>

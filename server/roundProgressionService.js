@@ -20,6 +20,12 @@ export const PROGRESSION_ERR = Object.freeze({
   ROUND_NO_RESULTS: 'ROUND_NO_RESULTS',
   NO_NEXT_ROUND: 'NO_NEXT_ROUND',
   INVALID_INPUT: 'INVALID_INPUT',
+  DUPLICATE_TEAMS: 'DUPLICATE_TEAMS',
+  TEAM_DID_NOT_PLAY_SOURCE_ROUND: 'TEAM_DID_NOT_PLAY_SOURCE_ROUND',
+  TEAM_DISQUALIFIED: 'TEAM_DISQUALIFIED',
+  SOURCE_MATCHES_UNVERIFIED: 'SOURCE_MATCHES_UNVERIFIED',
+  TARGET_ROUND_HAS_RESULTS: 'TARGET_ROUND_HAS_RESULTS',
+  INVALID_PLACEMENT: 'INVALID_PLACEMENT',
 });
 
 export class ProgressionError extends Error {
@@ -253,7 +259,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 2. Fetch matches in this round to identify groups/districts
   const matchRes = await client.query(
-    `SELECT m.id, m.match_number, m.group_id, m.day_id, g.group_name, g.district_id, g.sequence
+    `SELECT m.id, m.match_number, m.group_id, m.day_id, g.group_name, g.id AS district_id, g.sequence
      FROM tournament_matches m
      LEFT JOIN tournament_groups g ON g.id = m.group_id
      WHERE m.round_id = $1 AND m.tournament_id = $2
@@ -293,7 +299,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   let roundAssignments = [];
   if (matchIds.length > 0) {
     const assignRes = await client.query(
-      `SELECT a.tournament_team_id, a.match_id, a.group_id, t.team_name, u.name as leader_name, g.group_name, g.district_id
+      `SELECT a.tournament_team_id, a.match_id, a.group_id, t.team_name, u.name as leader_name, g.group_name, g.id AS district_id
        FROM tournament_match_assignments a
        JOIN tournament_matches m ON m.id = a.match_id
        LEFT JOIN tournament_groups g ON g.id = a.group_id OR g.id = m.group_id
@@ -503,6 +509,50 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   };
 }
 
+/**
+ * Hardened Team Advancement Engine (Phase 4A)
+ *
+ * Enforces:
+ * - Row locks (SELECT FOR UPDATE on tournament and target round) preventing double-click duplicate advancement
+ * - Source and target rounds belonging to this tournament; target round must be subsequent
+ * - Every advanced team must have participated in the source round
+ * - Rejection of duplicate team IDs
+ * - Rejection of disqualified teams
+ * - Source matches verified results check (unless explicit allow_unverified is sent)
+ * - Safe re-run replacement of earlier advancement rows in target round (refused if target round has recorded results)
+ * - Placement default: snake seeding by points across target round's districts, with optional manual placement map override
+ * - Source round marked completed after advancing
+ * - Derivation of Qualified / Eliminated / Disqualified progression status per team
+ */
+/**
+ * Computes deterministic snake seeding distribution of ordered teams across target districts.
+ * Single source of truth for round advancement district placement.
+ *
+ * @param {string[]} orderedTeamIds - Team IDs ordered by seed (e.g. source round points desc)
+ * @param {Array<{ id: string }>} targetGroups - Target groups/districts ordered by sequence
+ * @returns {Object.<string, string>} Map of team_id -> target_group_id
+ */
+export function computeDefaultSnakePlacement(orderedTeamIds = [], targetGroups = []) {
+  const groups = Array.isArray(targetGroups) ? targetGroups : [];
+  const numDistricts = groups.length;
+  const placementMap = {};
+
+  for (let i = 0; i < orderedTeamIds.length; i++) {
+    const teamId = orderedTeamIds[i];
+    let assignedGroupId = null;
+
+    if (numDistricts > 0) {
+      const cycle = 2 * numDistricts;
+      const pos = i % cycle;
+      const distIdx = pos < numDistricts ? pos : (2 * numDistricts - 1) - pos;
+      assignedGroupId = groups[distIdx]?.id || null;
+    }
+    placementMap[teamId] = assignedGroupId;
+  }
+
+  return placementMap;
+}
+
 export async function advanceTeamsManually(client, {
   tournamentId,
   sourceRoundId = null,
@@ -510,12 +560,25 @@ export async function advanceTeamsManually(client, {
   targetGroupId = null,
   teamIds = [],
   actorId = null,
+  allow_unverified = false,
+  override_unverified = false,
+  manual_placement = null,
 }) {
   if (!client || !tournamentId || !targetRoundId || !Array.isArray(teamIds) || teamIds.length === 0) {
-    throw progressionError(PROGRESSION_ERR.INVALID_INPUT, 'Valid tournamentId, targetRoundId, and teamIds array required.');
+    throw progressionError(PROGRESSION_ERR.INVALID_INPUT, 'Valid tournamentId, targetRoundId, and a non-empty teamIds array are required.');
   }
 
-  const tournRes = await client.query('SELECT id, roadmap_status, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE', [tournamentId]);
+  // 1. Check for duplicate team IDs
+  const uniqueTeamIds = Array.from(new Set(teamIds));
+  if (uniqueTeamIds.length !== teamIds.length) {
+    throw progressionError(PROGRESSION_ERR.DUPLICATE_TEAMS, 'Duplicate team IDs provided in advancement list.');
+  }
+
+  // 2. Row lock on tournament (prevents concurrent modifications)
+  const tournRes = await client.query(
+    'SELECT id, "orgId", roadmap_status, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE',
+    [tournamentId]
+  );
   if (tournRes.rows.length === 0) {
     throw progressionError(PROGRESSION_ERR.TOURNAMENT_NOT_FOUND, 'Tournament not found.');
   }
@@ -523,84 +586,289 @@ export async function advanceTeamsManually(client, {
     throw progressionError(PROGRESSION_ERR.TOURNAMENT_FINALIZED, 'Tournament is finalized; advancement is locked.');
   }
 
+  // 3. Row lock & validation on target round (must belong to this tournament)
   const targetRoundRes = await client.query(
-    'SELECT id, round_number, name FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
+    'SELECT id, tournament_id, round_number, name, status FROM tournament_rounds WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
     [targetRoundId, tournamentId]
   );
   if (targetRoundRes.rows.length === 0) {
-    throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, 'Target round not found.');
+    throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, 'Target round not found or does not belong to this tournament.');
   }
+  const targetRound = targetRoundRes.rows[0];
 
-  let matchQuery = 'SELECT id, round_id, group_id, day_id FROM tournament_matches WHERE round_id = $1 AND tournament_id = $2';
-  const matchParams = [targetRoundId, tournamentId];
-  if (targetGroupId) {
-    matchQuery += ' AND group_id = $3';
-    matchParams.push(targetGroupId);
-  }
-  let targetMatchesRes = await client.query(matchQuery, matchParams);
-  if (targetMatchesRes.rows.length === 0 && targetGroupId) {
-    targetMatchesRes = await client.query(
-      'SELECT id, round_id, group_id, day_id FROM tournament_matches WHERE round_id = $1 AND tournament_id = $2',
-      [targetRoundId, tournamentId]
+  // 4. Source round validation (if provided)
+  let sourceRound = null;
+  if (sourceRoundId) {
+    const sRes = await client.query(
+      'SELECT id, tournament_id, round_number, name, status FROM tournament_rounds WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+      [sourceRoundId, tournamentId]
     );
-  }
+    if (sRes.rows.length === 0) {
+      throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, 'Source round not found or does not belong to this tournament.');
+    }
+    sourceRound = sRes.rows[0];
 
-  const targetMatches = targetMatchesRes.rows;
-  if (targetMatches.length === 0) {
-    throw progressionError(PROGRESSION_ERR.MATCH_NOT_FOUND, 'No matches configured in target round to advance teams into. Please add match days & district allocations in the target round first.');
-  }
+    if (Number(targetRound.round_number) <= Number(sourceRound.round_number)) {
+      throw progressionError(PROGRESSION_ERR.INVALID_INPUT, 'Target round must follow source round in round sequence.');
+    }
 
-  const advancedTeams = [];
-  for (const rawTeamId of teamIds) {
-    let teamId = rawTeamId;
+    // 4a. Every team must have played the source round
+    const playedRes = await client.query(`
+      SELECT DISTINCT tournament_team_id AS team_id
+      FROM tournament_match_assignments
+      WHERE tournament_id = $1
+        AND match_id IN (SELECT id FROM tournament_matches WHERE round_id = $2 AND tournament_id = $1)
+      UNION
+      SELECT DISTINCT mr.team_id
+      FROM tournament_match_results mr
+      JOIN tournament_matches m ON mr.match_id = m.id
+      WHERE m.round_id = $2 AND m.tournament_id = $1
+    `, [tournamentId, sourceRoundId]);
 
-    const teamCheck = await client.query('SELECT id, team_name FROM tournament_teams WHERE id = $1 AND tournament_id = $2', [teamId, tournamentId]);
-    if (teamCheck.rows.length === 0) {
-      const regCheck = await client.query('SELECT id, team_name, captain, user_id FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [teamId, tournamentId]);
-      if (regCheck.rows.length > 0) {
-        const reg = regCheck.rows[0];
-        const linkedTeam = await client.query('SELECT id FROM tournament_teams WHERE registration_id = $1 AND tournament_id = $2', [reg.id, tournamentId]);
-        if (linkedTeam.rows.length > 0) {
-          teamId = linkedTeam.rows[0].id;
-        } else {
-          const newTeamId = `tt_${randomId('')}`;
-          const leaderId = reg.user_id || actorId || 'sys_leader';
-          await client.query(
-            `INSERT INTO tournament_teams (id, tournament_id, team_name, leader_user_id, status, registration_id)
-             VALUES ($1, $2, $3, $4, 'verified', $5)
-             ON CONFLICT (tournament_id, team_name) DO UPDATE SET registration_id = EXCLUDED.registration_id`,
-            [newTeamId, tournamentId, reg.team_name, leaderId, reg.id]
-          );
-          const fresh = await client.query('SELECT id FROM tournament_teams WHERE tournament_id = $1 AND team_name = $2', [tournamentId, reg.team_name]);
-          if (fresh.rows.length > 0) teamId = fresh.rows[0].id;
-        }
+    const playedTeamSet = new Set(playedRes.rows.map((r) => r.team_id));
+    for (const tId of uniqueTeamIds) {
+      if (!playedTeamSet.has(tId)) {
+        throw progressionError(
+          PROGRESSION_ERR.TEAM_DID_NOT_PLAY_SOURCE_ROUND,
+          `Team "${tId}" did not play in source round "${sourceRound.name || sourceRound.round_number}" and cannot be advanced.`
+        );
       }
     }
 
-    for (const match of targetMatches) {
-      const allocId = randomId('ASN-');
-      await client.query(
-        `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, group_id, day_id, status, source)
-         VALUES ($1, $2, $3, $4, $5, $6, 'allocated', $7)
-         ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET
-           status = 'allocated',
-           source = EXCLUDED.source,
-           group_id = COALESCE(EXCLUDED.group_id, tournament_match_assignments.group_id),
-           day_id = COALESCE(EXCLUDED.day_id, tournament_match_assignments.day_id)`,
-        [allocId, tournamentId, teamId, match.id, match.group_id || targetGroupId || null, match.day_id || null, ALLOCATION_SOURCES.ADVANCEMENT]
+    // 4b. If any source match lacks verified results, refuse unless explicit override flag is sent
+    const allowOverride = Boolean(allow_unverified || override_unverified);
+    const matchVerificationRes = await client.query(`
+      SELECT m.id, m.match_number, m.status, COUNT(mr.id)::int AS result_count
+      FROM tournament_matches m
+      LEFT JOIN tournament_match_results mr ON mr.match_id = m.id
+      WHERE m.round_id = $1 AND m.tournament_id = $2
+      GROUP BY m.id, m.match_number, m.status
+      ORDER BY m.match_number ASC
+    `, [sourceRoundId, tournamentId]);
+
+    const unverifiedMatches = matchVerificationRes.rows.filter(
+      (m) => Number(m.result_count) === 0 && m.status !== 'COMPLETED'
+    );
+
+    if (unverifiedMatches.length > 0 && !allowOverride) {
+      const err = progressionError(
+        PROGRESSION_ERR.SOURCE_MATCHES_UNVERIFIED,
+        `Cannot advance teams: source round has ${unverifiedMatches.length} match(es) lacking verified results. Provide allow_unverified to override.`
       );
+      err.unverified_match_ids = unverifiedMatches.map((m) => m.id);
+      throw err;
+    }
+  }
+
+  // 5. Check for disqualified teams among advancing candidates
+  const dqCheck = await client.query(
+    'SELECT id, team_name, status FROM tournament_teams WHERE id = ANY($1::text[]) AND tournament_id = $2',
+    [uniqueTeamIds, tournamentId]
+  );
+  for (const teamRow of dqCheck.rows) {
+    if (teamRow.status === 'disqualified') {
+      throw progressionError(
+        PROGRESSION_ERR.TEAM_DISQUALIFIED,
+        `Team "${teamRow.team_name || teamRow.id}" is disqualified and cannot advance.`
+      );
+    }
+  }
+
+  // 6. Target round results check: refuse if target round already has recorded match results
+  const targetResultsCheck = await client.query(`
+    SELECT 1
+    FROM tournament_match_results mr
+    JOIN tournament_matches m ON mr.match_id = m.id
+    WHERE m.round_id = $1 AND m.tournament_id = $2
+    LIMIT 1
+  `, [targetRoundId, tournamentId]);
+
+  if (targetResultsCheck.rows.length > 0) {
+    throw progressionError(
+      PROGRESSION_ERR.TARGET_ROUND_HAS_RESULTS,
+      'Cannot re-advance: target round already has recorded match results. Existing progression is locked.'
+    );
+  }
+
+  // 7. Purge previous advancement assignments for target round (safe re-run replacement)
+  await client.query(`
+    DELETE FROM tournament_match_assignments
+    WHERE tournament_id = $1
+      AND match_id IN (SELECT id FROM tournament_matches WHERE round_id = $2 AND tournament_id = $1)
+      AND source = 'advancement'
+  `, [tournamentId, targetRoundId]);
+
+  // 8. Fetch target round matches and districts (groups)
+  const targetMatchesRes = await client.query(
+    'SELECT id, round_id, group_id, day_id, match_number FROM tournament_matches WHERE round_id = $1 AND tournament_id = $2 ORDER BY match_number ASC',
+    [targetRoundId, tournamentId]
+  );
+  const targetMatches = targetMatchesRes.rows;
+  if (targetMatches.length === 0) {
+    throw progressionError(
+      PROGRESSION_ERR.MATCH_NOT_FOUND,
+      'No matches configured in target round to advance teams into. Please configure target round schedule first.'
+    );
+  }
+
+  const targetGroupsRes = await client.query(
+    'SELECT id, group_name, sequence FROM tournament_groups WHERE round_id = $1 AND tournament_id = $2 ORDER BY COALESCE(display_order, sequence, 0) ASC, sequence ASC, id ASC',
+    [targetRoundId, tournamentId]
+  );
+  const targetGroups = targetGroupsRes.rows;
+
+  // 9. Order advancing teams by source round points descending for snake seeding
+  let orderedTeamIds = [...uniqueTeamIds];
+  if (sourceRoundId) {
+    try {
+      const standings = await getRoundStandings(client, tournamentId, sourceRoundId);
+      if (Array.isArray(standings) && standings.length > 0) {
+        const pointsMap = new Map(standings.map((t) => [t.team_id, Number(t.total_points) || 0]));
+        orderedTeamIds.sort((a, b) => (pointsMap.get(b) || 0) - (pointsMap.get(a) || 0));
+      }
+    } catch {
+      // Keep initial order if standings query encounters an issue
+    }
+  }
+
+  // 10. Parse manual placement override if provided
+  const manualPlacementMap = new Map();
+  if (manual_placement) {
+    if (Array.isArray(manual_placement)) {
+      for (const item of manual_placement) {
+        if (item && item.team_id && item.group_id) {
+          manualPlacementMap.set(item.team_id, item.group_id);
+        }
+      }
+    } else if (typeof manual_placement === 'object') {
+      for (const [tId, gId] of Object.entries(manual_placement)) {
+        if (gId) manualPlacementMap.set(tId, gId);
+      }
+    }
+
+    // Validate that every group_id in manual placement exists in target round
+    const validTargetGroupIds = new Set(targetGroups.map((g) => g.id));
+    for (const [tId, gId] of manualPlacementMap.entries()) {
+      if (!validTargetGroupIds.has(gId)) {
+        throw progressionError(
+          PROGRESSION_ERR.INVALID_PLACEMENT,
+          `Invalid target district ID "${gId}" specified in manual placement.`
+        );
+      }
+    }
+  } else if (targetGroupId) {
+    // Legacy support for single targetGroupId
+    for (const tId of orderedTeamIds) {
+      manualPlacementMap.set(tId, targetGroupId);
+    }
+  }
+
+  // 11. Distribute teams across target districts:
+  // Default: Snake seeding across target districts (or manual placement override)
+  const defaultPlacementMap = computeDefaultSnakePlacement(orderedTeamIds, targetGroups);
+  const advancedTeams = [];
+
+  for (let i = 0; i < orderedTeamIds.length; i++) {
+    const teamId = orderedTeamIds[i];
+    let assignedGroupId = null;
+
+    if (manualPlacementMap.has(teamId)) {
+      assignedGroupId = manualPlacementMap.get(teamId);
+    } else {
+      assignedGroupId = defaultPlacementMap[teamId] || null;
+    }
+
+    // Determine target matches for this team
+    let matchesForTeam = targetMatches;
+    if (assignedGroupId) {
+      const groupMatches = targetMatches.filter((m) => m.group_id === assignedGroupId);
+      if (groupMatches.length > 0) {
+        matchesForTeam = groupMatches;
+      }
+    }
+
+    // Insert assignment row for every match in this team's assigned district
+    for (const match of matchesForTeam) {
+      const allocId = randomId('ASN-');
+      await client.query(`
+        INSERT INTO tournament_match_assignments
+          (id, tournament_id, tournament_team_id, match_id, group_id, day_id, status, source)
+        VALUES ($1, $2, $3, $4, $5, $6, 'allocated', $7)
+        ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET
+          status = 'allocated',
+          source = EXCLUDED.source,
+          group_id = COALESCE(EXCLUDED.group_id, tournament_match_assignments.group_id),
+          day_id = COALESCE(EXCLUDED.day_id, tournament_match_assignments.day_id)
+      `, [
+        allocId,
+        tournamentId,
+        teamId,
+        match.id,
+        match.group_id || assignedGroupId || null,
+        match.day_id || null,
+        ALLOCATION_SOURCES.ADVANCEMENT,
+      ]);
     }
 
     advancedTeams.push(teamId);
   }
 
+  // 12. Mark the source round completed after advancing
+  if (sourceRoundId) {
+    await client.query(
+      `UPDATE tournament_rounds SET status = 'completed' WHERE id = $1 AND tournament_id = $2`,
+      [sourceRoundId, tournamentId]
+    );
+  }
+
+  // 13. Derive Qualified / Eliminated / Disqualified progression status per team for source round
+  const advancedTeamSet = new Set(advancedTeams);
+  let derivedProgression = [];
+  if (sourceRoundId) {
+    const sourceParticipantsRes = await client.query(`
+      SELECT DISTINCT t.id, t.team_name, t.status
+      FROM tournament_teams t
+      WHERE t.id IN (
+        SELECT tournament_team_id FROM tournament_match_assignments WHERE match_id IN (SELECT id FROM tournament_matches WHERE round_id = $1)
+        UNION
+        SELECT team_id FROM tournament_match_results WHERE match_id IN (SELECT id FROM tournament_matches WHERE round_id = $1)
+      ) AND t.tournament_id = $2
+    `, [sourceRoundId, tournamentId]);
+
+    derivedProgression = sourceParticipantsRes.rows.map((t) => {
+      let progressionStatus = 'eliminated';
+      if (advancedTeamSet.has(t.id)) {
+        progressionStatus = 'qualified';
+      } else if (t.status === 'disqualified') {
+        progressionStatus = 'disqualified';
+      }
+      return {
+        team_id: t.id,
+        team_name: t.team_name,
+        status: progressionStatus,
+      };
+    });
+  }
+
+  // Audit log
   try {
     const logId = randomId('LOG-');
-    await client.query(
-      `INSERT INTO admin_action_log (id, tournament_id, admin_id, action, action_type, target_type, target_id, details)
-       VALUES ($1, $2, $3, 'teams_advanced', 'progression', 'tournament_round', $4, $5)`,
-      [logId, tournamentId, actorId, targetRoundId, JSON.stringify({ count: advancedTeams.length, team_ids: advancedTeams, source_round_id: sourceRoundId, target_group_id: targetGroupId })]
-    );
+    await client.query(`
+      INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
+      VALUES ($1, $2, 'teams_advanced', 'tournament_round', $3, $4)
+    `, [
+      logId,
+      actorId,
+      targetRoundId,
+      JSON.stringify({
+        count: advancedTeams.length,
+        team_ids: advancedTeams,
+        tournament_id: tournamentId,
+        source_round_id: sourceRoundId,
+        target_group_id: targetGroupId,
+        manual_placement: manual_placement ? true : false,
+      }),
+    ]);
   } catch {
     // Non-blocking log
   }
@@ -609,9 +877,148 @@ export async function advanceTeamsManually(client, {
     success: true,
     advancedCount: advancedTeams.length,
     advancedTeamIds: advancedTeams,
+    sourceRoundId,
     targetRoundId,
-    targetGroupId,
-    message: `Successfully advanced ${advancedTeams.length} team(s) to ${targetRoundRes.rows[0].name}.`,
+    team_progression: derivedProgression,
+    message: `Successfully advanced ${advancedTeams.length} team(s) to ${targetRound.name}.`,
+  };
+}
+
+/**
+ * Organizer Summary for Round Advancement (Phase 4A)
+ *
+ * Returns for a source round:
+ * - Standings with ranks, points, kills, matches played
+ * - Per-district rankings
+ * - Planned qualification rule from the roadmap
+ * - Suggested advancing teams based on roadmap rule
+ * - Disqualified team flags
+ * - Whether results are complete (and unverified match details)
+ * - Target round and district structure
+ */
+export async function getRoundAdvancementSummary(client, tournamentId, sourceRoundId) {
+  // 1. Fetch source round
+  const sRes = await client.query(
+    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
+    [sourceRoundId, tournamentId]
+  );
+  if (sRes.rows.length === 0) {
+    throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, 'Source round not found.');
+  }
+  const sourceRound = sRes.rows[0];
+
+  // 2. Fetch target round (next round in sequence)
+  const nextRes = await client.query(
+    'SELECT id, round_number, name, status FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',
+    [tournamentId, sourceRound.round_number]
+  );
+  const targetRound = nextRes.rows.length > 0 ? nextRes.rows[0] : null;
+
+  let targetDistricts = [];
+  if (targetRound) {
+    const tgRes = await client.query(
+      'SELECT id, group_name, sequence FROM tournament_groups WHERE round_id = $1 AND tournament_id = $2 ORDER BY sequence ASC',
+      [targetRound.id, tournamentId]
+    );
+    targetDistricts = tgRes.rows;
+  }
+
+  // 3. Source round matches & verified results status
+  const mRes = await client.query(`
+    SELECT m.id, m.match_number, m.status, m.group_id, m.group_name, COUNT(mr.id)::int AS result_count
+    FROM tournament_matches m
+    LEFT JOIN tournament_match_results mr ON mr.match_id = m.id
+    WHERE m.round_id = $1 AND m.tournament_id = $2
+    GROUP BY m.id, m.match_number, m.status, m.group_id, m.group_name
+    ORDER BY m.match_number ASC
+  `, [sourceRoundId, tournamentId]);
+
+  const sourceMatches = mRes.rows;
+  const unverifiedMatches = sourceMatches.filter(
+    (m) => Number(m.result_count) === 0 && m.status !== 'COMPLETED'
+  );
+  const resultsComplete = sourceMatches.length > 0 && unverifiedMatches.length === 0;
+
+  // 4. Standings & per-district ranks
+  const detailed = await getDetailedRoundStandings(client, tournamentId, sourceRoundId);
+
+  // 5. Disqualified teams
+  const dqRes = await client.query(
+    `SELECT id, team_name, status FROM tournament_teams WHERE tournament_id = $1 AND status = 'disqualified'`,
+    [tournamentId]
+  );
+  const dqSet = new Set(dqRes.rows.map((t) => t.id));
+
+  // Attach is_disqualified flag
+  for (const t of detailed.overallStandings) {
+    t.is_disqualified = dqSet.has(t.team_id);
+  }
+  for (const d of detailed.districts) {
+    for (const t of d.teams) {
+      t.is_disqualified = dqSet.has(t.team_id);
+    }
+  }
+
+  // 6. Planned rule & suggested advancing teams
+  const plannedRule = {
+    advancement_type: sourceRound.advancement_type || 'per_district',
+    teams_advancing_per_district: sourceRound.teams_advancing_per_district != null ? Number(sourceRound.teams_advancing_per_district) : null,
+    teams_advancing: sourceRound.teams_advancing != null ? Number(sourceRound.teams_advancing) : null,
+    teams_advancing_per_match: sourceRound.teams_advancing_per_match != null ? Number(sourceRound.teams_advancing_per_match) : null,
+  };
+
+  const suggestedTeamIds = [];
+  if (plannedRule.advancement_type === 'per_district') {
+    const topPerDist = plannedRule.teams_advancing_per_district || 2;
+    for (const d of detailed.districts) {
+      const eligible = d.teams.filter((t) => !t.is_disqualified);
+      for (let i = 0; i < Math.min(topPerDist, eligible.length); i++) {
+        suggestedTeamIds.push(eligible[i].team_id);
+      }
+    }
+  } else {
+    const topOverall = plannedRule.teams_advancing || 16;
+    const eligible = detailed.overallStandings.filter((t) => !t.is_disqualified);
+    for (let i = 0; i < Math.min(topOverall, eligible.length); i++) {
+      suggestedTeamIds.push(eligible[i].team_id);
+    }
+  }
+
+  // 7. Check if target round has recorded match results
+  let targetHasResults = false;
+  if (targetRound) {
+    const trRes = await client.query(
+      `SELECT 1 FROM tournament_match_results mr JOIN tournament_matches m ON mr.match_id = m.id WHERE m.round_id = $1 AND m.tournament_id = $2 LIMIT 1`,
+      [targetRound.id, tournamentId]
+    );
+    targetHasResults = trRes.rows.length > 0;
+  }
+
+  return {
+    success: true,
+    source_round: {
+      id: sourceRound.id,
+      round_number: sourceRound.round_number,
+      name: sourceRound.name,
+      status: sourceRound.status,
+    },
+    target_round: targetRound ? {
+      id: targetRound.id,
+      round_number: targetRound.round_number,
+      name: targetRound.name,
+      status: targetRound.status,
+      districts: targetDistricts,
+      has_results: targetHasResults,
+    } : null,
+    target_has_results: targetHasResults,
+    standings: detailed.overallStandings,
+    districts: detailed.districts,
+    total_teams: detailed.totalTeams,
+    planned_rule: plannedRule,
+    suggested_advancing_team_ids: suggestedTeamIds,
+    disqualified_team_ids: Array.from(dqSet),
+    results_complete: resultsComplete,
+    unverified_match_ids: unverifiedMatches.map((m) => m.id),
   };
 }
 

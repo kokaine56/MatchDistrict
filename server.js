@@ -28,6 +28,7 @@ import {
   deleteTournamentRound,
   deleteEntireRoadmap,
   reorderDistrictAllocations,
+  getTournamentRoadmapResponse,
 } from './server/manualRoadmapService.js';
 import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus, createInvitationCredentials } from './server/registrationTeamBridge.js';
 import { allocateTeam, AllocationError, ALLOCATION_SOURCES, ALLOCATION_ERR } from './server/allocationService.js';
@@ -38,11 +39,14 @@ import {
   qualifyRound,
   advanceTeamsManually,
   getDetailedRoundStandings,
+  getRoundAdvancementSummary,
   resolveQualificationCutoff,
   ProgressionError,
   PROGRESSION_ERR,
 } from './server/roundProgressionService.js';
 import { mapPublicMatchResult } from './server/matchResultService.js';
+import { runSchemaMigrations } from './server/schemaMigrations.js';
+import { updateTeamQualificationStatus } from './server/teamDisqualificationService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
 import { buildGroups, normalizeTeamsPerGroup, validateGroupConfig, computeGroupCount, generateGroupName, assignGroups, predictedGroupFor, groupForGlobalSlot, groupLabelForSlot, DEFAULT_TEAMS_PER_GROUP } from './server/groupService.js';
@@ -249,1354 +253,43 @@ async function initDb() {
     const client = await pool.connect();
     console.log('\n📦 [MATCH DISTRICT DB] Connected to Supabase PostgreSQL Database.');
 
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(255),
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        "gamerTag" VARCHAR(255),
-        role VARCHAR(50) DEFAULT 'gamer',
-        roles TEXT[] DEFAULT '{user}',
-        tier VARCHAR(50) DEFAULT 'Amateur',
-        experience TEXT,
-        "socialLinks" TEXT,
-        "kycDoc" VARCHAR(255),
-        "orgApplicationStatus" VARCHAR(50) DEFAULT 'none',
-        avatar TEXT,
-        banner TEXT,
-        phone VARCHAR(255),
-        status VARCHAR(50) DEFAULT 'Active',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
+    // Authoritative unified schema migrations (shared with scripts/init-scratch-db.js)
+    // Runs shared DDL for all core tables (CREATE TABLE IF NOT EXISTS tournament_planning_config, etc.)
+    await runSchemaMigrations(client);
+    console.log('📦 [MATCH DISTRICT DB] Core schema tables ensured via shared schemaMigrations.');
 
-      CREATE TABLE IF NOT EXISTS otps (
-        email VARCHAR(255) PRIMARY KEY,
-        otp VARCHAR(6) NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS password_resets (
-        email VARCHAR(255) PRIMARY KEY,
-        token VARCHAR(255) NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS temp_users (
-        email VARCHAR(255) PRIMARY KEY,
-        name VARCHAR(255),
-        password VARCHAR(255),
-        "gamerTag" VARCHAR(255),
-        role VARCHAR(50),
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS registration_cooldowns (
-        client_key VARCHAR(64) PRIMARY KEY,
-        attempts INTEGER DEFAULT 1,
-        cooldown_until TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS paired_devices (
-        id VARCHAR(50) PRIMARY KEY,
-        user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        device_id VARCHAR(255) UNIQUE,
-        device_name VARCHAR(255),
-        api_key_hash VARCHAR(255) NOT NULL,
-        refresh_token_hash VARCHAR(255),
-        is_active BOOLEAN DEFAULT true,
-        app_version VARCHAR(50),
-        last_seen_at TIMESTAMPTZ,
-        paired_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      CREATE TABLE IF NOT EXISTS payment_sms_verifications (
-        id VARCHAR(50) PRIMARY KEY,
-        utr VARCHAR(255) UNIQUE NOT NULL,
-        amount INTEGER NOT NULL,
-        bank VARCHAR(50),
-        sender VARCHAR(255),
-        sender_account VARCHAR(255),
-        sms_hash VARCHAR(64) UNIQUE,
-        device_id VARCHAR(255),
-        matched_payment_id VARCHAR(50),
-        matched_registration_id VARCHAR(50),
-        match_type VARCHAR(20) DEFAULT 'unmatched',
-        status VARCHAR(20) DEFAULT 'unmatched',
-        admin_id VARCHAR(50),
-        rejection_reason TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
-      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
-      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS admin_id VARCHAR(50);
-      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
-      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sender_account VARCHAR(255);
-      ALTER TABLE payment_sms_verifications ADD COLUMN IF NOT EXISTS sms_hash VARCHAR(64);
-
-      CREATE TABLE IF NOT EXISTS notifications (
-        id VARCHAR(50) PRIMARY KEY,
-        user_id VARCHAR(50) NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        message TEXT,
-        is_read BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `);
-
-    // Ensure all columns exist in case the table was created previously with an older schema
     try {
-      await client.query(`
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS uid VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "gamerTag" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'gamer';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS tier VARCHAR(50) DEFAULT 'Amateur';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS experience TEXT;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "socialLinks" TEXT;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "kycDoc" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgApplicationStatus" VARCHAR(50) DEFAULT 'none';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS banner TEXT;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "riotId" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "bgmiId" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "steamId" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "discordTag" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "gamertag_last_changed" TIMESTAMP;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "email_last_changed" TIMESTAMP;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgName" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "customDashboardSlug" VARCHAR(255);
-        ALTER TABLE organizer_applications ADD COLUMN IF NOT EXISTS "orgImage" TEXT;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS yearly_price INT DEFAULT 0;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS has_premium_badge BOOLEAN DEFAULT false;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS staff_limit INT DEFAULT 0;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS api_access BOOLEAN DEFAULT false;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS white_label BOOLEAN DEFAULT false;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS custom_subdomain BOOLEAN DEFAULT false;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS automation_enabled BOOLEAN DEFAULT false;
-        ALTER TABLE organizer_plans ADD COLUMN IF NOT EXISTS priority_support BOOLEAN DEFAULT false;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT[] DEFAULT '{user}';
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_secret VARCHAR(255);
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_activated BOOLEAN DEFAULT false;
-      `);
-      // Backfill roles array from legacy `role` column for existing rows where roles IS NULL
-      await client.query(`UPDATE users SET roles = ARRAY[role] WHERE roles IS NULL AND role IS NOT NULL`);
-      console.log('📦 [MATCH DISTRICT DB] Supabase users and organizer tables schema verified and updated.');
-    } catch (alterErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tables:', alterErr.message);
-    }
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS organizer_applications (
-        id VARCHAR(50) PRIMARY KEY,
-        "applicantName" VARCHAR(255),
-        "orgName" VARCHAR(255),
-        email VARCHAR(255),
-        phone VARCHAR(255),
-        "cityRegion" VARCHAR(255),
-        games TEXT,
-        experience TEXT,
-        "socialLinks" TEXT,
-        "discordLink" VARCHAR(255),
-        "additionalNotes" TEXT,
-        "kycDoc" VARCHAR(255),
-        portfolio VARCHAR(255),
-        "orgImage" TEXT,
-        "adminNotes" TEXT,
-        "selectedPlan" VARCHAR(50) DEFAULT 'Free',
-        status VARCHAR(50) DEFAULT 'pending',
-        submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        reviewed_at TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS organizer_drafts (
-        id VARCHAR(50) PRIMARY KEY,
-        user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        form_data TEXT NOT NULL,
-        current_step INT DEFAULT 1,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS organizer_plans (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(50),
-        monthly_price INT,
-        max_tournaments INT,
-        max_slots INT,
-        has_verified_badge BOOLEAN
-      );
-
-      INSERT INTO organizer_plans (id, name, monthly_price, yearly_price, max_tournaments, max_slots, has_verified_badge, has_premium_badge, staff_limit, api_access, white_label, custom_subdomain, automation_enabled, priority_support) 
-      VALUES 
-        ('plan_free', 'Free', 0, 0, 30, 100, false, false, 0, false, false, false, false, false),
-        ('plan_basic', 'Basic', 149, 1341, 60, 300, true, false, 3, false, false, false, false, true),
-        ('plan_pro', 'Pro', 399, 3591, 999999, 1000, true, true, 999999, true, true, true, true, true)
-      ON CONFLICT (id) DO NOTHING;
-
-      CREATE TABLE IF NOT EXISTS subscriptions (
-        id VARCHAR(50) PRIMARY KEY,
-        organizer_id VARCHAR(50) UNIQUE,
-        plan_id VARCHAR(50),
-        billing_status VARCHAR(50) DEFAULT 'active',
-        plan_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        plan_expiration TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS plan_upgrade_requests (
-        id VARCHAR(50) PRIMARY KEY,
-        organizer_id VARCHAR(50),
-        current_plan VARCHAR(50),
-        requested_plan VARCHAR(50),
-        payment_screenshot VARCHAR(255),
-        transaction_id VARCHAR(100),
-        payment_notes TEXT,
-        status VARCHAR(50) DEFAULT 'pending',
-        submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        reviewed_at TIMESTAMP
-      );
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS tournaments (
-        id VARCHAR(50) PRIMARY KEY,
-        title VARCHAR(255),
-        game VARCHAR(255),
-        status VARCHAR(50),
-        "badgeBg" VARCHAR(100),
-        "badgeText" VARCHAR(100),
-        date VARCHAR(100),
-        prize VARCHAR(100),
-        entry VARCHAR(100),
-        "teamsCount" VARCHAR(100),
-        featured BOOLEAN DEFAULT false,
-        "orgName" VARCHAR(255),
-        "registrationOpenDate" VARCHAR(100),
-        "registrationCloseDate" VARCHAR(100),
-        "startDate" VARCHAR(100),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // Add extra metadata columns for dynamic detailed features
-    try {
-      await client.query(`
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rules TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS chat TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS notices TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS region VARCHAR(100);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS format VARCHAR(100);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "slotsTotal" INTEGER DEFAULT 100;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "slotsFilled" INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "roomID" VARCHAR(100);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "roomPassword" VARCHAR(100);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS timeline TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "bannerUrl" TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "logoUrl" TEXT;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "isDraft" BOOLEAN DEFAULT false;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgId" VARCHAR(50);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS match_type VARCHAR(20) DEFAULT 'squad';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS perspective VARCHAR(10) DEFAULT 'tpp';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS reserved_slots INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS entry_fee_amount INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_pool_type VARCHAR(20) DEFAULT 'fixed';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_pool_amount INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_split_1st VARCHAR(50) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_split_2nd VARCHAR(50) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_split_3rd VARCHAR(50) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_split_mvp VARCHAR(50) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS cover_image_url TEXT DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS lobby_start_time VARCHAR(100) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sponsors_data TEXT DEFAULT '[]';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS roadmap_status VARCHAR(50) DEFAULT 'pending';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS finalized_by VARCHAR(50);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sponsors_enabled BOOLEAN DEFAULT false;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_enabled BOOLEAN DEFAULT false;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_amount INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS kill_reward_enabled BOOLEAN DEFAULT false;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS kill_reward_per_kill INTEGER DEFAULT 0;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_positions TEXT DEFAULT '[]';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgLogo" TEXT DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS max_slots_per_room INTEGER DEFAULT NULL;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_per_match INTEGER DEFAULT 20;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS unique_amount_suffix_enabled BOOLEAN DEFAULT false;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS card_color VARCHAR(50) DEFAULT 'white';
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rounds_published BOOLEAN DEFAULT true;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_per_group INTEGER DEFAULT 16;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS roadmap_image_url TEXT DEFAULT '';
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Supabase tournaments table schema updated with dynamic detail fields.');
-    } catch (alterErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournaments table:', alterErr.message);
-    }
-
-    // ENSURE tournament_registrations table exists with all required columns
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_registrations (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL,
-          user_id VARCHAR(50) NOT NULL,
-          team_name VARCHAR(255) NOT NULL,
-          captain VARCHAR(255) NOT NULL,
-          members TEXT DEFAULT '[]',
-          status VARCHAR(50) DEFAULT 'pending',
-          slot_number INTEGER,
-          transaction_id VARCHAR(100),
-          payment_app VARCHAR(50),
-          screenshot_url TEXT,
-          email VARCHAR(255),
-          phone VARCHAR(20),
-          rejected_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registrations table ensured.');
-    } catch (createRegErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create/verify tournament_registrations:', createRegErr.message);
-    }
-
-    // ALTER tournament_registrations — add payment columns if missing (legacy migration)
-    try {
-      await client.query(`
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS screenshot_url TEXT;
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS email VARCHAR(255);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS phone VARCHAR(20);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_id VARCHAR(50);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_name VARCHAR(50);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registrations payment columns verified.');
-    } catch (alterRegErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournament_registrations:', alterRegErr.message);
-    }
-
-    // CREATE tournament_registration_groups table for group-based slot layout
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_registration_groups (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL,
-          group_index INTEGER NOT NULL,
-          name VARCHAR(5) NOT NULL,
-          capacity INTEGER NOT NULL DEFAULT 16,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE (tournament_id, group_index)
-        );
-      `);
-      await client.query(`
-        ALTER TABLE tournament_registration_groups ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-        CREATE INDEX IF NOT EXISTS idx_registration_groups_tournament ON tournament_registration_groups(tournament_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registration_groups table ensured.');
-    } catch (groupsErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_registration_groups:', groupsErr.message);
-    }
-
-    // CREATE registration_sessions table for temporary form data
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS registration_sessions (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL,
-          user_id VARCHAR(50) NOT NULL,
-          form_data TEXT NOT NULL,
-          idempotency_key VARCHAR(64) UNIQUE,
-          status VARCHAR(20) DEFAULT 'active',
-          expires_at TIMESTAMPTZ NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      // Migrate existing TIMESTAMP columns to TIMESTAMPTZ (no-op if already correct)
-      await client.query(`
-        ALTER TABLE registration_sessions 
-        ALTER COLUMN expires_at TYPE TIMESTAMPTZ 
-        USING expires_at AT TIME ZONE 'UTC'
-      `).catch(() => {});
-      await client.query(`
-        ALTER TABLE registration_sessions 
-        ALTER COLUMN created_at TYPE TIMESTAMPTZ 
-        USING created_at AT TIME ZONE 'UTC'
-      `).catch(() => {});
-      console.log('📦 [MATCH DISTRICT DB] registration_sessions table ensured.');
-    } catch (sesErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create registration_sessions:', sesErr.message);
-    }
-
-    // CREATE payment_submissions table for tournament entry fee payments
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS payment_submissions (
-          id VARCHAR(50) PRIMARY KEY,
-          registration_id VARCHAR(50),
-          tournament_id VARCHAR(50) NOT NULL,
-          user_id VARCHAR(50) NOT NULL,
-          amount INTEGER NOT NULL DEFAULT 0,
-          proof_url TEXT NOT NULL,
-          utr_number VARCHAR(255),
-          payment_app VARCHAR(50),
-          payment_status VARCHAR(30) DEFAULT 'pending_admin_review',
-          admin_notes TEXT,
-          reviewed_by VARCHAR(50),
-          reviewed_at TIMESTAMPTZ,
-          idempotency_key VARCHAR(64) UNIQUE,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`
-        ALTER TABLE payment_submissions 
-        ALTER COLUMN reviewed_at TYPE TIMESTAMPTZ 
-        USING reviewed_at AT TIME ZONE 'UTC'
-      `).catch(() => {});
-      await client.query(`
-        ALTER TABLE payment_submissions 
-        ALTER COLUMN created_at TYPE TIMESTAMPTZ 
-        USING created_at AT TIME ZONE 'UTC'
-      `).catch(() => {});
-      await client.query(`
-        ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-      `).catch(() => {});
-      console.log('📦 [MATCH DISTRICT DB] payment_submissions table ensured.');
-    } catch (payErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create payment_submissions:', payErr.message);
-    }
-
-    // ALTER tournament_registrations — add new columns for enhanced flow
-    try {
-      await client.query(`
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS captain_uid VARCHAR(100);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS payment_id VARCHAR(50);
-        ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_registrations enhanced columns verified.');
-    } catch (alterReg2Err) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not alter tournament_registrations v2:', alterReg2Err.message);
-    }
-
-    // ENSURE team_presets table exists with all columns (saved teams & squads)
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS team_presets (
-          id VARCHAR(50) PRIMARY KEY,
-          user_id VARCHAR(50) NOT NULL,
-          team_name VARCHAR(255) NOT NULL,
-          captain VARCHAR(255),
-          members TEXT DEFAULT '[]',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS preset_name VARCHAR(255);
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS game VARCHAR(100) DEFAULT 'BGMI';
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS captain_uid VARCHAR(100);
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS players TEXT DEFAULT '[]';
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS substitutes TEXT DEFAULT '[]';
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
-        ALTER TABLE team_presets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
-      `).catch(() => {});
-      console.log('📦 [MATCH DISTRICT DB] team_presets table ensured.');
-    } catch (presetErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create/verify team_presets:', presetErr.message);
-    }
-
-    // CREATE INDEX on registration_sessions for fast expiry queries
-    try {
-      await client.query(`
-        CREATE INDEX IF NOT EXISTS idx_reg_sessions_expires ON registration_sessions(expires_at);
-        CREATE INDEX IF NOT EXISTS idx_payment_submissions_status ON payment_submissions(payment_status);
-        CREATE INDEX IF NOT EXISTS idx_registrations_idempotency ON tournament_registrations(idempotency_key);
-        CREATE INDEX IF NOT EXISTS idx_registrations_payment_id ON tournament_registrations(payment_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Registration/payment indexes created.');
-
-      // CREATE admin_action_log table for audit trail (supports both action and action_type columns for backward compat)
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS admin_action_log (
-          id VARCHAR(50) PRIMARY KEY,
-          admin_id VARCHAR(50),
-          action TEXT,
-          action_type TEXT,
-          target_type VARCHAR(50),
-          target_id VARCHAR(50),
-          target_user VARCHAR(50),
-          details TEXT,
-          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_admin_action_log_admin ON admin_action_log(admin_id)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_admin_action_log_created ON admin_action_log(created_at DESC)`);
-      console.log('📦 [MATCH DISTRICT DB] admin_action_log table ensured.');
-    } catch (idxErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create indexes:', idxErr.message);
-    }
-
-    // CREATE sponsor & extension tables (each statement isolated so one failure never skips the others —
-    // the old atomic block copied PK-FK only after sponsor_requests was created and failed, leaving no sponsor tables at all)
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS sponsor_requests (
-          id VARCHAR(50) PRIMARY KEY,
-          organizer_id VARCHAR(50),
-          tournament_id VARCHAR(50),
-          prize_pool_amount INTEGER DEFAULT 0,
-          sponsor_type VARCHAR(50) DEFAULT 'prize_pool',
-          description TEXT,
-          status VARCHAR(50) DEFAULT 'pending',
-          admin_notes TEXT,
-          admin_id VARCHAR(50),
-          reviewed_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS sponsor_list (
-          id VARCHAR(50) PRIMARY KEY,
-          sponsor_request_id VARCHAR(50) REFERENCES sponsor_requests(id) ON DELETE SET NULL,
-          name VARCHAR(255) NOT NULL,
-          logo_url TEXT,
-          sponsor_type VARCHAR(50) DEFAULT 'prize_pool',
-          amount_contributed NUMERIC(10, 2) DEFAULT 0,
-          assigned_by VARCHAR(50),
-          is_active BOOLEAN DEFAULT true,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS sponsor_contributions (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL,
-          user_id VARCHAR(50),
-          contributor_name VARCHAR(255) NOT NULL,
-          contributor_email VARCHAR(255),
-          amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
-          message TEXT,
-          screenshot_url TEXT,
-          status VARCHAR(50) DEFAULT 'pending',
-          admin_notes TEXT,
-          admin_id VARCHAR(50),
-          reviewed_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          transaction_id VARCHAR(255),
-          payment_app VARCHAR(50)
-        );
-        -- Live DBs created before the user_id column exists: CREATE TABLE IF NOT EXISTS is a no-op,
-        -- so migrate the missing columns explicitly before building the indexes on them.
-        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS user_id VARCHAR(50);
-        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
-        ALTER TABLE sponsor_contributions ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
-        CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_tournament ON sponsor_contributions(tournament_id);
-        CREATE INDEX IF NOT EXISTS idx_sponsor_contributions_user ON sponsor_contributions(user_id);
-      `);
-      // Idempotency guard — a UPI transaction ID belongs to one payment → one sponsorship submission.
-      // (own try/catch: a pre-existing duplicate in prod fails the CREATE; the endpoint pre-check still blocks dupes)
-      try {
-        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_sponsor_contributions_transaction ON sponsor_contributions(transaction_id) WHERE transaction_id IS NOT NULL AND transaction_id <> ''`);
-      } catch (uqErr) {
-        console.warn('⚠️ [MATCH DISTRICT DB] Could not create unique index on sponsor_contributions.transaction_id:', uqErr.message);
-      }
-      console.log('📦 [MATCH DISTRICT DB] Sponsor tables initialized (sponsor_requests / sponsor_list / sponsor_contributions).');
-    } catch (extErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create sponsor extension tables:', extErr.message);
-    }
-
-    // CREATE terms_acceptance_log table for legal proof of consent
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS terms_acceptance_log (
-          id VARCHAR(50) PRIMARY KEY,
-          user_id VARCHAR(50),
-          email VARCHAR(255) NOT NULL,
-          action VARCHAR(20) NOT NULL,
-          terms_version VARCHAR(20) NOT NULL DEFAULT '1.0',
-          privacy_version VARCHAR(20) NOT NULL DEFAULT '1.0',
-          ip_address VARCHAR(45),
-          user_agent TEXT,
-          accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-      `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_terms_log_email ON terms_acceptance_log(email)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_terms_log_user ON terms_acceptance_log(user_id)`);
-      console.log('📜 [MATCH DISTRICT DB] terms_acceptance_log table ensured.');
-    } catch (talErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create terms_acceptance_log:', talErr.message);
-    }
-
-    // CREATE slot_grid table for admin tournament slot occupancy mapping
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS slot_grid (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          room_index INTEGER NOT NULL,
-          slot_index INTEGER NOT NULL,
-          status VARCHAR(20) DEFAULT 'empty',
-          registration_id VARCHAR(50) REFERENCES tournament_registrations(id) ON DELETE SET NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(tournament_id, room_index, slot_index)
-        );
-        CREATE INDEX IF NOT EXISTS idx_slot_grid_tournament ON slot_grid(tournament_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] slot_grid table initialized.');
-    } catch (slotErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create slot_grid table:', slotErr.message);
-    }
-
-    // CREATE tournament_leaderboard + leaderboard_audit tables for tournament scoring
-    // NOTE (Phase 8A): This legacy block previously created `tournament_leaderboard`
-    // referencing `tournament_registrations(id)` — the WRONG foreign key (the leaderboard
-    // records tournament_teams, not registrations). It also created `leaderboard_audit`,
-    // which is dead code (nothing ever wrote to it) and which the boot-time DROP removed
-    // on every restart. The single authoritative, team-based schema now lives in the
-    // "CREATE SCORING & RESULTS TABLES (Phase 10)" block below and the boot-time DROP of
-    // those tables was removed so a correct schema is never destroyed on restart. A
-    // dormant, non-destructive migration guard immediately after the Phase 10 block
-    // rebuilds any legacy-schema table if one somehow exists on an upgraded deployment.
-    // Creation intentionally deferred to Phase 10 (happens AFTER tournament_teams exists).
-
-    // --- CREATE TOURNAMENT PLANNING CONFIGURATION TABLE (Phase 1) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_planning_config (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          expected_teams INTEGER NOT NULL DEFAULT 0,
-          maximum_teams INTEGER NOT NULL DEFAULT 0,
-          players_per_team INTEGER NOT NULL DEFAULT 4,
-          teams_per_room INTEGER NOT NULL DEFAULT 16,
-          teams_per_group INTEGER NOT NULL DEFAULT 16,
-          max_simultaneous_rooms INTEGER NOT NULL DEFAULT 1,
-          matches_per_team INTEGER NOT NULL DEFAULT 3,
-          match_duration_minutes INTEGER NOT NULL DEFAULT 25,
-          break_between_matches_minutes INTEGER NOT NULL DEFAULT 5,
-          daily_start_time VARCHAR(10) NOT NULL DEFAULT '10:00',
-          daily_end_time VARCHAR(10) NOT NULL DEFAULT '22:00',
-          max_matches_per_day INTEGER DEFAULT NULL,
-          config_status VARCHAR(30) DEFAULT 'draft',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_id)
-        );
-        ALTER TABLE tournament_planning_config ADD COLUMN IF NOT EXISTS teams_per_group INTEGER DEFAULT 16;
-        CREATE INDEX IF NOT EXISTS idx_tournament_planning_config_tournament ON tournament_planning_config(tournament_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_planning_config table initialized.');
-    } catch (planErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_planning_config table:', planErr.message);
-    }
-
-    // --- CREATE TOURNAMENT PLANNING RESULT TABLE (Phase 2) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_planning_result (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          config_snapshot JSONB NOT NULL,
-          planning_team_count INTEGER NOT NULL,
-          expected_teams INTEGER NOT NULL,
-          required_rooms INTEGER NOT NULL,
-          max_simultaneous_rooms INTEGER NOT NULL,
-          teams_per_room INTEGER NOT NULL,
-          matches_per_team INTEGER NOT NULL,
-          total_room_sessions INTEGER NOT NULL,
-          match_duration_minutes INTEGER NOT NULL,
-          break_between_matches_minutes INTEGER NOT NULL,
-          daily_operating_minutes INTEGER NOT NULL,
-          match_slot_minutes INTEGER NOT NULL,
-          sequential_slots_per_room INTEGER NOT NULL,
-          calculated_daily_capacity INTEGER NOT NULL,
-          configured_max_per_day INTEGER,
-          effective_daily_capacity INTEGER NOT NULL,
-          required_days INTEGER NOT NULL,
-          tournament_start_date VARCHAR(30),
-          tournament_end_date VARCHAR(30),
-          daily_plan JSONB NOT NULL,
-          plan_version INTEGER NOT NULL DEFAULT 1,
-          plan_status VARCHAR(30) DEFAULT 'generated',
-          generated_by VARCHAR(50) NOT NULL,
-          generated_at TIMESTAMPTZ DEFAULT NOW(),
-          approved_by VARCHAR(50),
-          approved_at TIMESTAMPTZ,
-          UNIQUE(tournament_id, plan_version)
-        );
-        CREATE INDEX IF NOT EXISTS idx_planning_result_tournament ON tournament_planning_result(tournament_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] tournament_planning_result table initialized.');
-    } catch (planResErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_planning_result table:', planResErr.message);
-    }
-
-    // --- PLANNING ENGINE (2026-09-24): round_plan proposal column ---
-    try {
-      await client.query(`
-        ALTER TABLE tournament_planning_result
-          ADD COLUMN IF NOT EXISTS round_plan JSONB
-      `);
-    } catch (roundPlanErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not add round_plan column:', roundPlanErr.message);
-    }
-
-    // --- CREATE TOURNAMENT ROADMAP TABLES (Phase 3) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_days (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          day_number INTEGER NOT NULL,
-          date VARCHAR(30) NOT NULL,
-          UNIQUE(tournament_id, day_number)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_days_tournament ON tournament_days(tournament_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_groups (
-          id VARCHAR(50) PRIMARY KEY,
-          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          group_name VARCHAR(100) NOT NULL,
-          sequence INTEGER NOT NULL,
-          UNIQUE(day_id, sequence)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_groups_day ON tournament_groups(day_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_rooms (
-          id VARCHAR(50) PRIMARY KEY,
-          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
-          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          room_number INTEGER NOT NULL,
-          capacity INTEGER NOT NULL,
-          status VARCHAR(30) DEFAULT 'DRAFT',
-          UNIQUE(tournament_id, room_number)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_rooms_group ON tournament_rooms(group_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_matches (
-          id VARCHAR(50) PRIMARY KEY,
-          room_id VARCHAR(50) NOT NULL REFERENCES tournament_rooms(id) ON DELETE CASCADE,
-          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
-          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          match_number INTEGER NOT NULL,
-          start_time VARCHAR(10) NOT NULL,
-          end_time VARCHAR(10) NOT NULL,
-          status VARCHAR(30) DEFAULT 'PENDING',
-          room_identifier VARCHAR(100),
-          room_password VARCHAR(100),
-          credential_status VARCHAR(30) DEFAULT 'Not Configured',
-          UNIQUE(room_id, match_number)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_matches_room ON tournament_matches(room_id);
-      `);
-
-      // Add Phase 9 Columns to existing tables if needed
-      await client.query(`
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS room_credentials_release_minutes INTEGER DEFAULT 15;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_identifier VARCHAR(100);
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS room_password VARCHAR(100);
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS credential_status VARCHAR(30) DEFAULT 'Not Configured';
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS map VARCHAR(100);
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS id_pwd_release_time VARCHAR(50);
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS group_name VARCHAR(100);
-        
-        -- Decouple Legacy Constraints (Make Nullable)
-        ALTER TABLE tournament_matches ALTER COLUMN room_id DROP NOT NULL;
-        ALTER TABLE tournament_matches ALTER COLUMN group_id DROP NOT NULL;
-        ALTER TABLE tournament_matches ALTER COLUMN day_id DROP NOT NULL;
-        
-        -- Add Match Consistency Constraint
-        -- Drops the existing unique constraint before recreating it with NULLS NOT DISTINCT on round_id
-      `);
-      
-      try {
-        await client.query(`
-          ALTER TABLE tournament_matches DROP CONSTRAINT IF EXISTS tournament_matches_room_id_match_number_key;
-          ALTER TABLE tournament_matches ADD CONSTRAINT uq_tournament_matches_round_match UNIQUE NULLS NOT DISTINCT (tournament_id, round_id, match_number);
-        `);
-      } catch (err) {
-        // Constraints may already be altered
-      }
-      
-      await client.query(`
-        -- Add Deterministic Progression Pairing
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_match_id VARCHAR(50) REFERENCES tournament_matches(id) ON DELETE SET NULL;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_round_id VARCHAR(50) REFERENCES tournament_rounds(id) ON DELETE SET NULL;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS teams_advancing INTEGER;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS progression_processed BOOLEAN DEFAULT false;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Roadmap tables (days, groups, rooms, matches) initialized.');
-    } catch (roadmapErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create roadmap tables:', roadmapErr.message);
-    }
-
-    // --- CREATE TOURNAMENT ROUND/STAGE TABLES (structural foundation) ---
-    // Round/Stage sits between a Tournament and its Days:
-    // Tournament -> Round/Stage -> Day -> Group -> Room -> Match.
-    // Round definitions are authored in the Step 6 timeline and materialized here
-    // by roundsService.syncTournamentRounds (idempotent one-way derivation).
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_rounds (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          round_number INTEGER NOT NULL,
-          name VARCHAR(255) NOT NULL,
-          status VARCHAR(30) DEFAULT 'configured',
-          teams_advancing INTEGER,
-          "date" VARCHAR(30),
-          "time" VARCHAR(10),
-          map VARCHAR(255),
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_id, round_number)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_rounds_tournament ON tournament_rounds(tournament_id);
-
-        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
-        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
-        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS display_order INTEGER;
-        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
-        ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_type VARCHAR(50) DEFAULT 'qualifier';
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_type VARCHAR(50) DEFAULT 'per_district';
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_target_round_id VARCHAR(50);
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_match INTEGER;
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_order INTEGER;
-        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_in INTEGER;
-      `);
-
-      // Day numbers are now 1-based WITHIN a round ("Round 2 · Day 1"), so the
-      // old UNIQUE(tournament_id, day_number) must become UNIQUE(tournament_id,
-      // round_id, day_number). Idempotent: drop only if the legacy constraint is
-      // still present, add only if the new one is missing.
-      await client.query(`
-        DO $$
-        BEGIN
-          IF EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'tournament_days_tournament_id_day_number_key'
-              AND conrelid = 'public.tournament_days'::regclass
-          ) THEN
-            ALTER TABLE public.tournament_days DROP CONSTRAINT tournament_days_tournament_id_day_number_key;
-          END IF;
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint
-            WHERE conname = 'uq_tournament_days_round_day'
-              AND conrelid = 'public.tournament_days'::regclass
-          ) THEN
-            ALTER TABLE public.tournament_days ADD CONSTRAINT uq_tournament_days_round_day
-              UNIQUE (tournament_id, round_id, day_number);
-          END IF;
-        END $$;
-      `);
-
-      // Backfill pre-Round tournaments (roadmap rows exist, round rows do not).
-      // Writes association columns only; never recreates or deletes existing data.
       await legacyRoundBackfill(pool);
       console.log('📦 [MATCH DISTRICT DB] Tournament rounds (Round/Stage) initialized.');
     } catch (roundErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not initialise tournament rounds:', roundErr.message);
+      console.warn('⚠️ [MATCH DISTRICT DB] Legacy round backfill skipped:', roundErr.message);
     }
 
-    // --- DYNAMIC ROADMAP CONFIG + MANUAL MATCH TRACKING ---
-    // Adds organizer-controlled scheduling/qualification settings on the
-    // tournament and per-match provenance so manual matches can coexist with
-    // (and survive) automatic regeneration. All additive/idempotent.
+    let shouldBackfill = true;
     try {
-      await client.query(`
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS matches_per_day INTEGER;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS first_match_time VARCHAR(10);
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS match_gap_minutes INTEGER;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS match_duration_minutes INTEGER;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
-        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS enable_semi_finals BOOLEAN;
-
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'automatic';
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS notes TEXT;
-        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Roadmap config + manual match tracking initialized.');
-    } catch (roadmapCfgErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not initialise roadmap config columns:', roadmapCfgErr.message);
-    }
-
-    // --- CREATE TOURNAMENT TEAMS TABLES (Phase 4) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_teams (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          team_name VARCHAR(255) NOT NULL,
-          leader_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          status VARCHAR(50) DEFAULT 'awaiting_members',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_id, team_name)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_teams_tournament ON tournament_teams(tournament_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_team_members (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          role VARCHAR(20) NOT NULL,
-          status VARCHAR(20) DEFAULT 'active',
-          joined_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_id, user_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_tournament_team_members_team ON tournament_team_members(tournament_team_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Tournament Teams tables (Phase 4) initialized.');
-    } catch (teamsErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament teams tables:', teamsErr.message);
-    }
-
-    // --- REGISTRATION → TEAM BRIDGE: additive registration_id link column ---
-    // Links a tournament_team to the eligible tournament_registration (the
-    // registered team slot) that granted the leader their place. Plain column +
-    // index (no FK): legacy admin tooling hard-deletes registration rows, and a
-    // dangling link is handled gracefully (treated as not-eligible). Additive &
-    // idempotent; never touches existing data.
-    try {
-      await client.query(`
-        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS registration_id VARCHAR(50);
-        CREATE INDEX IF NOT EXISTS idx_tournament_teams_registration ON tournament_teams(registration_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Tournament Teams registration_id bridge column (Phase 4b) initialized.');
-    } catch (bridgeErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not add tournament teams registration_id column:', bridgeErr.message);
-    }
-
-    // --- CREATE INVITATION TABLES (Phase 5) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_team_invitations (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          created_by_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          token VARCHAR(100) UNIQUE NOT NULL,
-          status VARCHAR(20) DEFAULT 'active',
-          expires_at TIMESTAMPTZ NOT NULL,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        CREATE INDEX IF NOT EXISTS idx_team_invitations_token ON tournament_team_invitations(token);
-        CREATE INDEX IF NOT EXISTS idx_team_invitations_team ON tournament_team_invitations(tournament_team_id);
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Tournament Invitations tables (Phase 5) initialized.');
-    } catch (inviteErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament invitation tables:', inviteErr.message);
-    }
-
-    // --- CREATE ALLOCATION TABLES (Phase 7) ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_match_assignments (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          tournament_team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          match_id VARCHAR(50) NOT NULL REFERENCES tournament_matches(id) ON DELETE CASCADE,
-          room_id VARCHAR(50) NOT NULL REFERENCES tournament_rooms(id) ON DELETE CASCADE,
-          group_id VARCHAR(50) NOT NULL REFERENCES tournament_groups(id) ON DELETE CASCADE,
-          day_id VARCHAR(50) NOT NULL REFERENCES tournament_days(id) ON DELETE CASCADE,
-          status VARCHAR(20) DEFAULT 'allocated',
-          assigned_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_team_id, match_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_match_assignments_team ON tournament_match_assignments(tournament_team_id);
-        CREATE INDEX IF NOT EXISTS idx_match_assignments_match ON tournament_match_assignments(match_id);
-        CREATE INDEX IF NOT EXISTS idx_match_assignments_room ON tournament_match_assignments(room_id);
-
-        ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual';
-        
-        -- Decouple Legacy Constraints (Make Nullable)
-        ALTER TABLE tournament_match_assignments ALTER COLUMN room_id DROP NOT NULL;
-        ALTER TABLE tournament_match_assignments ALTER COLUMN group_id DROP NOT NULL;
-        ALTER TABLE tournament_match_assignments ALTER COLUMN day_id DROP NOT NULL;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Tournament Allocation tables (Phase 7) + source column initialized.');
-    } catch (allocErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament allocation tables:', allocErr.message);
-    }
-
-    // --- CREATE SCORING & RESULTS TABLES (Phase 10) ---
-    try {
-      await client.query(`
-        -- NOTE (Phase 8A): the boot-time DROP of tournament_leaderboard / leaderboard_audit
-        -- was removed so a restarted server never destroys a correct team-based schema.
-        -- Legacy-schema tables (created against tournament_registrations) are
-        -- non-destructively rebuilt by the migration guard that follows this block.
-
-        CREATE TABLE IF NOT EXISTS tournament_scoring_rules (
-          tournament_id VARCHAR(50) PRIMARY KEY REFERENCES tournaments(id) ON DELETE CASCADE,
-          kill_points_multiplier INTEGER DEFAULT 1,
-          placement_points_map JSONB DEFAULT '{"1": 15, "2": 12, "3": 10, "4": 8, "5": 6, "6": 4, "7": 2, "8": 1, "9": 1, "10": 1, "11": 1, "12": 1, "13": 0, "14": 0, "15": 0, "16": 0, "17": 0, "18": 0, "19": 0, "20": 0}'::jsonb,
-          wwcd_bonus INTEGER DEFAULT 0,
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS tournament_match_results (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          match_id VARCHAR(50) NOT NULL REFERENCES tournament_matches(id) ON DELETE CASCADE,
-          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          placement INTEGER NOT NULL,
-          kills INTEGER NOT NULL,
-          kill_points INTEGER DEFAULT 0,
-          placement_points INTEGER DEFAULT 0,
-          wwcd BOOLEAN DEFAULT FALSE,
-          total_points INTEGER DEFAULT 0,
-          status VARCHAR(20) DEFAULT 'pending',
-          submitted_by VARCHAR(50),
-          verified_by VARCHAR(50),
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(match_id, team_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_match_results_tourn ON tournament_match_results(tournament_id);
-        CREATE INDEX IF NOT EXISTS idx_match_results_match ON tournament_match_results(match_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_match_results_audit (
-          id VARCHAR(50) PRIMARY KEY,
-          result_id VARCHAR(50) NOT NULL REFERENCES tournament_match_results(id) ON DELETE CASCADE,
-          action VARCHAR(50) NOT NULL,
-          previous_data JSONB,
-          new_data JSONB,
-          actor_id VARCHAR(50),
-          reason TEXT,
-          timestamp TIMESTAMPTZ DEFAULT NOW()
-        );
-
-        CREATE TABLE IF NOT EXISTS tournament_leaderboard (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          matches_played INTEGER DEFAULT 0,
-          total_kills INTEGER DEFAULT 0,
-          total_kill_points INTEGER DEFAULT 0,
-          total_placement_points INTEGER DEFAULT 0,
-          total_points INTEGER DEFAULT 0,
-          wwcd_count INTEGER DEFAULT 0,
-          best_placement INTEGER,
-          updated_at TIMESTAMPTZ DEFAULT NOW(),
-          UNIQUE(tournament_id, team_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_leaderboard_tournament ON tournament_leaderboard(tournament_id);
-
-        CREATE TABLE IF NOT EXISTS tournament_final_standings (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          rank INTEGER NOT NULL,
-          total_points INTEGER NOT NULL DEFAULT 0,
-          total_kills INTEGER NOT NULL DEFAULT 0,
-          wwcd_count INTEGER NOT NULL DEFAULT 0,
-          best_placement INTEGER,
-          team_name VARCHAR(255),
-          leader_name VARCHAR(255),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          UNIQUE (tournament_id, team_id),
-          UNIQUE (tournament_id, rank)
-        );
-        CREATE INDEX IF NOT EXISTS idx_final_standings_tournament ON tournament_final_standings(tournament_id, rank);
-
-        -- Phase 9B: immutable prize-award obligations (no payout / UPI fields yet)
-        CREATE TABLE IF NOT EXISTS tournament_prize_awards (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          final_standing_id VARCHAR(50) REFERENCES tournament_final_standings(id) ON DELETE RESTRICT,
-          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-          rank INTEGER NOT NULL,
-          award_type VARCHAR(30) NOT NULL DEFAULT 'placement',
-          prize_amount INTEGER NOT NULL CHECK (prize_amount >= 0),
-          percentage NUMERIC(8,4),
-          recipient_user_id VARCHAR(50) REFERENCES users(id) ON DELETE SET NULL,
-          status VARCHAR(30) NOT NULL DEFAULT 'pending_payout',
-          generated_by VARCHAR(50),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          UNIQUE (tournament_id, award_type, rank)
-        );
-        CREATE INDEX IF NOT EXISTS idx_prize_awards_tournament ON tournament_prize_awards(tournament_id, rank);
-        CREATE INDEX IF NOT EXISTS idx_prize_awards_recipient ON tournament_prize_awards(recipient_user_id);
-        CREATE INDEX IF NOT EXISTS idx_prize_awards_status ON tournament_prize_awards(tournament_id, status);
-
-        ALTER TABLE tournament_prize_awards ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
-        ALTER TABLE tournament_prize_awards ADD COLUMN IF NOT EXISTS recorded_by VARCHAR(50) REFERENCES users(id);
-
-        -- Recipient payout destinations are private account data, separate from public users.
-        CREATE TABLE IF NOT EXISTS user_payout_profiles (
-          user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-          upi_id VARCHAR(255) NOT NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-        ALTER TABLE user_payout_profiles ENABLE ROW LEVEL SECURITY;
-
-        -- Outgoing manual prize settlement is distinct from incoming payment verification and wallets.
-        CREATE TABLE IF NOT EXISTS tournament_prize_payments (
-          id VARCHAR(50) PRIMARY KEY,
-          user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE RESTRICT,
-          prize_award_id VARCHAR(50) NOT NULL UNIQUE REFERENCES tournament_prize_awards(id) ON DELETE RESTRICT,
-          team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE RESTRICT,
-          amount INTEGER NOT NULL CHECK (amount > 0),
-          currency VARCHAR(3) NOT NULL DEFAULT 'INR',
-          payment_type VARCHAR(40) NOT NULL CHECK (payment_type = 'tournament_prize'),
-          payment_status VARCHAR(20) NOT NULL CHECK (payment_status = 'paid'),
-          utr_reference VARCHAR(128) NOT NULL,
-          recipient_upi_id VARCHAR(255) NOT NULL,
-          paid_at TIMESTAMPTZ NOT NULL,
-          recorded_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_tournament_prize_payments_utr
-          ON tournament_prize_payments (lower(btrim(utr_reference)));
-        CREATE INDEX IF NOT EXISTS idx_tournament_prize_payments_user
-          ON tournament_prize_payments(user_id, paid_at DESC);
-        ALTER TABLE tournament_prize_payments ENABLE ROW LEVEL SECURITY;
-        CREATE OR REPLACE FUNCTION reject_prize_payment_mutation() RETURNS trigger
-        LANGUAGE plpgsql AS $$
-        BEGIN
-          RAISE EXCEPTION 'Tournament prize payment history is immutable';
-        END;
-        $$;
-        DROP TRIGGER IF EXISTS trg_prize_payment_immutable ON tournament_prize_payments;
-        CREATE TRIGGER trg_prize_payment_immutable
-          BEFORE UPDATE OR DELETE ON tournament_prize_payments
-          FOR EACH ROW EXECUTE FUNCTION reject_prize_payment_mutation();
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Scoring & Results tables (Phase 10) initialized.');
-    } catch (scoreErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create scoring tables:', scoreErr.message);
-    }
-
-    // --- LEGACY LEADERBOARD MIGRATION GUARD (Phase 8A) ---
-    // Dormant safety net: only runs when a legacy-schema tournament_leaderboard exists
-    // (created against tournament_registrations — identifiable by a `kills` column and no
-    // `total_kills` column). Rebuilds it non-destructively against tournament_teams so the
-    // authoritative team-based schema (Phase 10, above) is the only one ever in use.
-    try {
-      await client.query(`
-        DO $$
-        DECLARE
-          legacy_present BOOLEAN;
-        BEGIN
-          SELECT (COUNT(*) > 0)
-            FROM information_schema.columns
-           WHERE table_schema = current_schema()
-             AND table_name = 'tournament_leaderboard'
-             AND column_name = 'kills'
-          INTO legacy_present;
-
-          IF legacy_present THEN
-            SELECT (COUNT(*) = 0)
-              FROM information_schema.columns
-             WHERE table_schema = current_schema()
-               AND table_name = 'tournament_leaderboard'
-               AND column_name = 'total_kills'
-            INTO legacy_present;
-          END IF;
-
-          IF legacy_present THEN
-            DROP TABLE IF EXISTS tournament_leaderboard_new CASCADE;
-            CREATE TABLE tournament_leaderboard_new (
-              id VARCHAR(50) PRIMARY KEY,
-              tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-              team_id VARCHAR(50) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
-              matches_played INTEGER DEFAULT 0,
-              total_kills INTEGER DEFAULT 0,
-              total_kill_points INTEGER DEFAULT 0,
-              total_placement_points INTEGER DEFAULT 0,
-              total_points INTEGER DEFAULT 0,
-              wwcd_count INTEGER DEFAULT 0,
-              best_placement INTEGER,
-              updated_at TIMESTAMPTZ DEFAULT NOW(),
-              UNIQUE(tournament_id, team_id)
-            );
-
-            INSERT INTO tournament_leaderboard_new
-              (id, tournament_id, team_id, total_kills, total_placement_points, total_points, wwcd_count, updated_at)
-            SELECT id, tournament_id, team_id, COALESCE(kills, 0), COALESCE(placement_points, 0), COALESCE(total_points, 0), COALESCE(wwcd, 0), updated_at
-              FROM tournament_leaderboard;
-
-            DROP TABLE IF EXISTS leaderboard_audit CASCADE;
-            DROP TABLE tournament_leaderboard CASCADE;
-            ALTER TABLE tournament_leaderboard_new RENAME TO tournament_leaderboard;
-            CREATE INDEX IF NOT EXISTS idx_leaderboard_tournament ON tournament_leaderboard(tournament_id);
-          END IF;
-        END $$;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] Leaderboard migration guard checked (legacy schema not present).');
-    } catch (lbMigrationErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Legacy tournament_leaderboard migration guard failed:', lbMigrationErr.message);
-    }
-
-    // --- CREATE MONITORING AND SECURITY TABLES ---
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS system_services (
-          id VARCHAR(50) PRIMARY KEY,
-          name VARCHAR(100) NOT NULL,
-          slug VARCHAR(100) UNIQUE NOT NULL,
-          type VARCHAR(50) NOT NULL,
-          description TEXT,
-          enabled BOOLEAN DEFAULT true,
-          criticality VARCHAR(20) DEFAULT 'normal',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS service_health_checks (
-          id SERIAL PRIMARY KEY,
-          service_id VARCHAR(50) NOT NULL REFERENCES system_services(id) ON DELETE CASCADE,
-          status VARCHAR(20) NOT NULL,
-          response_time_ms INTEGER,
-          status_code INTEGER,
-          error_message TEXT,
-          checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS system_incidents (
-          id VARCHAR(50) PRIMARY KEY,
-          service_id VARCHAR(50) NOT NULL REFERENCES system_services(id) ON DELETE CASCADE,
-          started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          resolved_at TIMESTAMP,
-          duration_seconds INTEGER,
-          severity VARCHAR(20) NOT NULL,
-          reason TEXT,
-          status VARCHAR(20) DEFAULT 'active'
-        );
-
-        CREATE TABLE IF NOT EXISTS security_findings (
-          id VARCHAR(50) PRIMARY KEY,
-          type VARCHAR(50) NOT NULL,
-          severity VARCHAR(20) NOT NULL,
-          service VARCHAR(100),
-          description TEXT,
-          detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          resolved_at TIMESTAMP,
-          status VARCHAR(20) DEFAULT 'open',
-          fingerprint TEXT UNIQUE
-        );
-
-        CREATE TABLE IF NOT EXISTS monitoring_settings (
-          key VARCHAR(100) PRIMARY KEY,
-          value TEXT,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_health_checks_service ON service_health_checks(service_id, checked_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_system_incidents_status ON system_incidents(status);
-        CREATE INDEX IF NOT EXISTS idx_security_findings_status ON security_findings(status);
-      `);
-
-      // Seed initial critical services
-      await client.query(`
-        INSERT INTO system_services (id, name, slug, type, criticality, description) VALUES
-        ('srv_api', 'Match District API', 'api', 'internal', 'critical', 'Core internal REST API'),
-        ('srv_db', 'PostgreSQL Database', 'database', 'internal', 'critical', 'Main Supabase database connection'),
-        ('srv_supabase', 'Supabase Realtime & Auth', 'supabase', 'third_party', 'high', 'External Supabase REST & WebSocket endpoints'),
-        ('srv_cloudinary', 'Cloudinary Media Storage', 'cloudinary', 'third_party', 'normal', 'External media storage API')
-        ON CONFLICT (slug) DO NOTHING;
-      `);
-      console.log('📦 [MATCH DISTRICT DB] System Monitoring tables initialized.');
-    } catch (monErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create monitoring tables:', monErr.message);
-    }
-    // --- TOURNAMENT PROMOTIONS (Trending & Featured) ---
-    // One row per tournament. A UNIQUE index on tournament_id guarantees a
-    // tournament can never receive duplicate promotion records, and therefore
-    // can never render twice in the promoted section. Promotion is purely a
-    // presentation concern: this table never mutates tournament data.
-    try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS tournament_promotions (
-          id VARCHAR(50) PRIMARY KEY,
-          tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
-          is_active BOOLEAN NOT NULL DEFAULT true,
-          placement VARCHAR(32) NOT NULL DEFAULT 'trending_featured',
-          priority INTEGER NOT NULL DEFAULT 0,
-          display_order INTEGER NOT NULL DEFAULT 0,
-          starts_at TIMESTAMPTZ,
-          ends_at TIMESTAMPTZ,
-          created_by VARCHAR(50),
-          updated_by VARCHAR(50),
-          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tournament_promotions_tournament ON tournament_promotions(tournament_id)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_tournament_promotions_active ON tournament_promotions(is_active, priority DESC, display_order ASC)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_tournament_promotions_window ON tournament_promotions(starts_at, ends_at)`);
-      console.log('📦 [MATCH DISTRICT DB] tournament_promotions table ensured.');
-
-      // One-time backfill marker: if the marker exists, skip backfilling
-      // tournaments with featured=true (so that deleting a promotion later is
-      // not automatically undone on restart).
-      let shouldBackfill = true;
+      const marker = await client.query("SELECT 1 FROM site_settings WHERE key = 'promotions_featured_backfilled' LIMIT 1");
+      if (marker.rows.length > 0) shouldBackfill = false;
+    } catch { /* ignore */ }
+    if (shouldBackfill) {
       try {
-        const marker = await client.query("SELECT 1 FROM site_settings WHERE key = 'promotions_featured_backfilled' LIMIT 1");
-        if (marker.rows.length > 0) shouldBackfill = false;
-      } catch { /* ignore */ }
-      if (shouldBackfill) {
-        try {
-          const backfill = await client.query(`
-            INSERT INTO tournament_promotions (id, tournament_id, is_active, placement, priority, display_order)
-            SELECT 'PRM-' || UPPER(SUBSTR(MD5(RANDOM()::TEXT || t.id), 1, 16)), t.id, true, 'trending_featured', 0, 0
-            FROM tournaments t
-            WHERE t.featured = true
-              AND NOT EXISTS (SELECT 1 FROM tournament_promotions p WHERE p.tournament_id = t.id)
-            ON CONFLICT (tournament_id) DO NOTHING
-          `);
-          await client.query(
-            `INSERT INTO site_settings (key, value, updated_at) VALUES ('promotions_featured_backfilled', '1', NOW())
-             ON CONFLICT (key) DO NOTHING`
-          );
-          if (backfill.rowCount > 0) {
-            console.log(`📦 [MATCH DISTRICT DB] Backfilled ${backfill.rowCount} featured tournament(s) into tournament_promotions.`);
-          }
-        } catch (backfillErr) {
-          console.warn('⚠️ [MATCH DISTRICT DB] Promotion backfill skipped:', backfillErr.message);
+        const backfill = await client.query(`
+          INSERT INTO tournament_promotions (id, tournament_id, is_active, placement, priority, display_order)
+          SELECT 'PRM-' || UPPER(SUBSTR(MD5(RANDOM()::TEXT || t.id), 1, 16)), t.id, true, 'trending_featured', 0, 0
+          FROM tournaments t
+          WHERE t.featured = true
+            AND NOT EXISTS (SELECT 1 FROM tournament_promotions p WHERE p.tournament_id = t.id)
+          ON CONFLICT (tournament_id) DO NOTHING
+        `);
+        await client.query(
+          `INSERT INTO site_settings (key, value, updated_at) VALUES ('promotions_featured_backfilled', '1', NOW())
+           ON CONFLICT (key) DO NOTHING`
+        );
+        if (backfill.rowCount > 0) {
+          console.log(`📦 [MATCH DISTRICT DB] Backfilled ${backfill.rowCount} featured tournament(s) into tournament_promotions.`);
         }
+      } catch (backfillErr) {
+        console.warn('⚠️ [MATCH DISTRICT DB] Promotion backfill skipped:', backfillErr.message);
       }
-    } catch (promoErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not create tournament_promotions table:', promoErr.message);
-    }
-
-    // Seed the central promoted-section display limit (safe if site_settings
-    // already exists; wrapped so a missing table never breaks startup).
-    try {
-      await client.query(
-        `INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO NOTHING`,
-        [PROMOTED_LIMIT_SETTING_KEY, String(DEFAULT_PROMOTED_LIMIT)]
-      );
-    } catch (settingsErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Could not seed promoted_section_limit setting:', settingsErr.message);
     }
 
     // --- ENABLE REALTIME REPLICATION ---
@@ -5146,7 +3839,107 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7g0b. Manual / Configured Team Advancement endpoint
+  // GET /api/tournaments/:id/rounds — Return list of rounds (Hardened Phase 5)
+  const roundsListMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds$/);
+  if (roundsListMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(roundsListMatch[1]);
+    (async () => {
+      try {
+        const tournRes = await pool.query(
+          'SELECT "orgId", roadmap_status, rounds_published, "isDraft" FROM tournaments WHERE id = $1',
+          [tId]
+        );
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const tourn = tournRes.rows[0];
+        const authUser = getAuthUser(req);
+        const isOwnerOrAdmin = authUser && (hasRole(authUser, ROLES.ADMIN) || tourn.orgId === authUser.id);
+
+        if (!isOwnerOrAdmin) {
+          const isApproved = tourn.roadmap_status === 'approved' || tourn.roadmap_status === 'published';
+          const isRoundsPublished = tourn.rounds_published !== false;
+          if (!isApproved || !isRoundsPublished || tourn.isDraft) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: false,
+              error: 'ROADMAP_NOT_APPROVED',
+              message: 'Roadmap is not approved or published yet.'
+            }));
+          }
+        }
+
+        const allRounds = await getTournamentRounds(pool, tId);
+
+        // For non-owners, sanitize internal progression rules and expose only public stage info
+        const rounds = isOwnerOrAdmin
+          ? allRounds
+          : allRounds.map((r) => ({
+              id: r.id,
+              round_number: r.round_number,
+              name: r.name,
+              round_type: r.round_type,
+              status: r.status,
+              date: r.date,
+              time: r.time,
+              map: r.map,
+            }));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, rounds }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    })();
+    return;
+  }
+
+  // 7g0a2. GET /api/tournaments/:id/rounds/:roundId/advancement-summary — Source round advancement summary
+  const roundAdvancementSummaryMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/([^/]+)\/advancement-summary$/);
+  if (roundAdvancementSummaryMatch && req.method === 'GET') {
+    const tId = decodeURIComponent(roundAdvancementSummaryMatch[1]);
+    const roundIdentifier = decodeURIComponent(roundAdvancementSummaryMatch[2]);
+    (async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+        const oRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        if (oRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        }
+
+        // roundIdentifier could be round ID or round number
+        let roundId = roundIdentifier;
+        if (/^\d+$/.test(roundIdentifier)) {
+          const rRes = await pool.query('SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2', [tId, parseInt(roundIdentifier, 10)]);
+          if (rRes.rows.length > 0) roundId = rRes.rows[0].id;
+        }
+
+        const summary = await getRoundAdvancementSummary(pool, tId, roundId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(summary));
+      } catch (err) {
+        console.error('Error fetching advancement summary:', err);
+        const status = err.code === 'ROUND_NOT_FOUND' ? 404 : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: err.code || 'INTERNAL_ERROR', message: err.message }));
+      }
+    })();
+    return;
+  }
+
+  // 7g0b. Manual / Configured Team Advancement endpoint (Hardened Phase 4A)
   const roundAdvanceMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/(?:(\d+)\/)?advance$/);
   if (roundAdvanceMatch && req.method === 'POST') {
     const tId = decodeURIComponent(roundAdvanceMatch[1]);
@@ -5165,7 +3958,7 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
+        if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
         }
@@ -5176,7 +3969,17 @@ const server = http.createServer(async (req, res) => {
           : (Array.isArray(payload.teamIds) ? payload.teamIds : []);
         let targetRoundId = payload.target_round_id || payload.targetRoundId;
         const targetGroupId = payload.target_group_id || payload.targetGroupId || null;
-        const sourceRoundId = payload.source_round_id || payload.sourceRoundId || null;
+        let sourceRoundId = payload.source_round_id || payload.sourceRoundId || null;
+        const manualPlacement = payload.manual_placement || payload.manualPlacement || null;
+        const allowUnverified = Boolean(payload.allow_unverified || payload.allowUnverified || payload.override_unverified || payload.overrideUnverified);
+
+        if (routeRoundNum && !sourceRoundId) {
+          const srcRnd = await pool.query(
+            'SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2',
+            [tId, routeRoundNum]
+          );
+          if (srcRnd.rows.length > 0) sourceRoundId = srcRnd.rows[0].id;
+        }
 
         if (!targetRoundId && routeRoundNum) {
           const nextRnd = await pool.query(
@@ -5206,6 +4009,8 @@ const server = http.createServer(async (req, res) => {
             targetGroupId,
             teamIds,
             actorId: authUser.id,
+            allow_unverified: allowUnverified,
+            manual_placement: manualPlacement,
           });
           await client.query('COMMIT');
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -5219,8 +4024,19 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         console.error('Advancement error:', err);
         const code = err instanceof ProgressionError ? err.code : 'ADVANCEMENT_ERROR';
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: code, message: err.message || 'Failed to advance teams.' }));
+        let status = 400;
+        if (code === 'TARGET_ROUND_HAS_RESULTS' || code === 'TOURNAMENT_FINALIZED') {
+          status = 409;
+        } else if (code === 'ROUND_NOT_FOUND' || code === 'TOURNAMENT_NOT_FOUND') {
+          status = 404;
+        }
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: code,
+          message: err.message || 'Failed to advance teams.',
+          unverified_match_ids: err.unverified_match_ids || undefined,
+        }));
       }
     });
     return;
@@ -7076,6 +5892,10 @@ const server = http.createServer(async (req, res) => {
         }
       } catch (err) {
         console.error('Roadmap draft save error:', err);
+        if (err.code === 'ROUND_STRUCTURALLY_LOCKED' || err.code === 'DAY_LOCKED' || err.code === 'MATCH_LOCKED') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: err.code, message: err.message }));
+        }
         res.writeHead(500, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', message: err.message || 'Failed to save roadmap draft.' }));
       }
@@ -7238,7 +6058,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify(result));
       } catch (delErr) {
         await client.query('ROLLBACK').catch(() => {});
-        if (delErr.code === 'ROADMAP_HAS_RESULTS') {
+        if (delErr.code === 'ROADMAP_HAS_RESULTS' || delErr.code === 'ROADMAP_HAS_ASSIGNMENTS') {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: delErr.code, message: delErr.message }));
         }
@@ -7389,225 +6209,13 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, prize_positions, card_color FROM tournaments WHERE id = $1', [tId]);
-      if (tRes.rows.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' });
-        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
-      }
-
-      const t = tRes.rows[0];
       const authUser = getAuthUser(req);
-      const isOrganizer = !!(authUser && (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id));
-      const nowMs = Date.now();
-      const isPublished = isRoadmapPublished(t);
-
-      // ── PARTICIPANT / PUBLIC MODE PRIVACY GATE ──
-      // Until published, ordinary participants and visitors see ONLY "Roadmap will be published soon."
-      if (!isOrganizer && !isPublished) {
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
-        });
-        return res.end(JSON.stringify({
-          success: true,
-          mode: 'public',
-          viewer_is_organizer: false,
-          is_organizer: false,
-          roadmap_status: t.roadmap_status || 'draft',
-          published: false,
-          message: 'Roadmap will be published soon.',
-          participant: null,
-          roadmap: null,
-        }));
-      }
-
-      const rounds = await getTournamentRounds(pool, tId);
-      const roundOrder = new Map(rounds.map((r, i) => [r.id, i]));
-      const daysQuery = await pool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tId]);
-      const days = daysQuery.rows
-        .sort((a, b) =>
-          (roundOrder.get(a.round_id) ?? -1) - (roundOrder.get(b.round_id) ?? -1) ||
-          a.day_number - b.day_number
-        )
-        .map((d) => ({
-          ...d,
-          round_number: rounds.find((r) => r.id === d.round_id)?.round_number ?? null
-        }));
-      const groups = await pool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY COALESCE(display_order, sequence, 0) ASC, sequence ASC, id ASC', [tId]);
-      const rooms = await pool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tId]);
-      const matches = await pool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tId]);
-
-      const assignments = await pool.query(`
-        SELECT match_id, room_id, tournament_team_id
-        FROM tournament_match_assignments
-        WHERE tournament_id = $1
-      `, [tId]);
-
-      const slotsTotal = parseInt(t.slotsTotal, 10) || 64;
-      const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
-      const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
-      const cfg = normalizeRoadmapConfig(t);
-
-      const districtsData = await getTournamentDistricts(pool, tId);
-      const structuredRounds = buildHierarchicalRoadmap(rounds, days, groups.rows, matches.rows);
-
-      const roadmapMeta = {
-        total_slots: slotsTotal,
-        teams_per_group: teamsPerGroup,
-        num_groups: districtsData.districts.length || groupLayout.length,
-        group_names: districtsData.districts.map(d => d.name),
-        district_names: districtsData.districts.map(d => d.name),
-        district_sizes: distributeDistrictSizes(slotsTotal, teamsPerGroup),
-        top_per_group: cfg.teamsAdvancingPerDistrict != null
-          ? Math.min(teamsPerGroup, cfg.teamsAdvancingPerDistrict)
-          : defaultTeamsAdvancing(teamsPerGroup),
-        matches_per_day: cfg.matchesPerDayProvided ? cfg.matchesPerDay : null,
-        first_match_time: cfg.firstMatchTime,
-        match_gap_minutes: cfg.matchGapMinutes,
-        match_duration_minutes: cfg.matchDurationMinutes,
-        release_offset_minutes: cfg.releaseOffsetMinutes,
-        enable_semi_finals: cfg.enableSemiFinals,
-        game: t.game || 'bgmi',
-        registration_close_date: t.registrationCloseDate || null,
-        registration_open_date: t.registrationOpenDate || null,
-        start_date: t.startDate || t.date || null,
-        total_teams: districtsData.meta.total_teams,
-        prize: t.prize || null,
-        prize_pool_amount: t.prize_pool_amount || null,
-        prize_split_1st: t.prize_split_1st || t.prizeSplit1st || null,
-        prize_split_2nd: t.prize_split_2nd || t.prizeSplit2nd || null,
-        prize_split_3rd: t.prize_split_3rd || t.prizeSplit3rd || null,
-        prize_split_mvp: t.prize_split_mvp || t.prizeSplitMvp || null,
-        prize_positions: t.prize_positions || null,
-        card_color: t.card_color || 'white',
-      };
-
-      // Check if slotsTotal changed after roadmap was created
-      let plannedCapacity = null;
-      if (structuredRounds && structuredRounds.length > 0) {
-        if (structuredRounds[0].teams_in != null && structuredRounds[0].teams_in > 0) {
-          plannedCapacity = Number(structuredRounds[0].teams_in);
-        } else {
-          const r1Districts = new Set();
-          for (const d of (structuredRounds[0].days || [])) {
-            for (const a of (d.allocations || [])) {
-              if (a.district_id) r1Districts.add(a.district_id);
-            }
-          }
-          if (r1Districts.size > 0) {
-            plannedCapacity = r1Districts.size * teamsPerGroup;
-          }
-        }
-      }
-
-      if (isOrganizer && plannedCapacity != null && plannedCapacity !== slotsTotal) {
-        roadmapMeta.capacity_warning = `Roadmap was built for ${plannedCapacity} teams, but tournament capacity is now ${slotsTotal}.`;
-        roadmapMeta.capacity_mismatch = {
-          planned: plannedCapacity,
-          current: slotsTotal,
-        };
-      }
-
-      if (isOrganizer) {
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
-        });
-        return res.end(JSON.stringify({
-          success: true,
-          mode: 'organizer',
-          viewer_is_organizer: true,
-          is_organizer: true,
-          roadmap_status: t.roadmap_status || (days.length > 0 ? 'draft' : 'pending'),
-          published: isPublished,
-          participant: null,
-          roadmap: {
-            rounds,
-            days,
-            groups: groups.rows,
-            rooms: rooms.rows,
-            matches: matches.rows.map(m => {
-              const dayRow = days.find(d => d.id === m.day_id);
-              const dateStr = dayRow ? dayRow.date : null;
-              const released = isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
-              return {
-                ...m,
-                credentials_available: released,
-              };
-            }),
-            assignments: assignments.rows,
-            districts: districtsData.districts,
-            structured_rounds: structuredRounds,
-            meta: roadmapMeta,
-          }
-        }));
-      }
-
-      // ── PUBLISHED PARTICIPANT / PUBLIC SCHEDULE ──
-      let team = null;
-      if (authUser) {
-        const teamRes = await pool.query(`
-          SELECT t.id, t.team_name, t.status, t.tournament_id
-          FROM tournament_teams t
-          JOIN tournament_team_members tm ON tm.tournament_team_id = t.id
-          WHERE t.tournament_id = $1 AND tm.user_id = $2
-          LIMIT 1
-        `, [tId, authUser.id]);
-        if (teamRes.rows.length > 0) team = teamRes.rows[0];
-      }
-
-      res.writeHead(200, {
+      const result = await getTournamentRoadmapResponse(pool, tId, authUser, Date.now());
+      res.writeHead(result.statusCode, {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
       });
-      return res.end(JSON.stringify({
-        success: true,
-        mode: team ? 'participant' : 'public',
-        viewer_is_organizer: false,
-        is_organizer: false,
-        roadmap_status: t.roadmap_status || 'published',
-        published: true,
-        participant: team ? { team_id: team.id, team_name: team.team_name, team_status: team.status } : null,
-        roadmap: {
-          rounds,
-          days,
-          groups: groups.rows,
-          rooms: rooms.rows,
-          structured_rounds: structuredRounds,
-          matches: matches.rows.map(m => {
-            const dayRow = days.find(d => d.id === m.day_id);
-            const dateStr = dayRow ? dayRow.date : null;
-            const released = isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
-            return {
-              id: m.id,
-              room_id: m.room_id,
-              group_id: m.group_id,
-              day_id: m.day_id,
-              match_number: m.match_number,
-              start_time: m.start_time,
-              end_time: m.end_time,
-              status: m.status,
-              round_id: m.round_id,
-              group_name: m.group_name,
-              map: m.map || 'Erangel',
-              id_pwd_release_time: m.id_pwd_release_time || null,
-              origin: m.origin || 'manual',
-              credentials_available: released,
-              ...(released ? { room_identifier: m.room_identifier, room_password: m.room_password } : {})
-            };
-          }),
-          districts: (districtsData.districts || []).map(d => ({
-            id: d.id,
-            group_index: d.group_index,
-            name: d.name,
-            code: d.code,
-            capacity: d.capacity,
-            slot_start: d.slot_start,
-            slot_end: d.slot_end,
-          })),
-          meta: roadmapMeta,
-        }
-      }));
+      return res.end(JSON.stringify(result.body));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: err.message }));
@@ -8955,6 +7563,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- PHASE 5: TEAM DISQUALIFICATION & REINSTATEMENT ---
+  const teamStatusMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/status$/);
+  if (teamStatusMatch && (req.method === 'PUT' || req.method === 'POST')) {
+    const tId = decodeURIComponent(teamStatusMatch[1]);
+    const teamId = decodeURIComponent(teamStatusMatch[2]);
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+
+        let payload = {};
+        try {
+          if (body) payload = JSON.parse(body);
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Invalid JSON payload.' }));
+        }
+
+        const isAdmin = hasRole(authUser, ROLES.ADMIN);
+        const result = await updateTeamQualificationStatus(pool, {
+          tournamentId: tId,
+          teamId,
+          status: payload.status,
+          reason: payload.reason || '',
+          actorId: authUser.id,
+          isAdmin,
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      } catch (err) {
+        const statusCode = err.status || (err.code === 'FORBIDDEN' ? 403 : err.code === 'TEAM_NOT_FOUND' || err.code === 'TOURNAMENT_NOT_FOUND' ? 404 : 500);
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: err.code || 'INTERNAL_ERROR',
+          message: err.message,
+        }));
+      }
+    });
+    return;
+  }
+
   // --- PHASE 8: ORGANIZER ALLOCATION MANAGEMENT ---
   const allocationGetMatch = req.url.match(/^\/api\/tournaments\/([^\/]+)\/allocations$/);
   if (allocationGetMatch && req.method === 'GET') {
@@ -9262,11 +7918,20 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ success: false, error: 'Roadmap is not approved yet.' }));
         }
         const teamCheck = await pool.query(`
-          SELECT a.id 
+          SELECT a.id, t.status AS team_status
           FROM tournament_match_assignments a
+          JOIN tournament_teams t ON a.tournament_team_id = t.id
           JOIN tournament_team_members tm ON a.tournament_team_id = tm.tournament_team_id
           WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3
         `, [mId, tId, authUser.id]);
+        if (teamCheck.rows.some((r) => r.team_status === 'disqualified')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'TEAM_DISQUALIFIED',
+            message: 'Your team is disqualified and cannot receive room credentials.',
+          }));
+        }
         if (teamCheck.rows.length > 0) isAllocated = true;
       }
 
@@ -10507,13 +9172,22 @@ const server = http.createServer(async (req, res) => {
       let isEligibleParticipant = false;
       if (!isOrganizer) {
         const allocRes = await pool.query(
-          `SELECT a.status
+          `SELECT a.status, t.status AS team_status
            FROM tournament_match_assignments a
+           JOIN tournament_teams t ON t.id = a.tournament_team_id
            JOIN tournament_team_members tm ON tm.tournament_team_id = a.tournament_team_id
            WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3`,
           [matchId, tournId, authUser.id]
         );
-        isEligibleParticipant = allocRes.rows.some(r => r.status === 'allocated');
+        if (allocRes.rows.some((r) => r.team_status === 'disqualified')) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'TEAM_DISQUALIFIED',
+            message: 'Your team is disqualified and cannot receive room credentials.',
+          }));
+        }
+        isEligibleParticipant = allocRes.rows.some((r) => r.status === 'allocated');
       }
 
       if (!isOrganizer && !isEligibleParticipant) {

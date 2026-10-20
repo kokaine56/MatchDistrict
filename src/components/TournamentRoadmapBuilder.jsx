@@ -188,6 +188,7 @@ export default function TournamentRoadmapBuilder({
   registrationCloseDate = null,
   onClose = null,
   onApproved = null,
+  onNavigateToLeaderboard = null,
 }) {
   const [serverIsOrganizer, setServerIsOrganizer] = useState(null);
   const effectiveOrganizer = Boolean(isOrganizer || (serverIsOrganizer === true));
@@ -1226,9 +1227,11 @@ export default function TournamentRoadmapBuilder({
       });
       const data = await res.json();
       if (!data.success) {
+        const errList = data.errors || [data.message || data.error || "Failed to save draft."];
+        setError(errList[0]);
         return {
           success: false,
-          errors: data.errors || [data.message || data.error || "Failed to save draft."],
+          errors: errList,
           warnings: data.warnings || [],
         };
       }
@@ -1263,12 +1266,16 @@ export default function TournamentRoadmapBuilder({
       });
       const data = await res.json();
       if (!data.success) {
+        const errList = data.errors || [data.message || data.error || "Failed to publish roadmap."];
+        setError(errList[0]);
         if (data.errors && Array.isArray(data.errors)) {
           setPublishErrors(data.errors);
+        } else {
+          setPublishErrors(errList);
         }
         return {
           success: false,
-          errors: data.errors || [data.message || data.error || "Failed to publish roadmap."],
+          errors: errList,
           warnings: data.warnings || [],
         };
       }
@@ -1432,19 +1439,41 @@ export default function TournamentRoadmapBuilder({
       />
 
       {showAdvancementModal && (
-        <RoadmapAdvancementModal
-          isOpen={showAdvancementModal}
-          onClose={() => setShowAdvancementModal(false)}
-          sourceRound={advancementSourceRound}
-          rounds={rounds}
-          tournamentId={tournamentId}
-          onSuccess={(res) => {
-            setSuccess(res.message);
-            fetchDistricts();
-            fetchRoadmap();
-          }}
-          onError={(err) => setError(err)}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 max-w-md w-full text-center space-y-4 shadow-2xl">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center mx-auto text-xl">
+              🏆
+            </div>
+            <h3 className="text-base sm:text-lg font-black text-slate-900">Stage Qualification Moved</h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Team qualification and stage advancement is now managed on the official <strong className="text-slate-900">Leaderboard</strong> tab with verified standings, tie detection, and snake-seeding district placement.
+            </p>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAdvancementModal(false)}
+                className="w-full sm:flex-1 px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors min-h-[38px]"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAdvancementModal(false);
+                  if (typeof onNavigateToLeaderboard === 'function') {
+                    onNavigateToLeaderboard();
+                  } else {
+                    const el = document.querySelector('[data-tab="leaderboard"]');
+                    if (el) el.click();
+                  }
+                }}
+                className="w-full sm:flex-1 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-all shadow-md shadow-blue-600/25 min-h-[38px]"
+              >
+                Go to Leaderboard
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

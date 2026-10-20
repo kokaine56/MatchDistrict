@@ -21,6 +21,13 @@ import {
   isValidDateStr,
 } from './roadmapValidation.js';
 import { normalizeReleaseMinutes, isMatchReleased } from './matchRelease.js';
+import { getTournamentRounds } from './roundsService.js';
+import { isRoadmapPublished } from './roadmapStatus.js';
+import {
+  normalizeRoadmapConfig,
+  distributeDistrictSizes,
+  defaultTeamsAdvancing,
+} from './roadmapConfig.js';
 
 export const ROUND_TYPES = Object.freeze([
   'qualifier',
@@ -679,6 +686,42 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
     }
   }
 
+  // Reject edits to locked days or matches with a clear error naming what is locked
+  for (const r of rounds) {
+    for (const d of (r.days || [])) {
+      if (d.id && dayIdsWithResults.has(d.id)) {
+        const oldDay = oldDays.find((od) => od.id === d.id);
+        if (oldDay && d.date && d.date !== oldDay.date) {
+          const err = new Error(
+            `Cannot modify date for Day ${oldDay.day_number || ''} (${oldDay.date}): this match day contains verified results and is locked.`
+          );
+          err.code = 'DAY_LOCKED';
+          throw err;
+        }
+      }
+      for (const a of (d.allocations || [])) {
+        for (const m of (a.matches || [])) {
+          if (m.id && protectedMatchIds.has(m.id)) {
+            const oldMatch = oldMatches.find((om) => om.id === m.id);
+            if (oldMatch) {
+              const timeChanged = m.start_time && m.start_time !== oldMatch.start_time;
+              const endTimeChanged = m.end_time && m.end_time !== oldMatch.end_time;
+              const mapChanged = m.map && m.map !== oldMatch.map;
+              const notesChanged = m.notes != null && m.notes !== (oldMatch.notes || '');
+              if (timeChanged || endTimeChanged || mapChanged || notesChanged) {
+                const err = new Error(
+                  `Cannot modify Match ${oldMatch.match_number || m.id}: this match has verified results and is locked.`
+                );
+                err.code = 'MATCH_LOCKED';
+                throw err;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   const currentRoundIds = new Set();
   const currentDayIds = new Set();
   const currentGroupIds = new Set();
@@ -1302,6 +1345,17 @@ export async function deleteEntireRoadmap(client, tournamentId) {
     throw err;
   }
 
+  // 2b. Check if any team assignments exist in this tournament
+  const assignmentsCheck = await client.query(
+    `SELECT id FROM tournament_match_assignments WHERE tournament_id = $1 LIMIT 1`,
+    [tournamentId]
+  );
+  if (assignmentsCheck.rows && assignmentsCheck.rows.length > 0) {
+    const err = new Error('Cannot delete roadmap because teams are already assigned to matches.');
+    err.code = 'ROADMAP_HAS_ASSIGNMENTS';
+    throw err;
+  }
+
   // 3. Detach self-referencing and inter-round pointers
   await client.query(
     `UPDATE tournament_matches
@@ -1455,6 +1509,240 @@ export async function reorderDistrictAllocations(client, tournamentId, dayId, or
     success: true,
     day_id: dayId,
     ordered_ids: orderedGroupIds,
+  };
+}
+
+/**
+ * Authoritative handler for GET /api/tournaments/:id/roadmap.
+ * Enforces participant privacy gating and organizer metadata projections.
+ */
+export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, authUser = null, nowMs = Date.now()) {
+  const tRes = await clientOrPool.query(
+    'SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, prize_positions, card_color FROM tournaments WHERE id = $1',
+    [tournamentId]
+  );
+  if (!tRes.rows || tRes.rows.length === 0) {
+    return {
+      statusCode: 404,
+      body: { success: false, error: 'NOT_FOUND', message: 'Tournament not found.' },
+    };
+  }
+
+  const t = tRes.rows[0];
+  const isOrganizer = !!(authUser && (authUser.role === 'admin' || (Array.isArray(authUser.roles) && authUser.roles.includes('admin')) || t.orgId === authUser.id));
+  const isPublished = isRoadmapPublished(t);
+
+  // ── PARTICIPANT / PUBLIC MODE PRIVACY GATE ──
+  // Until published, ordinary participants and visitors see ONLY "Roadmap will be published soon."
+  if (!isOrganizer && !isPublished) {
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        mode: 'public',
+        viewer_is_organizer: false,
+        is_organizer: false,
+        roadmap_status: t.roadmap_status || 'draft',
+        published: false,
+        message: 'Roadmap will be published soon.',
+        participant: null,
+        roadmap: null,
+      },
+    };
+  }
+
+  const rounds = await getTournamentRounds(clientOrPool, tournamentId);
+  const roundOrder = new Map(rounds.map((r, i) => [r.id, i]));
+  const daysQuery = await clientOrPool.query('SELECT * FROM tournament_days WHERE tournament_id = $1', [tournamentId]);
+  const days = (daysQuery.rows || [])
+    .sort((a, b) =>
+      (roundOrder.get(a.round_id) ?? -1) - (roundOrder.get(b.round_id) ?? -1) ||
+      a.day_number - b.day_number
+    )
+    .map((d) => ({
+      ...d,
+      round_number: rounds.find((r) => r.id === d.round_id)?.round_number ?? null,
+    }));
+  const groups = await clientOrPool.query('SELECT * FROM tournament_groups WHERE tournament_id = $1 ORDER BY COALESCE(display_order, sequence, 0) ASC, sequence ASC, id ASC', [tournamentId]);
+  const rooms = await clientOrPool.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1 ORDER BY room_number ASC', [tournamentId]);
+  const matches = await clientOrPool.query('SELECT * FROM tournament_matches WHERE tournament_id = $1 ORDER BY match_number ASC', [tournamentId]);
+
+  const assignments = await clientOrPool.query(`
+    SELECT match_id, room_id, tournament_team_id
+    FROM tournament_match_assignments
+    WHERE tournament_id = $1
+  `, [tournamentId]);
+
+  const slotsTotal = parseInt(t.slotsTotal, 10) || 64;
+  const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
+  const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
+  const cfg = normalizeRoadmapConfig(t);
+
+  const districtsData = await getTournamentDistricts(clientOrPool, tournamentId);
+  const structuredRounds = buildHierarchicalRoadmap(rounds, days, groups.rows || [], matches.rows || []);
+
+  const roadmapMeta = {
+    total_slots: slotsTotal,
+    teams_per_group: teamsPerGroup,
+    num_groups: districtsData.districts?.length || groupLayout.length,
+    group_names: (districtsData.districts || []).map((d) => d.name),
+    district_names: (districtsData.districts || []).map((d) => d.name),
+    district_sizes: distributeDistrictSizes(slotsTotal, teamsPerGroup),
+    top_per_group: cfg.teamsAdvancingPerDistrict != null
+      ? Math.min(teamsPerGroup, cfg.teamsAdvancingPerDistrict)
+      : defaultTeamsAdvancing(teamsPerGroup),
+    matches_per_day: cfg.matchesPerDayProvided ? cfg.matchesPerDay : null,
+    first_match_time: cfg.firstMatchTime,
+    match_gap_minutes: cfg.matchGapMinutes,
+    match_duration_minutes: cfg.matchDurationMinutes,
+    release_offset_minutes: cfg.releaseOffsetMinutes,
+    enable_semi_finals: cfg.enableSemiFinals,
+    game: t.game || 'bgmi',
+    registration_close_date: t.registrationCloseDate || null,
+    registration_open_date: t.registrationOpenDate || null,
+    start_date: t.startDate || t.date || null,
+    total_teams: districtsData.meta?.total_teams ?? 0,
+    prize: t.prize || null,
+    prize_pool_amount: t.prize_pool_amount || null,
+    prize_split_1st: t.prize_split_1st || t.prizeSplit1st || null,
+    prize_split_2nd: t.prize_split_2nd || t.prizeSplit2nd || null,
+    prize_split_3rd: t.prize_split_3rd || t.prizeSplit3rd || null,
+    prize_split_mvp: t.prize_split_mvp || t.prizeSplitMvp || null,
+    prize_positions: t.prize_positions || null,
+    card_color: t.card_color || 'white',
+  };
+
+  let plannedCapacity = null;
+  if (structuredRounds && structuredRounds.length > 0) {
+    if (structuredRounds[0].teams_in != null && structuredRounds[0].teams_in > 0) {
+      plannedCapacity = Number(structuredRounds[0].teams_in);
+    } else {
+      const r1Districts = new Set();
+      for (const d of (structuredRounds[0].days || [])) {
+        for (const a of (d.allocations || [])) {
+          if (a.district_id) r1Districts.add(a.district_id);
+        }
+      }
+      if (r1Districts.size > 0) {
+        plannedCapacity = r1Districts.size * teamsPerGroup;
+      }
+    }
+  }
+
+  if (isOrganizer && plannedCapacity != null && plannedCapacity !== slotsTotal) {
+    roadmapMeta.capacity_warning = `Roadmap was built for ${plannedCapacity} teams, but tournament capacity is now ${slotsTotal}.`;
+    roadmapMeta.capacity_mismatch = {
+      planned: plannedCapacity,
+      current: slotsTotal,
+    };
+  }
+
+  if (isOrganizer) {
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        mode: 'organizer',
+        viewer_is_organizer: true,
+        is_organizer: true,
+        roadmap_status: t.roadmap_status || (days.length > 0 ? 'draft' : 'pending'),
+        published: isPublished,
+        participant: null,
+        roadmap: {
+          rounds,
+          days,
+          groups: groups.rows || [],
+          rooms: rooms.rows || [],
+          matches: (matches.rows || []).map((m) => {
+            const dayRow = days.find((d) => d.id === m.day_id);
+            const dateStr = dayRow ? dayRow.date : null;
+            const released = isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
+            return {
+              ...m,
+              credentials_available: released,
+            };
+          }),
+          assignments: assignments.rows || [],
+          districts: districtsData.districts || [],
+          structured_rounds: structuredRounds,
+          meta: roadmapMeta,
+        },
+      },
+    };
+  }
+
+  // ── PUBLISHED PARTICIPANT / PUBLIC SCHEDULE ──
+  let team = null;
+  if (authUser && authUser.id) {
+    const teamRes = await clientOrPool.query(`
+      SELECT t.id, t.team_name, t.status, t.tournament_id
+      FROM tournament_teams t
+      JOIN tournament_team_members tm ON tm.tournament_team_id = t.id
+      WHERE t.tournament_id = $1 AND tm.user_id = $2
+      LIMIT 1
+    `, [tournamentId, authUser.id]);
+    if (teamRes.rows && teamRes.rows.length > 0) team = teamRes.rows[0];
+  }
+
+  return {
+    statusCode: 200,
+    body: {
+      success: true,
+      mode: team ? 'participant' : 'public',
+      viewer_is_organizer: false,
+      is_organizer: false,
+      roadmap_status: t.roadmap_status || 'published',
+      published: true,
+      participant: team ? {
+        team_id: team.id,
+        team_name: team.team_name,
+        team_status: team.status,
+        is_disqualified: team.status === 'disqualified',
+        disqualification_message: team.status === 'disqualified'
+          ? 'Your team is disqualified and cannot receive room credentials or participate in matches.'
+          : null,
+      } : null,
+      roadmap: {
+        rounds,
+        days,
+        groups: groups.rows || [],
+        rooms: rooms.rows || [],
+        structured_rounds: structuredRounds,
+        matches: (matches.rows || []).map((m) => {
+          const dayRow = days.find((d) => d.id === m.day_id);
+          const dateStr = dayRow ? dayRow.date : null;
+          const isDisqualified = team && team.status === 'disqualified';
+          const released = !isDisqualified && isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
+          return {
+            id: m.id,
+            room_id: m.room_id,
+            group_id: m.group_id,
+            day_id: m.day_id,
+            match_number: m.match_number,
+            start_time: m.start_time,
+            end_time: m.end_time,
+            status: m.status,
+            round_id: m.round_id,
+            group_name: m.group_name,
+            map: m.map || 'Erangel',
+            id_pwd_release_time: m.id_pwd_release_time || null,
+            origin: m.origin || 'manual',
+            credentials_available: released,
+            ...(released ? { room_identifier: m.room_identifier, room_password: m.room_password } : {}),
+          };
+        }),
+        districts: (districtsData.districts || []).map((d) => ({
+          id: d.id,
+          group_index: d.group_index,
+          name: d.name,
+          code: d.code,
+          capacity: d.capacity,
+          slot_start: d.slot_start,
+          slot_end: d.slot_end,
+        })),
+        meta: roadmapMeta,
+      },
+    },
   };
 }
 
