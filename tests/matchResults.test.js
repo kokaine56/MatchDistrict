@@ -88,17 +88,17 @@ test('scoring: calculates points correctly for non-WWCD', () => {
 test('scoring: ranks teams using deterministic tiebreakers', () => {
   const rows = [
     { team_id: 'C', total_points: 10, total_kills: 2, wwcd_count: 0, best_placement: 4 },
-    { team_id: 'A', total_points: 10, total_kills: 5, wwcd_count: 0, best_placement: 3 }, // More kills
-    { team_id: 'B', total_points: 10, total_kills: 2, wwcd_count: 1, best_placement: 1 }, // WWCD wins over C despite same points/kills
+    { team_id: 'A', total_points: 10, total_kills: 5, wwcd_count: 0, best_placement: 3 }, // More kills, but 0 WWCD
+    { team_id: 'B', total_points: 10, total_kills: 2, wwcd_count: 1, best_placement: 1 }, // WWCD wins over A and C
     { team_id: 'D', total_points: 20, total_kills: 10, wwcd_count: 1, best_placement: 1 } // Highest points
   ];
 
   const ranked = sortAndRank(rows);
 
   assert.strictEqual(ranked[0].team_id, 'D'); // 20 pts
-  assert.strictEqual(ranked[1].team_id, 'A'); // 10 pts, 5 kills
-  assert.strictEqual(ranked[2].team_id, 'B'); // 10 pts, 2 kills, 1 WWCD
-  assert.strictEqual(ranked[3].team_id, 'C'); // 10 pts, 2 kills, 0 WWCD
+  assert.strictEqual(ranked[1].team_id, 'B'); // 10 pts, 1 WWCD (WWCD beats 0 WWCD)
+  assert.strictEqual(ranked[2].team_id, 'A'); // 10 pts, 0 WWCD, 5 kills (more kills beats 2 kills)
+  assert.strictEqual(ranked[3].team_id, 'C'); // 10 pts, 0 WWCD, 2 kills
 });
 
 test('defaults: DEFAULT_SCORING_RULES mirrors the tournament_scoring_rules DDL defaults', () => {

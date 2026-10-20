@@ -215,7 +215,17 @@ export default function TournamentLeaderboard({
                          <span className="text-gray-500 font-bold">#{team.rank}</span>}
                       </td>
                       <td className="px-6 py-4">
-                        <div className="font-black text-white">{team.team_name}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-black text-white">{team.team_name}</div>
+                          {(team.tie_broken || (standings.filter((s) => Number(s.total_points) === Number(team.total_points)).length > 1)) && (
+                            <span
+                              className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                              title="Rank resolved by tie-break rules"
+                            >
+                              Tie-break
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-gray-500 mt-0.5">LDR: {team.leader_name}</div>
                       </td>
                       <td className="px-6 py-4 text-center text-gray-400">{team.matches_played}</td>
@@ -286,6 +296,15 @@ export default function TournamentLeaderboard({
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="px-6 py-3 border-t border-white/5 bg-black/40 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-300">Tie-break order:</span>
+                <span>1. Total WWCDs &bull; 2. Total placement points &bull; 3. Total elimination points &bull; 4. Best placement in most recent match</span>
+              </span>
+              <span className="text-slate-500 text-[10px]">
+                * Tie-break note appears on rows where tie-breakers were needed
+              </span>
             </div>
           </div>
         </>

@@ -82,10 +82,47 @@ export async function getMatchStandings(client, tournamentId, matchId) {
      GROUP BY tm.team_id`,
     [matchId, tournamentId]
   );
-  return sortAndRank(res.rows);
+  const rows = res.rows.map((r) => ({
+    ...r,
+    last_match_placement: r.best_placement != null ? Number(r.best_placement) : null,
+  }));
+  return sortAndRank(rows);
 }
 
 export async function getRoundStandings(client, tournamentId, roundId) {
+  let placementMap = new Map();
+  try {
+    const lastMatchRes = await client.query(
+      `SELECT m.id
+       FROM tournament_matches m
+       JOIN tournament_match_results mr ON mr.match_id = m.id AND mr.status = 'verified'
+       LEFT JOIN tournament_days d ON d.id = m.day_id
+       WHERE m.round_id = $1 AND m.tournament_id = $2
+       GROUP BY m.id, d.day_number, m.match_number
+       ORDER BY COALESCE(d.day_number, 1) DESC, m.match_number DESC, m.id DESC
+       LIMIT 1`,
+      [roundId, tournamentId]
+    );
+
+    if (lastMatchRes.rows.length > 0) {
+      const lastMatchId = lastMatchRes.rows[0].id;
+      const placementsRes = await client.query(
+        `SELECT team_id, MIN(placement)::int AS placement
+         FROM tournament_match_results
+         WHERE match_id = $1 AND tournament_id = $2 AND status = 'verified'
+         GROUP BY team_id`,
+        [lastMatchId, tournamentId]
+      );
+      for (const r of placementsRes.rows) {
+        if (r.placement != null) {
+          placementMap.set(r.team_id, Number(r.placement));
+        }
+      }
+    }
+  } catch {
+    // Tolerant fallback for test environments
+  }
+
   const res = await client.query(
     `SELECT
        tm.team_id,
@@ -105,7 +142,11 @@ export async function getRoundStandings(client, tournamentId, roundId) {
      GROUP BY tm.team_id`,
     [roundId, tournamentId]
   );
-  return sortAndRank(res.rows);
+  const rows = res.rows.map((row) => ({
+    ...row,
+    last_match_placement: placementMap.has(row.team_id) ? placementMap.get(row.team_id) : null,
+  }));
+  return sortAndRank(rows);
 }
 
 export async function processRoundQualifiers(client, tournamentId, roundId, teamsAdvancing) {
@@ -259,11 +300,12 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 2. Fetch matches in this round to identify groups/districts
   const matchRes = await client.query(
-    `SELECT m.id, m.match_number, m.group_id, m.day_id, g.group_name, g.id AS district_id, g.sequence
+    `SELECT m.id, m.match_number, m.group_id, m.day_id, d.day_number, g.group_name, g.id AS district_id, g.sequence
      FROM tournament_matches m
+     LEFT JOIN tournament_days d ON d.id = m.day_id
      LEFT JOIN tournament_groups g ON g.id = m.group_id
      WHERE m.round_id = $1 AND m.tournament_id = $2
-     ORDER BY m.match_number ASC`,
+     ORDER BY COALESCE(d.day_number, 1) ASC, m.match_number ASC, m.id ASC`,
     [roundId, tournamentId]
   );
   const matches = matchRes.rows;
@@ -375,7 +417,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       teamStatsMap.set(key, {
         team_id: key,
         registration_id: null,
-        team_name: asgn.team_name || `Team ${key.slice(-4)}`,
+        team_name: asgn.team_name || (key ? `Team ${String(key).slice(-4)}` : 'Team'),
         leader_name: asgn.leader_name || 'Captain',
         slot_number: null,
         group_id: asgn.group_id || null,
@@ -399,7 +441,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       entry = {
         team_id: key,
         registration_id: null,
-        team_name: res.team_name || `Team ${key.slice(-4)}`,
+        team_name: res.team_name || (key ? `Team ${String(key).slice(-4)}` : 'Team'),
         leader_name: res.leader_name || 'Captain',
         slot_number: null,
         group_id: null,
@@ -428,18 +470,26 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
     entry.has_results = true;
   }
 
-  const allTeams = Array.from(teamStatsMap.values());
-  const teamComparator = (a, b) => {
-    if (b.total_points !== a.total_points) return b.total_points - a.total_points;
-    if (b.wwcd_count !== a.wwcd_count) return b.wwcd_count - a.wwcd_count;
-    if (b.total_placement_points !== a.total_placement_points) return b.total_placement_points - a.total_placement_points;
-    if (b.total_kills !== a.total_kills) return b.total_kills - a.total_kills;
-    return (a.slot_number || 9999) - (b.slot_number || 9999);
-  };
+  // Build lookup of team placement in each verified match
+  const matchTeamPlacement = new Map();
+  for (const res of resultsRows) {
+    if (res.best_placement != null) {
+      matchTeamPlacement.set(`${res.match_id}:${res.team_id}`, Number(res.best_placement));
+    }
+  }
 
-  allTeams.sort(teamComparator);
-  allTeams.forEach((t, idx) => {
-    t.rank = idx + 1;
+  // Find verified matches ordered by (day_number, match_number)
+  const verifiedMatchIds = new Set(resultsRows.map((r) => r.match_id));
+  const verifiedMatches = matches.filter((m) => verifiedMatchIds.has(m.id));
+  const roundLastMatch = verifiedMatches.length > 0 ? verifiedMatches[verifiedMatches.length - 1] : null;
+
+  const rawAllTeams = Array.from(teamStatsMap.values()).map((t) => ({
+    ...t,
+    last_match_placement: roundLastMatch ? (matchTeamPlacement.get(`${roundLastMatch.id}:${t.team_id}`) ?? null) : null,
+  }));
+
+  const allTeams = sortAndRank(rawAllTeams);
+  allTeams.forEach((t) => {
     t.advanced = advancedTeamSet.has(t.team_id);
   });
 
@@ -493,9 +543,17 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   }
 
   const districts = Array.from(districtMap.values()).map((d) => {
-    d.teams.sort(teamComparator);
-    d.teams.forEach((t, i) => {
-      t.district_rank = i + 1;
+    const distMatches = verifiedMatches.filter((m) => m.group_id === d.id || m.district_id === d.id);
+    const distLastMatch = distMatches.length > 0 ? distMatches[distMatches.length - 1] : roundLastMatch;
+    const districtTeamsToRank = d.teams.map((t) => ({
+      ...t,
+      last_match_placement: distLastMatch ? (matchTeamPlacement.get(`${distLastMatch.id}:${t.team_id}`) ?? null) : null,
+    }));
+    d.teams = sortAndRank(districtTeamsToRank);
+    d.teams.forEach((t) => {
+      t.district_rank = t.rank;
+      t.district_tie_broken = t.tie_broken;
+      t.district_is_true_tie = t.is_true_tie;
     });
     return d;
   });
@@ -717,14 +775,14 @@ export async function advanceTeamsManually(client, {
   );
   const targetGroups = targetGroupsRes.rows;
 
-  // 9. Order advancing teams by source round points descending for snake seeding
+  // 9. Order advancing teams by source round rank descending for snake seeding
   let orderedTeamIds = [...uniqueTeamIds];
   if (sourceRoundId) {
     try {
       const standings = await getRoundStandings(client, tournamentId, sourceRoundId);
       if (Array.isArray(standings) && standings.length > 0) {
-        const pointsMap = new Map(standings.map((t) => [t.team_id, Number(t.total_points) || 0]));
-        orderedTeamIds.sort((a, b) => (pointsMap.get(b) || 0) - (pointsMap.get(a) || 0));
+        const rankMap = new Map(standings.map((t, idx) => [t.team_id, t.rank ?? (idx + 1)]));
+        orderedTeamIds.sort((a, b) => (rankMap.get(a) || 9999) - (rankMap.get(b) || 9999));
       }
     } catch {
       // Keep initial order if standings query encounters an issue

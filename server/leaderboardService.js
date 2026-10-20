@@ -89,35 +89,157 @@ export async function updateTeamLeaderboard(pool, tournamentId, teamId) {
   );
 }
 
+export const TIE_BREAK_RULES_DESCRIPTION =
+  '1. Total WWCDs | 2. Total placement points | 3. Total elimination points | 4. Best placement in most recent match';
+
 /**
- * Deterministic ranking order:
- *   1. total points (desc)
- *   2. kills (desc)
- *   3. wwcd (desc)      
- *   4. best placement (asc)
- *   5. team_id (asc)
+ * Strict tie-break comparison between two teams for equal total points:
+ *   1. Total WWCDs (1st place finishes), higher wins
+ *   2. Total placement points, higher wins
+ *   3. Total elimination (kill) points, higher wins
+ *   4. Best placement in the most recent match, higher wins (1st beats 2nd; lower placement number wins; no-result loses)
+ *
+ * Returns:
+ *   negative if team a ranks higher than team b
+ *   positive if team b ranks higher than team a
+ *   0 if ALL four criteria are equal (true tie)
  */
-export function sortAndRank(rows) {
+export function compareTeams(a, b) {
+  // Primary: Total points (higher wins -> descending)
+  const aPts = Number(a?.total_points ?? a?.points) || 0;
+  const bPts = Number(b?.total_points ?? b?.points) || 0;
+  if (bPts !== aPts) return bPts - aPts;
+
+  // Criterion 1: Total WWCDs (1st place finishes), higher wins
+  const aWwcd = Number(a?.wwcd_count ?? a?.wwcd) || 0;
+  const bWwcd = Number(b?.wwcd_count ?? b?.wwcd) || 0;
+  if (bWwcd !== aWwcd) return bWwcd - aWwcd;
+
+  // Criterion 2: Total placement points, higher wins
+  const aPlacePts = Number(a?.total_placement_points ?? a?.placement_points) || 0;
+  const bPlacePts = Number(b?.total_placement_points ?? b?.placement_points) || 0;
+  if (bPlacePts !== aPlacePts) return bPlacePts - aPlacePts;
+
+  // Criterion 3: Total elimination (kill) points, higher wins
+  const aKillPts = Number(a?.total_kill_points ?? a?.kill_points ?? a?.total_kills ?? a?.kills) || 0;
+  const bKillPts = Number(b?.total_kill_points ?? b?.kill_points ?? b?.total_kills ?? b?.kills) || 0;
+  if (bKillPts !== aKillPts) return bKillPts - aKillPts;
+
+  // Criterion 4: Best placement in the most recent match (1st beats 2nd; no-result loses)
+  const aHasPlacement =
+    a?.last_match_placement != null &&
+    Number.isFinite(Number(a.last_match_placement)) &&
+    Number(a.last_match_placement) > 0;
+  const bHasPlacement =
+    b?.last_match_placement != null &&
+    Number.isFinite(Number(b.last_match_placement)) &&
+    Number(b.last_match_placement) > 0;
+
+  if (aHasPlacement && bHasPlacement) {
+    const aPlacement = Number(a.last_match_placement);
+    const bPlacement = Number(b.last_match_placement);
+    if (aPlacement !== bPlacement) return aPlacement - bPlacement;
+  } else if (aHasPlacement && !bHasPlacement) {
+    return -1; // a wins because a played/placed in most recent match
+  } else if (!aHasPlacement && bHasPlacement) {
+    return 1; // b wins because b played/placed in most recent match
+  }
+
+  // All 4 criteria are equal: true tie
+  return 0;
+}
+
+/**
+ * Deterministic ranking order enforcing strict tie-break rules:
+ *   1. Total points (higher wins)
+ *   2. Total WWCDs (1st place finishes, higher wins)
+ *   3. Total placement points, higher wins
+ *   4. Total elimination (kill) points, higher wins
+ *   5. Best placement in the most recent match, higher wins (1st beats 2nd)
+ *   6. Fallback for display stability: slot_number (asc) then team_id (asc)
+ *
+ * Annotates each row with:
+ *   rank: 1-indexed rank
+ *   tie_broken: boolean indicating if row needed tie-break (shares total points with another row)
+ *   is_true_tie: boolean indicating all 4 criteria are equal to another row
+ */
+export function sortAndRank(rows = []) {
+  if (!Array.isArray(rows)) return [];
+
   const sorted = [...rows].sort((a, b) => {
-    const byPoints = (b.total_points || 0) - (a.total_points || 0);
-    if (byPoints !== 0) return byPoints;
-    const byKills = (b.total_kills || 0) - (a.total_kills || 0);
-    if (byKills !== 0) return byKills;
-    const byWwcd = (b.wwcd_count || 0) - (a.wwcd_count || 0);
-    if (byWwcd !== 0) return byWwcd;
-    const byPlacement = (a.best_placement || 999) - (b.best_placement || 999);
-    if (byPlacement !== 0) return byPlacement;
-    const aId = String(a.team_id);
-    const bId = String(b.team_id);
-    return aId < bId ? -1 : aId > bId ? 1 : 0;
+    const cmp = compareTeams(a, b);
+    if (cmp !== 0) return cmp;
+
+    // Display fallback when all 4 criteria are tied
+    const aSlot = a?.slot_number != null ? Number(a.slot_number) : 99999;
+    const bSlot = b?.slot_number != null ? Number(b.slot_number) : 99999;
+    if (aSlot !== bSlot) return aSlot - bSlot;
+
+    const aId = String(a?.team_id || a?.id || '');
+    const bId = String(b?.team_id || b?.id || '');
+    return aId.localeCompare(bId);
   });
-  return sorted.map((row, idx) => ({ ...row, rank: idx + 1 }));
+
+  // Track frequency of points to mark rows that required tie-breaking
+  const pointsCount = new Map();
+  for (const r of sorted) {
+    const pts = Number(r?.total_points ?? r?.points) || 0;
+    pointsCount.set(pts, (pointsCount.get(pts) || 0) + 1);
+  }
+
+  return sorted.map((row, idx) => {
+    const pts = Number(row?.total_points ?? row?.points) || 0;
+    const tieNeeded = (pointsCount.get(pts) || 0) > 1;
+    const isTrueTie = sorted.some((other, oIdx) => oIdx !== idx && compareTeams(row, other) === 0);
+
+    return {
+      ...row,
+      rank: idx + 1,
+      tie_broken: tieNeeded,
+      is_true_tie: isTrueTie,
+    };
+  });
 }
 
 /**
  * Fetch every scored team for a tournament and return ranked standings.
+ * Identifies the most recent match of the tournament to supply last_match_placement.
  */
 export async function calculateRankings(pool, tournamentId) {
+  let placementMap = new Map();
+  try {
+    const lastMatchRes = await pool.query(
+      `SELECT m.id
+       FROM tournament_matches m
+       JOIN tournament_match_results mr ON mr.match_id = m.id AND mr.status = 'verified'
+       LEFT JOIN tournament_rounds rnd ON rnd.id = m.round_id
+       LEFT JOIN tournament_days d ON d.id = m.day_id
+       WHERE m.tournament_id = $1
+       GROUP BY m.id, rnd.round_number, d.day_number, m.match_number
+       ORDER BY COALESCE(rnd.round_number, 1) DESC, COALESCE(d.day_number, 1) DESC, m.match_number DESC, m.id DESC
+       LIMIT 1`,
+      [tournamentId]
+    );
+
+    if (lastMatchRes.rows.length > 0) {
+      const lastMatchId = lastMatchRes.rows[0].id;
+      const placementsRes = await pool.query(
+        `SELECT team_id, MIN(placement)::int AS placement
+         FROM tournament_match_results
+         WHERE match_id = $1 AND tournament_id = $2 AND status = 'verified'
+         GROUP BY team_id`,
+        [lastMatchId, tournamentId]
+      );
+      for (const r of placementsRes.rows) {
+        if (r.placement != null) {
+          placementMap.set(r.team_id, Number(r.placement));
+        }
+      }
+    }
+  } catch {
+    // Tolerant fallback for test environments or unmigrated schemas
+  }
+
   const result = await pool.query(
     `SELECT lb.*, t.team_name, u.name as leader_name
      FROM tournament_leaderboard lb
@@ -126,5 +248,11 @@ export async function calculateRankings(pool, tournamentId) {
      WHERE lb.tournament_id = $1`,
     [tournamentId]
   );
-  return sortAndRank(result.rows);
+
+  const rows = result.rows.map((row) => ({
+    ...row,
+    last_match_placement: placementMap.has(row.team_id) ? placementMap.get(row.team_id) : null,
+  }));
+
+  return sortAndRank(rows);
 }

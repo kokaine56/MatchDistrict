@@ -143,9 +143,24 @@ export default function RoundQualifyPanel({
   // Tie detection at cutoff boundary
   const plannedCount = useMemo(() => getPlannedCount(summary, activeMode), [summary, activeMode]);
   const tieInfo = useMemo(() => {
-    if (!summary?.standings) return { hasTie: false };
+    if (!summary?.standings) return { hasTie: false, tiedTeams: [] };
+    if (activeMode === 'per_district') {
+      const topPerDist = Number(summary.planned_rule?.teams_advancing_per_district) || 2;
+      const allTied = [];
+      let foundTie = false;
+      let score = null;
+      for (const dist of (summary.districts || [])) {
+        const check = detectCutoffTies(dist.teams || [], topPerDist);
+        if (check.hasTie) {
+          foundTie = true;
+          score = check.cutoffScore;
+          allTied.push(...check.tiedTeams.map((t) => ({ ...t, districtName: dist.name || t.district_name })));
+        }
+      }
+      return { hasTie: foundTie, cutoffScore: score, tiedTeams: allTied };
+    }
     return detectCutoffTies(summary.standings, plannedCount);
-  }, [summary, plannedCount]);
+  }, [summary, plannedCount, activeMode]);
 
   // Placement computation: Snake seeding + Manual Overrides
   const { defaultSnakePlacement, districtBuckets } = useMemo(() => {
@@ -392,11 +407,44 @@ export default function RoundQualifyPanel({
 
           {/* Tie Warning Banner */}
           {tieInfo.hasTie && (
-            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-              <div>
-                <strong>Tie Detected at Cutoff Boundary ({tieInfo.cutoffScore} pts):</strong>{' '}
-                {tieInfo.tiedTeams.map((t) => t.team_name).join(', ')} share the exact same score at the qualification threshold. Review and adjust manual selections if needed.
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 space-y-3 shadow-lg">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-2 flex-1">
+                  <div>
+                    <h4 className="text-sm font-black text-amber-300">
+                      True Tie Detected at Cutoff Boundary ({tieInfo.cutoffScore} pts)
+                    </h4>
+                    <p className="text-xs text-amber-200/90 mt-0.5">
+                      The teams below are tied across <strong>all four</strong> tie-break criteria (Total Points, WWCDs, Placement Points, Elimination Points, and Recent Match Placement). The system will not decide silently. Please review and manually choose which team(s) advance:
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {tieInfo.tiedTeams.map((team) => {
+                      const isSelected = selectedTeamIds.includes(team.team_id);
+                      return (
+                        <button
+                          key={team.team_id}
+                          type="button"
+                          onClick={() => handleToggleTeam(team.team_id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-500 text-black shadow-md shadow-emerald-500/20'
+                              : 'bg-white/10 hover:bg-white/20 text-white border border-white/15'
+                          }`}
+                        >
+                          <span>{team.team_name}</span>
+                          <span className="text-[10px] opacity-80">
+                            (Rank #{team.rank ?? team.district_rank ?? '-'} &bull; {team.wwcd_count || 0} WWCD &bull; {team.total_kills || 0} Kills)
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${isSelected ? 'bg-black/20 text-black' : 'bg-amber-400/20 text-amber-300'}`}>
+                            {isSelected ? 'Selected' : 'Select'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -547,6 +595,22 @@ export default function RoundQualifyPanel({
                                 DQ
                               </span>
                             )}
+                            {(team.tie_broken || team.district_tie_broken || (summary.standings?.filter((s) => Number(s.total_points) === Number(team.total_points)).length > 1)) && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                title="Position determined by tie-break rules"
+                              >
+                                Tie-break
+                              </span>
+                            )}
+                            {(team.is_true_tie || team.district_is_true_tie) && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                                title="True tie across all 4 criteria"
+                              >
+                                Cutoff Tie
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-slate-500">LDR: {team.leader_name || 'Host'}</div>
                         </td>
@@ -603,6 +667,15 @@ export default function RoundQualifyPanel({
                   })}
                 </tbody>
               </table>
+            </div>
+            <div className="px-4 py-2.5 bg-black/40 border-t border-white/5 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <span className="font-bold text-slate-300">Tie-break order:</span>
+                <span>1. Total WWCDs &bull; 2. Total placement points &bull; 3. Total elimination points &bull; 4. Best placement in most recent match</span>
+              </span>
+              <span className="text-slate-500 text-[10px]">
+                * Tie-break note appears on rows where tie-breakers were needed
+              </span>
             </div>
           </div>
 
