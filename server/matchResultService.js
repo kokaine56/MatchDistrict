@@ -260,9 +260,6 @@ export async function applyMatchResults(client, { tournId, matchId, results, act
   if (tournRes.rows[0].finalized_at) {
     throw matchResultError(MATCH_RESULT_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; match results are locked.', 409);
   }
-  if (tournRes.rows[0].roadmap_status !== 'approved') {
-    throw matchResultError(MATCH_RESULT_ERR.ROADMAP_NOT_APPROVED, 'The tournament roadmap must be approved before results can be recorded.');
-  }
 
   // 2. Lock the match row and verify it belongs to the tournament.
   const matchRes = await client.query('SELECT id, "tournament_id", status FROM tournament_matches WHERE id = $1 FOR UPDATE', [matchId]);

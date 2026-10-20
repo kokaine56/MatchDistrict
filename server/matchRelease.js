@@ -33,7 +33,7 @@ export function normalizeReleaseMinutes(value, fallback = DEFAULT_CREDENTIALS_RE
 
 /**
  * Compute the absolute release timestamp for a match as an epoch (ms).
- * Naive local time: `new Date(\`${date}T${start_time}:00\`)` minus the release
+ * Explicit IST time: `new Date(`${date}T${startTime}:00+05:30`)` minus the release
  * window. Returns null when the date/start time cannot be interpreted.
  * @param {string} date  `YYYY-MM-DD`
  * @param {string} startTime  24h `HH:MM`
@@ -42,7 +42,7 @@ export function normalizeReleaseMinutes(value, fallback = DEFAULT_CREDENTIALS_RE
  */
 export function matchReleaseEpoch(date, startTime, releaseMinutes) {
   if (!date || !startTime || /^\d{2}:\d{2}$/.test(String(startTime)) === false) return null;
-  const matchDateTime = new Date(`${date}T${startTime}:00`);
+  const matchDateTime = new Date(`${date}T${startTime}:00+05:30`);
   if (Number.isNaN(matchDateTime.getTime())) return null;
   return matchDateTime.getTime() - normalizeReleaseMinutes(releaseMinutes) * 60000;
 }

@@ -82,14 +82,16 @@ export function formatRevealLabel(round = {}) {
 export function isRevealAvailable(round = {}, nowMs = Date.now()) {
   const r = getRoundRelease(round)
   if (!r.date || !r.time) return false
-  const d = new Date(`${r.date}T${r.time}`)
+  const timeWithSec = r.time.length === 5 ? `${r.time}:00` : r.time
+  const d = new Date(`${r.date}T${timeWithSec}+05:30`)
   if (isNaN(d.getTime())) return false
   return d.getTime() <= nowMs
 }
 
 export function getRoundState(round = {}, nowMs = Date.now()) {
   if (!round.date || !/^\d{2}:\d{2}$/.test(round.time || '')) return 'upcoming'
-  const d = new Date(`${round.date}T${round.time}`)
+  const timeWithSec = round.time.length === 5 ? `${round.time}:00` : round.time
+  const d = new Date(`${round.date}T${timeWithSec}+05:30`)
   if (isNaN(d.getTime())) return 'upcoming'
   const start = d.getTime()
   if (nowMs >= start + ROUND_LIVE_WINDOW_MS) return 'completed'

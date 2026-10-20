@@ -124,10 +124,6 @@ export async function qualifyMatch(client, { tournamentId, matchId, actorId = nu
   if (tournRes.rows[0].finalized_at) {
     throw progressionError(PROGRESSION_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; progression is locked.');
   }
-  if (tournRes.rows[0].roadmap_status !== 'approved') {
-    throw progressionError(PROGRESSION_ERR.ROADMAP_NOT_APPROVED, 'The roadmap must be approved before qualifying teams.');
-  }
-
   const matchRes = await client.query(
     'SELECT id, round_id, match_number, next_match_id, next_round_id, teams_advancing, progression_processed FROM tournament_matches WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
     [matchId, tournamentId]
@@ -186,46 +182,59 @@ export async function qualifyMatch(client, { tournamentId, matchId, actorId = nu
     return {
       success: true,
       alreadyProcessed: false,
+      roundCompleted: false,
       message: 'Match processed, waiting for all matches in the round to complete.',
       status: 'WAITING'
     };
   }
 
-  const roundRes = await client.query('SELECT id, teams_advancing FROM tournament_rounds WHERE id = $1', [match.round_id]);
-  const round = roundRes.rows[0];
-
-  // ALL source matches in the round are ready. Global aggregation.
-  const allQualifiers = await processRoundQualifiers(client, tournamentId, match.round_id, round.teams_advancing);
-
-  let targetMatchIds = [];
+  // For round-level progression (next_round_id), do NOT auto-advance teams or write
+  // tournament_match_assignments. The organizer's explicit Qualify action is the sole advancement authority.
   if (match.next_round_id) {
-    const gfMatches = await client.query('SELECT id FROM tournament_matches WHERE round_id = $1', [match.next_round_id]);
-    targetMatchIds = gfMatches.rows.map(r => r.id);
-  } else if (match.next_match_id) {
-    targetMatchIds = [match.next_match_id];
+    return {
+      success: true,
+      alreadyProcessed: false,
+      roundCompleted: true,
+      message: 'Match processed. All matches in the round are verified; ready for organizer round advancement.',
+      status: 'COMPLETED'
+    };
   }
 
-  const outcomes = [];
-  
-  for (const team of allQualifiers) {
-    for (const targetMatchId of targetMatchIds) {
-      const allocId = randomId('ASN-');
-      await client.query(
-        `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, status, source)
-           VALUES ($1, $2, $3, $4, 'allocated', $5)
-           ON CONFLICT (tournament_team_id, match_id) DO NOTHING`,
-        [allocId, tournamentId, team.team_id, targetMatchId, ALLOCATION_SOURCES.ADVANCEMENT]
-      );
+  // If next_match_id (match-to-match progression) is explicitly configured, advance to that specific target match
+  if (match.next_match_id) {
+    const roundRes = await client.query('SELECT id, teams_advancing FROM tournament_rounds WHERE id = $1', [match.round_id]);
+    const round = roundRes.rows[0] || {};
+    const allQualifiers = await processRoundQualifiers(client, tournamentId, match.round_id, round.teams_advancing);
+    const targetMatchIds = [match.next_match_id];
+    const outcomes = [];
+
+    for (const team of allQualifiers) {
+      for (const targetMatchId of targetMatchIds) {
+        const allocId = randomId('ASN-');
+        await client.query(
+          `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, status, source)
+             VALUES ($1, $2, $3, $4, 'allocated', $5)
+             ON CONFLICT (tournament_team_id, match_id) DO NOTHING`,
+          [allocId, tournamentId, team.team_id, targetMatchId, ALLOCATION_SOURCES.ADVANCEMENT]
+        );
+      }
+      outcomes.push({ teamId: team.team_id, status: 'advanced' });
     }
-    outcomes.push({ teamId: team.team_id, status: 'advanced' });
+
+    return {
+      success: true,
+      alreadyProcessed: false,
+      advancedCount: allQualifiers.length,
+      outcomes,
+      message: `All matches in round processed. ${allQualifiers.length} team(s) advanced to next match.`,
+      status: 'COMPLETED'
+    };
   }
 
   return {
     success: true,
     alreadyProcessed: false,
-    advancedCount: allQualifiers.length,
-    outcomes,
-    message: `All matches in round processed. ${allQualifiers.length} total team(s) qualified globally and advanced.`,
+    message: 'Match processed.',
     status: 'COMPLETED'
   };
 }

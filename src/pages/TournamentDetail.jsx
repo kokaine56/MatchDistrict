@@ -1675,6 +1675,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {activeTab === 'roadmap' && (
               <div className="w-full">
                 <TournamentRoadmapBuilder
+                  key={tourney?.id}
                   tournamentId={tourney?.id}
                   tournamentTitle={tourney?.title}
                   isOrganizer={isTournamentOwner}

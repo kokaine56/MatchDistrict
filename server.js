@@ -32,6 +32,7 @@ import {
 import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus, createInvitationCredentials } from './server/registrationTeamBridge.js';
 import { allocateTeam, AllocationError, ALLOCATION_SOURCES, ALLOCATION_ERR } from './server/allocationService.js';
 import { matchReleaseEpoch, isMatchReleased, normalizeReleaseMinutes } from './server/matchRelease.js';
+import { isRoadmapPublished } from './server/roadmapStatus.js';
 import {
   qualifyMatch,
   qualifyRound,
@@ -1082,6 +1083,7 @@ async function initDb() {
         ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
         ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_match INTEGER;
         ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_order INTEGER;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_in INTEGER;
       `);
 
       // Day numbers are now 1-based WITHIN a round ("Round 2 · Day 1"), so the
@@ -5169,10 +5171,12 @@ const server = http.createServer(async (req, res) => {
         }
 
         const payload = JSON.parse(body || '{}');
-        const teamIds = Array.isArray(payload.team_ids) ? payload.team_ids : [];
-        let targetRoundId = payload.target_round_id;
-        const targetGroupId = payload.target_group_id || null;
-        const sourceRoundId = payload.source_round_id || null;
+        const teamIds = Array.isArray(payload.team_ids)
+          ? payload.team_ids
+          : (Array.isArray(payload.teamIds) ? payload.teamIds : []);
+        let targetRoundId = payload.target_round_id || payload.targetRoundId;
+        const targetGroupId = payload.target_group_id || payload.targetGroupId || null;
+        const sourceRoundId = payload.source_round_id || payload.sourceRoundId || null;
 
         if (!targetRoundId && routeRoundNum) {
           const nextRnd = await pool.query(
@@ -6988,16 +6992,19 @@ const server = http.createServer(async (req, res) => {
       const authUser = getAuthUser(req);
       if (!authUser) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
       }
+
       const tCheck = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
       if (tCheck.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && tCheck.rows[0].orgId !== authUser.id) {
+
+      const isOwnerOrAdmin = authUser.role === 'admin' || hasRole(authUser, ROLES.ADMIN) || tCheck.rows[0].orgId === authUser.id;
+      if (!isOwnerOrAdmin) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only tournament organizer or admin can access districts configuration.' }));
       }
 
       const districtsData = await getTournamentDistricts(pool, tId);
@@ -7075,7 +7082,7 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         }
-        const oRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tId]);
+        const oRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status, "slotsTotal", teams_per_group, teams_per_match FROM tournaments WHERE id = $1', [tId]);
         if (oRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -7103,8 +7110,15 @@ const server = http.createServer(async (req, res) => {
           };
         }
 
+        const slotsTotal = parseInt(oRes.rows[0].slotsTotal, 10) || 64;
+        const teamsPerGroup = parseInt(oRes.rows[0].teams_per_group || oRes.rows[0].teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
+
         // Validate complete roadmap
-        const validation = validateManualRoadmap(roadmapData);
+        const validation = validateManualRoadmap(roadmapData, {
+          isPublish: true,
+          slotsTotal,
+          teams_per_group: teamsPerGroup,
+        });
         if (!validation.valid) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({
@@ -7361,7 +7375,7 @@ const server = http.createServer(async (req, res) => {
   if (roadmapGetMatch && req.method === 'GET') {
     const tId = decodeURIComponent(roadmapGetMatch[1]);
     try {
-      const tRes = await pool.query('SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, "prizeSplit1st", "prizeSplit2nd", "prizeSplit3rd", "prizeSplitMvp", prize_positions FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT "orgId", roadmap_status, rounds_published, room_credentials_release_minutes, status, timeline, "slotsTotal", teams_per_group, teams_per_match, game, matches_per_day, first_match_time, match_gap_minutes, match_duration_minutes, teams_advancing_per_district, enable_semi_finals, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, prize_positions, card_color FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -7371,7 +7385,7 @@ const server = http.createServer(async (req, res) => {
       const authUser = getAuthUser(req);
       const isOrganizer = !!(authUser && (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id));
       const nowMs = Date.now();
-      const isPublished = (t.roadmap_status === 'approved' || t.roadmap_status === 'published') && t.rounds_published !== false;
+      const isPublished = isRoadmapPublished(t);
 
       // ── PARTICIPANT / PUBLIC MODE PRIVACY GATE ──
       // Until published, ordinary participants and visitors see ONLY "Roadmap will be published soon."
@@ -7383,6 +7397,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({
           success: true,
           mode: 'public',
+          viewer_is_organizer: false,
+          is_organizer: false,
           roadmap_status: t.roadmap_status || 'draft',
           published: false,
           message: 'Roadmap will be published soon.',
@@ -7444,12 +7460,39 @@ const server = http.createServer(async (req, res) => {
         total_teams: districtsData.meta.total_teams,
         prize: t.prize || null,
         prize_pool_amount: t.prize_pool_amount || null,
-        prize_split_1st: t.prizeSplit1st || null,
-        prize_split_2nd: t.prizeSplit2nd || null,
-        prize_split_3rd: t.prizeSplit3rd || null,
-        prize_split_mvp: t.prizeSplitMvp || null,
+        prize_split_1st: t.prize_split_1st || t.prizeSplit1st || null,
+        prize_split_2nd: t.prize_split_2nd || t.prizeSplit2nd || null,
+        prize_split_3rd: t.prize_split_3rd || t.prizeSplit3rd || null,
+        prize_split_mvp: t.prize_split_mvp || t.prizeSplitMvp || null,
         prize_positions: t.prize_positions || null,
+        card_color: t.card_color || 'white',
       };
+
+      // Check if slotsTotal changed after roadmap was created
+      let plannedCapacity = null;
+      if (structuredRounds && structuredRounds.length > 0) {
+        if (structuredRounds[0].teams_in != null && structuredRounds[0].teams_in > 0) {
+          plannedCapacity = Number(structuredRounds[0].teams_in);
+        } else {
+          const r1Districts = new Set();
+          for (const d of (structuredRounds[0].days || [])) {
+            for (const a of (d.allocations || [])) {
+              if (a.district_id) r1Districts.add(a.district_id);
+            }
+          }
+          if (r1Districts.size > 0) {
+            plannedCapacity = r1Districts.size * teamsPerGroup;
+          }
+        }
+      }
+
+      if (isOrganizer && plannedCapacity != null && plannedCapacity !== slotsTotal) {
+        roadmapMeta.capacity_warning = `Roadmap was built for ${plannedCapacity} teams, but tournament capacity is now ${slotsTotal}.`;
+        roadmapMeta.capacity_mismatch = {
+          planned: plannedCapacity,
+          current: slotsTotal,
+        };
+      }
 
       if (isOrganizer) {
         res.writeHead(200, {
@@ -7459,6 +7502,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({
           success: true,
           mode: 'organizer',
+          viewer_is_organizer: true,
+          is_organizer: true,
           roadmap_status: t.roadmap_status || (days.length > 0 ? 'draft' : 'pending'),
           published: isPublished,
           participant: null,
@@ -7467,7 +7512,15 @@ const server = http.createServer(async (req, res) => {
             days,
             groups: groups.rows,
             rooms: rooms.rows,
-            matches: matches.rows,
+            matches: matches.rows.map(m => {
+              const dayRow = days.find(d => d.id === m.day_id);
+              const dateStr = dayRow ? dayRow.date : null;
+              const released = isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
+              return {
+                ...m,
+                credentials_available: released,
+              };
+            }),
             assignments: assignments.rows,
             districts: districtsData.districts,
             structured_rounds: structuredRounds,
@@ -7496,6 +7549,8 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({
         success: true,
         mode: team ? 'participant' : 'public',
+        viewer_is_organizer: false,
+        is_organizer: false,
         roadmap_status: t.roadmap_status || 'published',
         published: true,
         participant: team ? { team_id: team.id, team_name: team.team_name, team_status: team.status } : null,
@@ -7528,6 +7583,7 @@ const server = http.createServer(async (req, res) => {
             };
           }),
           assignments: assignments.rows,
+          districts: districtsData.districts,
           meta: roadmapMeta,
         }
       }));

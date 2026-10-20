@@ -32,6 +32,7 @@ export const ROUND_TYPES = Object.freeze([
 export const ADVANCEMENT_TYPES = Object.freeze([
   'per_district',
   'per_match',
+  'overall',
   'round_total',
   'manual',
 ]);
@@ -69,7 +70,7 @@ export function generateRandomId(prefix = '') {
  */
 export async function getTournamentDistricts(poolOrClient, tournamentId) {
   const tRes = await poolOrClient.query(
-    'SELECT id, title, "slotsTotal", "slotsFilled", teams_per_group, teams_per_match, game, status, roadmap_status, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, "prizeSplit1st", "prizeSplit2nd", "prizeSplit3rd", "prizeSplitMvp", prize_positions FROM tournaments WHERE id = $1',
+    'SELECT id, title, "slotsTotal", "slotsFilled", teams_per_group, teams_per_match, game, status, roadmap_status, "registrationCloseDate", "registrationOpenDate", "startDate", date, prize, prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, prize_positions FROM tournaments WHERE id = $1',
     [tournamentId]
   );
   if (tRes.rows.length === 0) {
@@ -207,10 +208,10 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
       start_date: tourney.startDate || tourney.date || null,
       prize: tourney.prize || null,
       prize_pool_amount: tourney.prize_pool_amount || null,
-      prize_split_1st: tourney.prizeSplit1st || null,
-      prize_split_2nd: tourney.prizeSplit2nd || null,
-      prize_split_3rd: tourney.prizeSplit3rd || null,
-      prize_split_mvp: tourney.prizeSplitMvp || null,
+      prize_split_1st: tourney.prize_split_1st || tourney.prizeSplit1st || null,
+      prize_split_2nd: tourney.prize_split_2nd || tourney.prizeSplit2nd || null,
+      prize_split_3rd: tourney.prize_split_3rd || tourney.prizeSplit3rd || null,
+      prize_split_mvp: tourney.prize_split_mvp || tourney.prizeSplitMvp || null,
       prize_positions: tourney.prize_positions || null,
       has_empty_districts: emptyDistricts.length > 0,
       is_consistent: true,
@@ -308,7 +309,7 @@ export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
     return Math.max(0, matchCount * perMatch);
   }
 
-  if (advType === 'round_total' || advType === 'manual') {
+  if (advType === 'overall' || advType === 'round_total' || advType === 'manual') {
     return Math.max(0, Number(roundConfig.teams_advancing) || 0);
   }
 
@@ -332,6 +333,10 @@ export function validateManualRoadmap(roadmapData, options = {}) {
   const roundIds = new Set();
   const roundNames = new Set();
   const roundOrderMap = new Map();
+
+  let prevRoundEndDate = null;
+  let prevRoundQualifiers = null;
+  let prevRoundName = null;
 
   for (let rIdx = 0; rIdx < rounds.length; rIdx++) {
     const round = rounds[rIdx];
@@ -363,13 +368,34 @@ export function validateManualRoadmap(roadmapData, options = {}) {
 
     let totalRoundMatches = 0;
     const scheduledDistrictsInRound = new Set();
+    let prevDayDate = null;
+    let roundStartDate = null;
+    let roundEndDate = null;
 
     for (let dIdx = 0; dIdx < days.length; dIdx++) {
       const day = days[dIdx];
       const dNum = day.day_number || dIdx + 1;
 
-      if (day.date && !isValidDateStr(day.date)) {
+      // Validate date
+      if (options.isPublish && (!day.date || !isValidDateStr(day.date))) {
+        errors.push(`Day ${dNum} in "${rName || `Round ${rNum}`}" must have a valid date in YYYY-MM-DD format.`);
+      } else if (day.date && !isValidDateStr(day.date)) {
         warnings.push(`Day ${dNum} in "${rName || `Round ${rNum}`}" has an invalid date format (expected YYYY-MM-DD).`);
+      }
+
+      if (day.date && isValidDateStr(day.date)) {
+        if (!roundStartDate) roundStartDate = day.date;
+        roundEndDate = day.date;
+
+        if (prevDayDate && day.date < prevDayDate) {
+          const msg = `Day ${dNum} date (${day.date}) cannot precede Day ${dNum - 1} date (${prevDayDate}) in "${rName || `Round ${rNum}`}".`;
+          if (options.isPublish) {
+            errors.push(msg);
+          } else {
+            warnings.push(msg);
+          }
+        }
+        prevDayDate = day.date;
       }
 
       const allocations = Array.isArray(day.allocations) ? day.allocations : [];
@@ -403,11 +429,19 @@ export function validateManualRoadmap(roadmapData, options = {}) {
         totalRoundMatches += matchCount;
 
         const matches = Array.isArray(alloc.matches) ? alloc.matches : [];
+        if (options.isPublish && matches.length === 0) {
+          errors.push(`District "${distName}" on Day ${dNum} has no matches configured.`);
+        }
+
         for (let mIdx = 0; mIdx < matches.length; mIdx++) {
           const match = matches[mIdx];
           const mLabel = match.district_match_number || mIdx + 1;
 
-          if (match.start_time && toMins(match.start_time) === null) {
+          if (!match.start_time) {
+            if (options.isPublish) {
+              errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} requires a start time.`);
+            }
+          } else if (toMins(match.start_time) === null) {
             errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} has an invalid start time "${match.start_time}". Expected HH:MM format.`);
           }
         }
@@ -417,6 +451,46 @@ export function validateManualRoadmap(roadmapData, options = {}) {
     if (totalRoundMatches === 0) {
       errors.push(`Round "${rName || `Round ${rNum}`}" has no matches scheduled.`);
     }
+
+    // Chronological order across rounds
+    if (roundStartDate && prevRoundEndDate && roundStartDate < prevRoundEndDate) {
+      const msg = `Round "${rName || `Round ${rNum}`}" starts on ${roundStartDate}, which is before previous round "${prevRoundName}" ends on ${prevRoundEndDate}.`;
+      if (options.isPublish) {
+        errors.push(msg);
+      } else {
+        warnings.push(msg);
+      }
+    }
+    if (roundEndDate) {
+      prevRoundEndDate = roundEndDate;
+    }
+
+    // Publish check: in Round 1, check that all expected districts are assigned to at least one day
+    if (options.isPublish && rIdx === 0) {
+      const slotsTotal = Number(options.slotsTotal);
+      const teamsPerGroup = Number(options.teams_per_group || 16);
+      if (slotsTotal > 0 && teamsPerGroup > 0) {
+        const expectedCount = Math.ceil(slotsTotal / teamsPerGroup);
+        if (scheduledDistrictsInRound.size < expectedCount) {
+          errors.push(`Round 1 only has ${scheduledDistrictsInRound.size} of ${expectedCount} required districts scheduled. Every district must be assigned to a day.`);
+        }
+      }
+    }
+
+    // Calculate advancing teams for this round
+    const advancingTeams = calculateAdvancingTeams(round, scheduledDistrictsInRound.size);
+
+    // Rule consistency: incoming teams vs previous round qualifiers
+    if (rIdx > 0 && round.teams_in != null && prevRoundQualifiers != null && prevRoundQualifiers > 0) {
+      const incoming = Number(round.teams_in);
+      if (incoming !== prevRoundQualifiers) {
+        warnings.push(
+          `"${rName || `Round ${rNum}`}" is planned for ${incoming} incoming teams, but previous round "${prevRoundName}" qualifies ${prevRoundQualifiers} teams.`
+        );
+      }
+    }
+    prevRoundQualifiers = advancingTeams;
+    prevRoundName = rName || `Round ${rNum}`;
 
     // Progression / advancement validation (only for qualifying/non-final rounds)
     const isGrandFinal = round.round_type === 'grand_final';
@@ -429,7 +503,6 @@ export function validateManualRoadmap(roadmapData, options = {}) {
       if (!targetRound) {
         errors.push(`Round "${rName}" targets next round "${round.advancement_target_round_id}" which does not exist in the roadmap.`);
       } else {
-        const advancingTeams = calculateAdvancingTeams(round, scheduledDistrictsInRound.size);
         const targetCapacity = Number(targetRound.capacity) || Number(options.teams_per_district || 16);
         if (advancingTeams > targetCapacity && (!targetRound.advancement_target_round_id || targetRound.round_type === 'grand_final')) {
           warnings.push(
@@ -482,6 +555,12 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
     [tournamentId]
   ).catch(() => {});
 
+  // Temporarily negate existing match numbers to prevent UNIQUE(tournament_id, round_id, match_number) collisions when reordering
+  await client.query(
+    `UPDATE tournament_matches SET match_number = -1 * (ABS(match_number) + 1000) WHERE tournament_id = $1`,
+    [tournamentId]
+  ).catch(() => {});
+
   for (let rIdx = 0; rIdx < rounds.length; rIdx++) {
     const r = rounds[rIdx];
     const roundId = r.id || `RND-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
@@ -496,14 +575,15 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
     const teamsAdvPerDist = (!isGrandFinal && r.teams_advancing_per_district) ? Number(r.teams_advancing_per_district) : null;
     const teamsAdvPerMatch = (!isGrandFinal && r.teams_advancing_per_match) ? Number(r.teams_advancing_per_match) : null;
     const nextRoundId = isGrandFinal ? null : (r.advancement_target_round_id || null);
+    const teamsIn = r.teams_in != null ? Number(r.teams_in) : null;
 
     await client.query(
       `INSERT INTO tournament_rounds (
         id, tournament_id, round_number, name, status, teams_advancing,
         round_type, advancement_type, advancement_target_round_id,
-        teams_advancing_per_district, teams_advancing_per_match, round_order, updated_at
+        teams_advancing_per_district, teams_advancing_per_match, round_order, teams_in, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
       ON CONFLICT (id) DO UPDATE
       SET round_number = EXCLUDED.round_number,
           name = EXCLUDED.name,
@@ -514,6 +594,7 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
           teams_advancing_per_district = EXCLUDED.teams_advancing_per_district,
           teams_advancing_per_match = EXCLUDED.teams_advancing_per_match,
           round_order = EXCLUDED.round_order,
+          teams_in = EXCLUDED.teams_in,
           updated_at = NOW()`,
       [
         roundId,
@@ -528,6 +609,7 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
         teamsAdvPerDist,
         teamsAdvPerMatch,
         roundNumber,
+        teamsIn,
       ]
     );
 
@@ -537,6 +619,12 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
     // Temporarily negate day numbers within this round to avoid UNIQUE(tournament_id, round_id, day_number) collision
     await client.query(
       `UPDATE tournament_days SET day_number = -1 * (ABS(day_number) + 1000) WHERE tournament_id = $1 AND round_id = $2`,
+      [tournamentId, roundId]
+    ).catch(() => {});
+
+    // Temporarily negate match numbers within this round to avoid UNIQUE(tournament_id, round_id, match_number) collision
+    await client.query(
+      `UPDATE tournament_matches SET match_number = -1 * (ABS(match_number) + 1000) WHERE tournament_id = $1 AND round_id = $2`,
       [tournamentId, roundId]
     ).catch(() => {});
 
@@ -891,6 +979,7 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
       name: rnd.name,
       round_type: rnd.round_type || (isGrandFinal ? 'grand_final' : 'qualifier'),
       status: rnd.status || 'configured',
+      teams_in: rnd.teams_in != null ? Number(rnd.teams_in) : null,
       advancement_type: isGrandFinal ? null : (rnd.advancement_type || 'per_district'),
       teams_advancing: isGrandFinal ? null : rnd.teams_advancing,
       teams_advancing_per_district: isGrandFinal ? null : rnd.teams_advancing_per_district,
