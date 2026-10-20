@@ -53,6 +53,7 @@ export default function OrganizerRoadmapEditor({
   const [showLeaveWarning, setShowLeaveWarning] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [serverValidation, setServerValidation] = useState({ errors: [], warnings: [] });
+  const [serverErrorBanner, setServerErrorBanner] = useState(null);
   const [successBanner, setSuccessBanner] = useState(null);
 
   // Synchronize when server rounds change
@@ -87,34 +88,44 @@ export default function OrganizerRoadmapEditor({
   // Save Draft
   const handleSaveDraft = async () => {
     setServerValidation({ errors: [], warnings: [] });
+    setServerErrorBanner(null);
     try {
       const res = await onSaveDraft({ rounds: workingRounds });
       if (res && res.success) {
         setHasUnsavedChanges(false);
         setSuccessBanner('Draft saved successfully.');
         setTimeout(() => setSuccessBanner(null), 4000);
-      } else if (res && res.errors) {
+      } else if (res && res.serverError) {
+        setServerErrorBanner(res.serverError);
+      } else if (res && res.errors && res.errors.length > 0) {
         setServerValidation({ errors: res.errors || [], warnings: res.warnings || [] });
+      } else if (res && !res.success) {
+        setServerErrorBanner(res.message || 'Failed to save draft.');
       }
     } catch (err) {
-      setServerValidation({ errors: [err.message || 'Failed to save draft.'], warnings: [] });
+      setServerErrorBanner(err.message || 'Failed to save draft.');
     }
   };
 
   // Publish
   const handlePublish = async () => {
     setServerValidation({ errors: [], warnings: [] });
+    setServerErrorBanner(null);
     try {
       const res = await onPublish({ rounds: workingRounds });
       if (res && res.success) {
         setHasUnsavedChanges(false);
         setSuccessBanner('Roadmap published successfully! Participants can now view the match schedule.');
         setTimeout(() => setSuccessBanner(null), 5000);
-      } else if (res && res.errors) {
+      } else if (res && res.serverError) {
+        setServerErrorBanner(res.serverError);
+      } else if (res && res.errors && res.errors.length > 0) {
         setServerValidation({ errors: res.errors || [], warnings: res.warnings || [] });
+      } else if (res && !res.success) {
+        setServerErrorBanner(res.message || 'Failed to publish roadmap.');
       }
     } catch (err) {
-      setServerValidation({ errors: [err.message || 'Failed to publish roadmap.'], warnings: [] });
+      setServerErrorBanner(err.message || 'Failed to publish roadmap.');
     }
   };
 
@@ -271,6 +282,25 @@ export default function OrganizerRoadmapEditor({
                 <span className="font-semibold">{successBanner}</span>
               </div>
               <button onClick={() => setSuccessBanner(null)} className="text-emerald-700 hover:text-emerald-900 p-1">
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+
+          {serverErrorBanner && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3 sm:mt-4 p-3.5 sm:p-4 rounded-xl bg-red-50 border border-red-300 text-red-900 text-xs flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <div>
+                  <span className="font-bold block text-red-800">Server Error:</span>
+                  <span className="text-[11px] text-red-700">{serverErrorBanner}</span>
+                </div>
+              </div>
+              <button onClick={() => setServerErrorBanner(null)} className="text-red-700 hover:text-red-900 p-1">
                 <X className="w-4 h-4" />
               </button>
             </motion.div>

@@ -5892,12 +5892,30 @@ const server = http.createServer(async (req, res) => {
         }
       } catch (err) {
         console.error('Roadmap draft save error:', err);
-        if (err.code === 'ROUND_STRUCTURALLY_LOCKED' || err.code === 'DAY_LOCKED' || err.code === 'MATCH_LOCKED') {
+        if (err.code === 'ROUND_STRUCTURALLY_LOCKED' || err.code === 'DAY_LOCKED' || err.code === 'MATCH_LOCKED' || err.code === 'ROOM_LOCKED') {
           res.writeHead(409, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: err.code, message: err.message }));
+          return res.end(JSON.stringify({ success: false, error: err.code, message: err.message, serverError: err.message }));
+        }
+        if (err.code === '23505' || (err.message && err.message.includes('unique constraint'))) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'DATABASE_UNIQUE_VIOLATION',
+            serverError: 'A scheduling conflict occurred while saving room or match numbering. Please try saving again.',
+            message: 'A scheduling conflict occurred while saving room or match numbering. Please try saving again.'
+          }));
+        }
+        if (err.code && /^[0-9A-Z]{5}$/.test(err.code)) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'DATABASE_ERROR',
+            serverError: 'An unexpected database error occurred while saving the roadmap draft. Details have been logged.',
+            message: 'An unexpected database error occurred while saving the roadmap draft. Details have been logged.'
+          }));
         }
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', message: err.message || 'Failed to save roadmap draft.' }));
+        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: err.message || 'Failed to save roadmap draft.', message: err.message || 'Failed to save roadmap draft.' }));
       }
     });
     return;
@@ -5985,8 +6003,30 @@ const server = http.createServer(async (req, res) => {
         }
       } catch (err) {
         console.error('Roadmap publish error:', err);
+        if (err.code === 'ROUND_STRUCTURALLY_LOCKED' || err.code === 'DAY_LOCKED' || err.code === 'MATCH_LOCKED' || err.code === 'ROOM_LOCKED') {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: err.code, message: err.message, serverError: err.message }));
+        }
+        if (err.code === '23505' || (err.message && err.message.includes('unique constraint'))) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'DATABASE_UNIQUE_VIOLATION',
+            serverError: 'A scheduling conflict occurred while publishing the roadmap. Please try publishing again.',
+            message: 'A scheduling conflict occurred while publishing the roadmap. Please try publishing again.'
+          }));
+        }
+        if (err.code && /^[0-9A-Z]{5}$/.test(err.code)) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'DATABASE_ERROR',
+            serverError: 'An unexpected database error occurred while publishing the roadmap. Details have been logged.',
+            message: 'An unexpected database error occurred while publishing the roadmap. Details have been logged.'
+          }));
+        }
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', message: err.message || 'Failed to publish roadmap.' }));
+        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: err.message || 'Failed to publish roadmap.', message: err.message || 'Failed to publish roadmap.' }));
       }
     });
     return;

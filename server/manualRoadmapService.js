@@ -730,6 +730,52 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
 
   let globalMatchCounter = 0;
 
+  // Identify rooms that already have verified match results or configured credentials.
+  // Their room_number must NOT be modified or temporarily negated.
+  const lockedRoomIds = new Set();
+  const preservedRoomNumbers = new Map();
+  for (const om of oldMatches) {
+    const hasResults = protectedMatchIds.has(om.id);
+    const hasCreds = Boolean(
+      (om.room_identifier && om.room_identifier.trim()) ||
+      (om.room_password && om.room_password.trim())
+    );
+    if (hasResults || hasCreds) {
+      if (om.room_id) lockedRoomIds.add(om.room_id);
+    }
+  }
+  for (const r of oldRooms) {
+    if (lockedRoomIds.has(r.id)) {
+      preservedRoomNumbers.set(r.id, r.room_number);
+    }
+  }
+
+  // Temporarily negate existing room numbers for modifiable rooms to prevent UNIQUE(tournament_id, room_number) collision during reordering
+  if (lockedRoomIds.size > 0) {
+    await client.query(
+      `UPDATE tournament_rooms SET room_number = -1 * (ABS(room_number) + 1000) WHERE tournament_id = $1 AND NOT (id = ANY($2))`,
+      [tournamentId, Array.from(lockedRoomIds)]
+    ).catch(() => {});
+  } else {
+    await client.query(
+      `UPDATE tournament_rooms SET room_number = -1 * (ABS(room_number) + 1000) WHERE tournament_id = $1`,
+      [tournamentId]
+    ).catch(() => {});
+  }
+
+  const occupiedRoomNumbers = new Set(Array.from(preservedRoomNumbers.values()));
+  let nextFreeRoomNumber = 1;
+  function getNextFreeRoomNumber() {
+    while (occupiedRoomNumbers.has(nextFreeRoomNumber)) {
+      nextFreeRoomNumber++;
+    }
+    const allocated = nextFreeRoomNumber;
+    occupiedRoomNumbers.add(allocated);
+    nextFreeRoomNumber++;
+    return allocated;
+  }
+  const usedExistingRoomIds = new Set();
+
   // Temporarily negate existing round numbers to prevent UNIQUE(tournament_id, round_number) collisions when reordering/deleting
   await client.query(
     `UPDATE tournament_rounds SET round_number = -1 * (ABS(round_number) + 1000) WHERE tournament_id = $1`,
@@ -865,8 +911,44 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
           );
         }
 
-        // Technical Room representing this district on this day
-        const roomId = alloc.room_id || `RM-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+        // Technical Room representing this district on this day.
+        // Reuse existing room row for the same (day, district) if available to avoid duplicate inserts.
+        let matchedExistingRoom = null;
+        if (alloc.room_id && !usedExistingRoomIds.has(alloc.room_id)) {
+          matchedExistingRoom = oldRooms.find((r) => r.id === alloc.room_id) || null;
+        }
+        if (!matchedExistingRoom) {
+          matchedExistingRoom = oldRooms.find((r) => r.day_id === dayId && r.group_id === groupId && !usedExistingRoomIds.has(r.id)) || null;
+        }
+        if (!matchedExistingRoom) {
+          const candidateGroup = oldGroups.find((g) => g.day_id === dayId && (g.district_id === distId || g.group_name === distName));
+          if (candidateGroup) {
+            matchedExistingRoom = oldRooms.find((r) => r.day_id === dayId && r.group_id === candidateGroup.id && !usedExistingRoomIds.has(r.id)) || null;
+          }
+        }
+        if (!matchedExistingRoom) {
+          const candidateGroup = oldGroups.find((g) => g.district_id === distId || g.group_name === distName);
+          if (candidateGroup) {
+            matchedExistingRoom = oldRooms.find((r) => r.group_id === candidateGroup.id && !usedExistingRoomIds.has(r.id)) || null;
+          }
+        }
+
+        let roomId;
+        let targetRoomNumber;
+        if (matchedExistingRoom) {
+          roomId = matchedExistingRoom.id;
+          usedExistingRoomIds.add(roomId);
+          if (lockedRoomIds.has(roomId)) {
+            targetRoomNumber = preservedRoomNumbers.get(roomId);
+          } else {
+            targetRoomNumber = getNextFreeRoomNumber();
+          }
+        } else {
+          roomId = alloc.room_id || `RM-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
+          targetRoomNumber = getNextFreeRoomNumber();
+        }
+
+        alloc.room_id = roomId;
         currentRoomIds.add(roomId);
         const roomCapacity = Number(alloc.capacity) || 16;
 
@@ -874,8 +956,12 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
           `INSERT INTO tournament_rooms (id, tournament_id, day_id, group_id, round_id, room_number, capacity, status)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO UPDATE
-           SET day_id = EXCLUDED.day_id, group_id = EXCLUDED.group_id, round_id = EXCLUDED.round_id, capacity = EXCLUDED.capacity, room_number = EXCLUDED.room_number`,
-          [roomId, tournamentId, dayId, groupId, roundId, globalMatchCounter + aIdx + 1, roomCapacity, 'DRAFT']
+           SET day_id = EXCLUDED.day_id,
+               group_id = EXCLUDED.group_id,
+               round_id = EXCLUDED.round_id,
+               capacity = EXCLUDED.capacity,
+               room_number = EXCLUDED.room_number`,
+          [roomId, tournamentId, dayId, groupId, roundId, targetRoomNumber, roomCapacity, 'DRAFT']
         );
 
         const matches = Array.isArray(alloc.matches) ? alloc.matches : [];
@@ -968,6 +1054,11 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
   // Safe cleanup of unused rooms, groups, days, rounds
   for (const r of oldRooms) {
     if (!currentRoomIds.has(r.id)) {
+      if (lockedRoomIds.has(r.id)) {
+        const err = new Error(`Cannot delete room "${r.id}": this room has verified match results or configured credentials.`);
+        err.code = 'ROOM_LOCKED';
+        throw err;
+      }
       await client.query(`DELETE FROM tournament_rooms WHERE id = $1`, [r.id]).catch(() => {});
     }
   }

@@ -1227,11 +1227,13 @@ export default function TournamentRoadmapBuilder({
       });
       const data = await res.json();
       if (!data.success) {
-        const errList = data.errors || [data.message || data.error || "Failed to save draft."];
-        setError(errList[0]);
+        const isValidation = Array.isArray(data.errors) && data.errors.length > 0;
+        const msg = data.serverError || data.message || data.error || "Failed to save draft.";
+        setError(msg);
         return {
           success: false,
-          errors: errList,
+          errors: isValidation ? data.errors : [],
+          serverError: !isValidation ? msg : null,
           warnings: data.warnings || [],
         };
       }
@@ -1241,7 +1243,7 @@ export default function TournamentRoadmapBuilder({
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
       setError(err.message);
-      return { success: false, errors: [err.message || "Failed to save draft."], warnings: [] };
+      return { success: false, errors: [], serverError: err.message || "Failed to save draft.", warnings: [] };
     } finally {
       setSaving(false);
     }
@@ -1266,16 +1268,18 @@ export default function TournamentRoadmapBuilder({
       });
       const data = await res.json();
       if (!data.success) {
-        const errList = data.errors || [data.message || data.error || "Failed to publish roadmap."];
-        setError(errList[0]);
-        if (data.errors && Array.isArray(data.errors)) {
+        const isValidation = Array.isArray(data.errors) && data.errors.length > 0;
+        const msg = data.serverError || data.message || data.error || "Failed to publish roadmap.";
+        setError(msg);
+        if (isValidation) {
           setPublishErrors(data.errors);
         } else {
-          setPublishErrors(errList);
+          setPublishErrors([]);
         }
         return {
           success: false,
-          errors: errList,
+          errors: isValidation ? data.errors : [],
+          serverError: !isValidation ? msg : null,
           warnings: data.warnings || [],
         };
       }
@@ -1287,7 +1291,7 @@ export default function TournamentRoadmapBuilder({
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
       setError(err.message);
-      return { success: false, errors: [err.message || "Failed to publish roadmap."], warnings: [] };
+      return { success: false, errors: [], serverError: err.message || "Failed to publish roadmap.", warnings: [] };
     } finally {
       setPublishing(false);
     }
