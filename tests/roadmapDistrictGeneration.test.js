@@ -24,16 +24,17 @@ test('TEST A: 128 slots / 16 per district => 8 districts, 16 teams each, 8 quali
   const res = generateTournamentRoadmap({ id: 'A', slotsTotal: 128, teams_per_group: 16, startDate: '2026-10-10' });
   assert.strictEqual(res.ok, true, res.error);
   const rm = res.roadmap;
+  const { round: r1Round, matches } = ROUND1(rm);
+  const r1Groups = rm.groups.filter((g) => g.round_id === r1Round.id);
 
-  assert.strictEqual(rm.groups.length, 8, 'exactly 8 districts');
+  assert.strictEqual(r1Groups.length, 8, 'exactly 8 districts in Round 1');
   assert.strictEqual(rm.meta.num_groups, 8);
   assert.deepStrictEqual(rm.meta.district_sizes, [16, 16, 16, 16, 16, 16, 16, 16]);
 
-  const { matches } = ROUND1(rm);
   assert.strictEqual(matches.length, 8, 'one qualifier match per district');
   assert.strictEqual(new Set(matches.map((m) => m.group_id)).size, 8, 'unique district per match');
   assert.strictEqual(new Set(matches.map((m) => m.id)).size, 8, 'unique match ids');
-  assert.deepStrictEqual(rm.groups.map((g) => g.group_name), [
+  assert.deepStrictEqual(r1Groups.map((g) => g.group_name), [
     'District 1', 'District 2', 'District 3', 'District 4',
     'District 5', 'District 6', 'District 7', 'District 8',
   ]);
@@ -44,7 +45,8 @@ test('district count scales with capacity: 64=>4, 128=>8, 256=>16', () => {
   for (const [slots, expected] of [[64, 4], [128, 8], [256, 16]]) {
     const res = generateTournamentRoadmap({ id: `D${slots}`, slotsTotal: slots, teams_per_group: 16 });
     assert.strictEqual(res.ok, true, res.error);
-    assert.strictEqual(res.roadmap.groups.length, expected, `${slots} slots => ${expected} districts`);
+    const r1Groups = res.roadmap.groups.filter((g) => g.round_id === res.roadmap.rounds[0].id);
+    assert.strictEqual(r1Groups.length, expected, `${slots} slots => ${expected} districts`);
   }
 });
 
@@ -60,10 +62,11 @@ test('non-divisible capacity yields the smallest imbalance and keeps every team'
 // Test B/C/D: configurable matches per day ----------------------------------
 test('TEST B: 2 matches/day => 4 qualifier days, every district exactly once', () => {
   const res = generateTournamentRoadmap({ id: 'B', slotsTotal: 128, teams_per_group: 16, startDate: '2026-10-10', matches_per_day: 2 });
-  const { matches } = ROUND1(res.roadmap);
+  const { round: r1Round, matches } = ROUND1(res.roadmap);
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === r1Round.id);
   assert.strictEqual(matches.length, 8);
   assert.strictEqual(distinctDays(matches), 4);
-  assert.deepStrictEqual(res.roadmap.groups.map((g) => g.group_name).sort(), [
+  assert.deepStrictEqual(r1Groups.map((g) => g.group_name).sort(), [
     'District 1', 'District 2', 'District 3', 'District 4',
     'District 5', 'District 6', 'District 7', 'District 8',
   ]);
@@ -154,14 +157,17 @@ test('an unset capacity falls back to the platform default (64)', () => {
   const res = generateTournamentRoadmap({ id: 'DEFSLOTS' });
   assert.strictEqual(res.ok, true, res.error);
   assert.strictEqual(res.roadmap.meta.total_slots, 64);
-  assert.strictEqual(res.roadmap.groups.length, 4);
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === res.roadmap.rounds[0].id);
+  assert.strictEqual(r1Groups.length, 4);
 });
 
 test('planned (empty) districts remain visible when deriving from capacity', () => {
   // Capacity drives district count, never the number of registered teams.
   const res = generateTournamentRoadmap({ id: 'EMPTY', slotsTotal: 128, teams_per_group: 16 });
-  assert.strictEqual(res.roadmap.groups.length, 8);
-  assert.strictEqual(res.roadmap.matches.filter((m) => m.group_id).length, 8);
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === res.roadmap.rounds[0].id);
+  assert.strictEqual(r1Groups.length, 8);
+  assert.strictEqual(r1Groups.length, 8);
+  assert.ok(res.roadmap.matches.every((m) => m.group_id), 'every match in every round belongs to a district');
 });
 
 // Deterministic + idempotent structure --------------------------------------

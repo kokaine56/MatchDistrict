@@ -25,6 +25,7 @@ import {
   formatAdvancementError,
 } from './qualificationLogic.js';
 import QualifyConfirmModal from './QualifyConfirmModal.jsx';
+import MatchResultEntry from '../MatchResultEntry.jsx';
 
 export default function RoundQualifyPanel({
   tournamentId,
@@ -51,6 +52,9 @@ export default function RoundQualifyPanel({
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [advancementError, setAdvancementError] = useState(null);
+
+  // Match result entry modal state
+  const [selectedResultMatch, setSelectedResultMatch] = useState(null);
 
   // Active round selection
   const currentRoundId = selectedRoundId || availableRounds[0]?.id;
@@ -421,6 +425,61 @@ export default function RoundQualifyPanel({
             </div>
           ) : null}
 
+          {/* Matches Pending Results Box */}
+          {(() => {
+            const unverifiedMatchesList = (summary.unverified_matches && summary.unverified_matches.length > 0)
+              ? summary.unverified_matches
+              : (summary.unverified_match_ids || []).map((id, idx) => ({
+                  id,
+                  match_id: id,
+                  match_number: idx + 1,
+                  group_name: `District ${idx + 1}`,
+                }));
+
+            if (summary.results_complete && unverifiedMatchesList.length === 0) return null;
+
+            return (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 space-y-3 shadow-lg">
+                <div className="flex items-center gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-black text-amber-300">
+                      Matches Pending Results ({unverifiedMatchesList.length})
+                    </h4>
+                    <p className="text-xs text-amber-200/80">
+                      Some source round matches have no recorded results yet. Enter results before qualifying teams to ensure accurate standings.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                  {unverifiedMatchesList.map((m) => (
+                    <div
+                      key={m.id || m.match_id}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-amber-500/20 text-xs"
+                    >
+                      <div className="truncate pr-2">
+                        <span className="font-bold text-white block truncate">
+                          Match {m.match_number}
+                        </span>
+                        <span className="text-[10px] text-amber-400/90 block truncate">
+                          {m.group_name || `District ${m.match_number}`}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedResultMatch(m)}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-[11px] transition cursor-pointer shrink-0 shadow-sm"
+                      >
+                        Enter results
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Standings Table with Selection Checkboxes */}
           <div className="bg-[#0A0C10] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
@@ -663,6 +722,38 @@ export default function RoundQualifyPanel({
         submitting={advancing}
         error={advancementError}
       />
+
+      {/* Match Result Entry Modal */}
+      {selectedResultMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-2xl bg-[#0E1117] border border-white/10 rounded-2xl p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/10">
+              <h3 className="text-base font-black text-white">
+                Enter Match Results — Match {selectedResultMatch.match_number} ({selectedResultMatch.group_name || 'District'})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setSelectedResultMatch(null)}
+                className="text-slate-400 hover:text-white text-xs font-bold px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+            <MatchResultEntry
+              tournamentId={tournamentId}
+              matchDetails={{
+                match_id: selectedResultMatch.id || selectedResultMatch.match_id,
+                match_number: selectedResultMatch.match_number,
+              }}
+              onSaved={() => {
+                setSelectedResultMatch(null);
+                fetchSummary(currentRoundId);
+              }}
+              onCancel={() => setSelectedResultMatch(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -291,37 +291,9 @@ export function getPrizePositions(meta) {
   ];
 }
 
-/**
- * Pure calculation of advancing teams for a round based on configuration.
- * Grand Finals is the terminal stage and produces 0 advancing teams.
- */
-export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
-  if (!roundConfig) return 0;
-  if (roundConfig.round_type === 'grand_final') return 0;
-  const advType = roundConfig.advancement_type || 'per_district';
+export { calculateAdvancingTeams, syncAutoDistrictsForLaterRounds } from './roadmapAutoDistricts.js';
+import { calculateAdvancingTeams, syncAutoDistrictsForLaterRounds } from './roadmapAutoDistricts.js';
 
-  if (advType === 'per_district') {
-    const perDist = Number(roundConfig.teams_advancing_per_district) || 0;
-    const dists = districtCount || (Array.isArray(roundConfig.days)
-      ? new Set(roundConfig.days.flatMap((d) => (d.allocations || []).map((a) => a.district_id))).size
-      : 0);
-    return Math.max(0, dists * perDist);
-  }
-
-  if (advType === 'per_match') {
-    const perMatch = Number(roundConfig.teams_advancing_per_match) || 0;
-    const matchCount = Array.isArray(roundConfig.days)
-      ? roundConfig.days.reduce((acc, d) => acc + (d.allocations || []).reduce((a2, a) => a2 + (Number(a.match_count) || (a.matches ? a.matches.length : 0)), 0), 0)
-      : 0;
-    return Math.max(0, matchCount * perMatch);
-  }
-
-  if (advType === 'overall' || advType === 'round_total' || advType === 'manual') {
-    return Math.max(0, Number(roundConfig.teams_advancing) || 0);
-  }
-
-  return Math.max(0, Number(roundConfig.teams_advancing) || 0);
-}
 
 /**
  * Validate manual roadmap structure.
@@ -330,6 +302,12 @@ export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
 export function validateManualRoadmap(roadmapData, options = {}) {
   const errors = [];
   const warnings = [];
+
+  // Synchronize auto-districts for rounds after Round 1 (Round 2+, Grand Finals)
+  const syncResult = syncAutoDistrictsForLaterRounds(roadmapData, options);
+  if (syncResult?.warnings?.length > 0) {
+    warnings.push(...syncResult.warnings);
+  }
 
   const rounds = Array.isArray(roadmapData?.rounds) ? roadmapData.rounds : [];
   if (rounds.length === 0) {
@@ -582,15 +560,31 @@ export function validateManualRoadmap(roadmapData, options = {}) {
  * Save manual roadmap as draft in the database.
  * Preserves stable IDs and protects completed matches and existing results.
  */
-export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) {
-  const rounds = Array.isArray(roadmapData?.rounds) ? roadmapData.rounds : [];
-
+export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, options = {}) {
   // Fetch existing matches with recorded results to protect them from deletion
   const existingResultsRes = await client.query(
     `SELECT DISTINCT match_id FROM tournament_match_results WHERE tournament_id = $1`,
     [tournamentId]
   );
   const protectedMatchIds = new Set(existingResultsRes.rows.map((r) => r.match_id));
+
+  // Query groups with team assignments or verified results to protect them from removal
+  const assignedOrResultGroupsRes = await client.query(
+    `SELECT DISTINCT group_id FROM tournament_match_assignments WHERE tournament_id = $1 AND group_id IS NOT NULL
+     UNION
+     SELECT DISTINCT tm.group_id FROM tournament_match_results tmr JOIN tournament_matches tm ON tm.id = tmr.match_id WHERE tm.tournament_id = $1 AND tm.group_id IS NOT NULL`,
+    [tournamentId]
+  ).catch(() => ({ rows: [] }));
+  const protectedGroupIds = new Set(assignedOrResultGroupsRes.rows.map((r) => r.group_id));
+
+  // Auto-sync districts for later rounds with protection against deleting active districts
+  const syncResult = syncAutoDistrictsForLaterRounds(roadmapData, {
+    protectedGroupIds,
+    teams_per_group: options?.teams_per_group,
+  });
+  const warnings = syncResult?.warnings || [];
+
+  const rounds = Array.isArray(roadmapData?.rounds) ? roadmapData.rounds : [];
 
   // Fetch existing rounds, days, groups, rooms, matches
   const oldRounds = (await client.query('SELECT * FROM tournament_rounds WHERE tournament_id = $1', [tournamentId])).rows;
@@ -1064,6 +1058,9 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
   }
   for (const g of oldGroups) {
     if (!currentGroupIds.has(g.id)) {
+      if (protectedGroupIds.has(g.id)) {
+        throw new Error(`Cannot delete group "${g.group_name || g.id}": this group has team assignments or verified results.`);
+      }
       await client.query(`DELETE FROM tournament_groups WHERE id = $1`, [g.id]).catch(() => {});
     }
   }
@@ -1102,15 +1099,15 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
     [tournamentId]
   );
 
-  return { success: true, message: 'Draft saved successfully.' };
+  return { success: true, message: 'Draft saved successfully.', warnings };
 }
 
 /**
  * Validate and publish the manual roadmap.
  */
-export async function publishManualRoadmap(client, tournamentId, roadmapData) {
+export async function publishManualRoadmap(client, tournamentId, roadmapData, options = {}) {
   // 1. Structural validation
-  const validation = validateManualRoadmap(roadmapData);
+  const validation = validateManualRoadmap(roadmapData, options);
   if (!validation.valid) {
     const err = new Error('ROADMAP_VALIDATION_FAILED');
     err.code = 'ROADMAP_VALIDATION_FAILED';
@@ -1120,7 +1117,7 @@ export async function publishManualRoadmap(client, tournamentId, roadmapData) {
   }
 
   // 2. Persist the latest data
-  await saveManualRoadmapDraft(client, tournamentId, roadmapData);
+  const saveResult = await saveManualRoadmapDraft(client, tournamentId, roadmapData, options);
 
   // 3. Mark as approved / published
   // Note: we set roadmap_status = 'approved' and rounds_published = true to preserve
@@ -1138,7 +1135,7 @@ export async function publishManualRoadmap(client, tournamentId, roadmapData) {
     success: true,
     status: 'published',
     message: 'Roadmap published successfully.',
-    warnings: validation.warnings,
+    warnings: [...(validation.warnings || []), ...(saveResult?.warnings || [])],
   };
 }
 

@@ -256,6 +256,28 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         round_id: gfRoundId
       });
 
+      const gfGroupRec = {
+        id: `GRP-${generateId()}`,
+        day_id: dayId,
+        tournament_id: tournament.id,
+        group_name: 'Grand Final',
+        sequence: 1,
+        round_id: gfRoundId,
+      };
+      groups.push(gfGroupRec);
+
+      const gfRoomRec = {
+        id: `RM-${generateId()}`,
+        group_id: gfGroupRec.id,
+        day_id: dayId,
+        tournament_id: tournament.id,
+        room_number: 1,
+        capacity: slotsTotal,
+        status: 'DRAFT',
+        round_id: gfRoundId,
+      };
+      rooms.push(gfRoomRec);
+
       for (let m = 0; m < GRAND_FINAL_MATCHES; m++) {
         const matchId = `MAT-${generateId()}`;
         const mapName = (m === 0 ? 'Erangel' : (m === 1 ? 'Miramar' : 'Rondo'));
@@ -269,8 +291,9 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           tournament_id: tournament.id,
           round_id: gfRoundId,
           day_id: dayId,
-          group_id: null,
-          group_name: null,
+          group_id: gfGroupRec.id,
+          group_name: gfGroupRec.group_name,
+          room_id: gfRoomRec.id,
           match_number: m + 1,
           start_time: startTimeStr,
           end_time: endTimeStr,
@@ -357,35 +380,30 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
             days.push(dayRec);
           }
 
-          let groupId = null;
-          let groupNameStr = null;
+          // For all rounds, districts are auto-created from teams_in
+          const groupNameStr = `District ${m + 1}`;
+          const groupRec = {
+            id: `GRP-${generateId()}`,
+            day_id: dayRec.id,
+            tournament_id: tournament.id,
+            group_name: groupNameStr,
+            sequence: m + 1,
+            round_id: roundId
+          };
+          groups.push(groupRec);
+          const groupId = groupRec.id;
 
-          // Round 1 matches explicitly map to initial District allocations (District 1, District 2, District 3...)
-          if (isRound1) {
-            groupNameStr = `District ${m + 1}`;
-            const groupRec = {
-              id: `GRP-${generateId()}`,
-              day_id: dayRec.id,
-              tournament_id: tournament.id,
-              group_name: groupNameStr,
-              sequence: m + 1,
-              round_id: roundId
-            };
-            groups.push(groupRec);
-            groupId = groupRec.id;
-
-            const roomRec = {
-              id: `RM-${generateId()}`,
-              group_id: groupRec.id,
-              day_id: dayRec.id,
-              tournament_id: tournament.id,
-              room_number: m + 1,
-              capacity: pRound.matchSizes[m],
-              status: 'DRAFT',
-              round_id: roundId
-            };
-            rooms.push(roomRec);
-          }
+          const roomRec = {
+            id: `RM-${generateId()}`,
+            group_id: groupRec.id,
+            day_id: dayRec.id,
+            tournament_id: tournament.id,
+            room_number: rooms.length + 1,
+            capacity: pRound.matchSizes[m],
+            status: 'DRAFT',
+            round_id: roundId
+          };
+          rooms.push(roomRec);
 
           const matchId = `MAT-${generateId()}`;
           const mapName = getDefaultMap(game, m + 1);
@@ -405,6 +423,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
             day_id: dayRec.id,
             group_id: groupId,
             group_name: groupNameStr,
+            room_id: roomRec.id,
             match_number: m + 1,
             start_time: startTimeStr,
             end_time: endTimeStr,
@@ -466,6 +485,29 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
       };
       days.push(gfDayRec);
       
+      const gfTeamsIn = plan.length > 0 ? plan[plan.length - 1].totalTeamsAfter : maxCapacity;
+      const gfGroupRec = {
+        id: `GRP-${generateId()}`,
+        day_id: gfDayRec.id,
+        tournament_id: tournament.id,
+        group_name: 'Grand Final',
+        sequence: 1,
+        round_id: gfRoundId,
+      };
+      groups.push(gfGroupRec);
+
+      const gfRoomRec = {
+        id: `RM-${generateId()}`,
+        group_id: gfGroupRec.id,
+        day_id: gfDayRec.id,
+        tournament_id: tournament.id,
+        room_number: rooms.length + 1,
+        capacity: Math.min(gfTeamsIn, maxCapacity),
+        status: 'DRAFT',
+        round_id: gfRoundId,
+      };
+      rooms.push(gfRoomRec);
+
       for (let m = 0; m < GRAND_FINAL_MATCHES; m++) {
         const matchId = `MAT-${generateId()}`;
         const mapName = (m === 0 ? 'Erangel' : (m === 1 ? 'Miramar' : 'Rondo'));
@@ -479,8 +521,9 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           tournament_id: tournament.id,
           round_id: gfRoundId,
           day_id: gfDayRec.id,
-          group_id: null,
-          group_name: null,
+          group_id: gfGroupRec.id,
+          group_name: gfGroupRec.group_name,
+          room_id: gfRoomRec.id,
           match_number: m + 1,
           start_time: startTimeStr,
           end_time: endTimeStr,

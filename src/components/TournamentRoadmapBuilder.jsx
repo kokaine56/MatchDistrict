@@ -787,6 +787,7 @@ export default function TournamentRoadmapBuilder({
 
   // Grand Finals / Custom District Handlers
   const handleOpenCustomDistrictModal = (roundIdx, dayIdx) => {
+    if (roundIdx > 0) return; // Later rounds auto-generate districts and do not allow custom districts
     setCustomDistrictRoundIdx(roundIdx);
     setCustomDistrictDayIdx(dayIdx);
     const round = rounds[roundIdx];

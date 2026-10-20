@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert';
 import { generateTournamentRoadmap } from '../server/roadmapGenerator.js';
 
@@ -22,8 +22,10 @@ test('TEST 1: 64 slots / 16 per district => 4 districts with one qualifier match
   assert.strictEqual(res.ok, true, res.error);
   const rm = res.roadmap;
 
-  assert.strictEqual(rm.groups.length, 4);
-  assert.deepStrictEqual(rm.groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
+  const r1Groups = rm.groups.filter((g) => g.round_id === rm.rounds[0].id);
+  assert.strictEqual(r1Groups.length, 4);
+  assert.deepStrictEqual(r1Groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
+  assert.strictEqual(rm.groups.length, 7, 'all rounds auto-create districts: R1(4) + R2(2) + GF(1)');
 
   const r1 = round1Matches(rm);
   assert.strictEqual(r1.length, 4);
@@ -44,7 +46,9 @@ test('TEST 2: 128 slots / 16 per district => 8 districts and a coherent multi-da
   assert.strictEqual(res.ok, true, res.error);
   const rm = res.roadmap;
 
-  assert.strictEqual(rm.groups.length, 8);
+  const r1Groups = rm.groups.filter((g) => g.round_id === rm.rounds[0].id);
+  assert.strictEqual(r1Groups.length, 8);
+  assert.strictEqual(rm.groups.length, 15, 'all rounds auto-create districts: R1(8) + R2(4) + R3(2) + GF(1)');
   const r1 = round1Matches(rm);
   assert.strictEqual(r1.length, 8);
 
@@ -75,6 +79,7 @@ test('legacy extra arguments (config/plan/rounds) are tolerated without breaking
 
   const res = generateTournamentRoadmap(config, planningResult, tournament, [], { rounds: [] });
   assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(res.roadmap.groups.length, 4, 'district count derives from slot capacity, not the legacy plan');
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === res.roadmap.rounds[0].id);
+  assert.strictEqual(r1Groups.length, 4, 'district count derives from slot capacity, not the legacy plan');
   assert.strictEqual(round1Matches(res.roadmap).length, 4);
 });

@@ -1019,6 +1019,13 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
     disqualified_team_ids: Array.from(dqSet),
     results_complete: resultsComplete,
     unverified_match_ids: unverifiedMatches.map((m) => m.id),
+    unverified_matches: unverifiedMatches.map((m) => ({
+      id: m.id,
+      match_id: m.id,
+      match_number: m.match_number,
+      group_name: m.group_name || `District ${m.match_number}`,
+      status: m.status,
+    })),
   };
 }
 

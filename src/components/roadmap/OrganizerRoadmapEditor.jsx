@@ -19,6 +19,7 @@ import RoadmapPlanSummary from './RoadmapPlanSummary';
 import RoadmapSetupModal from './RoadmapSetupModal';
 import RoadmapRoundsManager from './RoadmapRoundsManager';
 import RoadmapDaysDistricts from './RoadmapDaysDistricts';
+import { syncAutoDistrictsForLaterRounds } from '../../utils/roadmapAutoDistricts.js';
 
 export default function OrganizerRoadmapEditor({
   tournamentId,
@@ -56,23 +57,43 @@ export default function OrganizerRoadmapEditor({
   const [serverErrorBanner, setServerErrorBanner] = useState(null);
   const [successBanner, setSuccessBanner] = useState(null);
 
+  const teamsPerGroup = Number(meta.teams_per_group || meta.teams_per_district || 16);
+
   // Synchronize when server rounds change
   useEffect(() => {
-    setWorkingRounds(rounds);
+    const copy = JSON.parse(JSON.stringify(rounds || []));
+    const syncRes = syncAutoDistrictsForLaterRounds({ rounds: copy }, { teams_per_group: teamsPerGroup });
+    setWorkingRounds(copy);
     setHasUnsavedChanges(false);
-  }, [rounds]);
+    if (syncRes?.warnings?.length > 0) {
+      setServerValidation((prev) => ({
+        ...prev,
+        warnings: [...new Set([...prev.warnings, ...syncRes.warnings])],
+      }));
+    }
+  }, [rounds, teamsPerGroup]);
 
   // Track edits
   const handleUpdateRounds = (newRounds) => {
-    setWorkingRounds(newRounds);
+    const copy = JSON.parse(JSON.stringify(newRounds || []));
+    const syncRes = syncAutoDistrictsForLaterRounds({ rounds: copy }, { teams_per_group: teamsPerGroup });
+    setWorkingRounds(copy);
     setHasUnsavedChanges(true);
+    if (syncRes?.warnings?.length > 0) {
+      setServerValidation((prev) => ({
+        ...prev,
+        warnings: [...new Set([...prev.warnings, ...syncRes.warnings])],
+      }));
+    }
   };
 
   const handleUpdateDays = (newDays) => {
     const updated = workingRounds.map((r, i) =>
       i === selectedRoundIdx ? { ...r, days: newDays } : r
     );
-    setWorkingRounds(updated);
+    const copy = JSON.parse(JSON.stringify(updated));
+    const syncRes = syncAutoDistrictsForLaterRounds({ rounds: copy }, { teams_per_group: teamsPerGroup });
+    setWorkingRounds(copy);
     setHasUnsavedChanges(true);
   };
 
@@ -389,11 +410,14 @@ export default function OrganizerRoadmapEditor({
           <RoadmapDaysDistricts
             round={currentRound}
             roundIdx={selectedRoundIdx}
+            prevRound={selectedRoundIdx > 0 ? workingRounds[selectedRoundIdx - 1] : null}
+            rounds={workingRounds}
             allDistricts={districts}
             minSelectableDate={minSelectableDate}
             game={game}
             onUpdateDays={handleUpdateDays}
             cardColor={cardColor}
+            meta={meta}
           />
         </div>
       )}

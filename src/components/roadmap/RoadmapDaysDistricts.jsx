@@ -1,22 +1,28 @@
 import React, { useState } from 'react';
-import { Calendar, Plus, Trash2, Sliders, ChevronUp, ChevronDown, Clock, Map as MapIcon } from 'lucide-react';
+import { Calendar, Plus, Trash2, Sliders, ChevronUp, ChevronDown, Clock, Map as MapIcon, Trophy, Award } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
 import { getDayOfWeek } from '../TournamentRoadmapBuilder';
 import RoadmapDistrictSettingsModal from './RoadmapDistrictSettingsModal';
+import { calculateAdvancingTeams } from '../../utils/roadmapAutoDistricts.js';
 
 export default function RoadmapDaysDistricts({
   round,
   roundIdx,
+  prevRound = null,
+  rounds = [],
   allDistricts = [],
   minSelectableDate = '',
   game = 'bgmi',
   onUpdateDays,
   cardColor = 'white',
   validationErrors = [],
+  meta = {},
 }) {
   const theme = getRoadmapTheme(cardColor);
   const [selectedDayIdx, setSelectedDayIdx] = useState(0);
   const [editingDistrictAlloc, setEditingDistrictAlloc] = useState(null);
+
+  const isGrandFinal = round?.round_type === 'grand_final' || round?.is_grand_final || (roundIdx > 0 && round?.name?.toLowerCase().includes('grand final'));
 
   const days = Array.isArray(round?.days) ? round.days : [];
   const activeDay = days[selectedDayIdx] || days[0] || null;
@@ -34,6 +40,18 @@ export default function RoadmapDaysDistricts({
   const availableDistricts = allDistricts.filter(
     (dist) => !allocatedDistrictIdsInRound.has(dist.id)
   );
+
+  // Districts scheduled on other days in this round (for easy reassignment)
+  const districtsOnOtherDays = [];
+  if (roundIdx > 0 && days.length > 1) {
+    days.forEach((d, dIdx) => {
+      if (dIdx !== selectedDayIdx) {
+        (d.allocations || []).forEach((alloc, aIdx) => {
+          districtsOnOtherDays.push({ alloc, fromDayIdx: dIdx, allocIdx: aIdx });
+        });
+      }
+    });
+  }
 
   // Handlers
   const handleAddDay = () => {
@@ -147,6 +165,104 @@ export default function RoadmapDaysDistricts({
     onUpdateDays(updatedDays);
   };
 
+  const handleMoveDistrictToDay = (allocIdx, targetDayIdx, sourceDayIdx = selectedDayIdx) => {
+    if (!days[sourceDayIdx] || targetDayIdx === sourceDayIdx) return;
+    const sourceDay = days[sourceDayIdx];
+    const targetDay = days[targetDayIdx];
+    if (!sourceDay || !targetDay) return;
+
+    const allocToMove = sourceDay.allocations[allocIdx];
+    if (!allocToMove) return;
+
+    const sourceAllocs = sourceDay.allocations.filter((_, i) => i !== allocIdx);
+    const destAllocs = [...(targetDay.allocations || []), allocToMove];
+
+    const updatedDays = days.map((d, i) => {
+      if (i === sourceDayIdx) {
+        return { ...d, allocations: sourceAllocs };
+      }
+      if (i === targetDayIdx) {
+        return { ...d, allocations: destAllocs };
+      }
+      return d;
+    });
+
+    onUpdateDays(updatedDays);
+  };
+
+  const handleGrandFinalChange = (field, value) => {
+    let currentDays = days.length > 0 ? [...days] : [{
+      id: `DAY-${Date.now()}`,
+      day_number: 1,
+      date: round.date || '',
+      allocations: [],
+    }];
+
+    let day0 = { ...currentDays[0] };
+    let alloc = day0.allocations && day0.allocations.length > 0
+      ? { ...day0.allocations[0] }
+      : {
+          id: `GRP-GF-${Date.now()}`,
+          group_id: `GRP-GF-${Date.now()}`,
+          district_id: `GRP-GF-${Date.now()}`,
+          district_name: 'Grand Finals',
+          name: 'Grand Finals',
+          capacity: 16,
+          match_count: 1,
+          matches: [],
+        };
+
+    let curDate = day0.date;
+    let curTime = alloc.matches?.[0]?.start_time || '13:00';
+    let curMap = alloc.matches?.[0]?.map || 'Erangel';
+    let curMatchesCount = Number(alloc.match_count) || 1;
+
+    if (field === 'date') curDate = value;
+    if (field === 'time') curTime = value;
+    if (field === 'map') curMap = value;
+    if (field === 'match_count') curMatchesCount = Math.max(1, Math.min(20, Number(value) || 1));
+
+    day0.date = curDate;
+
+    // Generate/synchronize matches
+    const [startH, startM] = (curTime || '13:00').split(':').map(Number);
+    let curMins = (isNaN(startH) ? 13 : startH) * 60 + (isNaN(startM) ? 0 : startM);
+    const duration = 30;
+    const gap = 45;
+
+    const newMatches = [];
+    for (let m = 0; m < curMatchesCount; m++) {
+      const hStr = String(Math.floor(curMins / 60) % 24).padStart(2, '0');
+      const mStr = String(curMins % 60).padStart(2, '0');
+      const sStr = `${hStr}:${mStr}`;
+      const endMins = curMins + duration;
+      const endHStr = String(Math.floor(endMins / 60) % 24).padStart(2, '0');
+      const endMStr = String(endMins % 60).padStart(2, '0');
+      const eStr = `${endHStr}:${endMStr}`;
+
+      newMatches.push({
+        id: alloc.matches?.[m]?.id || `MAT-GF-${m + 1}-${Date.now()}`,
+        match_number: m + 1,
+        district_match_number: m + 1,
+        start_time: sStr,
+        end_time: eStr,
+        map: curMap,
+        status: 'PENDING',
+        notes: '',
+      });
+      curMins += gap;
+    }
+
+    alloc.match_count = curMatchesCount;
+    alloc.matches = newMatches;
+    alloc.district_name = 'Grand Finals';
+    alloc.name = 'Grand Finals';
+    day0.allocations = [alloc];
+    currentDays[0] = day0;
+
+    onUpdateDays(currentDays);
+  };
+
   const handleSaveDistrictSettings = (newSettings) => {
     if (!activeDay || editingDistrictAlloc == null) return;
     const allocIdx = activeDay.allocations.findIndex(
@@ -247,6 +363,122 @@ export default function RoadmapDaysDistricts({
     onUpdateDays(updatedDays);
   };
 
+  // If Grand Finals: render the special Grand Finals card
+  if (isGrandFinal) {
+    const gfDay = days[0] || {};
+    const gfAlloc = gfDay.allocations?.[0] || {};
+    const gfMatches = gfAlloc.matches || [];
+    const firstMatch = gfMatches[0] || {};
+    const prizeAmount = Number(meta?.prize_pool_amount || meta?.prize || 0);
+
+    const prevRoundAdvancing = prevRound ? calculateAdvancingTeams(prevRound) : null;
+    const effectiveTeamsIn = round.teams_in || (prevRoundAdvancing > 0 ? prevRoundAdvancing : 16);
+
+    return (
+      <div className="space-y-4">
+        <div className={`p-4 sm:p-6 rounded-2xl ${theme.innerCardBg} border border-amber-500/20 shadow-lg space-y-5`}>
+          <div className="flex items-center gap-3 pb-3 border-b border-slate-200">
+            <span className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-500">
+              <Trophy className="w-5 h-5" />
+            </span>
+            <div>
+              <h3 className={`text-base font-extrabold ${theme.headingText}`}>
+                {effectiveTeamsIn} qualified teams play together
+              </h3>
+              <p className={`text-xs ${theme.mutedText}`}>
+                Grand Finals &bull; All qualified finalists compete together. Configure match schedule below.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Date */}
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider block ${theme.mutedText}`}>
+                Finals Date
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={gfDay.date || ''}
+                  min={minSelectableDate}
+                  onChange={(e) => handleGrandFinalChange('date', e.target.value)}
+                  className={`w-full px-3 py-2 rounded-xl text-xs font-semibold ${theme.inputBg}`}
+                />
+              </div>
+              {gfDay.date && (
+                <span className={`text-[11px] font-semibold ${theme.mutedText}`}>
+                  ({getDayOfWeek(gfDay.date)})
+                </span>
+              )}
+            </div>
+
+            {/* Start Time */}
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider block ${theme.mutedText}`}>
+                First Match Time
+              </label>
+              <input
+                type="time"
+                value={firstMatch.start_time || '13:00'}
+                onChange={(e) => handleGrandFinalChange('time', e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl text-xs font-semibold ${theme.inputBg}`}
+              />
+              <span className={`text-[11px] font-semibold ${theme.mutedText}`}>
+                IST (staggered by 45m)
+              </span>
+            </div>
+
+            {/* Map */}
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider block ${theme.mutedText}`}>
+                Default Map
+              </label>
+              <select
+                value={firstMatch.map || 'Erangel'}
+                onChange={(e) => handleGrandFinalChange('map', e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl text-xs font-semibold ${theme.inputBg}`}
+              >
+                <option value="Erangel">Erangel</option>
+                <option value="Miramar">Miramar</option>
+                <option value="Sanhok">Sanhok</option>
+                <option value="Vikendi">Vikendi</option>
+              </select>
+            </div>
+
+            {/* Number of Matches */}
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold uppercase tracking-wider block ${theme.mutedText}`}>
+                Number of Matches
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={gfAlloc.match_count || gfMatches.length || 1}
+                onChange={(e) => handleGrandFinalChange('match_count', e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl text-xs font-semibold ${theme.inputBg}`}
+              />
+            </div>
+          </div>
+
+          {/* Read-only Prize Pool Box */}
+          <div className="p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/20 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Award className="w-4 h-4 text-amber-500" />
+              <span className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                Prize Pool (Read-only):
+              </span>
+            </div>
+            <span className="px-3 py-1 rounded-lg text-xs font-black bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+              {prizeAmount > 0 ? `₹${prizeAmount.toLocaleString('en-IN')}` : 'Configured in Tournament Details'}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {/* Day Selector Tabs & Add Day */}
@@ -335,13 +567,30 @@ export default function RoadmapDaysDistricts({
             </div>
 
             {(!activeDay.allocations || activeDay.allocations.length === 0) ? (
-              <div className="p-6 rounded-xl border border-dashed border-slate-300 bg-white text-center space-y-1">
+              <div className="p-6 rounded-xl border border-dashed border-slate-300 bg-white text-center space-y-2">
                 <p className="text-xs font-semibold text-slate-700">
                   No districts scheduled for this day yet.
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  Select available districts below to schedule them on Day {activeDay.day_number || selectedDayIdx + 1}.
+                  {roundIdx === 0
+                    ? `Select available districts below to schedule them on Day ${activeDay.day_number || selectedDayIdx + 1}.`
+                    : `Use the buttons below or the Day dropdown on another day's district card to assign districts to Day ${activeDay.day_number || selectedDayIdx + 1}.`}
                 </p>
+                {roundIdx > 0 && districtsOnOtherDays.length > 0 && (
+                  <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
+                    <span className="text-[11px] text-slate-500 font-semibold">Move district to Day {activeDay.day_number || selectedDayIdx + 1}:</span>
+                    {districtsOnOtherDays.map(({ alloc, fromDayIdx, allocIdx }) => (
+                      <button
+                        key={alloc.id || alloc.district_id || allocIdx}
+                        type="button"
+                        onClick={() => handleMoveDistrictToDay(allocIdx, selectedDayIdx, fromDayIdx)}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
+                      >
+                        + {alloc.district_name || alloc.name} (from Day {fromDayIdx + 1})
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -383,6 +632,24 @@ export default function RoadmapDaysDistricts({
 
                       {/* District Actions */}
                       <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                        {/* Day assignment dropdown for later rounds with multiple days */}
+                        {roundIdx > 0 && days.length > 1 && (
+                          <div className="flex items-center gap-1 mr-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">Day:</span>
+                            <select
+                              value={selectedDayIdx}
+                              onChange={(e) => handleMoveDistrictToDay(aIdx, Number(e.target.value))}
+                              className="text-xs rounded-lg px-2 py-1 bg-slate-100 text-slate-800 font-semibold cursor-pointer border border-slate-200"
+                            >
+                              {days.map((d, dIdx) => (
+                                <option key={d.id || dIdx} value={dIdx}>
+                                  Day {d.day_number || dIdx + 1}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => setEditingDistrictAlloc(alloc)}
@@ -411,14 +678,17 @@ export default function RoadmapDaysDistricts({
                           <ChevronDown className="w-4 h-4" />
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveDistrictFromDay(aIdx)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
-                          title="Remove district from this day"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {/* District deletion is only available in Round 1 */}
+                        {roundIdx === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveDistrictFromDay(aIdx)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
+                            title="Remove district from this day"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -427,8 +697,8 @@ export default function RoadmapDaysDistricts({
             )}
           </div>
 
-          {/* Available Districts to Add */}
-          {availableDistricts.length > 0 && (
+          {/* Available Districts to Add (Only for Round 1) */}
+          {roundIdx === 0 && availableDistricts.length > 0 && (
             <div className="pt-3 border-t border-slate-200">
               <span className={`text-xs font-bold uppercase tracking-wider mb-2 block ${theme.mutedText}`}>
                 Unassigned Districts (Tap to Assign to Day {activeDay.day_number || selectedDayIdx + 1})

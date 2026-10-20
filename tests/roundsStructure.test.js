@@ -51,20 +51,22 @@ test('Days are assigned to their round and numbered globally from 1', () => {
   assert.deepStrictEqual(rm.days.map((d) => d.date), ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13']);
 });
 
-test('Districts (groups) belong to Round 1 and to the day of their match', () => {
+test('Districts (groups) belong to their round and to the day of their match', () => {
   const res = generateTournamentRoadmap(DISTRICTS_64);
   const { groups, days, rounds: outRounds } = res.roadmap;
   const r1 = roundBy(res.roadmap, 1);
   const dayById = Object.fromEntries(days.map((d) => [d.id, d]));
 
-  assert.strictEqual(groups.length, 4);
-  assert.deepStrictEqual(groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
-  assert.deepStrictEqual(groups.map((g) => g.sequence), [1, 2, 3, 4]);
-  for (const g of groups) {
-    assert.strictEqual(g.round_id, r1.id, 'districts only exist in Round 1');
+  const r1Groups = groups.filter((g) => g.round_id === r1.id);
+  assert.strictEqual(r1Groups.length, 4);
+  assert.deepStrictEqual(r1Groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
+  assert.deepStrictEqual(r1Groups.map((g) => g.sequence), [1, 2, 3, 4]);
+  for (const g of r1Groups) {
+    assert.strictEqual(g.round_id, r1.id, 'Round 1 district belongs to Round 1');
     assert.strictEqual(dayById[g.day_id].round_id, r1.id, 'district day belongs to Round 1');
   }
-  // Later rounds carry no district groups.
+  // Later rounds auto-create districts from teams_in: R1 (4), R2 (2), GF (1) = 7 total groups
+  assert.strictEqual(groups.length, 7);
   assert.strictEqual(outRounds.filter((r) => !r.is_grand_final).length, 2);
 });
 
@@ -74,41 +76,42 @@ test('Rooms mirror districts in Round 1 and carry the configured district size',
   const r1 = roundBy(res.roadmap, 1).id;
   const groupById = Object.fromEntries(groups.map((g) => [g.id, g]));
 
-  assert.strictEqual(rooms.length, 4);
-  for (const room of rooms) {
+  const r1Rooms = rooms.filter((r) => r.round_id === r1);
+  assert.strictEqual(r1Rooms.length, 4);
+  for (const room of r1Rooms) {
     assert.strictEqual(room.round_id, r1);
     assert.strictEqual(room.capacity, 16);
     assert.ok(groupById[room.group_id], 'room is attached to a district');
   }
 });
 
-test('Matches stay consistent with their district/day/round in Round 1 and detach in later rounds', () => {
+test('Matches stay consistent with their district/day/round in Round 1 and later rounds carry auto-created districts', () => {
   const res = generateTournamentRoadmap(DISTRICTS_64);
   const rm = res.roadmap;
   const groupById = Object.fromEntries(rm.groups.map((g) => [g.id, g]));
   const roomByGroup = Object.fromEntries(rm.rooms.map((r) => [r.group_id, r]));
   const r1 = roundBy(rm, 1).id;
 
-  for (const m of rm.matches.filter((m) => m.round_id === r1)) {
+  for (const m of rm.matches) {
     const group = groupById[m.group_id];
-    assert.ok(group, 'Round 1 match is attached to a district');
+    assert.ok(group, `match ${m.id} in round ${m.round_id} is attached to a district`);
     assert.strictEqual(m.round_id, group.round_id);
     assert.strictEqual(m.day_id, group.day_id);
     assert.strictEqual(m.group_name, group.group_name);
     assert.ok(roomByGroup[m.group_id], 'each district has a room');
   }
-  for (const m of rm.matches.filter((m) => m.round_id !== r1)) {
-    assert.strictEqual(m.group_id, null);
-    assert.strictEqual(m.group_name, null);
-  }
 });
 
 test('District count scales with capacity, not a fixed group size', () => {
-  assert.strictEqual(generateTournamentRoadmap({ id: 'A', slotsTotal: 64, teams_per_group: 16 }).roadmap.groups.length, 4);
-  assert.strictEqual(generateTournamentRoadmap({ id: 'B', slotsTotal: 128, teams_per_group: 16 }).roadmap.groups.length, 8);
-  assert.strictEqual(generateTournamentRoadmap({ id: 'C', slotsTotal: 160, teams_per_group: 16 }).roadmap.groups.length, 10);
+  const r1Groups = (res) => {
+    const r1 = roundBy(res.roadmap, 1);
+    return res.roadmap.groups.filter((g) => g.round_id === r1.id);
+  };
+  assert.strictEqual(r1Groups(generateTournamentRoadmap({ id: 'A', slotsTotal: 64, teams_per_group: 16 })).length, 4);
+  assert.strictEqual(r1Groups(generateTournamentRoadmap({ id: 'B', slotsTotal: 128, teams_per_group: 16 })).length, 8);
+  assert.strictEqual(r1Groups(generateTournamentRoadmap({ id: 'C', slotsTotal: 160, teams_per_group: 16 })).length, 10);
   // Custom district sizes also scale.
-  assert.strictEqual(generateTournamentRoadmap({ id: 'D', slotsTotal: 120, teams_per_group: 24 }).roadmap.groups.length, 5);
+  assert.strictEqual(r1Groups(generateTournamentRoadmap({ id: 'D', slotsTotal: 120, teams_per_group: 24 })).length, 5);
 });
 
 test('Empty planned districts remain visible and non-divisible capacities distribute evenly', () => {
@@ -118,7 +121,9 @@ test('Empty planned districts remain visible and non-divisible capacities distri
   assert.strictEqual(sizes.length, 7);
   assert.strictEqual(sizes.reduce((a, b) => a + b, 0), 100);
   assert.strictEqual(Math.max(...sizes) - Math.min(...sizes) <= 1, true, 'district sizes differ by at most 1');
-  assert.strictEqual(res.roadmap.groups.length, 7);
+  const r1 = roundBy(res.roadmap, 1);
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === r1.id);
+  assert.strictEqual(r1Groups.length, 7);
 });
 
 test('Legacy planning-result arguments are ignored; the district model still wins', () => {
@@ -136,8 +141,10 @@ test('Legacy planning-result arguments are ignored; the district model still win
   };
   const res = generateTournamentRoadmap(legacyConfig, legacyPlan, DISTRICTS_64);
   assert.strictEqual(res.ok, true, res.error);
-  assert.strictEqual(res.roadmap.groups.length, 4, 'districts come from slot capacity, not planned rooms');
-  assert.strictEqual(res.roadmap.rooms.length, 4);
+  const r1 = roundBy(res.roadmap, 1);
+  const r1Groups = res.roadmap.groups.filter((g) => g.round_id === r1.id);
+  assert.strictEqual(r1Groups.length, 4, 'districts come from slot capacity, not planned rooms');
+  assert.strictEqual(res.roadmap.rooms.filter((r) => r.round_id === r1.id).length, 4);
   assert.notStrictEqual(res.roadmap.rooms[0].capacity, 25);
 });
 
@@ -147,7 +154,9 @@ test('Grand Final only: capacity equal to one district collapses to a 3-match Gr
   assert.strictEqual(res.roadmap.rounds.length, 1);
   assert.strictEqual(res.roadmap.rounds[0].is_grand_final, true);
   assert.strictEqual(res.roadmap.matches.length, 3);
-  assert.strictEqual(res.roadmap.groups.length, 0);
+  assert.strictEqual(res.roadmap.groups.length, 1, 'Grand Final has 1 auto-created district');
+  assert.strictEqual(res.roadmap.groups[0].group_name, 'Grand Final');
+  assert.ok(res.roadmap.matches.every((m) => m.group_id === res.roadmap.groups[0].id));
 });
 
 test('No duplicate rounds: Timeline parsing collapses duplicate round numbers', () => {
