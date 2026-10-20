@@ -13,6 +13,7 @@ import {
   Layers,
   Settings,
   HelpCircle,
+  Trash2,
 } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
 import RoadmapPlanSummary from './RoadmapPlanSummary';
@@ -40,6 +41,8 @@ export default function OrganizerRoadmapEditor({
   onClose,
   previewMode = false,
   onTogglePreview,
+  onDeleteRoadmap,
+  deleting = false,
 }) {
   const theme = getRoadmapTheme(cardColor);
 
@@ -49,6 +52,7 @@ export default function OrganizerRoadmapEditor({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [showLeaveWarning, setShowLeaveWarning] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [serverValidation, setServerValidation] = useState({ errors: [], warnings: [] });
   const [successBanner, setSuccessBanner] = useState(null);
 
@@ -204,6 +208,19 @@ export default function OrganizerRoadmapEditor({
               >
                 <Send className="w-3.5 h-3.5" />
                 {publishing ? 'Publishing...' : 'Publish Roadmap'}
+              </button>
+            )}
+
+            {onDeleteRoadmap && workingRounds.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                disabled={publishing || saving || deleting}
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-500/30 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                title="Delete entire roadmap and reset"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Roadmap
               </button>
             )}
 
@@ -447,6 +464,54 @@ export default function OrganizerRoadmapEditor({
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer"
               >
                 Discard & Close
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Real Delete Entire Roadmap Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className={`w-full max-w-md p-6 rounded-2xl ${theme.modalBg} border border-rose-500/40 space-y-4 shadow-2xl`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className={`font-bold text-base ${theme.headingText}`}>
+                  Delete Entire Roadmap?
+                </h3>
+                <p className={`text-xs ${theme.mutedText}`}>Destructive tournament reset</p>
+              </div>
+            </div>
+            <p className={`text-xs ${theme.bodyText} leading-relaxed`}>
+              This will completely remove all configured rounds, match days, district allocations, and roadmap configuration for this tournament. Ordinary participants will see &ldquo;Roadmap will be published soon&rdquo;. This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-700/40">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setShowDeleteModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold ${theme.secondaryBtn}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={async () => {
+                  if (onDeleteRoadmap) await onDeleteRoadmap();
+                  setShowDeleteModal(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{deleting ? 'Deleting...' : 'Delete Entire Roadmap'}</span>
               </button>
             </div>
           </motion.div>

@@ -34,6 +34,7 @@ import { getAuthToken } from "../utils/getAuthToken";
 import { isRoadmapPublished } from "../utils/roadmapStatus";
 import OrganizerRoadmapEditor from "./roadmap/OrganizerRoadmapEditor";
 import RoadmapAdvancementModal from "./roadmap/RoadmapAdvancementModal";
+import ParticipantRoadmapViewer from "./roadmap/ParticipantRoadmapViewer";
 
 // Game default maps
 const GAME_MAP_OPTIONS = {
@@ -1381,197 +1382,20 @@ export default function TournamentRoadmapBuilder({
   }
 
   // ─────────────────────────────────────────────────────────────
-  // RENDER: Participant View (Before Publication)
+  // RENDER: Participant View (Before/After Publication) OR Organizer Preview
   // ─────────────────────────────────────────────────────────────
-  if (!effectiveOrganizer && !isPublished) {
+  if (!effectiveOrganizer || previewMode) {
     return (
-      <div className="w-full max-w-3xl mx-auto my-8 p-8 sm:p-12 bg-white border border-[#E4E7EC] rounded-2xl text-center shadow-xs">
-        <div className="inline-flex p-4 rounded-2xl bg-blue-50 border border-blue-100 text-[#2563EB] mb-5">
-          <Clock className="w-9 h-9" />
-        </div>
-        <h2 className="text-xl sm:text-2xl font-bold text-[#172033] mb-2 tracking-tight">
-          Roadmap will be published soon
-        </h2>
-        <p className="text-[#667085] text-sm sm:text-base max-w-md mx-auto leading-relaxed">
-          The tournament organizer is setting up the round schedules and district match allocations. Check back once the roadmap goes live!
-        </p>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // RENDER: Participant View (After Publication) OR Organizer Preview
-  // ─────────────────────────────────────────────────────────────
-  if ((!effectiveOrganizer && isPublished) || (effectiveOrganizer && previewMode)) {
-    return (
-      <div className="w-full max-w-5xl mx-auto space-y-6">
-        {/* Preview Banner if Organizer */}
-        {effectiveOrganizer && (
-          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 shadow-xs">
-            <div className="flex items-center gap-2">
-              <Eye className="w-5 h-5 text-amber-600 shrink-0" />
-              <span className="font-semibold text-xs sm:text-sm">Participant Preview Mode — Showing how attendees see the live roadmap.</span>
-            </div>
-            <button
-              onClick={() => setPreviewMode(false)}
-              className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition shadow-xs"
-            >
-              Exit Preview
-            </button>
-          </div>
-        )}
-
-        {/* Header Overview Card */}
-        <div className="p-5 sm:p-6 bg-white border border-[#E4E7EC] rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-50 text-[#16A34A] border border-emerald-200">
-                Official Schedule
-              </span>
-              <span className="text-xs text-[#667085] uppercase font-mono bg-[#F8FAFC] border border-[#E4E7EC] px-2 py-0.5 rounded">
-                {meta?.game || "BGMI"}
-              </span>
-            </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-[#172033] tracking-tight">{tournamentTitle}</h1>
-          </div>
-          <div className="flex items-center gap-6 text-sm">
-            <div className="text-right">
-              <div className="text-xs text-[#667085] font-medium">Districts</div>
-              <div className="text-base sm:text-lg font-bold text-[#172033]">{effectiveDistricts.length || meta?.total_districts || 0}</div>
-            </div>
-            <div className="text-right">
-              <div className="text-xs text-[#667085] font-medium">Participants</div>
-              <div className="text-base sm:text-lg font-bold text-[#16A34A]">{meta?.total_teams || meta?.slots_filled || 0} Teams</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Rounds Navigation Tabs or Empty State */}
-        {rounds.length === 0 ? (
-          <div className="p-8 sm:p-12 bg-white border border-[#E4E7EC] rounded-2xl text-center shadow-xs">
-            <div className="inline-flex p-4 rounded-2xl bg-blue-50 border border-blue-100 text-[#2563EB] mb-4">
-              <Calendar className="w-8 h-8" />
-            </div>
-            <h3 className="text-lg font-bold text-[#172033] mb-1">Schedule Details Pending</h3>
-            <p className="text-xs sm:text-sm text-[#667085] max-w-md mx-auto">
-              The tournament schedule has been published, but match rounds and district allocations are currently being finalized. Please check back shortly.
-            </p>
-          </div>
-        ) : (
-          <div className="flex gap-2 overflow-x-auto pb-2 border-b border-[#E4E7EC]">
-            {rounds.map((round, idx) => (
-              <button
-                key={round.id || idx}
-                onClick={() => setSelectedRoundIdx(idx)}
-                className={`px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm whitespace-nowrap transition flex items-center gap-2 shrink-0 ${
-                  selectedRoundIdx === idx
-                    ? "bg-[#2563EB] text-white shadow-xs"
-                    : "bg-white text-[#667085] hover:text-[#172033] hover:bg-[#F8FAFC] border border-[#E4E7EC]"
-                }`}
-              >
-                <Trophy className="w-4 h-4" />
-                <span>{round.name || `Round ${idx + 1}`}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Active Round Content */}
-        {activeRound && (
-          <div className="space-y-6">
-            {/* Round Advancement Summary */}
-            {activeRound.advancement_target_round_id && (
-              <div className="p-4 bg-blue-50/60 border border-blue-100 rounded-xl flex items-center gap-3 text-xs sm:text-sm text-[#172033]">
-                <Sparkles className="w-5 h-5 text-[#2563EB] shrink-0" />
-                <div>
-                  <span className="font-semibold text-[#172033]">Advancement Rule: </span>
-                  {activeRound.advancement_type === "per_district"
-                    ? `Top ${activeRound.teams_advancing_per_district || 2} teams from each district advance to the next stage.`
-                    : `Top teams advance to the next round.`}
-                </div>
-              </div>
-            )}
-
-            {/* Days in Round */}
-            {(activeRound.days || []).map((day, dIdx) => (
-              <div key={day.id || dIdx} className="bg-white border border-[#E4E7EC] rounded-2xl overflow-hidden shadow-xs">
-                <div className="p-4 bg-[#F8FAFC] border-b border-[#E4E7EC] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#2563EB] border border-blue-100 flex items-center justify-center font-bold text-xs sm:text-sm">
-                      D{day.day_number || dIdx + 1}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-[#172033] text-sm sm:text-base">Day {day.day_number || dIdx + 1}</h3>
-                      <div className="text-xs text-[#667085] flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5" />
-                        <span>{formatDateDisplay(day.date)}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-xs font-semibold px-2.5 py-1 bg-white border border-[#E4E7EC] rounded-lg text-[#667085]">
-                    {(day.allocations || []).reduce((acc, a) => acc + (a.match_count || (a.matches ? a.matches.length : 0)), 0)} Matches
-                  </div>
-                </div>
-
-                <div className="p-4 sm:p-6 space-y-6">
-                  {(day.allocations || []).map((alloc, aIdx) => {
-                    const matchingDist = effectiveDistricts.find((d) => d.id === alloc.district_id || d.name === alloc.district_name);
-                    const regCount = matchingDist?.registered_teams_count ?? matchingDist?.team_count ?? alloc.registered_teams_count ?? alloc.team_count ?? 0;
-                    return (
-                      <div key={alloc.id || alloc.district_id || aIdx} className="bg-[#F8FAFC] border border-[#E4E7EC] rounded-xl p-4">
-                        <div className="flex items-center justify-between mb-3 border-b border-[#E4E7EC] pb-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-[#667085]">{aIdx + 1}.</span>
-                            <Users className="w-4 h-4 text-[#2563EB]" />
-                            <h4 className="font-bold text-[#172033] text-sm sm:text-base">{alloc.district_name}</h4>
-                            <span className="text-xs px-2.5 py-0.5 rounded-md bg-white border border-[#E4E7EC] text-[#667085] font-medium">
-                              {regCount} registered team{regCount === 1 ? "" : "s"}
-                            </span>
-                          </div>
-                          <span className="text-xs font-semibold text-[#667085]">
-                            {alloc.match_count} Match{alloc.match_count === 1 ? "" : "es"}
-                          </span>
-                        </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {(alloc.matches || []).map((match, mIdx) => (
-                          <div
-                            key={match.id || mIdx}
-                            className="p-3.5 rounded-xl bg-white border border-[#E4E7EC] hover:border-blue-300 transition flex flex-col justify-between gap-3 shadow-xs"
-                          >
-                            <div className="flex items-start justify-between">
-                              <span className="font-bold text-sm text-[#2563EB]">Match {match.district_match_number || mIdx + 1}</span>
-                              <span className="text-xs px-2 py-0.5 rounded bg-[#F8FAFC] border border-[#E4E7EC] text-[#667085] font-medium">
-                                {match.map || "Erangel"}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-xs text-[#667085]">
-                              <div className="flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5 text-[#667085]" />
-                                <span>{formatTime12h(match.start_time)}</span>
-                              </div>
-                              {match.credentials_available ? (
-                                <span className="inline-flex items-center gap-1 text-[#16A34A] font-semibold">
-                                  <Unlock className="w-3.5 h-3.5" /> ID/Pass Ready
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-[#98A2B3]">
-                                  <Lock className="w-3.5 h-3.5" /> Credentials Locked
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <ParticipantRoadmapViewer
+        tournamentTitle={tournamentTitle}
+        rounds={rounds}
+        meta={meta || {}}
+        districts={effectiveDistricts}
+        isPublished={isPublished}
+        cardColor={meta?.card_color || meta?.cardColor || "white"}
+        previewMode={Boolean(effectiveOrganizer && previewMode)}
+        onExitPreview={() => setPreviewMode(false)}
+      />
     );
   }
 
@@ -1603,6 +1427,8 @@ export default function TournamentRoadmapBuilder({
         onClose={onClose}
         previewMode={previewMode}
         onTogglePreview={() => setPreviewMode(!previewMode)}
+        onDeleteRoadmap={handleConfirmMasterDelete}
+        deleting={deletingRoadmap}
       />
 
       {showAdvancementModal && (

@@ -6830,6 +6830,20 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Finalized tournament roadmap is locked.' }));
       }
 
+      // Check if tournament has any verified match results
+      const resCheck = await pool.query(
+        `SELECT 1 FROM tournament_match_results WHERE tournament_id = $1 LIMIT 1`,
+        [tId]
+      );
+      if (resCheck.rows.length > 0) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: 'ROADMAP_LOCKED_RESULTS_EXIST',
+          message: 'Cannot regenerate roadmap: tournament has recorded match results.',
+        }));
+      }
+
       // 1. Fetch full tournament row — generator reads slotsTotal + teams_per_group + config
       const tRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
@@ -7582,8 +7596,15 @@ const server = http.createServer(async (req, res) => {
               ...(released ? { room_identifier: m.room_identifier, room_password: m.room_password } : {})
             };
           }),
-          assignments: assignments.rows,
-          districts: districtsData.districts,
+          districts: (districtsData.districts || []).map(d => ({
+            id: d.id,
+            group_index: d.group_index,
+            name: d.name,
+            code: d.code,
+            capacity: d.capacity,
+            slot_start: d.slot_start,
+            slot_end: d.slot_end,
+          })),
           meta: roadmapMeta,
         }
       }));

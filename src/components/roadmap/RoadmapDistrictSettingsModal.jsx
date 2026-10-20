@@ -35,9 +35,35 @@ export default function RoadmapDistrictSettingsModal({
   const [selectedMap, setSelectedMap] = useState(
     allocation?.matches?.[0]?.map || 'Erangel'
   );
-  const [customMap, setCustomMap] = useState('');
-  const [durationMinutes, setDurationMinutes] = useState(30);
-  const [gapMinutes, setGapMinutes] = useState(60);
+  const initialDuration = (() => {
+    const m = allocation?.matches?.[0];
+    if (m?.start_time && m?.end_time) {
+      const [sh, sm] = m.start_time.split(':').map(Number);
+      const [eh, em] = m.end_time.split(':').map(Number);
+      if (!isNaN(sh) && !isNaN(sm) && !isNaN(eh) && !isNaN(em)) {
+        const diff = (eh * 60 + em) - (sh * 60 + sm);
+        if (diff > 0) return diff;
+      }
+    }
+    return 30;
+  })();
+
+  const initialGap = (() => {
+    const m1 = allocation?.matches?.[0];
+    const m2 = allocation?.matches?.[1];
+    if (m1?.start_time && m2?.start_time) {
+      const [s1h, s1m] = m1.start_time.split(':').map(Number);
+      const [s2h, s2m] = m2.start_time.split(':').map(Number);
+      if (!isNaN(s1h) && !isNaN(s1m) && !isNaN(s2h) && !isNaN(s2m)) {
+        const diff = (s2h * 60 + s2m) - (s1h * 60 + s1m);
+        if (diff > 0) return diff;
+      }
+    }
+    return 60;
+  })();
+
+  const [durationMinutes, setDurationMinutes] = useState(initialDuration);
+  const [gapMinutes, setGapMinutes] = useState(initialGap);
   const [notes, setNotes] = useState(
     allocation?.matches?.[0]?.notes || ''
   );

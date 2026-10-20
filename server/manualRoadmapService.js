@@ -445,6 +445,30 @@ export function validateManualRoadmap(roadmapData, options = {}) {
             errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} has an invalid start time "${match.start_time}". Expected HH:MM format.`);
           }
         }
+
+        // Publish validation: check for overlapping matches inside the SAME district.
+        // Parallel districts scheduled at the same time are explicitly allowed.
+        if (options.isPublish) {
+          for (let i = 0; i < matches.length; i++) {
+            const m1 = matches[i];
+            const m1Start = toMins(m1.start_time);
+            if (m1Start === null) continue;
+            const m1End = toMins(m1.end_time) ?? (m1Start + (Number(options.matchDurationMinutes) || 30));
+
+            for (let j = i + 1; j < matches.length; j++) {
+              const m2 = matches[j];
+              const m2Start = toMins(m2.start_time);
+              if (m2Start === null) continue;
+              const m2End = toMins(m2.end_time) ?? (m2Start + (Number(options.matchDurationMinutes) || 30));
+
+              if (m1Start < m2End && m2Start < m1End) {
+                errors.push(
+                  `Day ${dNum} in "${rName || `Round ${rNum}`}": Matches in district "${distName}" overlap (${m1.start_time || '??'}-${m1.end_time || minsToHHMM(m1End)} and ${m2.start_time || '??'}-${m2.end_time || minsToHHMM(m2End)}).`
+                );
+              }
+            }
+          }
+        }
       }
     }
 
@@ -479,6 +503,34 @@ export function validateManualRoadmap(roadmapData, options = {}) {
 
     // Calculate advancing teams for this round
     const advancingTeams = calculateAdvancingTeams(round, scheduledDistrictsInRound.size);
+    const isGrandFinal = round.round_type === 'grand_final';
+
+    // Incoming teams calculation (teams_in or derived)
+    let roundTeamsIn = round.teams_in != null ? Number(round.teams_in) : null;
+    if (roundTeamsIn == null) {
+      if (rIdx === 0) {
+        const slotsTotal = Number(options.slotsTotal);
+        if (slotsTotal > 0) {
+          roundTeamsIn = slotsTotal;
+        } else if (scheduledDistrictsInRound.size > 0) {
+          roundTeamsIn = scheduledDistrictsInRound.size * (Number(options.teams_per_group) || 16);
+        }
+      } else if (prevRoundQualifiers != null && prevRoundQualifiers > 0) {
+        roundTeamsIn = prevRoundQualifiers;
+      }
+    }
+
+    // Publish blocking check: Teams advancing cannot exceed teams in
+    if (options.isPublish && !isGrandFinal && roundTeamsIn != null && roundTeamsIn > 0 && advancingTeams > roundTeamsIn) {
+      errors.push(`Round "${rName || `Round ${rNum}`}": Teams advancing (${advancingTeams}) cannot exceed incoming teams (${roundTeamsIn}).`);
+    }
+
+    // Publish blocking check: Non-final round must have a valid qualification rule
+    if (options.isPublish && !isGrandFinal && rIdx < rounds.length - 1) {
+      if (!round.advancement_type || advancingTeams <= 0) {
+        errors.push(`Non-final round "${rName || `Round ${rNum}`}" must have a valid qualification rule configured.`);
+      }
+    }
 
     // Rule consistency: incoming teams vs previous round qualifiers
     if (rIdx > 0 && round.teams_in != null && prevRoundQualifiers != null && prevRoundQualifiers > 0) {
@@ -493,7 +545,6 @@ export function validateManualRoadmap(roadmapData, options = {}) {
     prevRoundName = rName || `Round ${rNum}`;
 
     // Progression / advancement validation (only for qualifying/non-final rounds)
-    const isGrandFinal = round.round_type === 'grand_final';
     if (isGrandFinal && rIdx < rounds.length - 1) {
       warnings.push(`"${rName}" is designated as Grand Finals (terminal stage). Subsequent rounds configured after it will not be reached in standard progression.`);
     }
@@ -540,6 +591,93 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
   const oldGroups = (await client.query('SELECT * FROM tournament_groups WHERE tournament_id = $1', [tournamentId])).rows;
   const oldRooms = (await client.query('SELECT * FROM tournament_rooms WHERE tournament_id = $1', [tournamentId])).rows;
   const oldMatches = (await client.query('SELECT * FROM tournament_matches WHERE tournament_id = $1', [tournamentId])).rows;
+
+  // Identify rounds and days that have verified match results
+  const roundIdsWithResults = new Set();
+  const dayIdsWithResults = new Set();
+  for (const om of oldMatches) {
+    if (protectedMatchIds.has(om.id)) {
+      if (om.round_id) roundIdsWithResults.add(om.round_id);
+      if (om.day_id) dayIdsWithResults.add(om.day_id);
+    }
+  }
+
+  for (const lockedRoundId of roundIdsWithResults) {
+    const oldRound = oldRounds.find((r) => r.id === lockedRoundId);
+    const newRound = rounds.find((r) => r.id === lockedRoundId);
+
+    if (!newRound) {
+      const err = new Error(`Cannot delete or remove round "${oldRound?.name || lockedRoundId}": this round has verified match results.`);
+      err.code = 'ROUND_STRUCTURALLY_LOCKED';
+      throw err;
+    }
+
+    // Check structural fields: round_type, advancement_type, teams_advancing, teams_advancing_per_district, teams_in, advancement_target_round_id
+    const oldType = oldRound.round_type || 'qualifier';
+    const newType = newRound.round_type || 'qualifier';
+    const oldAdvType = oldRound.advancement_type || 'per_district';
+    const newAdvType = newRound.advancement_type || 'per_district';
+    const oldAdv = oldRound.teams_advancing ? Number(oldRound.teams_advancing) : null;
+    const newAdv = newRound.teams_advancing ? Number(newRound.teams_advancing) : null;
+    const oldAdvPerDist = oldRound.teams_advancing_per_district ? Number(oldRound.teams_advancing_per_district) : null;
+    const newAdvPerDist = newRound.teams_advancing_per_district ? Number(newRound.teams_advancing_per_district) : null;
+    const oldTeamsIn = oldRound.teams_in != null ? Number(oldRound.teams_in) : null;
+    const newTeamsIn = newRound.teams_in != null ? Number(newRound.teams_in) : null;
+    const oldTarget = oldRound.advancement_target_round_id || null;
+    const newTarget = newRound.advancement_target_round_id || null;
+
+    if (
+      oldType !== newType ||
+      oldAdvType !== newAdvType ||
+      oldAdv !== newAdv ||
+      oldAdvPerDist !== newAdvPerDist ||
+      oldTeamsIn !== newTeamsIn ||
+      oldTarget !== newTarget
+    ) {
+      const err = new Error(
+        `Cannot modify qualification rules or structure of round "${oldRound.name}": this round has verified match results. Only renaming is permitted.`
+      );
+      err.code = 'ROUND_STRUCTURALLY_LOCKED';
+      throw err;
+    }
+  }
+
+  // Pre-validate incoming days and matches: only days and matches with verified results are locked from removal.
+  // Schedule, matches, and details on later days (or any day without results) remain freely editable.
+  const incomingDayIds = new Set();
+  const incomingMatchIds = new Set();
+  rounds.forEach((r) => {
+    (r.days || []).forEach((d) => {
+      if (d.id) incomingDayIds.add(d.id);
+      (d.allocations || []).forEach((a) => {
+        (a.matches || []).forEach((m) => {
+          if (m.id) incomingMatchIds.add(m.id);
+        });
+      });
+    });
+  });
+
+  for (const lockedDayId of dayIdsWithResults) {
+    if (!incomingDayIds.has(lockedDayId)) {
+      const err = new Error(
+        `Cannot delete or remove day "${lockedDayId}": this day has verified match results.`
+      );
+      err.code = 'ROUND_STRUCTURALLY_LOCKED';
+      throw err;
+    }
+  }
+
+  for (const lockedMatchId of protectedMatchIds) {
+    if (!incomingMatchIds.has(lockedMatchId)) {
+      const om = oldMatches.find((m) => m.id === lockedMatchId);
+      const matchLabel = om?.match_number != null ? `Match ${om.match_number} (${lockedMatchId})` : `match "${lockedMatchId}"`;
+      const err = new Error(
+        `Cannot delete ${matchLabel} because it has recorded match results.`
+      );
+      err.code = 'ROUND_STRUCTURALLY_LOCKED';
+      throw err;
+    }
+  }
 
   const currentRoundIds = new Set();
   const currentDayIds = new Set();
@@ -634,12 +772,17 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
       currentDayIds.add(dayId);
       const dayNumber = dIdx + 1;
 
+      // Protect day date if this day has verified match results; otherwise apply new date
+      const isDayLocked = dayIdsWithResults.has(dayId);
+      const oldDay = oldDays.find((od) => od.id === dayId);
+      const effectiveDate = isDayLocked && oldDay && oldDay.date ? oldDay.date : (d.date || null);
+
       await client.query(
         `INSERT INTO tournament_days (id, tournament_id, round_id, day_number, date)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (id) DO UPDATE
          SET date = EXCLUDED.date, day_number = EXCLUDED.day_number, round_id = EXCLUDED.round_id`,
-        [dayId, tournamentId, roundId, dayNumber, d.date || null]
+        [dayId, tournamentId, roundId, dayNumber, effectiveDate]
       );
 
       const allocations = Array.isArray(d.allocations) ? d.allocations : [];
@@ -701,11 +844,17 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
           const matchId = m.id || `MAT-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
           currentMatchIds.add(matchId);
 
-          const startTime = m.start_time || '13:00';
-          const endTime = m.end_time || computeMatchEndTime(startTime, 30) || '13:30';
-          const map = m.map || 'Erangel';
-          const releaseTime = m.id_pwd_release_time || null;
-          const notes = m.notes || '';
+          // If this match already has verified results, protect its schedule and settings;
+          // otherwise apply organizer updates (date, time, map, notes).
+          const isMatchLocked = protectedMatchIds.has(matchId);
+          const oldMatch = oldMatches.find((om) => om.id === matchId);
+
+          const startTime = isMatchLocked && oldMatch && oldMatch.start_time ? oldMatch.start_time : (m.start_time || '13:00');
+          const endTime = isMatchLocked && oldMatch && oldMatch.end_time ? oldMatch.end_time : (m.end_time || computeMatchEndTime(startTime, 30) || '13:30');
+          const map = isMatchLocked && oldMatch && oldMatch.map ? oldMatch.map : (m.map || 'Erangel');
+          const releaseTime = isMatchLocked && oldMatch ? oldMatch.id_pwd_release_time : (m.id_pwd_release_time || null);
+          const notes = isMatchLocked && oldMatch && oldMatch.notes != null ? oldMatch.notes : (m.notes || '');
+          const matchStatus = isMatchLocked && oldMatch && oldMatch.status ? oldMatch.status : (m.status || 'PENDING');
 
           await client.query(
             `INSERT INTO tournament_matches (
@@ -738,7 +887,7 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData) 
               roundMatchSeq,
               startTime,
               endTime,
-              m.status || 'PENDING',
+              matchStatus,
               map,
               distName,
               'manual',
