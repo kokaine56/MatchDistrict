@@ -1,5 +1,7 @@
 import { ALLOCATION_SOURCES, randomId } from './allocationService.js';
 import { sortAndRank } from './leaderboardService.js';
+export { getPrizePositions } from './manualRoadmapService.js';
+import { getPrizePositions } from './manualRoadmapService.js';
 
 export const ROUND_STATUS = Object.freeze({
   CONFIGURED: 'configured',
@@ -957,7 +959,7 @@ export async function advanceTeamsManually(client, {
 export async function getRoundAdvancementSummary(client, tournamentId, sourceRoundId) {
   // 1. Fetch source round
   const sRes = await client.query(
-    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
+    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match, round_type FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
     [sourceRoundId, tournamentId]
   );
   if (sRes.rows.length === 0) {
@@ -971,9 +973,25 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
     [tournamentId, sourceRound.round_number]
   );
   const targetRound = nextRes.rows.length > 0 ? nextRes.rows[0] : null;
+  const isGrandFinal = sourceRound.round_type === 'grand_final' || !targetRound;
+
+  let prizePositions = [];
+  if (isGrandFinal) {
+    try {
+      const tourRes = await client.query(
+        'SELECT prize, prize_pool_amount, prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp, prize_positions FROM tournaments WHERE id = $1',
+        [tournamentId]
+      );
+      if (tourRes.rows.length > 0) {
+        prizePositions = getPrizePositions(tourRes.rows[0]);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   let targetDistricts = [];
-  if (targetRound) {
+  if (targetRound && !isGrandFinal) {
     const tgRes = await client.query(
       'SELECT id, group_name, sequence FROM tournament_groups WHERE round_id = $1 AND tournament_id = $2 ORDER BY sequence ASC',
       [targetRound.id, tournamentId]
@@ -1017,8 +1035,8 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
     }
   }
 
-  // 6. Planned rule & suggested advancing teams
-  const plannedRule = {
+  // 6. Planned rule & suggested advancing teams (Grand Finals has no advancement rule)
+  const plannedRule = isGrandFinal ? null : {
     advancement_type: sourceRound.advancement_type || 'per_district',
     teams_advancing_per_district: sourceRound.teams_advancing_per_district != null ? Number(sourceRound.teams_advancing_per_district) : null,
     teams_advancing: sourceRound.teams_advancing != null ? Number(sourceRound.teams_advancing) : null,
@@ -1026,25 +1044,27 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
   };
 
   const suggestedTeamIds = [];
-  if (plannedRule.advancement_type === 'per_district') {
-    const topPerDist = plannedRule.teams_advancing_per_district || 2;
-    for (const d of detailed.districts) {
-      const eligible = d.teams.filter((t) => !t.is_disqualified);
-      for (let i = 0; i < Math.min(topPerDist, eligible.length); i++) {
+  if (!isGrandFinal && plannedRule) {
+    if (plannedRule.advancement_type === 'per_district') {
+      const topPerDist = plannedRule.teams_advancing_per_district || 2;
+      for (const d of detailed.districts) {
+        const eligible = d.teams.filter((t) => !t.is_disqualified);
+        for (let i = 0; i < Math.min(topPerDist, eligible.length); i++) {
+          suggestedTeamIds.push(eligible[i].team_id);
+        }
+      }
+    } else {
+      const topOverall = plannedRule.teams_advancing || 16;
+      const eligible = detailed.overallStandings.filter((t) => !t.is_disqualified);
+      for (let i = 0; i < Math.min(topOverall, eligible.length); i++) {
         suggestedTeamIds.push(eligible[i].team_id);
       }
-    }
-  } else {
-    const topOverall = plannedRule.teams_advancing || 16;
-    const eligible = detailed.overallStandings.filter((t) => !t.is_disqualified);
-    for (let i = 0; i < Math.min(topOverall, eligible.length); i++) {
-      suggestedTeamIds.push(eligible[i].team_id);
     }
   }
 
   // 7. Check if target round has recorded match results
   let targetHasResults = false;
-  if (targetRound) {
+  if (targetRound && !isGrandFinal) {
     const trRes = await client.query(
       `SELECT 1 FROM tournament_match_results mr JOIN tournament_matches m ON mr.match_id = m.id WHERE m.round_id = $1 AND m.tournament_id = $2 LIMIT 1`,
       [targetRound.id, tournamentId]
@@ -1054,13 +1074,16 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
 
   return {
     success: true,
+    is_grand_final: isGrandFinal,
+    prize_positions: prizePositions,
     source_round: {
       id: sourceRound.id,
       round_number: sourceRound.round_number,
       name: sourceRound.name,
       status: sourceRound.status,
+      round_type: sourceRound.round_type,
     },
-    target_round: targetRound ? {
+    target_round: targetRound && !isGrandFinal ? {
       id: targetRound.id,
       round_number: targetRound.round_number,
       name: targetRound.name,
@@ -1108,13 +1131,17 @@ export async function qualifyRound(client, { tournamentId, roundNumber, actorId 
   }
 
   const roundRes = await client.query(
-    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2 FOR UPDATE',
+    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match, round_type FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2 FOR UPDATE',
     [tournamentId, roundNumber]
   );
   if (roundRes.rows.length === 0) {
     throw progressionError(PROGRESSION_ERR.ROUND_NOT_FOUND, `Round ${roundNumber} does not exist.`);
   }
   const round = roundRes.rows[0];
+
+  if (round.round_type === 'grand_final') {
+    throw progressionError(PROGRESSION_ERR.NO_NEXT_ROUND, 'Grand Finals is the final tournament round. No teams advance to further rounds.');
+  }
 
   const nextRes = await client.query(
     'SELECT id, round_number, name FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',

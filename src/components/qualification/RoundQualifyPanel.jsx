@@ -136,6 +136,7 @@ export default function RoundQualifyPanel({
 
   // Target round and districts
   const targetRound = summary?.target_round || null;
+  const isGrandFinal = Boolean(summary?.is_grand_final || summary?.source_round?.round_type === 'grand_final' || !targetRound);
   const targetDistricts = targetRound?.districts || [];
   const targetHasResults = Boolean(summary?.target_has_results || targetRound?.has_results);
   const isAlreadyAdvanced = summary?.source_round?.status === 'completed' || (summary?.standings || []).some((t) => t.is_advanced);
@@ -278,13 +279,15 @@ export default function RoundQualifyPanel({
               </span>
               <div>
                 <h3 className="text-lg font-black text-white flex items-center gap-2">
-                  Qualify to Next Round
+                  {isGrandFinal ? 'Grand Finals Championship' : 'Qualify to Next Round'}
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase tracking-widest">
-                    Host Authority
+                    {isGrandFinal ? 'Final Stage' : 'Host Authority'}
                   </span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Select qualified teams from verified standings to advance to the next tournament stage.
+                  {isGrandFinal
+                    ? 'Final standings determine tournament prize pool distribution and championship awards.'
+                    : 'Select qualified teams from verified standings to advance to the next tournament stage.'}
                 </p>
               </div>
             </div>
@@ -337,76 +340,111 @@ export default function RoundQualifyPanel({
         <div className="space-y-6">
           
           {/* Controls Bar: Mode Switcher + Planned Rule Info + Selection Counter */}
-          <div className="bg-[#0E1117] border border-white/10 rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            
-            {/* Modes */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
-                <Layers className="w-3.5 h-3.5" />
-                Mode:
-              </span>
-              {[
-                { id: 'per_district', label: 'Per District' },
-                { id: 'overall', label: 'Overall Standings' },
-                { id: 'manual', label: 'Manual Selection' },
-              ].map((m) => {
-                const isActive = activeMode === m.id;
-                return (
-                  <button
-                    key={m.id}
-                    onClick={() => handleModeChange(m.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                      isActive
-                        ? 'bg-white/15 text-white border border-white/20 shadow-sm'
-                        : 'bg-white/5 text-slate-400 hover:text-slate-200 border border-transparent'
-                    }`}
-                  >
-                    {m.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Planned Rule & Selection Count */}
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Planned Rule Indicator */}
-              <div className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-xs text-slate-300 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>
-                  Planned Rule:{' '}
-                  <strong>
-                    {summary.planned_rule?.advancement_type === 'per_district'
-                      ? `Top ${summary.planned_rule.teams_advancing_per_district || 2} per District`
-                      : `Top ${summary.planned_rule?.teams_advancing || 16} Overall`}
-                  </strong>
-                </span>
+          {isGrandFinal ? (
+            <div className="bg-gradient-to-r from-amber-500/10 via-yellow-500/10 to-amber-500/10 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400">
+                  <Trophy className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white flex items-center gap-2">
+                    Championship Stage &bull; Grand Finals
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase tracking-widest">
+                      Prize Distribution
+                    </span>
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    Grand Finals is the terminal stage. No teams advance beyond this round. Final rankings determine the prize pool distribution.
+                  </p>
+                </div>
               </div>
 
-              {/* Selected Count Indicator */}
-              <div
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
-                  selectedTeamIds.length === plannedCount
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                    : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                }`}
-              >
-                <span>
-                  Selected <strong>{selectedTeamIds.length}</strong> of planned <strong>{plannedCount}</strong>
+              {Array.isArray(summary.prize_positions) && summary.prize_positions.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                  {summary.prize_positions.map((p) => (
+                    <div key={p.rank} className="p-3 rounded-xl bg-black/40 border border-amber-500/20 text-center">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90 block">
+                        {p.name || `Rank ${p.rank}`}
+                      </span>
+                      <span className="text-sm font-black text-white block mt-0.5">
+                        {p.prize_amount != null ? `₹${p.prize_amount.toLocaleString()}` : `${p.percentage}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-[#0E1117] border border-white/10 rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              {/* Modes */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5" />
+                  Mode:
                 </span>
+                {[
+                  { id: 'per_district', label: 'Per District' },
+                  { id: 'overall', label: 'Overall Standings' },
+                  { id: 'manual', label: 'Manual Selection' },
+                ].map((m) => {
+                  const isActive = activeMode === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => handleModeChange(m.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                        isActive
+                          ? 'bg-white/15 text-white border border-white/20 shadow-sm'
+                          : 'bg-white/5 text-slate-400 hover:text-slate-200 border border-transparent'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  );
+                })}
               </div>
 
-              <button
-                onClick={handleResetToPlanned}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
-                title="Reset selection to roadmap plan"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+              {/* Planned Rule & Selection Count */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Planned Rule Indicator */}
+                <div className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-xs text-slate-300 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    Planned Rule:{' '}
+                    <strong>
+                      {summary.planned_rule?.advancement_type === 'per_district'
+                        ? `Top ${summary.planned_rule.teams_advancing_per_district || 2} per District`
+                        : `Top ${summary.planned_rule?.teams_advancing || 16} Overall`}
+                    </strong>
+                  </span>
+                </div>
 
-          {/* Tie Warning Banner */}
-          {tieInfo.hasTie && (
+                {/* Selected Count Indicator */}
+                <div
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 ${
+                    selectedTeamIds.length === plannedCount
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                      : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  }`}
+                >
+                  <span>
+                    Selected <strong>{selectedTeamIds.length}</strong> of planned <strong>{plannedCount}</strong>
+                  </span>
+                </div>
+
+                <button
+                  onClick={handleResetToPlanned}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                  title="Reset selection to roadmap plan"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Tie Warning Banner (Qualifiers only) */}
+          {!isGrandFinal && tieInfo.hasTie && (
             <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 space-y-3 shadow-lg">
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -533,16 +571,18 @@ export default function RoundQualifyPanel({
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
                 <Users className="w-4 h-4 text-indigo-400" />
-                Round Standings & Advancement Selection
+                {isGrandFinal ? 'Grand Finals Final Standings' : 'Round Standings & Advancement Selection'}
               </h4>
-              <span className="text-xs text-slate-400">Click team row or checkbox to toggle qualification</span>
+              <span className="text-xs text-slate-400">
+                {isGrandFinal ? 'Official verified tournament results' : 'Click team row or checkbox to toggle qualification'}
+              </span>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse whitespace-nowrap text-sm">
                 <thead>
                   <tr className="bg-black/40 text-gray-400 text-xs uppercase tracking-wider">
-                    <th className="px-4 py-3 text-center w-12">Advance</th>
+                    {!isGrandFinal && <th className="px-4 py-3 text-center w-12">Advance</th>}
                     <th className="px-4 py-3 text-center w-14">Rank</th>
                     <th className="px-4 py-3">Team Name</th>
                     <th className="px-4 py-3 text-center">District</th>
@@ -561,25 +601,27 @@ export default function RoundQualifyPanel({
                     return (
                       <tr
                         key={team.team_id}
-                        onClick={() => !isDq && handleToggleTeam(team.team_id)}
-                        className={`transition-colors cursor-pointer ${
+                        onClick={() => !isGrandFinal && !isDq && handleToggleTeam(team.team_id)}
+                        className={`transition-colors ${!isGrandFinal ? 'cursor-pointer' : ''} ${
                           isDq
                             ? 'opacity-40 bg-red-950/10 cursor-not-allowed'
-                            : isSelected
+                            : isSelected && !isGrandFinal
                             ? 'bg-indigo-600/[0.08] hover:bg-indigo-600/[0.12]'
                             : 'hover:bg-white/[0.02]'
                         }`}
                       >
-                        {/* Checkbox */}
-                        <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            disabled={isDq}
-                            onChange={() => handleToggleTeam(team.team_id)}
-                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-white/20 bg-black/40 disabled:opacity-30 cursor-pointer"
-                          />
-                        </td>
+                        {/* Checkbox (Qualifiers only) */}
+                        {!isGrandFinal && (
+                          <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={isDq}
+                              onChange={() => handleToggleTeam(team.team_id)}
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-white/20 bg-black/40 disabled:opacity-30 cursor-pointer"
+                            />
+                          </td>
+                        )}
 
                         {/* Rank */}
                         <td className="px-4 py-3 text-center font-bold text-slate-400">
@@ -753,7 +795,7 @@ export default function RoundQualifyPanel({
           )}
 
           {/* Action Footer */}
-          {targetRound && (
+          {targetRound && !isGrandFinal && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-[#0A0C10] border border-white/10">
               <div className="text-xs text-slate-400">
                 {targetHasResults ? (

@@ -19,6 +19,8 @@ import {
   formatDateRangeIST,
 } from '../../utils/roadmapDateUtils';
 import { formatTime12hIST } from '../../utils/timeFormat';
+import { resolveDistrictDisplayName } from '../../utils/roadmapDistricts.js';
+import { getContinuousDayNumber } from '../../utils/roadmapDays.js';
 
 /**
  * Builds the compact single-line plan overview: "128 teams → 16 → Grand Final"
@@ -135,10 +137,12 @@ export default function ParticipantRoadmapView({
               map: 'Erangel',
               district_match_number: 1,
             };
+            const totalDistsInRound = (round.days || []).reduce((acc, d) => acc + (d.allocations?.length || 0), 0);
+            const distName = resolveDistrictDisplayName(round, alloc, 0, totalDistsInRound);
             return {
               roundName: round.name || `Round ${round.round_number || rIdx + 1}`,
-              districtName: alloc.district_name || alloc.name || 'Your District',
-              dayNumber: day.day_number,
+              districtName: distName,
+              dayNumber: getContinuousDayNumber(rounds, rIdx, dIdx),
               date: day.date,
               match: firstMatch,
               matchCount: matches.length || 1,
@@ -400,6 +404,12 @@ export default function ParticipantRoadmapView({
                       <span>{roundDateStr}</span>
                       <span className="opacity-40">·</span>
                       <span className="font-medium">{ruleSummary}</span>
+                      {round.lobbies_note && (
+                        <>
+                          <span className="opacity-40">·</span>
+                          <span className="font-semibold text-blue-600 dark:text-blue-400">{round.lobbies_note}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -421,16 +431,17 @@ export default function ParticipantRoadmapView({
                       No match days scheduled for this round yet.
                     </div>
                   ) : (
-                    round.days.map((day) => {
+                    round.days.map((day, dIdx) => {
+                      const continuousDayNum = getContinuousDayNumber(rounds, rIdx, dIdx);
                       const dayAllocs = day.allocations || [];
                       const dayDateFormatted = day.date ? formatDateWithWeekdayIST(day.date) : 'Date TBD';
 
                       return (
-                        <div key={day.id || day.day_number} className="space-y-2">
+                        <div key={day.id || continuousDayNum || dIdx} className="space-y-2">
                           {/* Day Header */}
                           <div className="flex items-center justify-between text-xs pb-1 border-b border-slate-100 dark:border-slate-800">
                             <span className="font-bold text-slate-800 dark:text-slate-200">
-                              Day {day.day_number} — {dayDateFormatted}
+                              Day {continuousDayNum} — {dayDateFormatted}
                             </span>
                             <span className="text-[11px] text-slate-400">
                               {dayAllocs.length} {dayAllocs.length === 1 ? 'district' : 'districts'}
@@ -440,12 +451,13 @@ export default function ParticipantRoadmapView({
                           {/* District Rows */}
                           {dayAllocs.length === 0 ? (
                             <div className="py-2 text-center text-xs text-slate-400 italic">
-                              No districts assigned to Day {day.day_number}.
+                              No districts assigned to Day {continuousDayNum}.
                             </div>
                           ) : (
                             <div className="space-y-1.5">
                               {dayAllocs.map((alloc, aIdx) => {
-                                const distName = alloc.district_name || alloc.name || `District ${aIdx + 1}`;
+                                const totalDistsInRound = (round.days || []).reduce((acc, d) => acc + (d.allocations?.length || 0), 0);
+                                const distName = resolveDistrictDisplayName(round, alloc, aIdx, totalDistsInRound);
                                 const matches = alloc.matches && alloc.matches.length > 0
                                   ? alloc.matches
                                   : [{
@@ -458,7 +470,7 @@ export default function ParticipantRoadmapView({
                                   effectiveMyDistIds.has(alloc.district_id) ||
                                   effectiveMyDistIds.has(alloc.id) ||
                                   effectiveMyDistIds.has(alloc.group_id) ||
-                                  matches.some((m) => effectiveMyMatchIds.has(m.id) || effectiveMyMatchIds.has(m.match_id));
+                                  matches.some((m) => effectiveMyDistIds.has(m.district_id) || effectiveMyMatchIds.has(m.id) || effectiveMyMatchIds.has(m.match_id));
 
                                 return (
                                   <div

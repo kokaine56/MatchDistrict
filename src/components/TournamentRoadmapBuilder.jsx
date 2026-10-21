@@ -35,6 +35,7 @@ import { isRoadmapPublished } from "../utils/roadmapStatus";
 import OrganizerRoadmapEditor from "./roadmap/OrganizerRoadmapEditor";
 import RoadmapAdvancementModal from "./roadmap/RoadmapAdvancementModal";
 import ParticipantRoadmapViewer from "./roadmap/ParticipantRoadmapViewer";
+import { addCalendarDays } from "../utils/roadmapDays";
 
 // Game default maps
 const GAME_MAP_OPTIONS = {
@@ -77,21 +78,7 @@ export function getDayOfWeek(dateStr) {
 }
 
 export function addDaysToDateStr(dateStr, daysToAdd = 1) {
-  if (!dateStr) return "";
-  try {
-    const clean = String(dateStr).slice(0, 10);
-    const parts = clean.split("-").map(Number);
-    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return "";
-    const [y, m, d] = parts;
-    const date = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-    date.setUTCDate(date.getUTCDate() + daysToAdd);
-    const year = date.getUTCFullYear();
-    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(date.getUTCDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  } catch {
-    return "";
-  }
+  return addCalendarDays(dateStr, daysToAdd);
 }
 
 export function computeMinSelectableDate(regCloseDate) {
@@ -121,69 +108,9 @@ function formatDateDisplay(dateStr) {
   }
 }
 
-/**
- * Dynamically parse configured prize distribution from tournament metadata.
- * Does not hardcode 4 ranks; returns configured ranks with percentages and amounts.
- */
-export function getPrizePositions(meta) {
-  if (!meta) return [];
+import { getPrizePositions } from "../utils/prizePool";
+export { getPrizePositions };
 
-  // 1. If structured prize_positions JSON is available
-  if (meta.prize_positions) {
-    try {
-      const raw = typeof meta.prize_positions === "string" ? JSON.parse(meta.prize_positions) : meta.prize_positions;
-      if (Array.isArray(raw) && raw.length > 0) {
-        return raw.map((p, idx) => {
-          const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
-          const pct = p.percentage != null ? Number(p.percentage) : null;
-          let calculatedAmount = p.prize_amount != null ? Number(p.prize_amount) : null;
-          if (calculatedAmount == null && pct != null && pool > 0) {
-            calculatedAmount = Math.round((pct / 100) * pool);
-          }
-          return {
-            rank: idx + 1,
-            name: p.name || `Rank ${idx + 1}`,
-            percentage: pct,
-            prize_amount: calculatedAmount,
-          };
-        });
-      }
-    } catch {
-      // Fallback below
-    }
-  }
-
-  // 2. Fallback to individual splits (prize_split_1st, prize_split_2nd, prize_split_3rd, prize_split_mvp)
-  const splits = [];
-  const pool = Number(meta.prize_pool_amount) || (meta.prize && !isNaN(Number(meta.prize)) ? Number(meta.prize) : 0);
-
-  if (meta.prize_split_1st) {
-    const pct = Number(meta.prize_split_1st);
-    splits.push({ rank: 1, name: "1st Place (Champion)", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
-  }
-  if (meta.prize_split_2nd) {
-    const pct = Number(meta.prize_split_2nd);
-    splits.push({ rank: 2, name: "2nd Place (Runner-up)", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
-  }
-  if (meta.prize_split_3rd) {
-    const pct = Number(meta.prize_split_3rd);
-    splits.push({ rank: 3, name: "3rd Place", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
-  }
-  if (meta.prize_split_mvp) {
-    const pct = Number(meta.prize_split_mvp);
-    splits.push({ rank: 4, name: "MVP / 4th Place", percentage: pct, prize_amount: pool ? Math.round((pct / 100) * pool) : null });
-  }
-
-  if (splits.length > 0) return splits;
-
-  // 3. Fallback: default placement distribution
-  return [
-    { rank: 1, name: "1st Place (Champion)", percentage: 50, prize_amount: pool ? Math.round(pool * 0.5) : null },
-    { rank: 2, name: "2nd Place", percentage: 25, prize_amount: pool ? Math.round(pool * 0.25) : null },
-    { rank: 3, name: "3rd Place", percentage: 15, prize_amount: pool ? Math.round(pool * 0.15) : null },
-    { rank: 4, name: "4th Place", percentage: 10, prize_amount: pool ? Math.round(pool * 0.10) : null },
-  ];
-}
 
 export default function TournamentRoadmapBuilder({
   tournamentId,
@@ -682,7 +609,21 @@ export default function TournamentRoadmapBuilder({
     }
   };
 
-  const handleConfirmMasterDelete = async () => {
+  const handleConfirmMasterDelete = async (options = {}) => {
+    if (options && options.optimistic) {
+      setRounds([]);
+      setIsPublished(false);
+      setSelectedRoundIdx(0);
+      setExpandedMatches(new Set());
+      setPublishErrors([]);
+      return { success: true };
+    }
+
+    if (options && options.restore) {
+      setRounds(options.snapshot || []);
+      return { success: true };
+    }
+
     setDeletingRoadmap(true);
     setError(null);
     setSuccess(null);
@@ -709,8 +650,10 @@ export default function TournamentRoadmapBuilder({
       setRounds([]);
       setSuccess("Entire roadmap deleted successfully. You can now generate a fresh roadmap or build one manually.");
       if (onApproved) onApproved();
+      return { success: true };
     } catch (err) {
       setError(err.message || "Failed to delete entire roadmap.");
+      return { success: false, error: err.message };
     } finally {
       setDeletingRoadmap(false);
     }
@@ -1246,7 +1189,9 @@ export default function TournamentRoadmapBuilder({
       const data = await res.json();
       if (!data.success) {
         const isValidation = Array.isArray(data.errors) && data.errors.length > 0;
-        const msg = data.serverError || data.message || data.error || "Failed to save draft.";
+        const rawMsg = data.serverError || data.message || data.error;
+        const isSql = /column|relation|syntax|SELECT|INSERT|UPDATE|pg_|Postgres|database error|42\d{3}|23\d{3}/i.test(String(rawMsg || ''));
+        const msg = isSql || !rawMsg ? "Could not save roadmap: server error" : rawMsg;
         setError(msg);
         return {
           success: false,
@@ -1260,8 +1205,8 @@ export default function TournamentRoadmapBuilder({
       await fetchRoadmap({ background: true });
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
-      setError(err.message);
-      return { success: false, errors: [], serverError: err.message || "Failed to save draft.", warnings: [] };
+      setError("Could not save roadmap: server error");
+      return { success: false, errors: [], serverError: "Could not save roadmap: server error", warnings: [] };
     } finally {
       setSaving(false);
     }
@@ -1287,7 +1232,9 @@ export default function TournamentRoadmapBuilder({
       const data = await res.json();
       if (!data.success) {
         const isValidation = Array.isArray(data.errors) && data.errors.length > 0;
-        const msg = data.serverError || data.message || data.error || "Failed to publish roadmap.";
+        const rawMsg = data.serverError || data.message || data.error;
+        const isSql = /column|relation|syntax|SELECT|INSERT|UPDATE|pg_|Postgres|database error|42\d{3}|23\d{3}/i.test(String(rawMsg || ''));
+        const msg = isSql || !rawMsg ? "Could not publish roadmap: server error" : rawMsg;
         setError(msg);
         if (isValidation) {
           setPublishErrors(data.errors);
@@ -1308,8 +1255,8 @@ export default function TournamentRoadmapBuilder({
       await fetchRoadmap({ background: true });
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
-      setError(err.message);
-      return { success: false, errors: [], serverError: err.message || "Failed to publish roadmap.", warnings: [] };
+      setError("Could not publish roadmap: server error");
+      return { success: false, errors: [], serverError: "Could not publish roadmap: server error", warnings: [] };
     } finally {
       setPublishing(false);
     }
@@ -1321,25 +1268,47 @@ export default function TournamentRoadmapBuilder({
     setSuccess(null);
     try {
       const token = await getAuthToken();
+      const payload = {
+        mode: "regenerate_all",
+        draft_only: true,
+        ...(genOptions || {}),
+      };
       const res = await fetch(`/api/tournaments/${tournamentId}/roadmap/generate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(genOptions || { mode: "regenerate_all" }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!data.success) {
-        return { success: false, error: data.message || data.error || "Failed to generate roadmap." };
+        const errorMsg = data.message || data.error || "Failed to generate roadmap.";
+        if (import.meta.env?.DEV) {
+          console.warn("[Roadmap Generation Error] Step: server_validation_or_rejection", errorMsg);
+        }
+        return { success: false, error: errorMsg };
       }
+
+      const structuredRounds = data.roadmap?.structured_rounds;
+      if (Array.isArray(structuredRounds) && structuredRounds.length > 0) {
+        setSuccess("Roadmap draft generated! You can now review, customize, and save or publish.");
+        if (onApproved) onApproved();
+        return { success: true, structured_rounds: structuredRounds, meta: data.roadmap?.meta };
+      }
+
+      // If draft_only wasn't returned as structured_rounds for some reason, fallback to fetch
       setSuccess("Roadmap generated successfully! You can now review, customize, and publish.");
       await fetchRoadmap();
       if (onApproved) onApproved();
       return { success: true };
     } catch (err) {
-      setError(err.message || "Failed to generate roadmap.");
-      return { success: false, error: err.message || "Failed to generate roadmap." };
+      const errorMsg = err.message || "Failed to generate roadmap.";
+      if (import.meta.env?.DEV) {
+        console.warn("[Roadmap Generation Error] Step: network_or_execution_exception", errorMsg);
+      }
+      setError(errorMsg);
+      return { success: false, error: errorMsg };
     } finally {
       setGeneratingRoadmap(false);
     }

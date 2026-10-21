@@ -352,10 +352,10 @@ test('Test 2: 64 teams in Round 2 auto-creates 4 districts (ceil(64 / 16))', asy
   // Round 2 should have 4 auto-created districts
   const r2Round = roadmapData.rounds[1];
   assert.strictEqual(r2Round.days[0].allocations.length, 4, 'Round 2 must have 4 auto-districts');
-  assert.strictEqual(r2Round.days[0].allocations[0].district_name, 'District 1');
-  assert.strictEqual(r2Round.days[0].allocations[1].district_name, 'District 2');
-  assert.strictEqual(r2Round.days[0].allocations[2].district_name, 'District 3');
-  assert.strictEqual(r2Round.days[0].allocations[3].district_name, 'District 4');
+  assert.strictEqual(r2Round.days[0].allocations[0].district_name, 'Round 2 · Lobby 1');
+  assert.strictEqual(r2Round.days[0].allocations[1].district_name, 'Round 2 · Lobby 2');
+  assert.strictEqual(r2Round.days[0].allocations[2].district_name, 'Round 2 · Lobby 3');
+  assert.strictEqual(r2Round.days[0].allocations[3].district_name, 'Round 2 · Lobby 4');
 
   // Verify DB groups
   const r2Groups = client.mockDb.groups.filter((g) => g.round_id === 'RND-2');

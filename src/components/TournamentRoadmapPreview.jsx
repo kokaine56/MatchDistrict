@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   CalendarDays, Map, Layers, LayoutGrid, Clock, Users, Swords, 
@@ -253,7 +253,7 @@ export default function TournamentRoadmapPreview({
                         >
                           {isExpandedDay ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
                           <CalendarDays className="w-5 h-5 text-indigo-400" />
-                          <span className="font-bold text-white flex-1">Day {day.day_number}</span>
+                          <span className="font-bold text-white flex-1">Day {day.display_day_number || day.day_number}</span>
                           <span className="text-sm text-gray-500">{day.date}</span>
                           <span className="text-xs bg-white/10 px-2 py-1 rounded text-gray-300">{dayGroups.length} Groups</span>
                         </button>

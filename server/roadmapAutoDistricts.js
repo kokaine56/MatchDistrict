@@ -10,6 +10,8 @@
 // team assignments or verified results are preserved, emitting a warning.
 
 import { toMins, minsToHHMM } from './roadmapValidation.js';
+import { getDistrictDisplayName } from './roadmapDistricts.js';
+import { getNextDefaultDayDate } from './roadmapDays.js';
 
 function generateShortId(prefix = '') {
   let randStr = '';
@@ -35,7 +37,7 @@ export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
   if (advType === 'per_district') {
     const perDist = Number(roundConfig.teams_advancing_per_district) || 0;
     const dists = districtCount || (Array.isArray(roundConfig.days)
-      ? new Set(roundConfig.days.flatMap((d) => (d.allocations || []).map((a) => a.district_id || a.id || a.group_id))).size
+      ? new Set(roundConfig.days.flatMap((d) => (d.allocations || []).map((a) => a.district_id || a.id || a.group_id || a.district_name || a.name))).size
       : 0);
     return Math.max(0, dists * perDist);
   }
@@ -53,6 +55,40 @@ export function calculateAdvancingTeams(roundConfig, districtCount = 0) {
   }
 
   return Math.max(0, Number(roundConfig.teams_advancing) || 0);
+}
+
+/**
+ * Pure helper to split incoming teams as evenly as possible across lobbies.
+ * For example, 40 teams across 3 lobbies yields [14, 13, 13] (not 16, 16, 8).
+ *
+ * @param {number} totalTeams - Total incoming teams
+ * @param {number} count - Number of lobbies
+ * @returns {number[]} Array of lobby capacities
+ */
+export function splitTeamsEvenly(totalTeams, count) {
+  const total = Number(totalTeams);
+  const n = Math.max(1, Math.floor(Number(count) || 1));
+  if (!Number.isFinite(total) || total <= 0) return Array(n).fill(0);
+  const base = Math.floor(total / n);
+  const extra = total % n;
+  const sizes = [];
+  for (let i = 0; i < n; i++) {
+    sizes.push(i < extra ? base + 1 : base);
+  }
+  return sizes;
+}
+
+/**
+ * Format a human-readable note describing incoming teams and lobby split.
+ * E.g. "32 teams -> 2 lobbies of 16" or "40 teams -> 3 lobbies of 14, 13, 13".
+ */
+export function formatLobbiesNote(teamsIn, lobbyCapacities) {
+  if (!teamsIn || !lobbyCapacities || lobbyCapacities.length === 0) return '';
+  const count = lobbyCapacities.length;
+  const lobbyWord = count === 1 ? 'lobby' : 'lobbies';
+  const allSame = lobbyCapacities.every((c) => c === lobbyCapacities[0]);
+  const capText = allSame ? `${lobbyCapacities[0]}` : lobbyCapacities.join(', ');
+  return `${teamsIn} teams -> ${count} ${lobbyWord} of ${capText}`;
 }
 
 /**
@@ -100,20 +136,31 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
           : (prevRoundAdvancing != null && prevRoundAdvancing > 0 ? prevRoundAdvancing : 16));
     round.teams_in = teamsIn;
 
-    if (rIdx < rounds.length - 1 && round.round_type !== 'grand_final') {
-      round.advancement_target_round_id = rounds[rIdx + 1]?.id || null;
-    } else if (round.round_type === 'grand_final') {
+    const isGrandFinal = round.round_type === 'grand_final' || round.is_grand_final || (!round.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
+
+    if (isGrandFinal) {
+      round.round_type = 'grand_final';
       round.advancement_target_round_id = null;
+      round.advancement_type = null;
+      round.teams_advancing = null;
+      round.teams_advancing_per_district = null;
+      round.teams_advancing_per_match = null;
+    } else if (rIdx < rounds.length - 1) {
+      round.advancement_target_round_id = rounds[rIdx + 1]?.id || null;
     }
 
     const neededDistrictCount = Math.max(1, Math.ceil(teamsIn / teamsPerGroup));
+    const lobbyCapacities = splitTeamsEvenly(teamsIn, neededDistrictCount);
+    round.lobbies_note = formatLobbiesNote(teamsIn, lobbyCapacities);
+    round.lobby_capacities = lobbyCapacities;
 
     // Ensure round has at least one day
     if (!Array.isArray(round.days) || round.days.length === 0) {
+      const defaultDate = getNextDefaultDayDate(rounds, rIdx, null) || round.date || '';
       round.days = [{
         id: `DAY-${round.id || rIdx + 1}-1`,
         day_number: 1,
-        date: round.date || null,
+        date: defaultDate,
         allocations: [],
       }];
     }
@@ -127,9 +174,8 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
       }
     }
 
-    const isGrandFinal = round.round_type === 'grand_final' || round.is_grand_final || (!round.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
-
     const targetAllocations = [];
+    const roundNum = round.round_number || rIdx + 1;
 
     // Step A: Keep existing allocations up to neededDistrictCount, or if protected
     for (let i = 0; i < existingAllocList.length; i++) {
@@ -146,12 +192,23 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
         }
 
         const distNum = targetAllocations.length + 1;
-        const defaultName = isGrandFinal
-          ? (neededDistrictCount === 1 ? 'Grand Finals' : `Grand Finals - District ${distNum}`)
-          : `District ${distNum}`;
-        alloc.district_name = alloc.district_name || defaultName;
-        alloc.name = alloc.name || alloc.district_name;
-        alloc.capacity = alloc.capacity || teamsPerGroup;
+        const defaultName = getDistrictDisplayName({
+          roundNumber: roundNum,
+          districtNumber: distNum,
+          totalDistricts: neededDistrictCount,
+          isGrandFinal,
+        });
+
+        // Regrouped lobbies: do not reuse old district names from Round 1
+        const isOldDistrictName = !alloc.district_name ||
+          /^District \d+/i.test(alloc.district_name) ||
+          /^Qualifiers District \d+/i.test(alloc.district_name) ||
+          /^Round \d+ · (?:Lobby|District) \d+/i.test(alloc.district_name) ||
+          /^Grand Finals?/i.test(alloc.district_name);
+
+        alloc.district_name = isOldDistrictName ? defaultName : alloc.district_name;
+        alloc.name = alloc.district_name;
+        alloc.capacity = lobbyCapacities[targetAllocations.length] || teamsPerGroup;
 
         // Ensure match_count & matches exist
         const matchCount = Math.max(1, Number(alloc.match_count) || Number(round.match_count) || (Array.isArray(alloc.matches) && alloc.matches.length > 0 ? alloc.matches.length : 1));
@@ -199,15 +256,26 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
         }
 
         targetAllocations.push({ day: item.day, alloc });
+      } else {
+        // Extra lobby is being pruned. Check if it had a configured schedule
+        const hasSchedule = (Array.isArray(alloc.matches) && alloc.matches.length > 0) || Boolean(alloc.match_count);
+        if (hasSchedule) {
+          warnings.push(
+            `Removed scheduled lobby "${alloc.district_name || alloc.name || gId}" from "${round.name || `Round ${roundNum}`}" because the updated qualifier rule reduced the required lobby count from ${existingAllocList.length} to ${neededDistrictCount}.`
+          );
+        }
       }
     }
 
     // Step B: Auto-create additional districts if needed
     while (targetAllocations.length < neededDistrictCount) {
       const distNum = targetAllocations.length + 1;
-      const distName = isGrandFinal
-        ? (neededDistrictCount === 1 ? 'Grand Finals' : `Grand Finals - District ${distNum}`)
-        : `District ${distNum}`;
+      const distName = getDistrictDisplayName({
+        roundNumber: roundNum,
+        districtNumber: distNum,
+        totalDistricts: neededDistrictCount,
+        isGrandFinal,
+      });
       const groupId = generateShortId('GRP');
       const matchCount = Math.max(1, Number(round.match_count) || 1);
       const matches = [];
@@ -235,7 +303,7 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
         district_id: groupId,
         district_name: distName,
         name: distName,
-        capacity: teamsPerGroup,
+        capacity: lobbyCapacities[targetAllocations.length] || teamsPerGroup,
         sequence: distNum,
         display_order: distNum,
         match_count: matchCount,
@@ -265,7 +333,12 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
         for (let tIdx = 0; tIdx < targetAllocations.length; tIdx++) {
           const td = targetAllocations[tIdx].alloc;
           const distId = td.district_id || td.id;
-          const distName = td.district_name || td.name || (targetAllocations.length === 1 ? 'Grand Finals' : `District ${tIdx + 1}`);
+          const distName = getDistrictDisplayName({
+            roundNumber: roundNum,
+            districtNumber: tIdx + 1,
+            totalDistricts: targetAllocations.length,
+            isGrandFinal: true,
+          });
           const existing = existingMap.get(distId) || existingMap.get(td.name);
 
           if (existing && Array.isArray(existing.matches) && existing.matches.length > 0) {

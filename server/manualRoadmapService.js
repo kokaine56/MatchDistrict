@@ -29,6 +29,39 @@ import {
   defaultTeamsAdvancing,
 } from './roadmapConfig.js';
 import { isTournamentOrganizer } from './tournamentAuth.js';
+import {
+  getRoundDistricts,
+  getDefaultDistrictForNewMatch,
+  getUnscheduledDistrictsForRound,
+  getDistrictDisplayName,
+  resolveDistrictDisplayName,
+} from './roadmapDistricts.js';
+import {
+  getContinuousDayNumber,
+  checkRoundDateOverlaps,
+  getNextDefaultDayDate,
+  addCalendarDays,
+  formatToDDMMYYYY,
+  calendarDayDiff,
+  shiftLaterRoundsToFollow,
+  toCalendarDateStr,
+} from './roadmapDays.js';
+
+export {
+  getRoundDistricts,
+  getDefaultDistrictForNewMatch,
+  getUnscheduledDistrictsForRound,
+  getDistrictDisplayName,
+  resolveDistrictDisplayName,
+  getContinuousDayNumber,
+  checkRoundDateOverlaps,
+  getNextDefaultDayDate,
+  addCalendarDays,
+  formatToDDMMYYYY,
+  calendarDayDiff,
+  shiftLaterRoundsToFollow,
+  toCalendarDateStr,
+};
 
 export const ROUND_TYPES = Object.freeze([
   'qualifier',
@@ -171,7 +204,12 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
     const slotEnd = l.slotEnd ?? row.group_index * row.capacity;
     const matchingRegs = districtRegMap.get(row.id) || [];
 
-    const displayName = formatDistrictName(row.group_index);
+    const displayName = getDistrictDisplayName({
+      roundNumber: 1,
+      districtNumber: row.group_index,
+      totalDistricts: groupRowsRes.rows.length,
+      isGrandFinal: false,
+    });
     return {
       id: row.id,
       group_index: row.group_index,
@@ -364,7 +402,7 @@ export function validateManualRoadmap(roadmapData, options = {}) {
 
     for (let dIdx = 0; dIdx < days.length; dIdx++) {
       const day = days[dIdx];
-      const dNum = day.day_number || dIdx + 1;
+      const dNum = getContinuousDayNumber(rounds, rIdx, dIdx);
 
       // Validate date
       if (options.isPublish && (!day.date || !isValidDateStr(day.date))) {
@@ -378,7 +416,8 @@ export function validateManualRoadmap(roadmapData, options = {}) {
         roundEndDate = day.date;
 
         if (prevDayDate && day.date < prevDayDate) {
-          const msg = `Day ${dNum} date (${day.date}) cannot precede Day ${dNum - 1} date (${prevDayDate}) in "${rName || `Round ${rNum}`}".`;
+          const prevDNum = getContinuousDayNumber(rounds, rIdx, dIdx - 1);
+          const msg = `Day ${dNum} date (${day.date}) cannot precede Day ${prevDNum} date (${prevDayDate}) in "${rName || `Round ${rNum}`}".`;
           if (options.isPublish) {
             errors.push(msg);
           } else {
@@ -402,12 +441,13 @@ export function validateManualRoadmap(roadmapData, options = {}) {
       }
 
       const dayDistricts = new Set();
+      const dayDistrictsMap = new Map();
       for (const alloc of allocations) {
         const distId = alloc.district_id || alloc.id;
         const distName = alloc.district_name || alloc.name || 'District';
 
         if (!distId) {
-          errors.push(`Day ${dNum} in "${rName}": District allocation is missing a valid district ID.`);
+          errors.push(`Day ${dNum} in "${rName || `Round ${rNum}`}": District allocation is missing a valid district ID.`);
           continue;
         }
 
@@ -417,15 +457,36 @@ export function validateManualRoadmap(roadmapData, options = {}) {
         dayDistricts.add(distId);
         scheduledDistrictsInRound.add(distId);
 
-        const matchCount = Number(alloc.match_count) || (Array.isArray(alloc.matches) ? alloc.matches.length : 0);
-        if (matchCount <= 0) {
-          errors.push(`District "${distName}" on Day ${dNum} has 0 configured matches.`);
+        if (!dayDistrictsMap.has(distId)) {
+          dayDistrictsMap.set(distId, {
+            distId,
+            distName,
+            matches: [],
+            matchCount: 0,
+          });
+        }
+        const entry = dayDistrictsMap.get(distId);
+        const matches = Array.isArray(alloc.matches) ? alloc.matches : [];
+        entry.matches.push(...matches);
+        entry.matchCount += Number(alloc.match_count) || matches.length;
+      }
+
+      for (const [distId, entry] of dayDistrictsMap) {
+        const distName = entry.distName;
+        const matchCount = entry.matchCount;
+
+        if (matchCount < 1) {
+          errors.push(`District "${distName}" on Day ${dNum} must have at least 1 match.`);
+          continue;
+        }
+        if (matchCount > 12) {
+          errors.push(`District "${distName}" on Day ${dNum} cannot exceed 12 matches per day.`);
           continue;
         }
 
         totalRoundMatches += matchCount;
 
-        const matches = Array.isArray(alloc.matches) ? alloc.matches : [];
+        const matches = entry.matches;
         if (options.isPublish && matches.length === 0) {
           errors.push(`District "${distName}" on Day ${dNum} has no matches configured.`);
         }
@@ -482,34 +543,92 @@ export function validateManualRoadmap(roadmapData, options = {}) {
       errors.push(`Round "${rName || `Round ${rNum}`}" has no matches scheduled.`);
     }
 
-    // Chronological order across rounds
-    if (roundStartDate && prevRoundEndDate && roundStartDate < prevRoundEndDate) {
-      const msg = `Round "${rName || `Round ${rNum}`}" starts on ${roundStartDate}, which is before previous round "${prevRoundName}" ends on ${prevRoundEndDate}.`;
-      if (options.isPublish) {
-        errors.push(msg);
-      } else {
-        warnings.push(msg);
+    // Chronological order across rounds (Round first date must be strictly after previous round's last date)
+    if (roundStartDate && prevRoundEndDate) {
+      const firstDayNum = getContinuousDayNumber(rounds, rIdx, 0);
+      const prevRoundDays = rounds[rIdx - 1]?.days || [];
+      const prevLastDayNum = getContinuousDayNumber(rounds, rIdx - 1, Math.max(0, prevRoundDays.length - 1));
+
+      if (roundStartDate <= prevRoundEndDate) {
+        const isSameDate = roundStartDate === prevRoundEndDate;
+        const formattedStart = formatToDDMMYYYY(roundStartDate);
+        const formattedPrevEnd = formatToDDMMYYYY(prevRoundEndDate);
+        const currentRoundTitle = rName || `Round ${rNum}`;
+        const prevRoundTitle = prevRoundName || `Round ${rNum - 1}`;
+
+        const msg = isSameDate
+          ? `${currentRoundTitle} starts on ${formattedStart} (${roundStartDate}) but ${prevRoundTitle} ends on the same date (${formattedPrevEnd}). Each round must take place on dates strictly after the previous round concludes.`
+          : `${currentRoundTitle} starts on ${formattedStart} (${roundStartDate}) which is before ${prevRoundTitle} ends (${formattedPrevEnd}). Each round must take place on dates strictly after the previous round concludes.`;
+
+        if (options.isPublish) {
+          errors.push(msg);
+        } else {
+          warnings.push(msg);
+        }
       }
     }
     if (roundEndDate) {
       prevRoundEndDate = roundEndDate;
     }
 
-    // Publish check: in Round 1, check that all expected districts are assigned to at least one day
-    if (options.isPublish && rIdx === 0) {
-      const slotsTotal = Number(options.slotsTotal);
-      const teamsPerGroup = Number(options.teams_per_group || 16);
-      if (slotsTotal > 0 && teamsPerGroup > 0) {
-        const expectedCount = Math.ceil(slotsTotal / teamsPerGroup);
-        if (scheduledDistrictsInRound.size < expectedCount) {
-          errors.push(`Round 1 only has ${scheduledDistrictsInRound.size} of ${expectedCount} required districts scheduled. Every district must be assigned to a day.`);
+    // Publish check: every district in this round must have at least one match
+    if (options.isPublish) {
+      const expectedDistricts = getRoundDistricts(round, rIdx, options.districts, {
+        teams_per_group: options.teams_per_group || 16,
+        slotsTotal: options.slotsTotal,
+        totalRounds: rounds.length,
+      });
+
+      const roundDistMatchesCount = new Map();
+      for (const ed of expectedDistricts) {
+        roundDistMatchesCount.set(ed.id, 0);
+      }
+
+      for (const d of (round.days || [])) {
+        for (const a of (d.allocations || [])) {
+          const aDistId = a.district_id || a.id;
+          const aMatches = Array.isArray(a.matches) ? a.matches : [];
+          for (const m of aMatches) {
+            const mDistId = m.district_id || aDistId;
+            if (mDistId) {
+              const prev = roundDistMatchesCount.get(mDistId) || 0;
+              roundDistMatchesCount.set(mDistId, prev + 1);
+            }
+          }
+        }
+      }
+
+      for (const ed of expectedDistricts) {
+        const count = roundDistMatchesCount.get(ed.id) || 0;
+        if (count === 0) {
+          errors.push(`In "${rName || `Round ${rNum}`}": District "${ed.name}" has no matches scheduled. Every district must have at least one match.`);
+        }
+      }
+
+      // Check that all required Round 1 districts are scheduled if slotsTotal is given
+      if (rIdx === 0) {
+        const slotsTotal = Number(options.slotsTotal);
+        const teamsPerGroup = Number(options.teams_per_group || 16);
+        if (slotsTotal > 0 && teamsPerGroup > 0) {
+          const expectedCount = Math.ceil(slotsTotal / teamsPerGroup);
+          if (scheduledDistrictsInRound.size < expectedCount) {
+            errors.push(`Round 1 only has ${scheduledDistrictsInRound.size} of ${expectedCount} required districts scheduled. Every district must be assigned to a day.`);
+          }
         }
       }
     }
 
     // Calculate advancing teams for this round
+    const isGrandFinal = round.round_type === 'grand_final' || round.is_grand_final || (!round.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
+    if (isGrandFinal) {
+      round.round_type = 'grand_final';
+      round.advancement_type = null;
+      round.teams_advancing = null;
+      round.teams_advancing_per_district = null;
+      round.teams_advancing_per_match = null;
+      round.advancement_target_round_id = null;
+    }
     const advancingTeams = calculateAdvancingTeams(round, scheduledDistrictsInRound.size);
-    const isGrandFinal = round.round_type === 'grand_final';
 
     // Incoming teams calculation (teams_in or derived)
     let roundTeamsIn = round.teams_in != null ? Number(round.teams_in) : null;
@@ -731,7 +850,11 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
               const endTimeChanged = m.end_time && m.end_time !== oldMatch.end_time;
               const mapChanged = m.map && m.map !== oldMatch.map;
               const notesChanged = m.notes != null && m.notes !== (oldMatch.notes || '');
-              if (timeChanged || endTimeChanged || mapChanged || notesChanged) {
+              const oldGroup = oldGroups.find((g) => g.id === oldMatch.group_id);
+              const oldDistId = oldMatch.district_id || oldGroup?.district_id || oldMatch.group_id;
+              const newDistId = m.district_id || a.district_id || a.id;
+              const districtChanged = Boolean(newDistId && oldDistId && String(newDistId) !== String(oldDistId));
+              if (timeChanged || endTimeChanged || mapChanged || notesChanged || districtChanged) {
                 const err = new Error(
                   `Cannot modify Match ${oldMatch.match_number || m.id}: this match has verified results and is locked.`
                 );
@@ -1016,9 +1139,9 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
             `INSERT INTO tournament_matches (
               id, tournament_id, round_id, day_id, group_id, room_id,
               match_number, start_time, end_time, status, map, group_name,
-              origin, manual_override, notes, id_pwd_release_time
+              origin, manual_override, notes, id_pwd_release_time, district_id
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (id) DO UPDATE
             SET day_id = EXCLUDED.day_id,
                 round_id = EXCLUDED.round_id,
@@ -1032,7 +1155,8 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
                 origin = EXCLUDED.origin,
                 manual_override = EXCLUDED.manual_override,
                 notes = EXCLUDED.notes,
-                id_pwd_release_time = EXCLUDED.id_pwd_release_time`,
+                id_pwd_release_time = EXCLUDED.id_pwd_release_time,
+                district_id = EXCLUDED.district_id`,
             [
               matchId,
               tournamentId,
@@ -1050,6 +1174,7 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
               true,
               notes,
               releaseTime,
+              m.district_id || distId,
             ]
           );
         }
@@ -1195,7 +1320,7 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
   const roundOrderMap = new Map(rounds.map((r, i) => [r.id, i]));
   const sortedRounds = rounds.slice().sort((a, b) => (a.round_number || 0) - (b.round_number || 0));
 
-  return sortedRounds.map((rnd, rIdx) => {
+  const structuredRounds = sortedRounds.map((rnd, rIdx) => {
     const roundDays = days
       .filter((d) => d.round_id === rnd.id)
       .sort((a, b) => (a.day_number || 0) - (b.day_number || 0));
@@ -1272,6 +1397,8 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
           notes: m.notes || '',
           id_pwd_release_time: m.id_pwd_release_time,
           origin: m.origin || 'manual',
+          district_id: m.district_id || alloc.district_id || alloc.id,
+          district_name: alloc.district_name || m.group_name || 'District 1',
         });
       }
 
@@ -1284,6 +1411,23 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
         ),
       };
     });
+
+    const totalDistrictsInRound = daysHierarchy.reduce(
+      (acc, d) => acc + (d.allocations ? d.allocations.length : 0),
+      0
+    );
+
+    for (const d of daysHierarchy) {
+      for (let aIdx = 0; aIdx < (d.allocations || []).length; aIdx++) {
+        const alloc = d.allocations[aIdx];
+        const canonicalName = resolveDistrictDisplayName(rnd, alloc, aIdx, totalDistrictsInRound);
+        alloc.district_name = canonicalName;
+        alloc.name = canonicalName;
+        for (const m of (alloc.matches || [])) {
+          m.district_name = canonicalName;
+        }
+      }
+    }
 
     const isLastRound = rIdx === sortedRounds.length - 1;
     const isGrandFinal = isLastRound && (
@@ -1306,6 +1450,20 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
       days: daysHierarchy,
     };
   });
+
+  // Assign continuous day numbering (1, 2, 3...) across the whole tournament
+  let cumulativeDayCounter = 1;
+  for (let rIdx = 0; rIdx < structuredRounds.length; rIdx++) {
+    const rnd = structuredRounds[rIdx];
+    for (let dIdx = 0; dIdx < (rnd.days || []).length; dIdx++) {
+      const d = rnd.days[dIdx];
+      const continuousNum = cumulativeDayCounter++;
+      d.day_number = continuousNum;
+      d.display_day_number = continuousNum;
+    }
+  }
+
+  return structuredRounds;
 }
 
 /**

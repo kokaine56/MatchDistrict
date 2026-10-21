@@ -9,6 +9,7 @@ import {
   DEFAULT_TEAMS_PER_GROUP,
 } from './roadmapConfig.js';
 import { planRoadmapStages } from './roadmapPlanner.js';
+import { addCalendarDays, toCalendarDateStr } from './roadmapDays.js';
 
 export function getDefaultMap(game, matchNumber) {
   const gameKey = (game || 'bgmi').toLowerCase().trim();
@@ -59,14 +60,7 @@ function pickFirst(source, keys) {
 
 function addDays(dateStr, n) {
   if (!dateStr) return null;
-  try {
-    const [y, mo, d] = dateStr.split('-').map(Number);
-    const base = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
-    base.setUTCDate(base.getUTCDate() + n);
-    return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-${String(base.getUTCDate()).padStart(2, '0')}`;
-  } catch {
-    return null;
-  }
+  return addCalendarDays(dateStr, n) || null;
 }
 
 const GRAND_FINAL_MATCHES = 3;
@@ -87,75 +81,12 @@ export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup 
     ? Math.floor(Number(options.teamsAdvancingPerDistrict))
     : null;
 
-  // Advance count for a match of `size` teams: organizer override (capped at the
-  // match size) or explicit advancePerMatch.
-  if (advancePerMatch != null) {
-    const rounds = [];
-    const qualifiersFor = (size) => Math.min(size, Math.max(1, advancePerMatch));
-
-    // Round 1: strictly map initial registration groups (teams_per_group) to Round 1 matches
-    const numGroups = Math.max(1, Math.ceil(total / tpg));
-    const baseSize = Math.floor(total / numGroups);
-    const extraSize = total % numGroups;
-    
-    const r1MatchSizes = [];
-    for (let i = 0; i < numGroups; i++) {
-      r1MatchSizes.push(baseSize + (i < extraSize ? 1 : 0));
-    }
-    
-    const r1Qualifiers = r1MatchSizes.map(size => qualifiersFor(size));
-    const r1NextTeams = r1Qualifiers.reduce((a, b) => a + b, 0);
-    const r1QType = (r1NextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
-
-    rounds.push({
-      roundNumber: 1,
-      matchCount: numGroups,
-      matchSizes: r1MatchSizes,
-      qualifiersPerMatch: r1Qualifiers,
-      totalTeamsBefore: total,
-      totalTeamsAfter: r1NextTeams,
-      qualificationType: r1QType,
-      advancementType: 'per_district',
-      teamsAdvancingPerDistrict: advancePerMatch,
-    });
-
-    let currentTeams = r1NextTeams;
-    let roundNumber = 2;
-
-    while (currentTeams > canonicalCapacity) {
-      let numMatches = Math.ceil(currentTeams / canonicalCapacity);
-      let base = Math.floor(currentTeams / numMatches);
-      let extra = currentTeams % numMatches;
-      let matchSizes = [];
-      for (let i = 0; i < numMatches; i++) matchSizes.push(base + (i < extra ? 1 : 0));
-      
-      let qualifyCounts = matchSizes.map(size => qualifiersFor(size));
-      let nextTeams = qualifyCounts.reduce((a, b) => a + b, 0);
-      let qType = (nextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
-
-      rounds.push({
-        roundNumber,
-        matchCount: numMatches,
-        matchSizes,
-        qualifiersPerMatch: qualifyCounts,
-        totalTeamsBefore: currentTeams,
-        totalTeamsAfter: nextTeams,
-        qualificationType: qType,
-        advancementType: 'per_district',
-        teamsAdvancingPerDistrict: advancePerMatch,
-      });
-      
-      currentTeams = nextTeams;
-      roundNumber++;
-    }
-    return rounds;
-  }
-
-  // Pure planner default: stops as soon as teams fit in Grand Final
+  // Pure planner: guarantees progression funnels into a 1-lobby Grand Final
   const stages = planRoadmapStages({
     slotsTotal: total,
     teamsPerDistrict: tpg,
     grandFinalTeams: cap,
+    teamsAdvancingPerDistrict: advancePerMatch,
   });
 
   const qualifierStages = stages.filter(s => s.roundType === 'qualifier');
@@ -248,17 +179,8 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
       ? Math.min(teamsPerGroup, Math.max(1, advanceOverride))
       : defaultTeamsAdvancing(districtSizes.length ? Math.max(...districtSizes) : teamsPerGroup);
 
-    let startDate = null;
     const rawDate = tournament.startDate || tournament.date || tournament.start_date || tournament.registrationCloseDate || legacyPlan?.daily_plan?.[0]?.date || legacyPlan?.tournament_start_date || '2026-10-10';
-    if (rawDate) {
-      try {
-        const d = new Date(rawDate);
-        if (!isNaN(d.getTime())) {
-          startDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        }
-      } catch { /* ignore */ }
-    }
-    if (!startDate) startDate = '2026-10-10';
+    let startDate = toCalendarDateStr(rawDate) || '2026-10-10';
 
     const rounds = [];
     const days = [];
@@ -368,6 +290,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
 
       let dayCounter = 1;
       let previousRoundMatches = [];
+      let previousRoundLastDate = null;
 
       for (let pIdx = 0; pIdx < plan.length; pIdx++) {
         const pRound = plan[pIdx];
@@ -381,7 +304,10 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           : (isRound1 ? 2 : pRound.matchCount);
         const totalDaysForRound = Math.ceil(pRound.matchSizes.length / matchesPerDay);
         
-        const roundStartDate = addDays(startDate, dayCounter - 1);
+        // Task 2 rule: the first day of each round = the day after the previous round's last day
+        const roundStartDate = (pIdx === 0 || !previousRoundLastDate)
+          ? startDate
+          : addCalendarDays(previousRoundLastDate, 1);
         const firstMins = parseTimeToMinutes(firstMatchTime) ?? 13 * 60;
 
         const roundData = {
@@ -404,11 +330,15 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         rounds.push(roundData);
 
         const currentRoundMatches = [];
+        let currentRoundLastDate = roundStartDate;
         
         for (let m = 0; m < pRound.matchSizes.length; m++) {
           const dayOffsetForMatch = Math.floor(m / matchesPerDay);
           const currentDayNumber = dayCounter + dayOffsetForMatch;
-          const currentDayDate = addDays(startDate, currentDayNumber - 1);
+          const currentDayDate = dayOffsetForMatch === 0
+            ? roundStartDate
+            : addCalendarDays(roundStartDate, dayOffsetForMatch);
+          if (currentDayDate) currentRoundLastDate = currentDayDate;
 
           // Find or create day record
           let dayRec = days.find(d => d.day_number === currentDayNumber && d.tournament_id === tournament.id);
@@ -482,6 +412,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           matches.push(match);
         }
 
+        previousRoundLastDate = currentRoundLastDate;
         dayCounter += totalDaysForRound;
 
         // Wire up previous round's progression
@@ -500,7 +431,9 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
       // Wire up the final qualification round to the Grand Final
       const gfRoundId = `RND-${generateId()}`;
       const gfDayNumber = dayCounter;
-      const gfRoundDate = addDays(startDate, gfDayNumber - 1);
+      const gfRoundDate = previousRoundLastDate
+        ? addCalendarDays(previousRoundLastDate, 1)
+        : (rounds.length > 0 && rounds[rounds.length - 1]?.date ? addCalendarDays(rounds[rounds.length - 1].date, 1) : startDate);
       let currentTimeMins = parseTimeToMinutes(firstMatchTime) ?? 13 * 60;
       
       const gfRound = {

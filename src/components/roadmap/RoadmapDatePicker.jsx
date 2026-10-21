@@ -11,6 +11,7 @@ export default function RoadmapDatePicker({
   placeholder = 'DD/MM/YYYY',
   disabled = false,
   className = '',
+  wrapperClassName = '',
   id,
 }) {
   const [textValue, setTextValue] = useState(formatToDDMMYYYY(value));
@@ -126,7 +127,7 @@ export default function RoadmapDatePicker({
   ];
 
   return (
-    <div className="relative inline-block w-full" ref={popoverRef}>
+    <div className={`relative inline-block ${wrapperClassName || 'w-full'}`} ref={popoverRef}>
       <div className="relative flex items-center">
         <input
           id={id}
@@ -136,22 +137,22 @@ export default function RoadmapDatePicker({
           placeholder={placeholder}
           onChange={handleInputChange}
           onBlur={handleInputBlur}
-          className={`w-full pl-3 pr-9 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition shadow-2xs disabled:bg-slate-50 dark:disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
+          className={`w-full pl-2.5 pr-8 py-1.5 rounded-xl text-xs font-semibold tracking-wide border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition shadow-2xs disabled:bg-slate-50 dark:disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
         />
         <button
           type="button"
           disabled={disabled}
           onClick={() => setIsOpen((prev) => !prev)}
-          className="absolute right-2 p-1 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:cursor-not-allowed"
+          className="absolute right-1.5 p-1 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:cursor-not-allowed"
           title="Open calendar (DD/MM/YYYY)"
         >
-          <CalendarIcon className="w-4 h-4" />
+          <CalendarIcon className="w-3.5 h-3.5" />
         </button>
       </div>
 
       {/* Calendar Popover */}
       {isOpen && (
-        <div className="absolute z-50 left-0 mt-1.5 w-64 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-slate-800 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-100 select-none">
+        <div className="absolute z-50 right-0 sm:right-auto sm:left-0 mt-1.5 w-64 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-slate-800 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-100 select-none">
           {/* Header */}
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
             <button

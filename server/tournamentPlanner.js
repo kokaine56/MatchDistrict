@@ -1,4 +1,4 @@
-﻿// server/tournamentPlanner.js
+// server/tournamentPlanner.js
 // Automatic roadmap planning engine (Phase 2.5 / 2026-09-24).
 //
 // Given a tournament, its planning configuration (tournament_planning_config)
@@ -31,6 +31,8 @@
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+import { toCalendarDateStr, addCalendarDays, calendarDayDiff } from './roadmapDays.js';
+
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
@@ -44,32 +46,17 @@ function toTime(mins) {
   return `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
 }
 
-// Naive 'YYYY-MM-DD' helpers. Avoiding Date-local-time arithmetic prevents
-// timezone drift when a day is moved forward (same convention as roomReveal).
+// Calendar 'YYYY-MM-DD' helpers. Uses pure calendar arithmetic without Date objects.
 function toIsoDate(value) {
-  if (value == null) return null;
-  if (typeof value === 'string') {
-    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  }
-  const d = new Date(value);
-  if (!isNaN(d.getTime())) {
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  }
-  return null;
+  return toCalendarDateStr(value) || null;
 }
 
 function addDaysNaive(dateStr, days) {
-  const [y, mo, d] = dateStr.split('-').map(Number);
-  const base = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
-  base.setUTCDate(base.getUTCDate() + days);
-  return `${base.getUTCFullYear()}-${pad2(base.getUTCMonth() + 1)}-${pad2(base.getUTCDate())}`;
+  return addCalendarDays(dateStr, days);
 }
 
 function utcDayDiff(from, to) {
-  const [fy, fm, fd] = from.split('-').map(Number);
-  const [ty, tm, td] = to.split('-').map(Number);
-  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+  return calendarDayDiff(from, to);
 }
 
 function round1(value) {

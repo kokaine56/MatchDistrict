@@ -6,6 +6,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { formatDate } from '../utils/timeFormat'
+import { addCalendarDays } from '../utils/roadmapDays'
 
 const STEPS = [
   { step: 1, label: 'Basic Details',  icon: 'info',          desc: 'Title & game' },
@@ -86,20 +87,7 @@ function getDayOfWeek(dateStr) {
 }
 
 function addDaysToDateStr(dateStr, daysToAdd = 1) {
-  if (!dateStr) return ''
-  try {
-    const parts = String(dateStr).slice(0, 10).split('-')
-    if (parts.length === 3) {
-      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + daysToAdd)
-      if (!isNaN(d.getTime())) {
-        const y = d.getFullYear()
-        const m = String(d.getMonth() + 1).padStart(2, '0')
-        const dt = String(d.getDate()).padStart(2, '0')
-        return `${y}-${m}-${dt}`
-      }
-    }
-  } catch { /* ignore */ }
-  return ''
+  return addCalendarDays(dateStr, daysToAdd)
 }
 
 export default function CreateTournament({ onNavigate, template }) {

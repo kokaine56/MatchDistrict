@@ -65,7 +65,8 @@ export const SCHEMA_TABLES = Object.freeze([
  * @param {object} clientOrPool - pg Client or Pool
  */
 export async function runSchemaMigrations(clientOrPool) {
-  const isPool = typeof clientOrPool.connect === 'function';
+  // A pg Pool has .connect() but no .release(); a checked-out PoolClient has .release()
+  const isPool = typeof clientOrPool.connect === 'function' && typeof clientOrPool.release !== 'function';
   const client = isPool ? await clientOrPool.connect() : clientOrPool;
 
   try {
@@ -600,6 +601,19 @@ export async function runSchemaMigrations(clientOrPool) {
         UNIQUE(tournament_id, round_number)
       );
       CREATE INDEX IF NOT EXISTS idx_tournament_rounds_tournament ON tournament_rounds(tournament_id);
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_in INTEGER;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_type VARCHAR(50) DEFAULT 'qualifier';
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_type VARCHAR(50) DEFAULT 'per_district';
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_target_round_id VARCHAR(50);
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_match INTEGER;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_order INTEGER;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS lobbies_note TEXT;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS is_grand_final BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "date" VARCHAR(30);
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "time" VARCHAR(10);
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS map VARCHAR(255);
 
       CREATE TABLE IF NOT EXISTS tournament_days (
         id VARCHAR(50) PRIMARY KEY,
@@ -608,6 +622,8 @@ export async function runSchemaMigrations(clientOrPool) {
         date VARCHAR(30) NOT NULL,
         round_id VARCHAR(50)
       );
+      ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+      ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
       CREATE INDEX IF NOT EXISTS idx_tournament_days_tournament ON tournament_days(tournament_id);
 
       DO $$
@@ -633,6 +649,9 @@ export async function runSchemaMigrations(clientOrPool) {
         district_id VARCHAR(50),
         UNIQUE(day_id, sequence)
       );
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS display_order INTEGER;
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
       CREATE INDEX IF NOT EXISTS idx_tournament_groups_day ON tournament_groups(day_id);
 
       CREATE TABLE IF NOT EXISTS tournament_rooms (
@@ -646,6 +665,9 @@ export async function runSchemaMigrations(clientOrPool) {
         round_id VARCHAR(50),
         UNIQUE(tournament_id, room_number)
       );
+      ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+      ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'DRAFT';
+      ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS capacity INTEGER;
       CREATE INDEX IF NOT EXISTS idx_tournament_rooms_group ON tournament_rooms(group_id);
 
       CREATE TABLE IF NOT EXISTS tournament_matches (
@@ -672,9 +694,25 @@ export async function runSchemaMigrations(clientOrPool) {
         origin VARCHAR(20) DEFAULT 'automatic',
         manual_override BOOLEAN DEFAULT FALSE,
         notes TEXT,
-        display_order INTEGER
+        display_order INTEGER,
+        district_id VARCHAR(50)
       );
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'automatic';
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS id_pwd_release_time VARCHAR(50);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS group_name VARCHAR(100);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS map VARCHAR(100);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS teams_advancing INTEGER;
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS progression_processed BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_match_id VARCHAR(50);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_round_id VARCHAR(50);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+      ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS day_id VARCHAR(50);
       CREATE INDEX IF NOT EXISTS idx_tournament_matches_room ON tournament_matches(room_id);
+      CREATE INDEX IF NOT EXISTS idx_tournament_matches_district ON tournament_matches(district_id);
 
       DO $$
       BEGIN

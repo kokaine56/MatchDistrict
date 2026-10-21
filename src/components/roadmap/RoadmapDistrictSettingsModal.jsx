@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Clock, Map as MapIcon, Sliders, Check, Copy, RotateCcw } from 'lucide-react';
+import { X, Clock, Map as MapIcon, Sliders, Check, Copy, RotateCcw, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
 
 const DEFAULT_MAPS = {
@@ -43,6 +43,8 @@ function generateMatches(count, startStr, durationMins, gapMins, mapName, existi
       end_time: eTime,
       map: mapName || 'Erangel',
       notes: ex.notes || '',
+      district_id: ex.district_id,
+      district_name: ex.district_name,
     });
     curMins += gap;
   }
@@ -53,6 +55,7 @@ export default function RoadmapDistrictSettingsModal({
   isOpen,
   onClose,
   allocation = null,
+  displayName = '',
   dayNumber = 1,
   game = 'bgmi',
   onSave,
@@ -72,6 +75,7 @@ export default function RoadmapDistrictSettingsModal({
   const [defaultMap, setDefaultMap] = useState('Erangel');
   const [notes, setNotes] = useState('');
   const [appliedNotice, setAppliedNotice] = useState(false);
+  const [limitMessage, setLimitMessage] = useState('');
 
   // Per-match editable state
   const [matches, setMatches] = useState([]);
@@ -102,6 +106,7 @@ export default function RoadmapDistrictSettingsModal({
     setDurationMinutes(dur);
     setGapMinutes(gap);
     setNotes(existingMatches[0]?.notes || '');
+    setLimitMessage('');
 
     if (existingMatches.length > 0) {
       setMatches(
@@ -121,9 +126,18 @@ export default function RoadmapDistrictSettingsModal({
 
   if (!isOpen || !allocation) return null;
 
-  // Handle Match Count change: adjust matches array size
+  // Handle Match Count change: adjust matches array size (clamped 1 to 12)
   const handleMatchCountChange = (newCountVal) => {
-    const newCount = Math.max(1, parseInt(newCountVal, 10) || 1);
+    let newCount = parseInt(newCountVal, 10);
+    if (isNaN(newCount)) newCount = 1;
+    if (newCount > 12) {
+      newCount = 12;
+      setLimitMessage('Maximum 12 matches per day allowed.');
+      setTimeout(() => setLimitMessage(''), 3500);
+    } else {
+      setLimitMessage('');
+    }
+    newCount = Math.max(1, newCount);
     setMatchCount(newCount);
 
     setMatches((prev) => {
@@ -150,6 +164,30 @@ export default function RoadmapDistrictSettingsModal({
       }
       return expanded;
     });
+  };
+
+  const handleAddMatch = () => {
+    if (matches.length >= 12) {
+      setLimitMessage('Maximum 12 matches per day allowed.');
+      setTimeout(() => setLimitMessage(''), 3500);
+      return;
+    }
+    setLimitMessage('');
+    handleMatchCountChange(matches.length + 1);
+  };
+
+  const handleRemoveMatch = (idx) => {
+    if (matches.length <= 1) {
+      setLimitMessage('A day must have at least 1 match.');
+      setTimeout(() => setLimitMessage(''), 3500);
+      return;
+    }
+    setLimitMessage('');
+    const updated = matches
+      .filter((_, i) => i !== idx)
+      .map((m, i) => ({ ...m, district_match_number: i + 1 }));
+    setMatches(updated);
+    setMatchCount(updated.length);
   };
 
   // Reset all matches to auto-filled values
@@ -220,7 +258,7 @@ export default function RoadmapDistrictSettingsModal({
               </div>
               <div>
                 <h3 className={`text-base sm:text-lg font-bold ${theme.headingText}`}>
-                  {allocation.district_name || allocation.name || 'District'} Settings
+                  {displayName || allocation?.district_name || allocation?.name || 'District'} Settings
                 </h3>
                 <p className={`text-xs ${theme.mutedText}`}>
                   Day {dayNumber} individual match timing, map selection & schedule properties
@@ -255,6 +293,13 @@ export default function RoadmapDistrictSettingsModal({
                 </button>
               </div>
 
+              {limitMessage && (
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs flex items-center gap-2 font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{limitMessage}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
@@ -263,7 +308,7 @@ export default function RoadmapDistrictSettingsModal({
                   <input
                     type="number"
                     min="1"
-                    max="10"
+                    max="12"
                     value={matchCount}
                     onChange={(e) => handleMatchCountChange(e.target.value)}
                     className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800"
@@ -331,13 +376,18 @@ export default function RoadmapDistrictSettingsModal({
 
             {/* Individual Matches List */}
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className={`text-xs font-extrabold uppercase tracking-wider ${theme.mutedText}`}>
                   Individual Match Settings ({matches.length})
                 </span>
-                <span className="text-[11px] text-slate-500 font-medium">
-                  Edit individual time and map per match
-                </span>
+                <button
+                  type="button"
+                  onClick={handleAddMatch}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add match</span>
+                </button>
               </div>
 
               <div className="space-y-2 max-h-[36vh] overflow-y-auto pr-1">
@@ -350,9 +400,20 @@ export default function RoadmapDistrictSettingsModal({
                       <span className="px-2 py-0.5 rounded-md font-mono text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                         Match {m.district_match_number || idx + 1}
                       </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {m.start_time} - {m.end_time}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {m.start_time} - {m.end_time}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMatch(idx)}
+                          disabled={matches.length <= 1}
+                          className="p-1 rounded text-slate-400 hover:text-rose-600 disabled:opacity-20 disabled:hover:text-slate-400 cursor-pointer"
+                          title={matches.length <= 1 ? "A day must have at least 1 match." : "Remove match"}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

@@ -259,6 +259,96 @@ async function initDb() {
     await runSchemaMigrations(client);
     console.log('📦 [MATCH DISTRICT DB] Core schema tables ensured via shared schemaMigrations.');
 
+    // ── ROADMAP & LIVE SCHEMA COLUMN MIGRATIONS (TASK 2 & 3) ───────────────
+    // Idempotent migrations for tournament_matches, tournament_rounds, etc.
+    try {
+      await client.query(`
+        -- 1. tournament_matches additive columns
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS origin VARCHAR(20) DEFAULT 'automatic';
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS notes TEXT;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS id_pwd_release_time VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS group_name VARCHAR(100);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS map VARCHAR(100);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS teams_advancing INTEGER;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS progression_processed BOOLEAN DEFAULT false;
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_match_id VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS next_round_id VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS day_id VARCHAR(50);
+
+        CREATE INDEX IF NOT EXISTS idx_tournament_matches_district ON tournament_matches(district_id);
+        CREATE INDEX IF NOT EXISTS idx_tournament_matches_round ON tournament_matches(round_id);
+        CREATE INDEX IF NOT EXISTS idx_tournament_matches_day ON tournament_matches(day_id);
+
+        -- 2. tournament_rounds additive columns
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_in INTEGER;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_type VARCHAR(50) DEFAULT 'qualifier';
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_type VARCHAR(50) DEFAULT 'per_district';
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS advancement_target_round_id VARCHAR(50);
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS teams_advancing_per_match INTEGER;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS round_order INTEGER;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS lobbies_note TEXT;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS is_grand_final BOOLEAN DEFAULT false;
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "date" VARCHAR(30);
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "time" VARCHAR(10);
+        ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS map VARCHAR(255);
+
+        -- 3. tournament_days additive columns
+        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
+        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS "date" VARCHAR(30);
+        ALTER TABLE tournament_days ADD COLUMN IF NOT EXISTS day_number INTEGER;
+
+        -- 4. tournament_groups additive columns
+        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
+        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS display_order INTEGER;
+        ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+
+        -- 5. tournament_rooms additive columns
+        ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+        ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'DRAFT';
+        ALTER TABLE tournament_rooms ADD COLUMN IF NOT EXISTS capacity INTEGER;
+
+        -- 6. tournament_teams additive columns
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS status_before_dq VARCHAR(50);
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS registration_id VARCHAR(50);
+
+        -- 7. tournament_match_results additive columns
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS wwcd BOOLEAN DEFAULT FALSE;
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS kill_points INTEGER DEFAULT 0;
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS placement_points INTEGER DEFAULT 0;
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS total_points INTEGER DEFAULT 0;
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS submitted_by VARCHAR(50);
+        ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS verified_by VARCHAR(50);
+      `);
+      console.log('📦 [MATCH DISTRICT DB] Roadmap & progression schema migrations applied.');
+    } catch (migErr) {
+      console.error('❌ [MATCH DISTRICT DB] Roadmap schema migration failed:', migErr.message);
+    }
+
+    // ── BACKFILL: Inferred district_id for legacy matches (TASK 4) ───────────
+    try {
+      const backfillRes = await client.query(`
+        UPDATE tournament_matches m
+        SET district_id = COALESCE(g.district_id, g.id)
+        FROM tournament_groups g
+        LEFT JOIN tournament_rooms r ON r.id = m.room_id
+        WHERE m.district_id IS NULL
+          AND g.id = COALESCE(m.group_id, r.group_id)
+      `);
+      if (backfillRes.rowCount > 0) {
+        console.log(`📦 [MATCH DISTRICT DB] Backfilled district_id for ${backfillRes.rowCount} legacy match(es).`);
+      }
+    } catch (bfErr) {
+      console.warn('⚠️ [MATCH DISTRICT DB] district_id backfill skipped:', bfErr.message);
+    }
+
     try {
       await legacyRoundBackfill(pool);
       console.log('📦 [MATCH DISTRICT DB] Tournament rounds (Round/Stage) initialized.');
@@ -5710,6 +5800,24 @@ const server = http.createServer(async (req, res) => {
 
       const { rounds, days, groups, rooms, matches } = result.roadmap;
 
+      if (genBody && genBody.draft_only) {
+        const structured_rounds = buildHierarchicalRoadmap(rounds, days, groups, matches);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          draft_only: true,
+          roadmap: {
+            rounds,
+            days,
+            groups,
+            rooms,
+            matches,
+            structured_rounds,
+            meta: result.roadmap.meta,
+          },
+        }));
+      }
+
       // 3. Atomic Database Transaction
       const dbClient = await pool.connect();
       try {
@@ -5947,12 +6055,12 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({
             success: false,
             error: 'DATABASE_ERROR',
-            serverError: 'An unexpected database error occurred while saving the roadmap draft. Details have been logged.',
-            message: 'An unexpected database error occurred while saving the roadmap draft. Details have been logged.'
+            serverError: 'Could not save roadmap: server error',
+            message: 'Could not save roadmap: server error'
           }));
         }
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: err.message || 'Failed to save roadmap draft.', message: err.message || 'Failed to save roadmap draft.' }));
+        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: 'Could not save roadmap: server error', message: 'Could not save roadmap: server error' }));
       }
     });
     return;
@@ -6059,12 +6167,12 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({
             success: false,
             error: 'DATABASE_ERROR',
-            serverError: 'An unexpected database error occurred while publishing the roadmap. Details have been logged.',
-            message: 'An unexpected database error occurred while publishing the roadmap. Details have been logged.'
+            serverError: 'Could not publish roadmap: server error',
+            message: 'Could not publish roadmap: server error'
           }));
         }
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: err.message || 'Failed to publish roadmap.', message: err.message || 'Failed to publish roadmap.' }));
+        return res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR', serverError: 'Could not publish roadmap: server error', message: 'Could not publish roadmap: server error' }));
       }
     });
     return;

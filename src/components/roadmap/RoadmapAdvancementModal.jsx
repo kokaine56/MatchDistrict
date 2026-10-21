@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Trophy, CheckCircle, Sparkles, X, Users, RefreshCw, Search, Filter } from 'lucide-react';
 import { getAuthToken } from '../../utils/getAuthToken';
+import { getContinuousDayNumber } from '../../utils/roadmapDays.js';
 
 export default function RoadmapAdvancementModal({
   isOpen,
@@ -318,13 +319,14 @@ export default function RoadmapAdvancementModal({
                 const tr = rounds.find((r) => r.id === targetRoundId);
                 const options = [];
                 if (tr && Array.isArray(tr.days)) {
-                  tr.days.forEach((d) => {
+                  tr.days.forEach((d, dIdx) => {
+                    const continuousDayNum = getContinuousDayNumber(rounds, tr, dIdx);
                     (d.allocations || []).forEach((a) => {
                       const id = a.id || a.group_id || a.district_id;
                       const name = a.district_name || a.name || `District ${id}`;
                       options.push(
                         <option key={id} value={id}>
-                          {name} (Day {d.day_number})
+                          {name} (Day {continuousDayNum})
                         </option>
                       );
                     });

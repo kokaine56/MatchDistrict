@@ -5,6 +5,7 @@ import { getDayOfWeek } from '../TournamentRoadmapBuilder';
 import RoadmapDistrictSettingsModal from './RoadmapDistrictSettingsModal';
 import RoadmapDatePicker from './RoadmapDatePicker';
 import { calculateAdvancingTeams } from '../../utils/roadmapAutoDistricts.js';
+import { getNextDefaultDayDate, addCalendarDays } from '../../utils/roadmapDays.js';
 
 export default function RoadmapDaysDistricts({
   round,
@@ -57,18 +58,7 @@ export default function RoadmapDaysDistricts({
   // Handlers
   const handleAddDay = () => {
     const nextDayNum = days.length + 1;
-    let nextDate = '';
-    if (days.length > 0 && days[days.length - 1].date) {
-      try {
-        const last = new Date(days[days.length - 1].date);
-        last.setDate(last.getDate() + 1);
-        nextDate = last.toISOString().slice(0, 10);
-      } catch {
-        nextDate = minSelectableDate;
-      }
-    } else {
-      nextDate = minSelectableDate;
-    }
+    const nextDate = getNextDefaultDayDate(rounds, roundIdx, minSelectableDate || '');
 
     const newDayId = `DAY-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
