@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Shield, Loader2, AlertCircle, Plus, Hash, Clock, CheckCircle2, QrCode, Share2, Copy, RefreshCw, X, Link } from "lucide-react";
+import { Users, Shield, Loader2, AlertCircle, Plus, Hash, Clock, CheckCircle2, QrCode, Share2, Copy, RefreshCw, X, Link, UserMinus, Crown, Trash2 } from "lucide-react";
 import { getAuthToken } from "../utils/getAuthToken";
+import { useCurrentUser } from "../hooks/useCurrentUser";
 import QRCode from "qrcode";
 import ParticipantMatchCard from "./ParticipantMatchCard";
 
 export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTeamSize = 4 }) {
+  const [currentUser] = useCurrentUser();
   const [loading, setLoading] = useState(true);
   const [team, setTeam] = useState(null);
   const [members, setMembers] = useState([]);
+  const [squad, setSquad] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [groupStandings, setGroupStandings] = useState([]);
   const [error, setError] = useState(null);
@@ -43,6 +46,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
       if (!data.success) throw new Error(data.message || data.error || 'Failed to fetch team data');
       setTeam(data.team);
       setMembers(data.members || []);
+      setSquad(data.squad || null);
       setAssignments(data.assignments || []);
       setGroupStandings(data.groupStandings || []);
       if (data.team) {
@@ -52,6 +56,74 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLeaveTeam = async () => {
+    if (!window.confirm("Are you sure you want to leave this team? Your roster slot will be freed.")) return;
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/teams/${team.id}/leave`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error);
+      await fetchMyTeam();
+    } catch (err) {
+      alert("Error leaving team: " + err.message);
+    }
+  };
+
+  const handleKickMember = async (memberId, memberName) => {
+    if (!window.confirm(`Are you sure you want to remove ${memberName || 'this player'} from the team?`)) return;
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/teams/${team.id}/members/${memberId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error);
+      await fetchMyTeam();
+    } catch (err) {
+      alert("Error removing member: " + err.message);
+    }
+  };
+
+  const handleTransferCaptaincy = async (newLeaderUserId, memberName) => {
+    if (!window.confirm(`Are you sure you want to transfer team captaincy to ${memberName || 'this player'}?`)) return;
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/teams/${team.id}/transfer`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ newLeaderUserId })
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error);
+      await fetchMyTeam();
+    } catch (err) {
+      alert("Error transferring captaincy: " + err.message);
+    }
+  };
+
+  const handleDeleteTeam = async () => {
+    if (!window.confirm("Are you sure you want to delete this team? This action cannot be undone.")) return;
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/tournaments/${tournamentId}/teams/${team.id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || data.error);
+      await fetchMyTeam();
+    } catch (err) {
+      alert("Error deleting team: " + err.message);
     }
   };
 
@@ -347,6 +419,51 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
         </div>
       </div>
 
+      {/* Stage Status Banner (Part B3) */}
+      {squad && (
+        <div className={`rounded-2xl p-5 border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+          squad.isComplete
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+            : 'bg-amber-500/10 border-amber-500/25 text-amber-300'
+        }`}>
+          <div className="flex items-start gap-3.5">
+            <div className={`p-2 rounded-xl mt-0.5 shrink-0 ${
+              squad.isComplete ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+            }`}>
+              {squad.isComplete ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+            </div>
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold text-sm tracking-wide">
+                  {squad.isComplete ? 'Fully Registered' : 'Slot Secured · Squad Incomplete'}
+                </span>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                  squad.isComplete ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  {squad.label}
+                </span>
+              </div>
+              <p className="text-xs opacity-90 leading-relaxed">{squad.message}</p>
+              {!squad.isComplete && (
+                <p className="text-[11px] text-amber-400/80 font-medium">
+                  🔒 Room credentials remain strictly locked until all {squad.required} roster slots are linked to registered accounts.
+                </p>
+              )}
+            </div>
+          </div>
+          {!squad.isComplete && isLeader && (
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="shrink-0 px-3.5 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              {copyStatus ? 'Link Copied!' : 'Copy Invite Link'}
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Roster Section */}
         <div className="lg:col-span-2 space-y-6 self-start">
@@ -366,64 +483,153 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
             <div className="p-5 border-b border-white/10 bg-white/5 flex items-center justify-between">
               <h3 className="font-bold text-white flex items-center gap-2">
                 <Users className="w-5 h-5 text-emerald-400" />
-                Team Roster
+                Squad Roster Slots
               </h3>
+              <span className="text-xs text-gray-400 font-mono">
+                {squad ? `${squad.joined} / ${squad.required} Linked` : `${members.length} / ${maxTeamSize}`}
+              </span>
             </div>
-            <div className="p-2">
-              {members.length > 0 ? (
-                members.map((member, idx) => (
-                  <div key={member.id} className={`flex items-center justify-between p-4 hover:bg-white/5 rounded-xl transition-colors ${idx > 0 ? 'border-t border-white/5' : ''}`}>
-                    <div className="flex items-center gap-4">
-                      {member.avatar ? (
-                        <img src={member.avatar} alt={member.name} className="w-10 h-10 rounded-full object-cover border border-white/10" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold">
-                          {member.name ? member.name.charAt(0).toUpperCase() : '?'}
+            <div className="p-3 space-y-2">
+              {squad?.slots && squad.slots.length > 0 ? (
+                squad.slots.map((slot) => {
+                  const isCurrentMember = slot.member?.user_id === currentUser?.id;
+                  return (
+                    <div
+                      key={slot.slot}
+                      className={`flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl transition-colors gap-3 ${
+                        slot.linked
+                          ? 'bg-white/[0.02] hover:bg-white/5 border border-white/5'
+                          : 'bg-white/[0.01] border border-dashed border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {slot.linked ? (
+                          slot.member?.avatar ? (
+                            <img
+                              src={slot.member.avatar}
+                              alt={slot.member.name}
+                              className="w-10 h-10 rounded-full object-cover border border-white/10 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold shrink-0">
+                              {slot.member?.name ? slot.member.name.charAt(0).toUpperCase() : '?'}
+                            </div>
+                          )
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-white/5 border border-dashed border-white/20 flex items-center justify-center text-gray-500 shrink-0">
+                            <Plus className="w-4 h-4" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-white text-sm truncate">
+                              {slot.linked ? (slot.member?.name || 'Linked Member') : 'Unclaimed Slot'}
+                            </span>
+                            {isCurrentMember && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                You
+                              </span>
+                            )}
+                            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-black/40 text-gray-300 border border-white/10">
+                              IGN: {slot.ign}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            {slot.linked
+                              ? `Roster Slot #${slot.slot + 1} · Linked & Active`
+                              : `Roster Slot #${slot.slot + 1} · Waiting for teammate to join`}
+                          </p>
                         </div>
-                      )}
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded ${
+                          slot.role === 'leader'
+                            ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/25 flex items-center gap-1'
+                            : slot.linked
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-white/5 text-gray-400 border border-white/10'
+                        }`}>
+                          {slot.role === 'leader' ? (
+                            <>
+                              <Crown className="w-3 h-3 text-amber-400" />
+                              CAPTAIN
+                            </>
+                          ) : slot.linked ? (
+                            'LINKED'
+                          ) : (
+                            'UNCLAIMED'
+                          )}
+                        </span>
+
+                        {/* Member action: Leave squad */}
+                        {slot.linked && isCurrentMember && slot.role !== 'leader' && (
+                          <button
+                            type="button"
+                            onClick={handleLeaveTeam}
+                            className="px-2.5 py-1 text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg border border-rose-500/20 transition-colors flex items-center gap-1"
+                            title="Leave this squad"
+                          >
+                            <UserMinus className="w-3 h-3" />
+                            Leave
+                          </button>
+                        )}
+
+                        {/* Leader actions on teammates */}
+                        {slot.linked && isLeader && !isCurrentMember && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleTransferCaptaincy(slot.member.user_id, slot.member.name)}
+                              className="px-2 py-1 text-[11px] font-semibold bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg border border-white/10 transition-colors"
+                              title="Transfer Captaincy"
+                            >
+                              Make Captain
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleKickMember(slot.member.id, slot.member.name)}
+                              className="p-1 text-rose-400 hover:bg-rose-500/10 rounded-lg border border-transparent hover:border-rose-500/20 transition-colors"
+                              title="Remove member"
+                            >
+                              <UserMinus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Unlinked slot action */}
+                        {!slot.linked && isLeader && (
+                          <button
+                            type="button"
+                            onClick={handleCopyLink}
+                            className="px-2.5 py-1 text-xs font-semibold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded-lg border border-indigo-500/20 transition-colors flex items-center gap-1"
+                          >
+                            <Copy className="w-3 h-3" />
+                            Invite
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                members.map((member) => (
+                  <div key={member.id} className="flex items-center justify-between p-3.5 hover:bg-white/5 rounded-xl transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold">
+                        {member.name?.charAt(0).toUpperCase() || '?'}
+                      </div>
                       <div>
-                        <p className="font-bold text-white">{member.name || 'Unknown User'}</p>
+                        <p className="font-bold text-white text-sm">{member.name || 'Unknown'}</p>
                         <p className="text-xs text-gray-500">Joined {new Date(member.created_at).toLocaleDateString()}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-1 text-xs font-bold rounded ${member.role === 'leader' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-white/5 text-gray-300 border border-white/10'}`}>
-                        {member.role === 'leader' ? 'LEADER' : 'MEMBER'}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="flex items-center justify-between p-4 hover:bg-white/5 rounded-xl transition-colors">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold">
-                      You
-                    </div>
-                    <div>
-                      <p className="font-bold text-white">You</p>
-                      <p className="text-xs text-gray-500">Joined {new Date(team.created_at).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-1 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-xs font-bold rounded">
-                      LEADER
+                    <span className="px-2.5 py-1 text-xs font-bold rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      {member.role === 'leader' ? 'LEADER' : 'MEMBER'}
                     </span>
                   </div>
-                </div>
+                ))
               )}
-              
-              {/* Empty Slots */}
-              {Array.from({ length: Math.max(0, maxTeamSize - Math.max(1, members.length)) }).map((_, idx) => (
-                <div key={`empty-${idx}`} className="flex items-center gap-4 p-4 opacity-50 border-t border-white/5">
-                  <div className="w-10 h-10 rounded-full bg-white/5 border border-dashed border-white/20 flex items-center justify-center">
-                    <Plus className="w-4 h-4 text-gray-500" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-400">Empty Slot</p>
-                    <p className="text-xs text-gray-600">Waiting for teammate...</p>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         </div>
@@ -615,8 +821,22 @@ matchDetails={{
         </div>
         )}
       </div>
+    </div>
+
+    {/* Delete Empty Team (B8) */}
+    {isLeader && members.length <= 1 && team.status !== 'allocated' && (
+      <div className="pt-4 flex justify-end">
+        <button
+          type="button"
+          onClick={handleDeleteTeam}
+          className="text-xs font-semibold text-rose-400 hover:text-rose-300 flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-rose-500/20 hover:border-rose-500/40 bg-rose-500/5 hover:bg-rose-500/10 transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete Team
+        </button>
       </div>
-      </div>
+    )}
+  </div>
 
       {/* QR Modal */}
       <AnimatePresence>

@@ -132,7 +132,26 @@ export default function MyTournaments({ onNavigate }) {
 
       const reg = pickCurrentRegistration(group)
       const regStatus = (reg.status || 'pending').toLowerCase()
+      const isApproved = regStatus === 'approved' || regStatus === 'confirmed'
       const config = REG_STATUS_CONFIG[regStatus] || REG_STATUS_CONFIG.pending
+
+      let badgeText = config.label
+      let badgeBg = config.bg
+
+      if (isApproved) {
+        if (reg.squad_waived) {
+          badgeText = 'Registered (Waived)'
+          badgeBg = 'bg-purple-600 text-white'
+        } else if (reg.is_squad_complete) {
+          badgeText = 'Fully Registered'
+          badgeBg = 'bg-emerald-600 text-white'
+        } else {
+          const joined = reg.squad_joined != null ? reg.squad_joined : 1
+          const req = reg.squad_required != null ? reg.squad_required : 4
+          badgeText = `Squad ${joined}/${req}`
+          badgeBg = 'bg-amber-600 text-white'
+        }
+      }
 
       cards.push({
         id: t.id,
@@ -149,11 +168,14 @@ export default function MyTournaments({ onNavigate }) {
         slotsFilled: parseInt(t.slotsFilled) || parseInt(t.slots_filled) || 0,
         orgName: t.orgName || 'Match District',
         orgTier: t.orgTier || 'Free',
-        badgeText: config.label,
-        badgeBg: config.bg,
+        badgeText,
+        badgeBg,
         buttonText: config.btnText,
         buttonClassName: config.btnClassName || '',
         regStatus,
+        squadIncomplete: isApproved && !reg.is_squad_complete && !reg.squad_waived,
+        squadJoined: reg.squad_joined != null ? reg.squad_joined : 1,
+        squadRequired: reg.squad_required != null ? reg.squad_required : 4,
       })
     }
     return cards
@@ -236,7 +258,7 @@ export default function MyTournaments({ onNavigate }) {
             className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-8 overflow-visible"
           >
             {filteredData.map(t => (
-              <motion.div key={t.id} variants={cardVariants}>
+              <motion.div key={t.id} variants={cardVariants} className="flex flex-col">
                   <TournamentCard
                     id={t.id}
                     title={t.title}
@@ -260,6 +282,12 @@ export default function MyTournaments({ onNavigate }) {
                     forceWalletCard
                     cardColor={t.card_color || t.cardColor || t.theme || 'white'}
                   />
+                  {t.squadIncomplete && (
+                    <div className="mt-2 px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[10px] text-amber-300 font-semibold flex items-center justify-between gap-1 shadow-sm">
+                      <span className="truncate">Squad: {t.squadJoined}/{t.squadRequired} claimed</span>
+                      <span className="text-amber-400 font-mono text-[9px] shrink-0 font-bold">LOCKED</span>
+                    </div>
+                  )}
               </motion.div>
             ))}
           </motion.div>

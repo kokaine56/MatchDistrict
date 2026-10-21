@@ -742,8 +742,13 @@ export async function runSchemaMigrations(clientOrPool) {
         UNIQUE(tournament_id, team_name)
       );
       ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS status_before_dq VARCHAR(50);
+      ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS registration_id VARCHAR(50);
+      ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_by VARCHAR(50);
+      ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_at TIMESTAMPTZ;
+      ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_reason TEXT;
       CREATE INDEX IF NOT EXISTS idx_tournament_teams_tournament ON tournament_teams(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_teams_registration ON tournament_teams(registration_id);
+      CREATE INDEX IF NOT EXISTS idx_tournament_teams_squad_waived ON tournament_teams(squad_waived_by);
 
       CREATE TABLE IF NOT EXISTS tournament_team_members (
         id VARCHAR(50) PRIMARY KEY,
@@ -753,8 +758,11 @@ export async function runSchemaMigrations(clientOrPool) {
         role VARCHAR(20) NOT NULL,
         status VARCHAR(20) DEFAULT 'active',
         joined_at TIMESTAMPTZ DEFAULT NOW(),
+        roster_slot INTEGER,
         UNIQUE(tournament_id, user_id)
       );
+      ALTER TABLE tournament_team_members ADD COLUMN IF NOT EXISTS roster_slot INTEGER;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_roster_slot ON tournament_team_members(tournament_team_id, roster_slot) WHERE roster_slot IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_tournament_team_members_team ON tournament_team_members(tournament_team_id);
 
       CREATE TABLE IF NOT EXISTS tournament_team_invitations (

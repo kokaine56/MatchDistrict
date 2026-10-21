@@ -33,9 +33,9 @@ export function buildRoadmapSchedule(roadmap = {}, { participant = false } = {})
       releaseMinutes: match.release_minutes ?? 15,
       id_pwd_release_time: match.id_pwd_release_time || null,
       
-      // Hidden from participants if not assigned or not time yet
-      roomIdentifier: participant ? null : (match.room_identifier || null),
-      roomPassword: participant ? null : (match.room_password || null),
+      // Credentials are served ONLY by the dedicated GET /credentials endpoint
+      roomIdentifier: null,
+      roomPassword: null,
       assignedTeams: participant ? null : (assignmentCounts.get(match.id) || 0),
       raw: match,
     };

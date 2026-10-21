@@ -1941,8 +1941,11 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
             const dayRow = days.find((d) => d.id === m.day_id);
             const dateStr = dayRow ? dayRow.date : null;
             const released = isMatchReleased(dateStr, m.start_time, t.room_credentials_release_minutes || 15, nowMs);
+            const safeM = { ...m };
+            delete safeM.room_identifier;
+            delete safeM.room_password;
             return {
-              ...m,
+              ...safeM,
               credentials_available: released,
             };
           }),
@@ -2057,7 +2060,6 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
             id_pwd_release_time: m.id_pwd_release_time || null,
             origin: m.origin || 'manual',
             credentials_available: released,
-            ...(released ? { room_identifier: m.room_identifier, room_password: m.room_password } : {}),
           };
         }),
         districts: (districtsData.districts || []).map((d) => ({

@@ -517,7 +517,9 @@ function AppInner() {
                   </>
                 } />
 
-                <Route path="/auth" element={<Navigate to="/login" replace />} />
+                <Route path="/auth" element={
+                  <Navigate to={{ pathname: '/login', search: location.search }} replace />
+                } />
                 <Route path="/login" element={
                   <PageTransition>
                     <Auth onNavigate={handleNavigate} initialMode="login" />

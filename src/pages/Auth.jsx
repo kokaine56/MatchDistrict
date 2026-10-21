@@ -61,12 +61,35 @@ const otpShakeKeyframes = `
 }
 `
 
+export function getSafeRedirect(target) {
+  if (!target || typeof target !== 'string') return null
+  const trimmed = target.trim()
+  // Disallow protocol-relative URLs, schemes, or javascript:
+  if (trimmed.startsWith('//') || trimmed.includes('://') || trimmed.startsWith('javascript:')) {
+    return null
+  }
+  // Must be an internal path starting with /
+  if (!trimmed.startsWith('/')) {
+    return null
+  }
+  return trimmed
+}
+
 function Auth({ onNavigate, initialMode = 'login' }) {
   const { theme } = useTheme()
   const navigate = useNavigate()
   const [redirectTo, setRedirectTo] = useState(() => {
     const params = new URLSearchParams(window.location.search)
-    return params.get('redirect') || ''
+    const queryRedirect = getSafeRedirect(params.get('redirect'))
+    if (queryRedirect) return queryRedirect
+    try {
+      const stored = sessionStorage.getItem('md_invite_redirect')
+      if (stored) {
+        sessionStorage.removeItem('md_invite_redirect')
+        return getSafeRedirect(stored) || ''
+      }
+    } catch { /* storage fallback */ }
+    return ''
   })
   const [authMode, setAuthMode] = useState(initialMode) // 'login' | 'register' | 'forgot' | 'reset-password'
   const [direction, setDirection] = useState(0) // -1 for left, 1 for right, 0 for vertical
@@ -825,7 +848,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
         setTimeout(() => {
           setIsLoading(false)
-          onNavigate && onNavigate('profile')
+          const dest = getSafeRedirect(redirectTo)
+          if (dest) {
+            navigate(dest, { replace: true })
+          } else {
+            onNavigate && onNavigate('profile')
+          }
         }, 2000)
       } else {
         setIsLoading(false)

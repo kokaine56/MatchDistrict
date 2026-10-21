@@ -2,6 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Lock, Unlock, Copy, CheckCircle, Clock, Trophy } from 'lucide-react';
 import { getAuthToken } from '../utils/getAuthToken';
 
+// B10 ARCHITECTURE NOTE: Both team leaders and invited teammates use ParticipantMatchCard
+// to view match credentials and schedules. All members query the authoritative GET /credentials
+// endpoint which enforces the two-stage squad gate and waiver checks uniformly.
+
 export default function ParticipantMatchCard({ tournamentId, matchDetails, teamId }) {
   const [credentials, setCredentials] = useState(null);
   const [result, setResult] = useState(null);
@@ -133,8 +137,24 @@ export default function ParticipantMatchCard({ tournamentId, matchDetails, teamI
             {!isReleased && !loading && (
               <div className="text-center py-6">
                 <Lock className="w-8 h-8 text-white/20 mx-auto mb-3" />
-                <p className="text-sm text-gray-400 font-medium">This match’s BGMI room credentials are currently locked.</p>
-                {timeLeft && <p className="text-xs text-amber-500/80 font-bold mt-2 bg-amber-500/10 inline-block px-3 py-1 rounded-full border border-amber-500/20">Available in: {timeLeft}</p>}
+                {credentials?.reason === 'squad_incomplete' ? (
+                  <div className="max-w-md mx-auto space-y-2">
+                    <p className="text-sm text-amber-400 font-bold">
+                      Squad Incomplete ({credentials.joined != null ? credentials.joined : '?'}/{credentials.required != null ? credentials.required : '?'})
+                    </p>
+                    <p className="text-xs text-gray-400 font-medium">
+                      {credentials.message || 'Every roster slot must be claimed by a registered teammate before room credentials can be unlocked.'}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      Teammates must join via the team invitation link to link their accounts and unlock match credentials.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-400 font-medium">This match’s BGMI room credentials are currently locked.</p>
+                    {timeLeft && <p className="text-xs text-amber-500/80 font-bold mt-2 bg-amber-500/10 inline-block px-3 py-1 rounded-full border border-amber-500/20">Available in: {timeLeft}</p>}
+                  </>
+                )}
               </div>
             )}
 

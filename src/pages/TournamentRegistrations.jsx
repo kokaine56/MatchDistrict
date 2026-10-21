@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
 import { formatDateTime } from '../utils/timeFormat'
@@ -11,6 +11,8 @@ export default function TournamentRegistrations() {
   const [expandedRow, setExpandedRow] = useState(null)
   const [toastMessage, setToastMessage] = useState('')
   const [showToast, setShowToast] = useState(false)
+  const [filterTab, setFilterTab] = useState('all') // 'all' | 'incomplete' | 'complete' | 'pending'
+  const [waivingTeamId, setWaivingTeamId] = useState(null)
 
   const triggerToast = (msg) => {
     setToastMessage(msg)
@@ -18,37 +20,90 @@ export default function TournamentRegistrations() {
     setTimeout(() => setShowToast(false), 3000)
   }
 
-  useEffect(() => {
+  const fetchRegistrations = useCallback(async () => {
     if (!id) return
-    const fetchRegistrations = async () => {
-      setLoading(true)
-      try {
-        const token = await getAuthToken()
-        const res = await fetch(`/api/tournaments/${id}/registrations`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
-        if (res.status === 401) {
-          navigate(`/login?redirect=/tournaments/${id}/registrations`, { replace: true })
-          return
-        }
-        if (res.status === 403) {
-          navigate(`/tournaments/${id}`, { replace: true })
-          return
-        }
-        const data = await res.json()
-        if (data.success) {
-          setRegistrations(data.registrations || [])
-        } else {
-          triggerToast(data.message || data.error || 'Failed to load registrations.')
-        }
-      } catch {
-        triggerToast('Error fetching registrations.')
-      } finally {
-        setLoading(false)
+    setLoading(true)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch(`/api/tournaments/${id}/registrations`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (res.status === 401) {
+        navigate(`/login?redirect=/tournaments/${id}/registrations`, { replace: true })
+        return
       }
+      if (res.status === 403) {
+        navigate(`/tournaments/${id}`, { replace: true })
+        return
+      }
+      const data = await res.json()
+      if (data.success) {
+        setRegistrations(data.registrations || [])
+      } else {
+        triggerToast(data.message || data.error || 'Failed to load registrations.')
+      }
+    } catch {
+      triggerToast('Error fetching registrations.')
+    } finally {
+      setLoading(false)
     }
+  }, [id, navigate])
+
+  useEffect(() => {
     fetchRegistrations()
-  }, [id])
+  }, [fetchRegistrations])
+
+  const handleWaiveSquad = async (teamId) => {
+    if (!teamId) {
+      triggerToast('No active team record for this registration yet.')
+      return
+    }
+    const reason = window.prompt("Reason for waiving squad requirement (e.g. Organizer exemption):", "Organizer exemption")
+    if (reason === null) return
+
+    setWaivingTeamId(teamId)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch(`/api/tournaments/${id}/teams/${teamId}/waive`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ reason })
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || data.error)
+      triggerToast('Squad requirement waived successfully.')
+      await fetchRegistrations()
+    } catch (err) {
+      triggerToast('Failed to waive squad: ' + err.message)
+    } finally {
+      setWaivingTeamId(null)
+    }
+  }
+
+  const handleUnwaiveSquad = async (teamId) => {
+    if (!teamId) return
+    if (!window.confirm("Reinstate the squad requirement? Credentials will lock until all slots are filled.")) return
+
+    setWaivingTeamId(teamId)
+    try {
+      const token = await getAuthToken()
+      const res = await fetch(`/api/tournaments/${id}/teams/${teamId}/unwaive`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || data.error)
+      triggerToast('Squad requirement reinstated.')
+      await fetchRegistrations()
+    } catch (err) {
+      triggerToast('Failed to reinstate squad requirement: ' + err.message)
+    } finally {
+      setWaivingTeamId(null)
+    }
+  }
 
   const parseMembers = (members) => {
     if (!members) return []
@@ -84,6 +139,53 @@ export default function TournamentRegistrations() {
     }
   }
 
+  const squadBadge = (reg) => {
+    if (reg.squad_waived) {
+      return (
+        <span className="px-2 py-0.5 rounded font-label-caps text-[9px] font-bold tracking-wider bg-purple-500/15 text-purple-400 border border-purple-500/30">
+          Waived
+        </span>
+      )
+    }
+    if (reg.is_squad_complete) {
+      return (
+        <span className="px-2 py-0.5 rounded font-label-caps text-[9px] font-bold tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+          Fully Registered
+        </span>
+      )
+    }
+    if (reg.stage === 'slot_secured_squad_incomplete' || reg.status === 'approved' || reg.status === 'confirmed') {
+      const joined = reg.squad_joined != null ? reg.squad_joined : '1'
+      const req = reg.squad_required != null ? reg.squad_required : '4'
+      return (
+        <span className="px-2 py-0.5 rounded font-label-caps text-[9px] font-bold tracking-wider bg-amber-500/15 text-amber-300 border border-amber-500/30">
+          Squad {joined}/{req}
+        </span>
+      )
+    }
+    return null
+  }
+
+  // Filter calculations
+  const incompleteCount = registrations.filter(
+    (r) => (r.status === 'approved' || r.status === 'confirmed') && !r.is_squad_complete
+  ).length
+  const completeCount = registrations.filter((r) => r.is_squad_complete).length
+  const pendingCount = registrations.filter((r) => r.status === 'pending' || r.status === 'pending_payment').length
+
+  const filteredRegistrations = registrations.filter((reg) => {
+    if (filterTab === 'incomplete') {
+      return (reg.status === 'approved' || reg.status === 'confirmed') && !reg.is_squad_complete
+    }
+    if (filterTab === 'complete') {
+      return reg.is_squad_complete
+    }
+    if (filterTab === 'pending') {
+      return reg.status === 'pending' || reg.status === 'pending_payment'
+    }
+    return true
+  })
+
   return (
     <div className="min-h-screen bg-background">
       {showToast && (
@@ -116,23 +218,53 @@ export default function TournamentRegistrations() {
           </button>
         </div>
 
-        {/* Stats bar */}
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="px-3.5 py-2 rounded-xl bg-surface border border-outline-variant/20 text-xs">
-            <span className="text-on-surface-variant">Teams: </span>
-            <span className="font-bold text-on-background">{registrations.length}</span>
+        {/* Filter Tabs & Stats Bar (Part B9) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setFilterTab('all')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterTab === 'all'
+                  ? 'bg-primary text-white shadow-md'
+                  : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:text-on-background'
+              }`}
+            >
+              All ({registrations.length})
+            </button>
+            <button
+              onClick={() => setFilterTab('incomplete')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterTab === 'incomplete'
+                  ? 'bg-amber-500 text-black shadow-md'
+                  : 'bg-amber-500/10 border border-amber-500/20 text-amber-400 hover:bg-amber-500/20'
+              }`}
+            >
+              Incomplete Squads ({incompleteCount})
+            </button>
+            <button
+              onClick={() => setFilterTab('complete')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterTab === 'complete'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+              }`}
+            >
+              Fully Registered ({completeCount})
+            </button>
+            <button
+              onClick={() => setFilterTab('pending')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                filterTab === 'pending'
+                  ? 'bg-yellow-500 text-black shadow-md'
+                  : 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 hover:bg-yellow-500/20'
+              }`}
+            >
+              Pending ({pendingCount})
+            </button>
           </div>
-          <div className="px-3.5 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-xs">
-            <span className="text-green-400">Approved: </span>
-            <span className="font-bold text-green-300">{registrations.filter(r => r.status === 'approved').length}</span>
-          </div>
-          <div className="px-3.5 py-2 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-xs">
-            <span className="text-yellow-400">Pending: </span>
-            <span className="font-bold text-yellow-300">{registrations.filter(r => r.status === 'pending').length}</span>
-          </div>
-          <div className="px-3.5 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
-            <span className="text-blue-400">Total Players: </span>
-            <span className="font-bold text-blue-300">{registrations.length * 4}</span>
+
+          <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+            <span>Showing: <strong className="text-on-background">{filteredRegistrations.length}</strong></span>
           </div>
         </div>
 
@@ -144,33 +276,38 @@ export default function TournamentRegistrations() {
                 <div key={i} className="h-14 bg-surface-variant/30 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : registrations.length === 0 ? (
+          ) : filteredRegistrations.length === 0 ? (
             <div className="text-center py-16">
               <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary mb-3">
                 <span className="material-symbols-outlined text-2xl">groups</span>
               </div>
-              <p className="text-sm font-medium text-on-surface-variant">No squads registered for this tournament yet.</p>
+              <p className="text-sm font-medium text-on-surface-variant">
+                {filterTab === 'incomplete'
+                  ? 'No incomplete squads found! All approved squads are fully registered.'
+                  : 'No registrations found for this filter.'}
+              </p>
             </div>
           ) : (
             <div className="space-y-2">
-              {/* Table header — hidden on very small screens */}
-              <div className="hidden sm:grid grid-cols-[1fr_1fr_1fr_1fr_100px] gap-4 px-4 py-2 font-label-caps text-[9px] font-bold uppercase tracking-wider text-on-surface-variant">
+              {/* Table header */}
+              <div className="hidden sm:grid grid-cols-[1.2fr_1fr_1.2fr_1fr_90px] gap-4 px-4 py-2 font-label-caps text-[9px] font-bold uppercase tracking-wider text-on-surface-variant">
                 <span>Team Name</span>
                 <span>Leader IGN</span>
-                <span>Status</span>
+                <span>Status & Stage</span>
                 <span>Registered</span>
                 <span className="text-right">Details</span>
               </div>
 
-              {registrations.map((reg) => {
+              {filteredRegistrations.map((reg) => {
                 const isExpanded = expandedRow === reg.id
                 const players = parseMembers(reg.members)
+                const sBadge = squadBadge(reg)
                 return (
                   <div key={reg.id}>
                     {/* Main row */}
                     <div
                       onClick={() => setExpandedRow(isExpanded ? null : reg.id)}
-                      className={`grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_1fr_100px] gap-2 sm:gap-4 px-4 py-3 rounded-xl cursor-pointer transition-all ${
+                      className={`grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1.2fr_1fr_90px] gap-2 sm:gap-4 px-4 py-3 rounded-xl cursor-pointer transition-all ${
                         isExpanded
                           ? 'bg-primary/5 rounded-b-none border border-primary/20'
                           : 'bg-surface-variant/10 hover:bg-surface-variant/30 border border-transparent'
@@ -193,10 +330,11 @@ export default function TournamentRegistrations() {
                         <span className="text-xs text-on-surface-variant truncate">{reg.captain || '—'}</span>
                       </div>
 
-                      {/* Status badge */}
-                      <div className="flex items-center gap-2 sm:gap-0">
+                      {/* Status & Squad Stage badges */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="sm:hidden text-[9px] font-bold uppercase tracking-wider text-on-surface-variant w-20 shrink-0">Status</span>
                         {statusBadge(reg.status)}
+                        {sBadge}
                       </div>
 
                       {/* Date */}
@@ -205,10 +343,10 @@ export default function TournamentRegistrations() {
                         <span className="text-[10px] text-on-surface-variant whitespace-nowrap">{formatDateTime(reg.created_at)}</span>
                       </div>
 
-                      {/* Actions — informational only */}
+                      {/* Actions */}
                       <div className="flex items-center justify-end">
                         <span className="text-[10px] text-on-surface-variant italic">
-                          {players.length > 0 ? `${players.length} players` : '—'}
+                          {players.length > 0 ? `${players.length + 1} slots` : '—'}
                         </span>
                       </div>
                     </div>
@@ -216,51 +354,98 @@ export default function TournamentRegistrations() {
                     {/* Expanded panel */}
                     {isExpanded && (
                       <div className="bg-surface-variant/30 p-4 sm:p-5 rounded-b-lg border-x border-b border-outline-variant/30 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-headline-md text-[11px] font-bold text-on-background uppercase tracking-wider">Squad Roster</h4>
-                            {statusBadge(reg.status)}
+                        {/* Squad Stage Alert & Organizer Waive Controls (B7, B9) */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl border gap-3 bg-surface/50 border-outline-variant/20">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-on-background uppercase tracking-wide">Squad Stage:</span>
+                              {sBadge}
+                            </div>
+                            <p className="text-[11px] text-on-surface-variant">
+                              {reg.squad_waived
+                                ? `Waived on ${formatDateTime(reg.squad_waived_at)}${reg.squad_waived_reason ? ` — "${reg.squad_waived_reason}"` : ''}`
+                                : reg.is_squad_complete
+                                ? 'All required roster slots have been linked to registered accounts.'
+                                : `Squad has ${reg.squad_joined || 1} of ${reg.squad_required || 4} slots linked. Room credentials will remain locked until all slots are filled or waived.`}
+                            </p>
                           </div>
-                          <span className="text-[10px] text-on-surface-variant font-mono">{reg.user_id || ''}</span>
+
+                          {/* Organizer Waive / Unwaive Buttons */}
+                          {reg.team_id && (
+                            <div className="shrink-0 flex items-center gap-2">
+                              {reg.squad_waived ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleUnwaiveSquad(reg.team_id); }}
+                                  disabled={waivingTeamId === reg.team_id}
+                                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 transition-colors"
+                                >
+                                  {waivingTeamId === reg.team_id ? 'Updating...' : 'Reinstate Squad Gate'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleWaiveSquad(reg.team_id); }}
+                                  disabled={waivingTeamId === reg.team_id}
+                                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+                                >
+                                  {waivingTeamId === reg.team_id ? 'Waiving...' : 'Waive Squad Requirement'}
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
+
                         {reg.transaction_id && (
                           <div className="flex items-center gap-4 flex-wrap text-[10px] text-on-surface-variant bg-surface/40 rounded-lg px-3 py-2">
                             <span>UTR: <strong className="font-mono text-on-background">{reg.transaction_id}</strong></span>
                             {reg.payment_app && <span>App: <strong className="text-on-background">{reg.payment_app}</strong></span>}
                           </div>
                         )}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {players.length > 0 ? players.map((player, pi) => (
-                            <div
-                              key={pi}
-                              className="flex items-center gap-3 p-3 rounded-xl bg-surface/60 border border-outline-variant/20"
-                            >
-                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
-                                player.role === 'Leader'
-                                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                                  : 'bg-primary/10 text-primary border border-primary/20'
-                              }`}>
-                                {pi + 1}
+
+                        {/* Roster list */}
+                        <div className="space-y-2">
+                          <h4 className="font-headline-md text-[11px] font-bold text-on-background uppercase tracking-wider">
+                            Roster Slots ({players.length + 1})
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                            {/* Captain / Slot 0 */}
+                            <div className="flex items-center gap-3 p-3 rounded-xl bg-surface/60 border border-amber-500/20">
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                                1
                               </div>
                               <div className="flex-1 min-w-0 space-y-0.5">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-xs font-semibold text-on-background truncate">{player.ign || '—'}</span>
-                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider ${
-                                    player.role === 'Leader'
-                                      ? 'bg-amber-500/15 text-amber-400'
-                                      : 'bg-primary/10 text-primary'
-                                  }`}>
-                                    {player.role || 'Member'}
+                                  <span className="text-xs font-semibold text-on-background truncate">{reg.captain || 'Leader'}</span>
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400">
+                                    Captain (Slot 0)
                                   </span>
                                 </div>
-                                <p className="text-[10px] font-mono text-on-surface-variant truncate">ID: {player.in_game_id || '—'}</p>
+                                <p className="text-[10px] font-mono text-on-surface-variant truncate">User ID: {reg.user_id}</p>
                               </div>
                             </div>
-                          )) : (
-                            <div className="col-span-full text-center py-6 text-xs text-on-surface-variant">
-                              No player data available for this squad.
-                            </div>
-                          )}
+
+                            {/* Teammates */}
+                            {players.map((player, pi) => (
+                              <div
+                                key={pi}
+                                className="flex items-center gap-3 p-3 rounded-xl bg-surface/60 border border-outline-variant/20"
+                              >
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-primary/10 text-primary border border-primary/20">
+                                  {pi + 2}
+                                </div>
+                                <div className="flex-1 min-w-0 space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-on-background truncate">{player.ign || `Player ${pi + 2}`}</span>
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-primary/10 text-primary">
+                                      Slot {pi + 1}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] font-mono text-on-surface-variant truncate">IGN: {player.ign || '—'}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}

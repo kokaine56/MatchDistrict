@@ -31,6 +31,12 @@ import {
   getTournamentRoadmapResponse,
 } from './server/manualRoadmapService.js';
 import { backfillRegistrationLinks, maxMembersForMatchType, pickEligibleRegistration, isEligibleRegistrationStatus, isExcludedRegistrationStatus, createInvitationCredentials } from './server/registrationTeamBridge.js';
+import {
+  computeSquadCapacity,
+  parseRosterSlots,
+  computeRegistrationStage,
+  parseRosterMembers
+} from './server/squadRegistrationService.js';
 import { allocateTeam, AllocationError, ALLOCATION_SOURCES, ALLOCATION_ERR } from './server/allocationService.js';
 import { matchReleaseEpoch, isMatchReleased, normalizeReleaseMinutes } from './server/matchRelease.js';
 import { isRoadmapPublished } from './server/roadmapStatus.js';
@@ -317,6 +323,14 @@ async function initDb() {
         -- 6. tournament_teams additive columns
         ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS status_before_dq VARCHAR(50);
         ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS registration_id VARCHAR(50);
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_by VARCHAR(50);
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_at TIMESTAMPTZ;
+        ALTER TABLE tournament_teams ADD COLUMN IF NOT EXISTS squad_waived_reason TEXT;
+        CREATE INDEX IF NOT EXISTS idx_tournament_teams_squad_waived ON tournament_teams(squad_waived_by);
+
+        -- 6b. tournament_team_members additive columns
+        ALTER TABLE tournament_team_members ADD COLUMN IF NOT EXISTS roster_slot INTEGER;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_team_members_roster_slot ON tournament_team_members(tournament_team_id, roster_slot) WHERE roster_slot IS NOT NULL;
 
         -- 7. tournament_match_results additive columns
         ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS wwcd BOOLEAN DEFAULT FALSE;
@@ -791,15 +805,11 @@ function sanitizeTimelineForUser(timelineRaw, opts = {}) {
     const releaseEpoch = roundReleaseEpoch(round, offsetMinutes);
     const released = releaseEpoch !== null && now >= releaseEpoch;
     const configured = Boolean(String(round.room_id || '').trim()) || Boolean(String(round.room_password || '').trim());
-    // Organizer access is immediate. Participants need: published round + eligible
-    // registration + release time reached. Unregistered / ineligible / public users
-    // never receive credentials regardless of time.
-    const granted = isOwner || (isRegistered && released && isPublished);
-    if (!granted) {
-      delete round.room_id;
-      delete round.room_password;
-      delete round.has_room_credentials;
-    }
+    // A1: Room credentials are served strictly via GET .../matches/:matchId/credentials.
+    // Never leak room_id, room_password, or has_room_credentials in timeline JSON to anyone.
+    delete round.room_id;
+    delete round.room_password;
+    delete round.has_room_credentials;
     // Time/schedule metadata is safe for all clients (never the credential values).
     round.release_available = released;
     // "configured" reveals whether the organizer has entered credentials — send it
@@ -7105,6 +7115,122 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // --- RATE LIMITING HELPERS (A7) ---
+  const rateLimitBuckets = new Map();
+  function checkRateLimit(key, maxRequests = 20, windowMs = 60000) {
+    const now = Date.now();
+    let bucket = rateLimitBuckets.get(key);
+    if (!bucket || now - bucket.start > windowMs) {
+      bucket = { start: now, count: 1 };
+      rateLimitBuckets.set(key, bucket);
+      return true;
+    }
+    if (bucket.count >= maxRequests) {
+      return false;
+    }
+    bucket.count++;
+    return true;
+  }
+
+  function getClientIp(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+    return req.socket?.remoteAddress || '127.0.0.1';
+  }
+
+  // Periodic rate limit cache cleanup (every 5 mins)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of rateLimitBuckets.entries()) {
+      if (now - v.start > 300000) rateLimitBuckets.delete(k);
+    }
+  }, 300000).unref?.();
+
+  // --- B2: AUTOMATIC / ON-DEMAND TEAM CREATION ---
+  async function ensureTeamForRegistration(clientOrPool, tournamentId, userId, teamNameFallback = '') {
+    const existingRes = await clientOrPool.query(`
+      SELECT t.*, tm.role, tm.status AS member_status, tm.roster_slot
+      FROM tournament_teams t
+      JOIN tournament_team_members tm ON tm.tournament_team_id = t.id
+      WHERE t.tournament_id = $1 AND tm.user_id = $2
+      LIMIT 1
+    `, [tournamentId, userId]);
+
+    if (existingRes.rows.length > 0) {
+      return { created: false, team: existingRes.rows[0] };
+    }
+
+    const regRes = await clientOrPool.query(`
+      SELECT * FROM tournament_registrations
+      WHERE tournament_id = $1 AND user_id = $2
+      ORDER BY created_at DESC
+    `, [tournamentId, userId]);
+
+    if (regRes.rows.length === 0) {
+      return { created: false, reason: 'REGISTRATION_NOT_FOUND' };
+    }
+
+    const eligiblePick = pickEligibleRegistration(regRes.rows);
+    if (!eligiblePick.ok) {
+      return { created: false, reason: 'REGISTRATION_NOT_ELIGIBLE' };
+    }
+
+    const registration = eligiblePick.registration;
+
+    const tRes = await clientOrPool.query('SELECT status, finalized_at FROM tournaments WHERE id = $1', [tournamentId]);
+    if (tRes.rows.length === 0 || tRes.rows[0].finalized_at || ['archived', 'completed'].includes(tRes.rows[0].status)) {
+      return { created: false, reason: 'TOURNAMENT_CLOSED' };
+    }
+
+    let targetName = (registration.team_name || teamNameFallback || registration.captain || 'Team ' + userId.slice(0, 6)).trim();
+    if (targetName.length > 20) targetName = targetName.slice(0, 20);
+    if (targetName.length < 3) targetName = 'Team ' + targetName;
+
+    const nameCheck = await clientOrPool.query(
+      'SELECT 1 FROM tournament_teams WHERE tournament_id = $1 AND LOWER(team_name) = LOWER($2)',
+      [tournamentId, targetName]
+    );
+    if (nameCheck.rows.length > 0) {
+      const suffix = '-' + Math.random().toString(36).substr(2, 4);
+      targetName = (targetName.slice(0, 20 - suffix.length) + suffix).trim();
+    }
+
+    const newTeamId = 'tt_' + Math.random().toString(36).substr(2, 9);
+    const newMemberId = 'ttm_' + Math.random().toString(36).substr(2, 9);
+
+    try {
+      const insertTeamRes = await clientOrPool.query(`
+        INSERT INTO tournament_teams (id, tournament_id, team_name, leader_user_id, status, registration_id)
+        VALUES ($1, $2, $3, $4, 'awaiting_members', $5)
+        ON CONFLICT (tournament_id, team_name) DO NOTHING
+        RETURNING *
+      `, [newTeamId, tournamentId, targetName, userId, registration.id]);
+
+      const createdTeam = insertTeamRes.rows[0];
+      if (createdTeam) {
+        await clientOrPool.query(`
+          INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status, roster_slot)
+          VALUES ($1, $2, $3, $4, 'leader', 'active', 0)
+          ON CONFLICT (tournament_id, user_id) DO NOTHING
+        `, [newMemberId, createdTeam.id, tournamentId, userId]);
+
+        return { created: true, team: createdTeam };
+      }
+    } catch (err) {
+      console.warn('[ensureTeamForRegistration] Non-fatal creation error:', err.message);
+    }
+
+    const fallbackCheck = await clientOrPool.query(`
+      SELECT t.*, tm.role, tm.status AS member_status, tm.roster_slot
+      FROM tournament_teams t
+      JOIN tournament_team_members tm ON tm.tournament_team_id = t.id
+      WHERE t.tournament_id = $1 AND tm.user_id = $2
+      LIMIT 1
+    `, [tournamentId, userId]);
+
+    return { created: false, team: fallbackCheck.rows[0] || null };
+  }
+
   // --- PHASE 4: TOURNAMENT-SPECIFIC TEAMS ENDPOINTS ---
 
   // GET /api/tournaments/:id/my-team
@@ -7117,31 +7243,111 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
       }
       const tId = decodeURIComponent(myTeamMatch[1]);
-      // Assignments (match schedule placement) are only revealed once the
-      // roadmap is approved — the same gate that governs the public roadmap.
-      const tRes = await pool.query('SELECT roadmap_status FROM tournaments WHERE id = $1', [tId]);
-      const roadmapApproved = tRes.rows.length > 0 && tRes.rows[0].roadmap_status === 'approved';
+      const tRes = await pool.query('SELECT title, status, roadmap_status, players_per_team, match_type FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+      }
+      const tournament = tRes.rows[0];
+      const roadmapApproved = tournament.roadmap_status === 'approved';
 
-      const teamRes = await pool.query(`
-        SELECT t.*, m.role, m.status as member_status
+      let teamRes = await pool.query(`
+        SELECT t.*, m.role, m.status as member_status, m.roster_slot
         FROM tournament_teams t
         JOIN tournament_team_members m ON t.id = m.tournament_team_id
         WHERE t.tournament_id = $1 AND m.user_id = $2
       `, [tId, authUser.id]);
 
+      // B2: On-demand team creation if user registered & approved but team row not yet created
+      if (teamRes.rows.length === 0) {
+        await ensureTeamForRegistration(pool, tId, authUser.id);
+        teamRes = await pool.query(`
+          SELECT t.*, m.role, m.status as member_status, m.roster_slot
+          FROM tournament_teams t
+          JOIN tournament_team_members m ON t.id = m.tournament_team_id
+          WHERE t.tournament_id = $1 AND m.user_id = $2
+        `, [tId, authUser.id]);
+      }
+
       let members = [];
       let assignments = [];
       let groupStandings = [];
+      let squadData = null;
+      let registration = null;
+
       if (teamRes.rows.length > 0) {
-        const teamId = teamRes.rows[0].id;
+        const team = teamRes.rows[0];
+        const teamId = team.id;
+
         const membersRes = await pool.query(`
-          SELECT m.id, m.role, m.joined_at AS created_at, u.name, u.avatar
+          SELECT m.id, m.user_id, m.role, m.roster_slot, m.joined_at AS created_at, u.name, u.display_name, u.avatar
           FROM tournament_team_members m
           JOIN users u ON m.user_id = u.id
           WHERE m.tournament_team_id = $1
-          ORDER BY m.joined_at ASC NULLS LAST, m.id ASC
+          ORDER BY m.roster_slot ASC NULLS LAST, m.joined_at ASC
         `, [teamId]);
         members = membersRes.rows;
+
+        // Fetch registration for roster slots & stage calculation
+        let regRes = null;
+        if (team.registration_id) {
+          regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [team.registration_id]);
+        }
+        if (!regRes || regRes.rows.length === 0) {
+          regRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [tId, team.leader_user_id]);
+        }
+        registration = regRes?.rows[0] || null;
+
+        const capacity = computeSquadCapacity(registration, tournament);
+        const parsedSlots = parseRosterSlots(registration, tournament);
+        const claimedSlotsMap = new Map();
+        for (const m of members) {
+          if (m.roster_slot !== null && m.roster_slot !== undefined) {
+            claimedSlotsMap.set(m.roster_slot, m);
+          }
+        }
+
+        const slotsWithStatus = parsedSlots.map((s) => {
+          const linkedMember = claimedSlotsMap.get(s.slot);
+          return {
+            slot: s.slot,
+            ign: s.ign,
+            role: s.role,
+            is_leader: s.is_leader,
+            linked: Boolean(linkedMember),
+            member: linkedMember ? {
+              id: linkedMember.id,
+              user_id: linkedMember.user_id,
+              name: linkedMember.display_name || linkedMember.name || 'Unknown',
+              avatar: linkedMember.avatar || null,
+              role: linkedMember.role,
+            } : null,
+          };
+        });
+
+        const isWaived = Boolean(team.squad_waived_by);
+        const stageInfo = computeRegistrationStage({
+          registrationStatus: registration?.status || 'approved',
+          capacity,
+          joinedCount: members.length,
+          isWaived,
+          teamStatus: team.status,
+        });
+
+        squadData = {
+          stage: stageInfo.stage,
+          label: stageInfo.label,
+          message: stageInfo.message,
+          isComplete: stageInfo.isComplete,
+          isWaived,
+          waivedReason: team.squad_waived_reason || null,
+          joined: members.length,
+          required: capacity,
+          capacity,
+          slots: slotsWithStatus,
+          unlinkedSlots: slotsWithStatus.filter((s) => !s.linked),
+          unlinkedCount: slotsWithStatus.filter((s) => !s.linked).length,
+        };
 
         if (roadmapApproved) {
           const assignRes = await pool.query(`
@@ -7203,9 +7409,16 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ 
         success: true, 
         team: teamRes.rows.length > 0 ? teamRes.rows[0] : null,
-        members: members,
+        members,
         assignments,
-        groupStandings
+        groupStandings,
+        registration: registration ? {
+          id: registration.id,
+          team_name: registration.team_name,
+          captain: registration.captain,
+          status: registration.status,
+        } : null,
+        squad: squadData,
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -7297,8 +7510,8 @@ const server = http.createServer(async (req, res) => {
           `, [teamId, tId, teamName, authUser.id, eligiblePick.registration.id]);
 
           await client.query(`
-            INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status)
-            VALUES ($1, $2, $3, $4, 'leader', 'active')
+            INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status, roster_slot)
+            VALUES ($1, $2, $3, $4, 'leader', 'active', 0)
           `, [memberId, teamId, tId, authUser.id]);
 
           await client.query('COMMIT');
@@ -7387,6 +7600,12 @@ const server = http.createServer(async (req, res) => {
       }
       const tId = decodeURIComponent(generateInviteMatch[1]);
       const teamId = decodeURIComponent(generateInviteMatch[2]);
+
+      // A7: In-memory rate limit on invite creation (10 per minute per user)
+      if (!checkRateLimit(`invite-create:${authUser.id}`, 10, 60000)) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many invite requests. Please wait a minute.' }));
+      }
 
       const client = await pool.connect();
       try {
@@ -7504,12 +7723,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /api/invitation/:token (Public resolving API)
+  // GET /api/invitation/:token (Public resolving API - A7 & A8)
   const resolveInviteMatch = urlPath.match(/^\/api\/invitation\/([^/]+)$/);
   if (resolveInviteMatch && req.method === 'GET') {
     try {
-      const token = decodeURIComponent(resolveInviteMatch[1]);
+      const clientIp = getClientIp(req);
+      if (!checkRateLimit(`invite-resolve:${clientIp}`, 30, 60000)) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests. Please wait a minute.' }));
+      }
 
+      const token = decodeURIComponent(resolveInviteMatch[1]);
       const invRes = await pool.query(
         "SELECT * FROM tournament_team_invitations WHERE token = $1",
         [token]
@@ -7527,8 +7751,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, status: inv.status === 'active' ? 'expired' : inv.status, message: 'Invitation is expired or revoked.' }));
       }
 
-      const tRes = await pool.query('SELECT title, status, match_type FROM tournaments WHERE id = $1', [inv.tournament_id]);
-      const teamRes = await pool.query('SELECT team_name, status, leader_user_id FROM tournament_teams WHERE id = $1', [inv.tournament_team_id]);
+      const tRes = await pool.query('SELECT title, status, match_type, players_per_team FROM tournaments WHERE id = $1', [inv.tournament_id]);
+      const teamRes = await pool.query('SELECT id, team_name, status, leader_user_id, registration_id FROM tournament_teams WHERE id = $1', [inv.tournament_team_id]);
       
       if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -7543,18 +7767,33 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, status: 'closed', message: 'Tournament is closed.' }));
       }
 
-      const membersRes = await pool.query('SELECT COUNT(*) as member_count FROM tournament_team_members WHERE tournament_team_id = $1', [inv.tournament_team_id]);
-      const memberCount = parseInt(membersRes.rows[0].member_count, 10);
+      let regRes = null;
+      if (team.registration_id) {
+        regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [team.registration_id]);
+      }
+      if (!regRes || regRes.rows.length === 0) {
+        regRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [inv.tournament_id, team.leader_user_id]);
+      }
+      const registration = regRes?.rows[0] || null;
 
-      const maxMembers = maxMembersForMatchType(tournament.match_type);
+      const capacity = computeSquadCapacity(registration, tournament);
+      const membersRes = await pool.query('SELECT roster_slot FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'', [inv.tournament_team_id]);
+      const memberCount = membersRes.rows.length;
 
-      if (memberCount >= maxMembers) {
+      if (memberCount >= capacity) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, status: 'full', message: 'Team is full.' }));
       }
 
-      const leaderRes = await pool.query('SELECT name FROM users WHERE id = $1', [team.leader_user_id]);
-      const leaderName = leaderRes.rows[0]?.name || 'Unknown Leader';
+      const leaderRes = await pool.query('SELECT name, display_name FROM users WHERE id = $1', [team.leader_user_id]);
+      const leaderDisplayName = leaderRes.rows[0]?.display_name || leaderRes.rows[0]?.name || 'Team Leader';
+
+      // Parse roster slots and list unlinked slots by IGN display name only (A8: no UIDs, emails, or phone numbers)
+      const parsedSlots = parseRosterSlots(registration, tournament);
+      const claimedSlots = new Set(membersRes.rows.map((m) => m.roster_slot));
+      const unlinkedSlots = parsedSlots
+        .filter((s) => s.slot > 0 && !claimedSlots.has(s.slot))
+        .map((s) => ({ slot: s.slot, ign: s.ign }));
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -7565,9 +7804,11 @@ const server = http.createServer(async (req, res) => {
           teamId: inv.tournament_team_id,
           tournamentTitle: tournament.title,
           teamName: team.team_name,
-          leaderName,
-          memberCount,
-          maxMembers
+          leaderDisplayName,
+          capacity,
+          joined: memberCount,
+          capacityRatio: `${memberCount}/${capacity}`,
+          unlinkedSlots,
         }
       }));
     } catch (err) {
@@ -7577,111 +7818,646 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const resolveInviteJoinMatch = req.url.match(/^\/api\/invitation\/([^\/]+)\/join$/);
+  // POST /api/invitation/:token/join (A4, A5, A7, B1)
+  const resolveInviteJoinMatch = req.url.match(/^\/api\/invitation\/([^/]+)\/join$/);
   if (resolveInviteJoinMatch && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', async () => {
+      try {
+        const clientIp = getClientIp(req);
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+
+        // A7: In-memory rate limits per IP and per user
+        if (!checkRateLimit(`invite-join-ip:${clientIp}`, 10, 60000) || !checkRateLimit(`invite-join-user:${authUser.id}`, 10, 60000)) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many join attempts. Please wait a minute.' }));
+        }
+
+        let parsedPayload = {};
+        if (body.trim()) {
+          try { parsedPayload = JSON.parse(body); } catch {}
+        }
+        const requestedSlot = parsedPayload.roster_slot != null ? parseInt(parsedPayload.roster_slot, 10) : null;
+
+        const token = decodeURIComponent(resolveInviteJoinMatch[1]);
+        const client = await pool.connect();
+
+        try {
+          await client.query('BEGIN');
+
+          const invRes = await client.query('SELECT * FROM tournament_team_invitations WHERE token = $1 FOR UPDATE', [token]);
+          if (invRes.rows.length === 0) {
+            throw new Error('Invitation not found.');
+          }
+
+          const inv = invRes.rows[0];
+          if (inv.status !== 'active' || new Date(inv.expires_at) < new Date()) {
+            throw new Error('Invitation is expired or revoked.');
+          }
+
+          const tRes = await client.query(
+            'SELECT title, status, match_type, players_per_team, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE',
+            [inv.tournament_id]
+          );
+          // A4: Lock the team row
+          const teamRes = await client.query(
+            'SELECT id, team_name, status, leader_user_id, registration_id FROM tournament_teams WHERE id = $1 FOR UPDATE',
+            [inv.tournament_team_id]
+          );
+          
+          if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
+            throw new Error('Tournament or Team no longer exists.');
+          }
+
+          const tournament = tRes.rows[0];
+          const team = teamRes.rows[0];
+
+          if (tournament.finalized_at || ['archived', 'completed'].includes(tournament.status)) {
+            throw new Error('Tournament is closed.');
+          }
+
+          // Check if user is already in THIS team -> idempotent success
+          const selfMemberCheck = await client.query(
+            'SELECT 1 FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2',
+            [inv.tournament_team_id, authUser.id]
+          );
+          if (selfMemberCheck.rows.length > 0) {
+            await client.query('ROLLBACK');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: true, message: 'You are already a member of this team.', status: 'already_member' }));
+          }
+
+          // Check if user is in ANOTHER team in THIS tournament -> ALREADY_IN_TEAM
+          const otherMemberCheck = await client.query(
+            'SELECT 1 FROM tournament_team_members WHERE tournament_id = $1 AND user_id = $2',
+            [inv.tournament_id, authUser.id]
+          );
+          if (otherMemberCheck.rows.length > 0) {
+            throw Object.assign(new Error('You are already part of another team for this tournament.'), { code: 'ALREADY_IN_TEAM' });
+          }
+
+          // Registration exclusion guard
+          const joinRegRes = await client.query(
+            'SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
+            [inv.tournament_id, authUser.id]
+          );
+          if (joinRegRes.rows.some((r) => isExcludedRegistrationStatus(r.status))) {
+            throw new Error('Your previous registration for this tournament was rejected or cancelled, so you cannot join a team.');
+          }
+
+          // Fetch registration for capacity derivation
+          let regRes = null;
+          if (team.registration_id) {
+            regRes = await client.query('SELECT * FROM tournament_registrations WHERE id = $1', [team.registration_id]);
+          }
+          if (!regRes || regRes.rows.length === 0) {
+            regRes = await client.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [inv.tournament_id, team.leader_user_id]);
+          }
+          const registration = regRes?.rows[0] || null;
+
+          const capacity = computeSquadCapacity(registration, tournament);
+          const currentMembersRes = await client.query(
+            'SELECT id, user_id, roster_slot FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'',
+            [inv.tournament_team_id]
+          );
+          const currentMembers = currentMembersRes.rows;
+
+          // A4: Re-check capacity inside the lock
+          if (currentMembers.length >= capacity) {
+            throw new Error('Team is full.');
+          }
+
+          const claimedSlots = new Set(currentMembers.map((m) => m.roster_slot));
+          let chosenSlot = requestedSlot;
+
+          // B1: Validate chosen roster slot (1..capacity-1) or auto-assign first free slot
+          if (chosenSlot !== null && !isNaN(chosenSlot)) {
+            if (chosenSlot <= 0 || chosenSlot >= capacity) {
+              throw new Error('Invalid roster slot selected.');
+            }
+            if (claimedSlots.has(chosenSlot)) {
+              throw Object.assign(new Error('Selected roster slot has already been claimed by another player.'), { code: 'SLOT_ALREADY_CLAIMED' });
+            }
+          } else {
+            for (let i = 1; i < capacity; i++) {
+              if (!claimedSlots.has(i)) {
+                chosenSlot = i;
+                break;
+              }
+            }
+          }
+
+          // Insert new member with chosen roster_slot
+          const memberId = 'mem_' + Math.random().toString(36).substr(2, 9) + Date.now();
+          await client.query(`
+            INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status, roster_slot)
+            VALUES ($1, $2, $3, $4, 'member', 'active', $5)
+          `, [memberId, inv.tournament_team_id, inv.tournament_id, authUser.id, chosenSlot]);
+
+          // A5: Status upgrade ONLY from awaiting_members -> members_complete
+          // Never overwrite verified, allocated, allocation_pending or disqualified
+          const newMemberCount = currentMembers.length + 1;
+          if (newMemberCount >= capacity) {
+            await client.query(`
+              UPDATE tournament_teams 
+              SET status = 'members_complete', updated_at = NOW()
+              WHERE id = $1 AND status = 'awaiting_members'
+            `, [inv.tournament_team_id]);
+          }
+
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Successfully joined the team.',
+            roster_slot: chosenSlot,
+            joined: newMemberCount,
+            required: capacity,
+          }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          // A4: Handle UNIQUE(tournament_id, user_id) as ALREADY_IN_TEAM
+          if (txnErr.code === '23505') {
+            if (txnErr.constraint && String(txnErr.constraint).includes('roster_slot')) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              return res.end(JSON.stringify({ success: false, error: 'SLOT_ALREADY_CLAIMED', message: 'That roster slot was just claimed by another player.' }));
+            }
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'ALREADY_IN_TEAM', message: 'You are already part of a team for this tournament.' }));
+          }
+          if (txnErr.code === 'ALREADY_IN_TEAM') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'ALREADY_IN_TEAM', message: txnErr.message }));
+          }
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: txnErr.message }));
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // --- B5: SQUAD MANAGEMENT (LEAVE, REMOVE, TRANSFER, DELETE) ---
+
+  // POST /api/tournaments/:id/teams/:teamId/leave (Member leaves)
+  const leaveTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/leave$/);
+  if (leaveTeamMatch && req.method === 'POST') {
     try {
       const authUser = getAuthUser(req);
       if (!authUser) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
       }
+      const tId = decodeURIComponent(leaveTeamMatch[1]);
+      const teamId = decodeURIComponent(leaveTeamMatch[2]);
 
-      const token = decodeURIComponent(resolveInviteJoinMatch[1]);
       const client = await pool.connect();
-
       try {
         await client.query('BEGIN');
 
-        const invRes = await client.query('SELECT * FROM tournament_team_invitations WHERE token = $1 FOR UPDATE', [token]);
-        if (invRes.rows.length === 0) {
-          throw new Error('Invitation not found.');
-        }
-
-        const inv = invRes.rows[0];
-        if (inv.status !== 'active' || new Date(inv.expires_at) < new Date()) {
-          throw new Error('Invitation is expired or revoked.');
-        }
-
-        const tRes = await client.query(
-          'SELECT title, status, match_type, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE',
-          [inv.tournament_id]
+        const teamRes = await client.query(
+          'SELECT id, status, leader_user_id, registration_id FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+          [teamId, tId]
         );
-        const teamRes = await client.query('SELECT team_name, status, leader_user_id FROM tournament_teams WHERE id = $1 FOR UPDATE', [inv.tournament_team_id]);
-        
-        if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
-          throw new Error('Tournament or Team no longer exists.');
+        if (teamRes.rows.length === 0) {
+          throw new Error('Team not found.');
         }
-
-        const tournament = tRes.rows[0];
         const team = teamRes.rows[0];
 
-        if (tournament.finalized_at || ['archived', 'completed'].includes(tournament.status)) {
-          throw new Error('Tournament is closed.');
+        // Allowed only while status is awaiting_members or members_complete
+        if (!['awaiting_members', 'members_complete'].includes(team.status)) {
+          throw new Error('Cannot leave team once verification or match allocation has started.');
         }
 
-        // Check if user is already in THIS team
-        const selfMemberCheck = await client.query('SELECT 1 FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2', [inv.tournament_team_id, authUser.id]);
-        if (selfMemberCheck.rows.length > 0) {
-          // Idempotent success
-          await client.query('ROLLBACK');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: true, message: 'You are already a member of this team.', status: 'already_member' }));
-        }
-
-        // Check if user is in ANOTHER team in THIS tournament
-        const otherMemberCheck = await client.query('SELECT 1 FROM tournament_team_members WHERE tournament_id = $1 AND user_id = $2', [inv.tournament_id, authUser.id]);
-        if (otherMemberCheck.rows.length > 0) {
-          throw new Error('You are already part of another team for this tournament.');
-        }
-
-        // Registration → team bridge member guard: members fill roster slots
-        // (leader-registers-slot model, no per-member registration required), but
-        // a user the registration system explicitly EXCLUDED from this
-        // tournament (rejected / cancelled / expired / payment rejected) cannot
-        // bypass that exclusion by joining a team via invite.
-        const joinRegRes = await client.query(
-          'SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
-          [inv.tournament_id, authUser.id]
+        const memberRes = await client.query(
+          'SELECT id, role, roster_slot FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2 FOR UPDATE',
+          [teamId, authUser.id]
         );
-        if (joinRegRes.rows.some((r) => isExcludedRegistrationStatus(r.status))) {
-          throw new Error('Your previous registration for this tournament was rejected or cancelled, so you cannot join a team.');
+        if (memberRes.rows.length === 0) {
+          throw new Error('You are not a member of this team.');
+        }
+        const member = memberRes.rows[0];
+
+        if (member.role === 'leader' || team.leader_user_id === authUser.id) {
+          throw new Error('Team leader cannot leave the team without transferring captaincy first.');
         }
 
-        const membersRes = await client.query('SELECT COUNT(*) as member_count FROM tournament_team_members WHERE tournament_team_id = $1', [inv.tournament_team_id]);
-        const memberCount = parseInt(membersRes.rows[0].member_count, 10);
+        // Delete member (frees their roster_slot)
+        await client.query('DELETE FROM tournament_team_members WHERE id = $1', [member.id]);
 
-        const maxMembers = maxMembersForMatchType(tournament.match_type);
+        // Recheck member count & status downgrade (reverts members_complete -> awaiting_members)
+        const countRes = await client.query('SELECT COUNT(*) AS count FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'', [teamId]);
+        const remainingCount = parseInt(countRes.rows[0]?.count || '0', 10);
 
-        if (memberCount >= maxMembers) {
-          throw new Error('Team is full.');
-        }
-
-        // Insert new member
-        const memberId = 'mem_' + Math.random().toString(36).substr(2, 9) + Date.now();
-        await client.query(`
-          INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role)
-          VALUES ($1, $2, $3, $4, 'member')
-        `, [memberId, inv.tournament_team_id, inv.tournament_id, authUser.id]);
-
-        const newMemberCount = memberCount + 1;
-        if (newMemberCount >= maxMembers) {
+        if (team.status === 'members_complete') {
           await client.query(`
-            UPDATE tournament_teams 
-            SET status = 'members_complete'
-            WHERE id = $1
-          `, [inv.tournament_team_id]);
+            UPDATE tournament_teams
+            SET status = 'awaiting_members', updated_at = NOW()
+            WHERE id = $1 AND status = 'members_complete'
+          `, [teamId]);
         }
 
         await client.query('COMMIT');
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Successfully joined the team.' }));
+        res.end(JSON.stringify({ success: true, message: 'You have left the team.', remainingMembers: remainingCount }));
       } catch (txnErr) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: txnErr.message }));
       } finally {
         client.release();
       }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // DELETE /api/tournaments/:id/teams/:teamId/members/:memberId (Leader/Admin removes member)
+  const removeMemberMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/members\/([^/]+)$/);
+  if (removeMemberMatch && req.method === 'DELETE') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(removeMemberMatch[1]);
+      const teamId = decodeURIComponent(removeMemberMatch[2]);
+      const memberId = decodeURIComponent(removeMemberMatch[3]);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const tRes = await client.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        const isOrganizer = tRes.rows.length > 0 && (tRes.rows[0].orgId === authUser.id || hasRole(authUser, ROLES.ADMIN));
+
+        const teamRes = await client.query(
+          'SELECT id, status, leader_user_id, registration_id FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+          [teamId, tId]
+        );
+        if (teamRes.rows.length === 0) {
+          throw new Error('Team not found.');
+        }
+        const team = teamRes.rows[0];
+
+        const isLeader = team.leader_user_id === authUser.id;
+        if (!isLeader && !isOrganizer) {
+          throw new Error('Only the team leader or organizer can remove members.');
+        }
+
+        if (!isOrganizer && !['awaiting_members', 'members_complete'].includes(team.status)) {
+          throw new Error('Members cannot be removed once verification or allocation has started.');
+        }
+
+        const targetMemberRes = await client.query(
+          'SELECT id, user_id, role, roster_slot FROM tournament_team_members WHERE id = $1 AND tournament_team_id = $2 FOR UPDATE',
+          [memberId, teamId]
+        );
+        if (targetMemberRes.rows.length === 0) {
+          throw new Error('Member not found in team.');
+        }
+        const targetMember = targetMemberRes.rows[0];
+
+        if (targetMember.role === 'leader' || targetMember.user_id === team.leader_user_id) {
+          throw new Error('Cannot remove the team leader.');
+        }
+
+        // Delete member (frees their roster_slot)
+        await client.query('DELETE FROM tournament_team_members WHERE id = $1', [memberId]);
+
+        // Recheck member count & status downgrade (reverts members_complete -> awaiting_members)
+        const countRes = await client.query('SELECT COUNT(*) AS count FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'', [teamId]);
+        const remainingCount = parseInt(countRes.rows[0]?.count || '0', 10);
+
+        if (team.status === 'members_complete') {
+          await client.query(`
+            UPDATE tournament_teams
+            SET status = 'awaiting_members', updated_at = NOW()
+            WHERE id = $1 AND status = 'members_complete'
+          `, [teamId]);
+        }
+
+        await client.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Member removed from team.', remainingMembers: remainingCount }));
+      } catch (txnErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: txnErr.message }));
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/tournaments/:id/teams/:teamId/transfer (Leader transfers captaincy)
+  const transferTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/transfer$/);
+  if (transferTeamMatch && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        const tId = decodeURIComponent(transferTeamMatch[1]);
+        const teamId = decodeURIComponent(transferTeamMatch[2]);
+        const data = JSON.parse(body || '{}');
+        const targetUserId = data.target_user_id || data.targetUserId;
+
+        if (!targetUserId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, message: 'Target user ID is required.' }));
+        }
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+
+          const teamRes = await client.query(
+            'SELECT id, status, leader_user_id FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+            [teamId, tId]
+          );
+          if (teamRes.rows.length === 0) {
+            throw new Error('Team not found.');
+          }
+          const team = teamRes.rows[0];
+
+          if (team.leader_user_id !== authUser.id) {
+            throw new Error('Only the current team leader can transfer captaincy.');
+          }
+
+          if (!['awaiting_members', 'members_complete'].includes(team.status)) {
+            throw new Error('Captaincy cannot be transferred after verification or match allocation.');
+          }
+
+          if (targetUserId === authUser.id) {
+            throw new Error('You are already the team leader.');
+          }
+
+          const targetMemberRes = await client.query(
+            'SELECT id, user_id, roster_slot FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2 AND status = \'active\' FOR UPDATE',
+            [teamId, targetUserId]
+          );
+          if (targetMemberRes.rows.length === 0) {
+            throw new Error('Target user is not an active member of this team.');
+          }
+          const targetMember = targetMemberRes.rows[0];
+
+          const currentLeaderMemberRes = await client.query(
+            'SELECT id, user_id, roster_slot FROM tournament_team_members WHERE tournament_team_id = $1 AND user_id = $2 FOR UPDATE',
+            [teamId, authUser.id]
+          );
+          const currentLeaderMember = currentLeaderMemberRes.rows[0];
+
+          const oldSlot = targetMember.roster_slot;
+
+          // Swap slots: Target member becomes slot 0 (leader), old leader takes target's slot
+          await client.query(`
+            UPDATE tournament_team_members
+            SET role = 'member', roster_slot = $1
+            WHERE id = $2
+          `, [oldSlot, currentLeaderMember.id]);
+
+          await client.query(`
+            UPDATE tournament_team_members
+            SET role = 'leader', roster_slot = 0
+            WHERE id = $1
+          `, [targetMember.id]);
+
+          await client.query(`
+            UPDATE tournament_teams
+            SET leader_user_id = $1, updated_at = NOW()
+            WHERE id = $2
+          `, [targetUserId, teamId]);
+
+          await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Captaincy transferred successfully.', new_leader_user_id: targetUserId }));
+        } catch (txnErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: txnErr.message }));
+        } finally {
+          client.release();
+        }
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // DELETE /api/tournaments/:id/teams/:teamId (Lone leader deletes empty team before allocation)
+  const deleteTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)$/);
+  if (deleteTeamMatch && req.method === 'DELETE') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(deleteTeamMatch[1]);
+      const teamId = decodeURIComponent(deleteTeamMatch[2]);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        const tRes = await client.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        const isOrganizer = tRes.rows.length > 0 && (tRes.rows[0].orgId === authUser.id || hasRole(authUser, ROLES.ADMIN));
+
+        const teamRes = await client.query(
+          'SELECT id, status, leader_user_id FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+          [teamId, tId]
+        );
+        if (teamRes.rows.length === 0) {
+          throw new Error('Team not found.');
+        }
+        const team = teamRes.rows[0];
+
+        const isLeader = team.leader_user_id === authUser.id;
+        if (!isLeader && !isOrganizer) {
+          throw new Error('Only the team leader or organizer can delete the team.');
+        }
+
+        const assignCheck = await client.query(
+          'SELECT 1 FROM tournament_match_assignments WHERE tournament_team_id = $1 LIMIT 1',
+          [teamId]
+        );
+        if (assignCheck.rows.length > 0) {
+          throw new Error('Cannot delete team that has match assignments.');
+        }
+
+        if (!['awaiting_members', 'members_complete'].includes(team.status) && !isOrganizer) {
+          throw new Error('Cannot delete team after verification or allocation.');
+        }
+
+        if (!isOrganizer) {
+          const memberCountRes = await client.query(
+            'SELECT COUNT(*) AS count FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'',
+            [teamId]
+          );
+          const activeCount = parseInt(memberCountRes.rows[0]?.count || '0', 10);
+          if (activeCount > 1) {
+            throw new Error('You cannot delete the team while teammates are still in the roster. Remove teammates first.');
+          }
+        }
+
+        await client.query('DELETE FROM tournament_team_members WHERE tournament_team_id = $1', [teamId]);
+        await client.query('DELETE FROM tournament_teams WHERE id = $1', [teamId]);
+
+        await client.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Team deleted successfully.' }));
+      } catch (txnErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: txnErr.message }));
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // --- B7: ORGANIZER WAIVE / UNWAIVE SQUAD REQUIREMENT ---
+
+  // POST /api/tournaments/:id/teams/:teamId/waive
+  const waiveTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/waive$/);
+  if (waiveTeamMatch && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+        }
+        const tId = decodeURIComponent(waiveTeamMatch[1]);
+        const teamId = decodeURIComponent(waiveTeamMatch[2]);
+        const data = JSON.parse(body || '{}');
+        const reason = (data.reason || '').trim();
+
+        if (!reason) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, message: 'A reason is required to waive squad completion.' }));
+        }
+
+        const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+        if (tRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+        }
+        const isOrganizer = tRes.rows[0].orgId === authUser.id || hasRole(authUser, ROLES.ADMIN);
+        if (!isOrganizer) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only organizers or admins can waive squad requirements.' }));
+        }
+
+        const updateRes = await pool.query(`
+          UPDATE tournament_teams
+          SET squad_waived_by = $1, squad_waived_at = NOW(), squad_waived_reason = $2, updated_at = NOW()
+          WHERE id = $3 AND tournament_id = $4
+          RETURNING *
+        `, [authUser.id, reason, teamId, tId]);
+
+        if (updateRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, message: 'Team not found.' }));
+        }
+
+        try {
+          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+          await pool.query(`
+            INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details)
+            VALUES ($1, $2, $3, $4, $5, $6)
+          `, [logId, authUser.id, 'waive_squad', 'tournament_team', teamId, JSON.stringify({ reason, tournamentId: tId })]);
+        } catch (logErr) {
+          console.warn('[WAIVE_SQUAD] Non-fatal log failure:', logErr.message);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Squad requirement waived successfully.', team: updateRes.rows[0] }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/tournaments/:id/teams/:teamId/unwaive
+  const unwaiveTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)\/unwaive$/);
+  if (unwaiveTeamMatch && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      }
+      const tId = decodeURIComponent(unwaiveTeamMatch[1]);
+      const teamId = decodeURIComponent(unwaiveTeamMatch[2]);
+
+      const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+      }
+      const isOrganizer = tRes.rows[0].orgId === authUser.id || hasRole(authUser, ROLES.ADMIN);
+      if (!isOrganizer) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+      }
+
+      const updateRes = await pool.query(`
+        UPDATE tournament_teams
+        SET squad_waived_by = NULL, squad_waived_at = NULL, squad_waived_reason = NULL, updated_at = NOW()
+        WHERE id = $1 AND tournament_id = $2
+        RETURNING *
+      `, [teamId, tId]);
+
+      if (updateRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, message: 'Team not found.' }));
+      }
+
+      try {
+        const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+        await pool.query(`
+          INSERT INTO admin_action_log (id, admin_id, action, target_type, target_id, details)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [logId, authUser.id, 'unwaive_squad', 'tournament_team', teamId, JSON.stringify({ tournamentId: tId })]);
+      } catch (logErr) {
+        console.warn('[UNWAIVE_SQUAD] Non-fatal log failure:', logErr.message);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Squad waiver revoked successfully.', team: updateRes.rows[0] }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -8149,17 +8925,18 @@ const server = http.createServer(async (req, res) => {
       // Verify participant is allocated to this match — scoped to the tournament
       // so a foreign match id / assignment row can never satisfy the check.
       let isAllocated = false;
+      let matchedTeam = null;
       if (!isOrganizer) {
         if (tRes.rows[0].roadmap_status !== 'approved') {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'Roadmap is not approved yet.' }));
         }
         const teamCheck = await pool.query(`
-          SELECT a.id, t.status AS team_status
+          SELECT a.id, t.id AS team_id, t.status AS team_status, t.squad_waived_by, t.registration_id, t.leader_user_id
           FROM tournament_match_assignments a
           JOIN tournament_teams t ON a.tournament_team_id = t.id
           JOIN tournament_team_members tm ON a.tournament_team_id = tm.tournament_team_id
-          WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3
+          WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3 AND tm.status = 'active'
         `, [mId, tId, authUser.id]);
         if (teamCheck.rows.some((r) => r.team_status === 'disqualified')) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -8169,18 +8946,67 @@ const server = http.createServer(async (req, res) => {
             message: 'Your team is disqualified and cannot receive room credentials.',
           }));
         }
-        if (teamCheck.rows.length > 0) isAllocated = true;
+        if (teamCheck.rows.length === 0) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'You are not allocated to this match.' }));
+        }
+        isAllocated = true;
+        matchedTeam = teamCheck.rows[0];
+
+        // B4, B6, B7: STRICT SQUAD GATE
+        // A participant receives credentials only if:
+        // 1. Organizer has waived this team (squad_waived_by IS NOT NULL) OR
+        // 2. The team is grandfathered (already verified, allocated, or allocation_pending) OR
+        // 3. The squad is fully registered (every roster slot linked to an account)
+        const isWaived = Boolean(matchedTeam.squad_waived_by);
+        const isGrandfathered = ['verified', 'allocated', 'allocation_pending'].includes(matchedTeam.team_status);
+
+        if (!isWaived && !isGrandfathered) {
+          let reg = null;
+          if (matchedTeam.registration_id) {
+            const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [matchedTeam.registration_id]);
+            reg = regRes.rows[0] || null;
+          }
+          if (!reg) {
+            const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [tId, matchedTeam.leader_user_id]);
+            reg = regRes.rows[0] || null;
+          }
+
+          const tourDetailsRes = await pool.query('SELECT players_per_team, match_type FROM tournaments WHERE id = $1', [tId]);
+          const tourRow = tourDetailsRes.rows[0] || {};
+          const capacity = computeSquadCapacity(reg, tourRow);
+
+          const membersCountRes = await pool.query('SELECT COUNT(*) AS count FROM tournament_team_members WHERE tournament_team_id = $1 AND status = \'active\'', [matchedTeam.team_id]);
+          const joinedCount = parseInt(membersCountRes.rows[0]?.count || '0', 10);
+
+          const stageInfo = computeRegistrationStage({
+            registrationStatus: reg?.status || 'approved',
+            capacity,
+            joinedCount,
+            isWaived: false,
+            teamStatus: matchedTeam.team_status
+          });
+
+          if (!stageInfo.isComplete) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: true,
+              status: 'locked',
+              reason: 'squad_incomplete',
+              joined: joinedCount,
+              required: capacity,
+              message: `Slot secured. Complete your squad (${joinedCount}/${capacity}) to unlock match room details`,
+              releaseTime: null
+            }));
+          }
+        }
       }
 
-      if (!isOrganizer && !isAllocated) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'You are not allocated to this match.' }));
-      }
-
+      // A3: LEFT JOIN prevents 404 when match day_id is NULL
       const mRes = await pool.query(`
         SELECT m.start_time, m.room_identifier, m.room_password, d.date 
         FROM tournament_matches m
-        JOIN tournament_days d ON m.day_id = d.id
+        LEFT JOIN tournament_days d ON m.day_id = d.id
         WHERE m.id = $1 AND m.tournament_id = $2
       `, [mId, tId]);
       
@@ -8191,7 +9017,7 @@ const server = http.createServer(async (req, res) => {
 
       const matchData = mRes.rows[0];
 
-      // Shared server-side release arithmetic (not duplicated here).
+      // Shared server-side release arithmetic
       const releaseEpoch = matchReleaseEpoch(matchData.date, matchData.start_time, releaseMinutes);
       const releaseTime = releaseEpoch !== null ? new Date(releaseEpoch) : null;
       const isReleased = isMatchReleased(matchData.date, matchData.start_time, releaseMinutes);
@@ -8885,19 +9711,81 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
         return;
       }
-      const tournRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [id]);
+      const tournRes = await pool.query('SELECT "orgId", match_type, players_per_team FROM tournaments WHERE id = $1', [id]);
       if (tournRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+      const tournament = tournRes.rows[0];
+      const access = checkTournamentOrganizerAccess(authUser, tournament);
       if (!access.authorized) {
         res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC', [id]);
+
+      // Enrich registrations with squad stage & team details
+      const teamsRes = await pool.query(`
+        SELECT t.id, t.team_name, t.leader_user_id, t.status, t.registration_id,
+               t.squad_waived_by, t.squad_waived_at, t.squad_waived_reason,
+               json_agg(
+                 json_build_object(
+                   'id', tm.id,
+                   'user_id', tm.user_id,
+                   'role', tm.role,
+                   'roster_slot', tm.roster_slot,
+                   'status', tm.status
+                 )
+               ) FILTER (WHERE tm.id IS NOT NULL) AS members
+        FROM tournament_teams t
+        LEFT JOIN tournament_team_members tm ON tm.tournament_team_id = t.id AND tm.status = 'active'
+        WHERE t.tournament_id = $1
+        GROUP BY t.id
+      `, [id]);
+
+      const teamByRegId = new Map();
+      const teamByLeaderId = new Map();
+      for (const t of teamsRes.rows) {
+        if (t.registration_id) teamByRegId.set(t.registration_id, t);
+        if (t.leader_user_id) teamByLeaderId.set(t.leader_user_id, t);
+      }
+
+      const enriched = dbRes.rows.map((reg) => {
+        const team = teamByRegId.get(reg.id) || teamByLeaderId.get(reg.user_id) || null;
+        const members = team?.members || [];
+        const isWaived = Boolean(team?.squad_waived_by);
+        const capacity = computeSquadCapacity(reg, tournament);
+        const stageInfo = computeRegistrationStage({
+          registrationStatus: reg.status,
+          capacity,
+          joinedCount: members.length,
+          isWaived,
+          teamStatus: team?.status,
+        });
+        const parsedSlots = parseRosterSlots(reg, tournament);
+        const claimedSlots = new Set(members.map((m) => m.roster_slot).filter((s) => s !== null && s !== undefined));
+        const unlinkedSlots = parsedSlots.filter((s) => !claimedSlots.has(s.slot));
+
+        return {
+          ...reg,
+          stage: stageInfo.stage,
+          stage_label: stageInfo.label,
+          stage_message: stageInfo.message,
+          is_squad_complete: stageInfo.isComplete,
+          squad_joined: team ? members.length : 1,
+          squad_required: capacity,
+          squad_capacity: capacity,
+          squad_waived: isWaived,
+          squad_waived_at: team?.squad_waived_at || null,
+          squad_waived_reason: team?.squad_waived_reason || null,
+          unlinked_slots: team ? unlinkedSlots : parsedSlots.slice(1),
+          team_id: team?.id || null,
+          team_status: team?.status || null,
+        };
+      });
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+      res.end(JSON.stringify({ success: true, registrations: enriched }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -9381,100 +10269,6 @@ const server = http.createServer(async (req, res) => {
   }
 
 
-
-  // GET /api/tournaments/:tournId/matches/:matchId/credentials
-  if (req.url.startsWith('/api/tournaments/') && req.url.match(/\/api\/tournaments\/([^/]+)\/matches\/([^/]+)\/credentials$/) && req.method === 'GET') {
-    const parts = req.url.split('/');
-    const tournId = parts[3];
-    const matchId = parts[5];
-    
-    try {
-      const authUser = getAuthUser(req);
-      if (!authUser) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
-        return;
-      }
-
-      const matchRes = await pool.query(
-        `SELECT m.start_time, m.room_identifier, m.room_password, m.day_id,
-                t.room_credentials_release_minutes, t."orgId", t.roadmap_status
-         FROM tournament_matches m
-         JOIN tournaments t ON t.id = m.tournament_id
-         WHERE m.id = $1 AND m.tournament_id = $2`,
-        [matchId, tournId]
-      );
-      if (matchRes.rows.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Match not found.' }));
-      }
-      const matchData = matchRes.rows[0];
-
-      if (matchData.roadmap_status !== 'approved') {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Roadmap not approved.' }));
-      }
-
-      const isOrganizer = (matchData.orgId === authUser.id || hasRole(authUser, ROLES.ADMIN));
-
-      let isEligibleParticipant = false;
-      if (!isOrganizer) {
-        const allocRes = await pool.query(
-          `SELECT a.status, t.status AS team_status
-           FROM tournament_match_assignments a
-           JOIN tournament_teams t ON t.id = a.tournament_team_id
-           JOIN tournament_team_members tm ON tm.tournament_team_id = a.tournament_team_id
-           WHERE a.match_id = $1 AND a.tournament_id = $2 AND tm.user_id = $3`,
-          [matchId, tournId, authUser.id]
-        );
-        if (allocRes.rows.some((r) => r.team_status === 'disqualified')) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({
-            success: false,
-            error: 'TEAM_DISQUALIFIED',
-            message: 'Your team is disqualified and cannot receive room credentials.',
-          }));
-        }
-        isEligibleParticipant = allocRes.rows.some((r) => r.status === 'allocated');
-      }
-
-      if (!isOrganizer && !isEligibleParticipant) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You are not assigned to this match.' }));
-      }
-
-      const dayRes = await pool.query('SELECT date FROM tournament_days WHERE id = $1', [matchData.day_id]);
-      const date = dayRes.rows[0]?.date;
-      
-      const { isMatchReleased, matchReleaseEpoch } = await import('./server/matchRelease.js');
-      const releaseTimeEpoch = matchReleaseEpoch(date, matchData.start_time, matchData.room_credentials_release_minutes);
-      const released = isMatchReleased(date, matchData.start_time, matchData.room_credentials_release_minutes, Date.now());
-
-      if (!isOrganizer && !released) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({
-          success: true,
-          status: 'locked',
-          releaseTime: releaseTimeEpoch ? new Date(releaseTimeEpoch).toISOString() : null
-        }));
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: true,
-        status: 'released',
-        room_identifier: matchData.room_identifier || '',
-        room_password: matchData.room_password || '',
-        releaseTime: releaseTimeEpoch ? new Date(releaseTimeEpoch).toISOString() : null
-      }));
-    } catch (err) {
-      console.error('[CREDENTIALS API]', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR' }));
-    }
-    return;
-  }
-
   // 7k_b. Supabase Get All Registrations for a User (auth + ownership required)
   if (req.url.startsWith('/api/users/') && req.url.endsWith('/registrations') && req.method === 'GET') {
     const parts = req.url.split('/');
@@ -9492,8 +10286,79 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+
+      const tournIds = Array.from(new Set(dbRes.rows.map((r) => r.tournament_id).filter(Boolean)));
+      let tournamentsMap = new Map();
+      let teamByRegId = new Map();
+      let teamByLeaderId = new Map();
+
+      if (tournIds.length > 0) {
+        const tRes = await pool.query('SELECT id, match_type, players_per_team FROM tournaments WHERE id = ANY($1)', [tournIds]);
+        for (const t of tRes.rows) {
+          tournamentsMap.set(t.id, t);
+        }
+
+        const teamsRes = await pool.query(`
+          SELECT t.id, t.tournament_id, t.team_name, t.leader_user_id, t.status, t.registration_id,
+                 t.squad_waived_by, t.squad_waived_at, t.squad_waived_reason,
+                 json_agg(
+                   json_build_object(
+                     'id', tm.id,
+                     'user_id', tm.user_id,
+                     'role', tm.role,
+                     'roster_slot', tm.roster_slot,
+                     'status', tm.status
+                   )
+                 ) FILTER (WHERE tm.id IS NOT NULL) AS members
+          FROM tournament_teams t
+          LEFT JOIN tournament_team_members tm ON tm.tournament_team_id = t.id AND tm.status = 'active'
+          WHERE t.tournament_id = ANY($1)
+          GROUP BY t.id
+        `, [tournIds]);
+
+        for (const t of teamsRes.rows) {
+          if (t.registration_id) teamByRegId.set(t.registration_id, t);
+          teamByLeaderId.set(`${t.tournament_id}:${t.leader_user_id}`, t);
+        }
+      }
+
+      const enriched = dbRes.rows.map((reg) => {
+        const tournament = tournamentsMap.get(reg.tournament_id) || null;
+        const team = teamByRegId.get(reg.id) || teamByLeaderId.get(`${reg.tournament_id}:${reg.user_id}`) || null;
+        const members = team?.members || [];
+        const isWaived = Boolean(team?.squad_waived_by);
+        const capacity = computeSquadCapacity(reg, tournament);
+        const stageInfo = computeRegistrationStage({
+          registrationStatus: reg.status,
+          capacity,
+          joinedCount: members.length,
+          isWaived,
+          teamStatus: team?.status,
+        });
+        const parsedSlots = parseRosterSlots(reg, tournament);
+        const claimedSlots = new Set(members.map((m) => m.roster_slot).filter((s) => s !== null && s !== undefined));
+        const unlinkedSlots = parsedSlots.filter((s) => !claimedSlots.has(s.slot));
+
+        return {
+          ...reg,
+          stage: stageInfo.stage,
+          stage_label: stageInfo.label,
+          stage_message: stageInfo.message,
+          is_squad_complete: stageInfo.isComplete,
+          squad_joined: team ? members.length : 1,
+          squad_required: capacity,
+          squad_capacity: capacity,
+          squad_waived: isWaived,
+          squad_waived_at: team?.squad_waived_at || null,
+          squad_waived_reason: team?.squad_waived_reason || null,
+          unlinked_slots: team ? unlinkedSlots : parsedSlots.slice(1),
+          team_id: team?.id || null,
+          team_status: team?.status || null,
+        };
+      });
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+      res.end(JSON.stringify({ success: true, registrations: enriched }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -9656,6 +10521,13 @@ const server = http.createServer(async (req, res) => {
 
         // Alert + email + audit log for approval
         if (newStatus === 'approved' || newStatus === 'confirmed') {
+          // B2: Ensure team is created immediately upon registration approval
+          try {
+            await ensureTeamForRegistration(pool, id, currentReg.user_id, currentReg.team_name);
+          } catch (teamErr) {
+            console.warn(`[REG_APPROVE] ensureTeamForRegistration non-fatal error:`, teamErr?.message);
+          }
+
           // Alert user
           try {
             const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
@@ -12763,6 +13635,9 @@ const server = http.createServer(async (req, res) => {
               [regId]
             );
 
+            // B2: Ensure team is created immediately upon approval
+            await ensureTeamForRegistration(pool, reg.tournament_id, reg.user_id, reg.team_name).catch(() => {});
+
             // Update payment_submissions if linked
             if (reg.payment_id) {
               await pool.query(
@@ -12882,6 +13757,8 @@ const server = http.createServer(async (req, res) => {
       const tournamentIds = new Set();
       for (const reg of pendingRes.rows) {
         tournamentIds.add(reg.tournament_id);
+        // B2: Ensure team is created immediately upon approval
+        await ensureTeamForRegistration(pool, reg.tournament_id, reg.user_id, reg.team_name).catch(() => {});
         try {
           const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
           await pool.query(

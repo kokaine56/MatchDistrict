@@ -500,6 +500,20 @@ function RegistrationPage({ onNavigate }) {
               )}
             </div>
           )}
+
+          {/* Next Step Reminder Banner (Part B) */}
+          <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-4 mb-6 text-left space-y-1.5">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
+              <span>Next Step: Complete Your Squad Roster</span>
+            </div>
+            <p className="text-xs text-amber-200/90 leading-relaxed">
+              Once approved, your team slot is secured! Share your team invitation link with your teammates so they can claim their roster slots.
+            </p>
+            <p className="text-[11px] text-amber-300/70 font-medium">
+              🔒 Match room credentials unlock only after all roster slots are linked to registered player accounts.
+            </p>
+          </div>
+
           <button
             onClick={() => navigate(`/tournaments/${id}`)}
             className="w-full bg-primary text-white font-bold py-3 px-6 rounded-xl hover:opacity-90 transition-all"
