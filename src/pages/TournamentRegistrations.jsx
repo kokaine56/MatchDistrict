@@ -27,11 +27,19 @@ export default function TournamentRegistrations() {
         const res = await fetch(`/api/tournaments/${id}/registrations`, {
           headers: { Authorization: `Bearer ${token}` }
         })
+        if (res.status === 401) {
+          navigate(`/login?redirect=/tournaments/${id}/registrations`, { replace: true })
+          return
+        }
+        if (res.status === 403) {
+          navigate(`/tournaments/${id}`, { replace: true })
+          return
+        }
         const data = await res.json()
         if (data.success) {
           setRegistrations(data.registrations || [])
         } else {
-          triggerToast('Failed to load registrations.')
+          triggerToast(data.message || data.error || 'Failed to load registrations.')
         }
       } catch {
         triggerToast('Error fetching registrations.')

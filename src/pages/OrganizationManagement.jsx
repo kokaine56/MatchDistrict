@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Header from '../components/Header.jsx';
 import { hasOrganizerRights } from '../utils/iamRoles.js';
+import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
 import OrganizerDashboard from '../components/OrganizerDashboard.jsx';
 import SafeImage from '../components/SafeImage.jsx';
 import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js';
@@ -123,7 +124,7 @@ function OrganizationManagement({ onNavigate }) {
         const data = await res.json();
         if (res.ok && data.success && Array.isArray(data.tournaments)) {
           // Filter to only this organizer's tournaments
-          const filtered = data.tournaments.filter(t => t.orgId === currentUser.id);
+          const filtered = data.tournaments.filter(t => isTournamentOrganizer(currentUser, t));
           setTournamentsList(filtered);
         }
       } catch (err) {

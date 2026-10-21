@@ -9,6 +9,7 @@
 // - Strict authorization (403 for non-owners).
 
 import crypto from 'crypto';
+import { isTournamentOrganizer } from './tournamentAuth.js';
 
 export const TEAM_STATUS = Object.freeze({
   DISQUALIFIED: 'disqualified',
@@ -78,7 +79,8 @@ export async function updateTeamQualificationStatus(poolOrClient, {
     const tournament = tournRes.rows[0];
 
     // 2. Authorization check: organizer or admin only
-    if (!isAdmin && actorId !== tournament.orgId) {
+    const actorUser = { id: actorId, role: isAdmin ? 'admin' : 'user' };
+    if (!isTournamentOrganizer(actorUser, tournament)) {
       const err = new Error('Only the tournament organizer or admin can modify team qualification status.');
       err.code = 'FORBIDDEN';
       err.status = 403;

@@ -136,13 +136,13 @@ export default function RoadmapDatePicker({
           placeholder={placeholder}
           onChange={handleInputChange}
           onBlur={handleInputBlur}
-          className={`w-full pl-3 pr-9 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border border-slate-200/90 bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition shadow-2xs disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
+          className={`w-full pl-3 pr-9 py-2 rounded-xl text-xs sm:text-sm font-semibold tracking-wide border border-slate-200/90 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition shadow-2xs disabled:bg-slate-50 dark:disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed ${className}`}
         />
         <button
           type="button"
           disabled={disabled}
           onClick={() => setIsOpen((prev) => !prev)}
-          className="absolute right-2 p-1 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition cursor-pointer disabled:cursor-not-allowed"
+          className="absolute right-2 p-1 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:cursor-not-allowed"
           title="Open calendar (DD/MM/YYYY)"
         >
           <CalendarIcon className="w-4 h-4" />
@@ -151,13 +151,13 @@ export default function RoadmapDatePicker({
 
       {/* Calendar Popover */}
       {isOpen && (
-        <div className="absolute z-50 left-0 mt-1.5 w-64 p-3 rounded-2xl bg-white border border-slate-200 shadow-xl text-slate-800 animate-in fade-in zoom-in-95 duration-100 select-none">
+        <div className="absolute z-50 left-0 mt-1.5 w-64 p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-slate-800 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-100 select-none">
           {/* Header */}
-          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
             <button
               type="button"
               onClick={handlePrevMonth}
-              className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 cursor-pointer transition"
+              className="p-1 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -174,7 +174,7 @@ export default function RoadmapDatePicker({
           </div>
 
           {/* Weekday labels */}
-          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400 mb-1">
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 mb-1">
             <span>Su</span>
             <span>Mo</span>
             <span>Tu</span>
@@ -206,10 +206,10 @@ export default function RoadmapDatePicker({
                   onClick={() => handleSelectDay(day)}
                   className={`h-7 w-7 mx-auto rounded-lg font-bold flex items-center justify-center transition cursor-pointer text-[11px] ${
                     isSelected
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-blue-600 text-white shadow-xs font-black'
                       : isBeforeMin
-                      ? 'text-slate-300 cursor-not-allowed bg-transparent'
-                      : 'text-slate-700 hover:bg-slate-100 hover:text-blue-600'
+                      ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed bg-transparent'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 dark:hover:text-blue-400'
                   }`}
                 >
                   {day}

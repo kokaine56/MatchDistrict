@@ -18,6 +18,7 @@ import { getUpgradeMessage, getNextPlan } from '../utils/featureGates'
 import VerificationBadge from './VerificationBadge'
 import AutomationPanel from './AutomationPanel'
 import { formatDate } from '../utils/timeFormat'
+import { isTournamentOrganizer } from '../utils/tournamentAuth.js'
 import FormBuilder from './FormBuilder'
 
 function OrganizerDashboard({
@@ -252,7 +253,7 @@ function OrganizerDashboard({
 
   // Filtered tournament list for current organizer
   const orgHostedTournaments = useMemo(() => {
-    return tournamentsList.filter(t => t.orgId === currentUser?.id || t.orgName === orgData.name)
+    return tournamentsList.filter(t => isTournamentOrganizer(currentUser, t) || (Boolean(orgData?.name && t.orgName) && t.orgName === orgData.name))
   }, [tournamentsList, currentUser, orgData])
 
   // Further filter by status sub-filter

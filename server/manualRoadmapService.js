@@ -28,6 +28,7 @@ import {
   distributeDistrictSizes,
   defaultTeamsAdvancing,
 } from './roadmapConfig.js';
+import { isTournamentOrganizer } from './tournamentAuth.js';
 
 export const ROUND_TYPES = Object.freeze([
   'qualifier',
@@ -1654,7 +1655,7 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
   }
 
   const t = tRes.rows[0];
-  const isOrganizer = !!(authUser && (authUser.role === 'admin' || (Array.isArray(authUser.roles) && authUser.roles.includes('admin')) || t.orgId === authUser.id));
+  const isOrganizer = isTournamentOrganizer(authUser, t);
   const isPublished = isRoadmapPublished(t);
 
   // ── PARTICIPANT / PUBLIC MODE PRIVACY GATE ──
@@ -1863,11 +1864,21 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
           : null,
       } : null,
       roadmap: {
-        rounds,
+        rounds: (rounds || [])
+          .filter((r) => r.status !== 'draft' && r.status !== 'unpublished')
+          .map((r) => ({
+            ...r,
+            advancement_target_round_id: null,
+          })),
         days,
         groups: groups.rows || [],
         rooms: rooms.rows || [],
-        structured_rounds: structuredRounds,
+        structured_rounds: (structuredRounds || [])
+          .filter((r) => r.status !== 'draft' && r.status !== 'unpublished')
+          .map((r) => ({
+            ...r,
+            advancement_target_round_id: null,
+          })),
         matches: (matches.rows || []).map((m) => {
           const dayRow = days.find((d) => d.id === m.day_id);
           const dateStr = dayRow ? dayRow.date : null;
@@ -1900,7 +1911,12 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
           slot_start: d.slot_start,
           slot_end: d.slot_end,
         })),
-        meta: roadmapMeta,
+        meta: (() => {
+          const safeMeta = { ...roadmapMeta };
+          delete safeMeta.capacity_warning;
+          delete safeMeta.capacity_mismatch;
+          return safeMeta;
+        })(),
       },
     },
   };

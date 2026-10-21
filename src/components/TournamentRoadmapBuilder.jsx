@@ -194,8 +194,8 @@ export default function TournamentRoadmapBuilder({
   onApproved = null,
   onNavigateToLeaderboard = null,
 }) {
-  const [serverIsOrganizer, setServerIsOrganizer] = useState(null);
-  const effectiveOrganizer = Boolean(isOrganizer || (serverIsOrganizer === true));
+  const [serverIsOrganizer, setServerIsOrganizer] = useState(false);
+  const effectiveOrganizer = Boolean(serverIsOrganizer === true && isOrganizer === true);
 
   const [loading, setLoading] = useState(true);
   const hasLoadedOnceRef = useRef(false);
@@ -346,14 +346,10 @@ export default function TournamentRoadmapBuilder({
       setMyDistrictIds(myDistIds);
       setMyMatchIds(myMtchIds);
 
-      const serverOrg = typeof data.viewer_is_organizer === "boolean"
-        ? data.viewer_is_organizer
-        : Boolean(data.is_organizer || data.mode === "organizer");
+      const serverOrg = data?.viewer_is_organizer === true;
       setServerIsOrganizer(serverOrg);
 
-      const isOrg = Boolean(isOrganizer || serverOrg);
-
-      if (!isOrg && !published) {
+      if (!serverOrg && !published) {
         setRounds([]);
         return;
       }

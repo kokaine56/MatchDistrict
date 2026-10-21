@@ -58,6 +58,7 @@ import {
   validatePromotionPayload,
   parseDisplayLimit,
 } from './server/tournamentPromotion.js';
+import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -3311,7 +3312,7 @@ const server = http.createServer(async (req, res) => {
       // Block draft access for non-owners (drafts should only be visible to the organizer)
       if (row.isDraft) {
         const authUser = getAuthUser(req);
-        if (!authUser || (authUser.id !== row.orgId && !hasRole(authUser, ROLES.ADMIN))) {
+        if (!isTournamentOrganizer(authUser, row)) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
@@ -3328,7 +3329,7 @@ const server = http.createServer(async (req, res) => {
       let detailRegistered = false;
       const detailAuth = getAuthUser(req);
       if (detailAuth) {
-        detailOwner = detailAuth.id === row.orgId || hasRole(detailAuth, ROLES.ADMIN);
+        detailOwner = isTournamentOrganizer(detailAuth, row);
         if (!detailOwner) {
           detailRegistered = await isRegisteredForTournament(row.id, detailAuth.id);
         }
@@ -3711,9 +3712,10 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const existing = existRes.rows[0];
-        if (!hasRole(authUser, ROLES.ADMIN) && existing.orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, existing);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 
@@ -3784,9 +3786,10 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, existRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
         const roundRes = await pool.query(
@@ -3856,7 +3859,7 @@ const server = http.createServer(async (req, res) => {
 
         const tourn = tournRes.rows[0];
         const authUser = getAuthUser(req);
-        const isOwnerOrAdmin = authUser && (hasRole(authUser, ROLES.ADMIN) || tourn.orgId === authUser.id);
+        const isOwnerOrAdmin = isTournamentOrganizer(authUser, tourn);
 
         if (!isOwnerOrAdmin) {
           const isApproved = tourn.roadmap_status === 'approved' || tourn.roadmap_status === 'published';
@@ -3914,9 +3917,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
 
         // roundIdentifier could be round ID or round number
@@ -3958,9 +3962,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, existRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
 
         const payload = JSON.parse(body || '{}');
@@ -4062,9 +4067,10 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (authUser.role !== 'admin' && existRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, existRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 
@@ -4348,10 +4354,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Authorization check: User must be the original organizer
-        if (existing.orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this tournament.' }));
+        // Authorization check: User must be tournament organizer or admin
+        const access = checkTournamentOrganizerAccess(authUser, existing);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 
@@ -4770,9 +4777,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const src = srcRes.rows[0];
-      if (src.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to duplicate this tournament.' }));
+      const access = checkTournamentOrganizerAccess(authUser, src);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         return;
       }
       const newId = `TRN-${Date.now().toString().slice(-4)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
@@ -4826,9 +4834,10 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      if (existRes.rows[0].orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to archive this tournament.' }));
+      const access = checkTournamentOrganizerAccess(authUser, existRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         return;
       }
       const archiveClient = await pool.connect();
@@ -5117,9 +5126,10 @@ const server = http.createServer(async (req, res) => {
         }
         const t = tRes.rows[0];
         // Only the tournament owner or admin can change status
-        if (t.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to update this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, t);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
         const bodyData = JSON.parse(body);
@@ -5249,9 +5259,10 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         return;
       }
       const cfgRes = await pool.query(
@@ -5301,9 +5312,10 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not own this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 
@@ -5481,9 +5493,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       // 1. Fetch tournament
@@ -5562,6 +5575,16 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
       }
+      const oRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
+      if (oRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+      }
       
         const resDb = await pool.query(
         'SELECT * FROM tournament_planning_result WHERE tournament_id = $1 ORDER BY plan_version DESC LIMIT 1',
@@ -5595,9 +5618,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       const resDb = await pool.query(`
@@ -5637,9 +5661,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -5842,10 +5867,10 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
 
-      const isOwnerOrAdmin = authUser.role === 'admin' || hasRole(authUser, ROLES.ADMIN) || tCheck.rows[0].orgId === authUser.id;
-      if (!isOwnerOrAdmin) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only tournament organizer or admin can access districts configuration.' }));
+      const access = checkTournamentOrganizerAccess(authUser, tCheck.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       const districtsData = await getTournamentDistricts(pool, tId);
@@ -5875,9 +5900,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -5950,9 +5976,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6058,9 +6085,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6091,9 +6119,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6148,9 +6177,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6204,9 +6234,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6292,9 +6323,10 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
 
         const payload = JSON.parse(body || '{}');
@@ -6366,9 +6398,12 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          if (editClient && editTxnOpen) await editClient.query('ROLLBACK').catch(() => {});
+          editTxnOpen = false;
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
         if (oRes.rows[0].finalized_at) {
@@ -6446,9 +6481,12 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          if (editClient && editTxnOpen) await editClient.query('ROLLBACK').catch(() => {});
+          editTxnOpen = false;
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
         if (oRes.rows[0].finalized_at) {
@@ -6527,10 +6565,10 @@ const server = http.createServer(async (req, res) => {
       }
       const t = tRes.rows[0];
       const authUser = getAuthUser(req);
-      const isOrganizer = !!(authUser && (hasRole(authUser, ROLES.ADMIN) || t.orgId === authUser.id));
-      if (!isOrganizer) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only the organizer can view roadmap settings.' }));
+      const access = checkTournamentOrganizerAccess(authUser, t);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       const slotsTotal = parseInt(t.slotsTotal, 10) || 0;
       const teamsPerGroup = parseInt(t.teams_per_group || t.teams_per_match, 10) || DEFAULT_TEAMS_PER_GROUP;
@@ -6576,9 +6614,10 @@ const server = http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
         const t = tRes.rows[0];
-        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, t);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (t.finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6649,9 +6688,12 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          if (client && txn) await client.query('ROLLBACK').catch(() => {});
+          txn = false;
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6762,9 +6804,12 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          if (client && txn) await client.query('ROLLBACK').catch(() => {});
+          txn = false;
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6839,9 +6884,12 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+        const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+        if (!access.authorized) {
+          if (client && txn) await client.query('ROLLBACK').catch(() => {});
+          txn = false;
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
         }
         if (oRes.rows[0].finalized_at) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -6903,9 +6951,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && oRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied.' }));
+      const access = checkTournamentOrganizerAccess(authUser, oRes.rows[0]);
+      if (!access.authorized) {
+        if (client && txn) await client.query('ROLLBACK').catch(() => {});
+        txn = false;
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
       if (oRes.rows[0].finalized_at) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -7189,9 +7240,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, message: 'Tournament not found' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, message: 'Forbidden' }));
+      const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       const teamsRes = await pool.query(`
@@ -7678,9 +7730,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
       }
-      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+      const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       const metrics = await pool.query(`
@@ -7744,9 +7797,18 @@ const server = http.createServer(async (req, res) => {
           // Role gate (non-locking read; the shared service, which runs after,
           // locks the team then the tournament as the allocation serialization
           // point — uniform ordering on both automatic and manual paths).
-          const tRes = await client.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
-          if (tRes.rows.length === 0) throw new Error('Tournament not found');
-          if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) throw new Error('Access denied');
+          const tRes = await client.query('SELECT "orgId", finalized_at, status FROM tournaments WHERE id = $1', [tId]);
+          if (tRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
+          }
+          const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+          if (!access.authorized) {
+            await client.query('ROLLBACK');
+            res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+          }
 
           const allocation = await allocateTeam(client, {
             teamId,
@@ -7794,7 +7856,17 @@ const server = http.createServer(async (req, res) => {
         try {
           await client.query('BEGIN');
           const tRes = await client.query('SELECT "orgId", finalized_at, status FROM tournaments WHERE id = $1 FOR UPDATE', [tId]);
-          if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) throw new Error('Access denied');
+          if (tRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
+          }
+          const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+          if (!access.authorized) {
+            await client.query('ROLLBACK');
+            res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+          }
           if (tRes.rows[0].finalized_at) {
             throw new AllocationError(ALLOCATION_ERR.TOURNAMENT_FINALIZED, 'This tournament is finalized; team allocations are locked.');
           }
@@ -7840,9 +7912,14 @@ const server = http.createServer(async (req, res) => {
       }
       
       const tRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [tId]);
-      if (!hasRole(authUser, ROLES.ADMIN) && tRes.rows[0].orgId !== authUser.id) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
+      }
+      const access = checkTournamentOrganizerAccess(authUser, tRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
 
       const healthIssues = [];
@@ -8700,6 +8777,16 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
         return;
       }
+      const tournRes = await pool.query('SELECT "orgId" FROM tournaments WHERE id = $1', [id]);
+      if (tournRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+      const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+      }
       const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC', [id]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
@@ -9124,9 +9211,10 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const tourn = tournRes.rows[0];
-        if (tourn.orgId !== authUser.id && !hasRole(authUser, ROLES.ADMIN)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizer access required.' }));
+        const access = checkTournamentOrganizerAccess(authUser, tourn);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
         if (tourn.finalized_at) {
@@ -9329,10 +9417,10 @@ const server = http.createServer(async (req, res) => {
         }
         const t = tRes.rows[0];
 
-        // Authorization check: User must be admin or the original organizer
-        if (!hasRole(authUser, ROLES.ADMIN) && t.orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to manage this tournament.' }));
+        const access = checkTournamentOrganizerAccess(authUser, t);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 
@@ -10198,9 +10286,10 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        if (!hasRole(authUser, ROLES.ADMIN) && existRes.rows[0].orgId !== authUser.id) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN' }));
+        const access = checkTournamentOrganizerAccess(authUser, existRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
           return;
         }
 

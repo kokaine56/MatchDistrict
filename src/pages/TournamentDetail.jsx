@@ -22,6 +22,7 @@ import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
 import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder.jsx';
 import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
 import { isSystemAdmin } from '../utils/iamRoles.js';
+import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -307,13 +308,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
   const isTournamentOwner = useMemo(
-    () => Boolean(currentUser && tourney && (
-      currentUser.id === tourney.orgId ||
-      currentUser.id === tourney.organizer_id ||
-      currentUser.id === tourney.organizerId ||
-      currentUser.id === tourney.org_id ||
-      isSystemAdmin(currentUser)
-    )),
+    () => isTournamentOrganizer(currentUser, tourney),
     [currentUser, tourney]
   );
   const isSponsorsEnabled = tourney?.sponsors_enabled === true || tourney?.sponsors_enabled === 'true';
@@ -1757,6 +1752,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {activeTab === 'leaderboard' && (
               <TournamentLeaderboard
                 tournamentId={tournamentId}
+                isOrganizer={isTournamentOwner}
                 isGoldTheme={isGoldTheme}
                 cardContainerClass={cardContainerClass}
                 cardTitleClass={cardTitleClass}

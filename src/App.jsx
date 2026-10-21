@@ -318,6 +318,51 @@ function AppInner() {
     )
   }
 
+  const TournamentManagementRoute = () => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login?redirect=/manage/tournaments" replace />
+    }
+
+    if (!hasOrganizerRights(currentUser)) {
+      return <Navigate to="/profile" replace />
+    }
+
+    return (
+      <PageTransition>
+        <TournamentManagement onNavigate={handleNavigate} />
+      </PageTransition>
+    )
+  }
+
+  const TournamentRegistrationsRoute = () => {
+    const { id } = useParams()
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to={`/login?redirect=/tournaments/${id}/registrations`} replace />
+    }
+
+    if (!hasOrganizerRights(currentUser)) {
+      return <Navigate to={`/tournaments/${id}`} replace />
+    }
+
+    return (
+      <PageTransition>
+        <TournamentRegistrations />
+      </PageTransition>
+    )
+  }
+
   // AdminAuthenticator adapter with frontend route guard
   const AdminAuthenticatorRoute = () => {
     const { currentUser, loading } = useUser()
@@ -543,11 +588,7 @@ function AppInner() {
 
                 <Route path="/create-tournament" element={<CreateTournamentRoute />} />
 
-                <Route path="/manage/tournaments" element={
-                  <PageTransition>
-                    <TournamentManagement onNavigate={handleNavigate} />
-                  </PageTransition>
-                } />
+                <Route path="/manage/tournaments" element={<TournamentManagementRoute />} />
 
                 <Route path="/organisers" element={
                   <PageTransition>
@@ -587,11 +628,7 @@ function AppInner() {
                   <RegistrationRoute />
                 } />
 
-                <Route path="/tournaments/:id/registrations" element={
-                  <PageTransition>
-                    <TournamentRegistrations />
-                  </PageTransition>
-                } />
+                <Route path="/tournaments/:id/registrations" element={<TournamentRegistrationsRoute />} />
 
                 {/* Catch-all — redirect unknown URLs to home */}
                 <Route path="*" element={<Navigate to="/" replace />} />

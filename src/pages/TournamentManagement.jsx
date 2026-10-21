@@ -5,6 +5,7 @@ import { useUser } from '../UserContext'
 import { getAuthToken } from '../utils/getAuthToken'
 import { normalizeTournamentRow } from '../utils/api'
 import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
+import { isTournamentOrganizer } from '../utils/tournamentAuth.js'
 import { formatDate } from '../utils/timeFormat'
 import TournamentPlanningConfigEditor from '../components/TournamentPlanningConfigEditor'
 import TournamentPlanningResultCard from '../components/TournamentPlanningResultCard'
@@ -972,15 +973,7 @@ export default function TournamentManagement({ onNavigate }) {
             key={roadmapTournament.id}
             tournamentId={roadmapTournament.id}
             tournamentTitle={roadmapTournament.title}
-            isOrganizer={Boolean(
-              currentUser && (
-                currentUser.id === roadmapTournament.orgId ||
-                currentUser.id === roadmapTournament.organizer_id ||
-                currentUser.id === roadmapTournament.organizerId ||
-                currentUser.id === roadmapTournament.org_id ||
-                isSystemAdmin(currentUser)
-              )
-            )}
+            isOrganizer={isTournamentOrganizer(currentUser, roadmapTournament)}
             registrationCloseDate={roadmapTournament.registrationCloseDate || roadmapTournament.registration_close_date}
             onClose={() => setRoadmapTournament(null)}
             onApproved={() => {
