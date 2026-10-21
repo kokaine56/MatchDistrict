@@ -274,11 +274,11 @@ test('PLAN TEST 14: planner still produces a proposal while the generator emits 
   const roadmap = gen.roadmap;
   const r1Groups = roadmap.groups.filter((g) => g.round_id === roadmap.rounds[0].id);
   assert.strictEqual(r1Groups.length, 4, '64 slots / 16 per district = 4 districts');
-  assert.strictEqual(roadmap.groups.length, 7, 'all rounds auto-create districts: R1(4) + R2(2) + GF(1)');
-  assert.strictEqual(roadmap.rooms.length, 7);
-  assert.strictEqual(roadmap.matches.length, 9, '4 district matches + 2 progression matches + 3 Grand Final matches');
+  assert.strictEqual(roadmap.groups.length, 5, 'all rounds auto-create districts: R1(4) + GF(1)');
+  assert.strictEqual(roadmap.rooms.length, 5);
+  assert.strictEqual(roadmap.matches.length, 7, '4 district matches + 3 Grand Final matches');
   assert.deepStrictEqual(r1Groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
-  assert.deepStrictEqual(roadmap.rounds.map((r) => r.round_number), [1, 2, 3]);
+  assert.deepStrictEqual(roadmap.rounds.map((r) => r.round_number), [1, 2]);
   assert.strictEqual(roadmap.rounds.filter((r) => r.is_grand_final).length, 1, 'exactly one Grand Final');
   assert.ok(roadmap.rooms.every((r) => r.capacity === 16), 'every room carries its district capacity');
   // Round 1 is spread across days; the Grand Final is scheduled last.
@@ -303,12 +303,12 @@ test('PLAN TEST 15: legacy planning results without round_plan no longer drive t
   const config = { daily_start_time: '10:00', daily_end_time: '22:00' };
   const res = generateTournamentRoadmap(config, planningResult, { id: 'T-LEGACY', slotsTotal: 64, teams_per_group: 16 });
   assert.strictEqual(res.ok, true, res.error);
-  // District structure (4 districts in R1, 7 total groups, 3 rounds, 4 days, 9 matches) — NOT the
+  // District structure (4 districts in R1, 5 total groups, 2 rounds, 3 days, 7 matches) — NOT the
   // legacy 10 rooms / 30 sessions from the planning result.
   const r1Groups = res.roadmap.groups.filter((g) => g.round_id === res.roadmap.rounds[0].id);
   assert.strictEqual(r1Groups.length, 4);
-  assert.strictEqual(res.roadmap.groups.length, 7);
-  assert.strictEqual(res.roadmap.rooms.length, 7);
-  assert.strictEqual(res.roadmap.matches.length, 9);
-  assert.strictEqual(res.roadmap.days.length, 4);
+  assert.strictEqual(res.roadmap.groups.length, 5);
+  assert.strictEqual(res.roadmap.rooms.length, 5);
+  assert.strictEqual(res.roadmap.matches.length, 7);
+  assert.strictEqual(res.roadmap.days.length, 3);
 });

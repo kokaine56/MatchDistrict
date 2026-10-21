@@ -1,4 +1,3 @@
-import React from 'react';
 import { ArrowRight, Trophy, AlertTriangle } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
 
@@ -48,7 +47,8 @@ export default function RoadmapPlanSummary({ rounds = [], meta = {}, cardColor =
       if (advType === 'per_district') {
         const perDist = Number(round.teams_advancing_per_district) || 2;
         qualifyCount = districtCount * perDist;
-        ruleDescription = `top ${perDist} per district (${districtCount} districts)`;
+        const distLabel = districtCount === 1 ? 'district' : 'districts';
+        ruleDescription = `top ${perDist} per district (${districtCount} ${distLabel})`;
       } else if (advType === 'overall' || advType === 'round_total') {
         qualifyCount = Number(round.teams_advancing) || 16;
         ruleDescription = `top ${qualifyCount} overall`;
@@ -110,18 +110,18 @@ export default function RoadmapPlanSummary({ rounds = [], meta = {}, cardColor =
       </div>
 
       {/* Progression Steps Flow */}
-      <div className="space-y-2.5">
+      <div className="divide-y divide-slate-100">
         {summaryItems.map((item, idx) => (
           <div
             key={idx}
-            className={`p-3 sm:p-4 rounded-xl ${theme.innerCardBg} flex flex-col md:flex-row items-start md:items-center justify-between gap-2.5 transition-all`}
+            className={`py-2.5 sm:py-3 px-2 sm:px-3 rounded-lg ${theme.rowHover} flex flex-col md:flex-row items-start md:items-center justify-between gap-2.5 transition-colors`}
           >
             {/* Round & Teams In */}
             <div className="flex items-center gap-3 w-full md:w-auto min-w-[210px]">
               <div
                 className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${
                   item.isGrandFinal
-                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                    ? 'bg-amber-500 text-slate-950 shadow-2xs'
                     : theme.isGold
                     ? 'bg-amber-100 text-amber-900 border border-amber-300'
                     : 'bg-blue-100 text-blue-700 font-black'
@@ -142,7 +142,7 @@ export default function RoadmapPlanSummary({ rounds = [], meta = {}, cardColor =
             <div className="w-full md:w-auto flex items-center justify-start md:justify-center gap-2">
               {!item.isGrandFinal ? (
                 <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
-                  <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-semibold ${theme.isGold ? 'bg-amber-50 text-amber-900 border border-amber-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
+                  <span className={`px-2.5 py-0.5 rounded-md text-[11px] font-semibold ${theme.isGold ? 'bg-amber-50 text-amber-900 border border-amber-200' : 'bg-slate-100 text-slate-700 border border-slate-200/80'}`}>
                     {item.ruleDescription}
                   </span>
                   <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0 hidden sm:block" />

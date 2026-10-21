@@ -326,10 +326,10 @@ test('Phase 2A: generateTournamentRoadmap builds complete plan with 0 registrati
   assert.strictEqual(rounds[0].round_type, 'qualifier');
   assert.strictEqual(rounds[0].advancement_type, 'per_district');
 
-  // Verify 8 distinct groups/districts created for 128 / 16 in Round 1, and 15 total across rounds
+  // Verify 8 distinct groups/districts created for 128 / 16 in Round 1, and 9 total across rounds (8 R1 + 1 GF)
   const r1Groups = groups.filter((g) => g.round_id === rounds[0].id);
   assert.strictEqual(r1Groups.length, 8);
-  assert.strictEqual(groups.length, 15);
+  assert.strictEqual(groups.length, 9);
   assert.strictEqual(matches.length > 0, true);
 
   // Grand Finals checks

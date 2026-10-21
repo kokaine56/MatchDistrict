@@ -5677,7 +5677,7 @@ const server = http.createServer(async (req, res) => {
       const requestedMode = genBody && (genBody.mode === 'regenerate_all' || genBody.mode === 'auto_only') ? genBody.mode : null;
 
       // 2. Generate roadmap — purely group-based, no planningResult required
-      const result = generateTournamentRoadmap(tournament);
+      const result = generateTournamentRoadmap({ ...tournament, ...(genBody && typeof genBody === 'object' ? genBody : {}) });
       if (!result.ok) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'ROADMAP_ERROR', message: result.error }));
@@ -5715,9 +5715,20 @@ const server = http.createServer(async (req, res) => {
 
         for (const r of (rounds || [])) {
           await dbClient.query(`
-            INSERT INTO tournament_rounds (id, tournament_id, round_number, name, status, teams_advancing, "date", "time", map)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-          `, [r.id, r.tournament_id, r.round_number, r.name, r.status || 'configured', r.teams_advancing, r.date, r.time, r.map || null]);
+            INSERT INTO tournament_rounds (
+              id, tournament_id, round_number, name, status, teams_advancing,
+              "date", "time", map, round_type, advancement_type,
+              teams_advancing_per_district, teams_in
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          `, [
+            r.id, r.tournament_id, r.round_number, r.name, r.status || 'configured',
+            r.teams_advancing, r.date, r.time, r.map || null,
+            r.round_type || (r.is_grand_final ? 'grand_final' : 'qualifier'),
+            r.advancement_type || null,
+            r.teams_advancing_per_district || null,
+            r.teams_in || null,
+          ]);
         }
 
         for (const d of (days || [])) {
@@ -6253,7 +6264,8 @@ const server = http.createServer(async (req, res) => {
       const result = await getTournamentRoadmapResponse(pool, tId, authUser, Date.now());
       res.writeHead(result.statusCode, {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate'
+        'Cache-Control': result.headers?.['Cache-Control'] || 'private, no-cache, must-revalidate',
+        ...(result.headers || {}),
       });
       return res.end(JSON.stringify(result.body));
     } catch (err) {

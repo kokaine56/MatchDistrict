@@ -25,7 +25,7 @@ test('TEST 1: 64 slots / 16 per district => 4 districts with one qualifier match
   const r1Groups = rm.groups.filter((g) => g.round_id === rm.rounds[0].id);
   assert.strictEqual(r1Groups.length, 4);
   assert.deepStrictEqual(r1Groups.map((g) => g.group_name), ['District 1', 'District 2', 'District 3', 'District 4']);
-  assert.strictEqual(rm.groups.length, 7, 'all rounds auto-create districts: R1(4) + R2(2) + GF(1)');
+  assert.strictEqual(rm.groups.length, 5, 'all rounds auto-create districts: R1(4) + GF(1)');
 
   const r1 = round1Matches(rm);
   assert.strictEqual(r1.length, 4);
@@ -48,7 +48,7 @@ test('TEST 2: 128 slots / 16 per district => 8 districts and a coherent multi-da
 
   const r1Groups = rm.groups.filter((g) => g.round_id === rm.rounds[0].id);
   assert.strictEqual(r1Groups.length, 8);
-  assert.strictEqual(rm.groups.length, 15, 'all rounds auto-create districts: R1(8) + R2(4) + R3(2) + GF(1)');
+  assert.strictEqual(rm.groups.length, 9, 'all rounds auto-create districts: R1(8) + GF(1)');
   const r1 = round1Matches(rm);
   assert.strictEqual(r1.length, 8);
 

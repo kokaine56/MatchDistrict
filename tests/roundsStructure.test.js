@@ -29,8 +29,8 @@ test('District rounds: 64 slots => 4 district matches in Round 1 then progressio
   assert.strictEqual(res.ok, true, res.error);
   const rm = res.roadmap;
 
-  assert.deepStrictEqual(rm.rounds.map((r) => r.round_number), [1, 2, 3]);
-  assert.strictEqual(grandFinal(rm).round_number, 3, 'the Grand Final is the last round');
+  assert.deepStrictEqual(rm.rounds.map((r) => r.round_number), [1, 2]);
+  assert.strictEqual(grandFinal(rm).round_number, 2, 'the Grand Final is the last round');
 
   const r1 = rm.matches.filter((m) => m.round_id === roundBy(rm, 1).id);
   assert.strictEqual(r1.length, 4, 'one qualifier match per district');
@@ -41,14 +41,13 @@ test('Days are assigned to their round and numbered globally from 1', () => {
   const res = generateTournamentRoadmap(DISTRICTS_64);
   const rm = res.roadmap;
 
-  assert.deepStrictEqual(rm.days.map((d) => d.day_number), [1, 2, 3, 4]);
+  assert.deepStrictEqual(rm.days.map((d) => d.day_number), [1, 2, 3]);
   const r1 = roundBy(rm, 1).id;
-  const r2 = roundBy(rm, 2).id;
   const gf = grandFinal(rm).id;
 
-  assert.deepStrictEqual(rm.days.map((d) => d.round_id), [r1, r1, r2, gf]);
+  assert.deepStrictEqual(rm.days.map((d) => d.round_id), [r1, r1, gf]);
   // Dates advance by one calendar day per global day number.
-  assert.deepStrictEqual(rm.days.map((d) => d.date), ['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13']);
+  assert.deepStrictEqual(rm.days.map((d) => d.date), ['2026-10-10', '2026-10-11', '2026-10-12']);
 });
 
 test('Districts (groups) belong to their round and to the day of their match', () => {
@@ -65,9 +64,9 @@ test('Districts (groups) belong to their round and to the day of their match', (
     assert.strictEqual(g.round_id, r1.id, 'Round 1 district belongs to Round 1');
     assert.strictEqual(dayById[g.day_id].round_id, r1.id, 'district day belongs to Round 1');
   }
-  // Later rounds auto-create districts from teams_in: R1 (4), R2 (2), GF (1) = 7 total groups
-  assert.strictEqual(groups.length, 7);
-  assert.strictEqual(outRounds.filter((r) => !r.is_grand_final).length, 2);
+  // Rounds auto-create districts from teams_in: R1 (4), GF (1) = 5 total groups
+  assert.strictEqual(groups.length, 5);
+  assert.strictEqual(outRounds.filter((r) => !r.is_grand_final).length, 1);
 });
 
 test('Rooms mirror districts in Round 1 and carry the configured district size', () => {

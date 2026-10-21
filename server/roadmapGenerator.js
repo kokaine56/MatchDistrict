@@ -8,6 +8,7 @@ import {
   parseTimeToMinutes,
   DEFAULT_TEAMS_PER_GROUP,
 } from './roadmapConfig.js';
+import { planRoadmapStages } from './roadmapPlanner.js';
 
 export function getDefaultMap(game, matchNumber) {
   const gameKey = (game || 'bgmi').toLowerCase().trim();
@@ -75,80 +76,115 @@ export function calculateQualifiers(matchSize) {
 }
 
 export function calculateProgressionPlan(totalTeams, maxCapacity, teamsPerGroup = 16, options = {}) {
-  const rounds = [];
   const tpg = Number(teamsPerGroup) || 16;
   const cap = Number(maxCapacity) || tpg;
   const canonicalCapacity = tpg;
   const total = Number(totalTeams);
 
   // Everything fits in a single match — no elimination rounds are needed.
-  if (!Number.isFinite(total) || total <= cap) return rounds;
+  if (!Number.isFinite(total) || total <= cap) return [];
   const advancePerMatch = Number.isFinite(Number(options.teamsAdvancingPerDistrict)) && Number(options.teamsAdvancingPerDistrict) > 0
     ? Math.floor(Number(options.teamsAdvancingPerDistrict))
     : null;
 
   // Advance count for a match of `size` teams: organizer override (capped at the
-  // match size) or the historical default of half the field.
-  const qualifiersFor = (size) => {
-    if (advancePerMatch == null) return calculateQualifiers(size);
-    return Math.min(size, Math.max(1, advancePerMatch));
-  };
+  // match size) or explicit advancePerMatch.
+  if (advancePerMatch != null) {
+    const rounds = [];
+    const qualifiersFor = (size) => Math.min(size, Math.max(1, advancePerMatch));
 
-  // Round 1: strictly map initial registration groups (teams_per_group) to Round 1 matches
-  const numGroups = Math.max(1, Math.ceil(totalTeams / tpg));
-  const baseSize = Math.floor(totalTeams / numGroups);
-  const extraSize = totalTeams % numGroups;
-  
-  const r1MatchSizes = [];
-  for (let i = 0; i < numGroups; i++) {
-    r1MatchSizes.push(baseSize + (i < extraSize ? 1 : 0));
-  }
-  
-  const r1Qualifiers = r1MatchSizes.map(size => qualifiersFor(size));
-  const r1NextTeams = r1Qualifiers.reduce((a, b) => a + b, 0);
-  const r1QType = (r1NextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
-
-  rounds.push({
-    roundNumber: 1,
-    matchCount: numGroups,
-    matchSizes: r1MatchSizes,
-    qualifiersPerMatch: r1Qualifiers,
-    totalTeamsBefore: totalTeams,
-    totalTeamsAfter: r1NextTeams,
-    qualificationType: r1QType
-  });
-
-  let currentTeams = r1NextTeams;
-  let roundNumber = 2;
-
-  // Subsequent rounds: redistribute qualified teams into match rooms up to canonicalCapacity
-  while (currentTeams > canonicalCapacity) {
-    let numMatches = Math.ceil(currentTeams / canonicalCapacity);
+    // Round 1: strictly map initial registration groups (teams_per_group) to Round 1 matches
+    const numGroups = Math.max(1, Math.ceil(total / tpg));
+    const baseSize = Math.floor(total / numGroups);
+    const extraSize = total % numGroups;
     
-    let base = Math.floor(currentTeams / numMatches);
-    let extra = currentTeams % numMatches;
-    let matchSizes = [];
-    for (let i = 0; i < numMatches; i++) matchSizes.push(base + (i < extra ? 1 : 0));
+    const r1MatchSizes = [];
+    for (let i = 0; i < numGroups; i++) {
+      r1MatchSizes.push(baseSize + (i < extraSize ? 1 : 0));
+    }
     
-    let qualifyCounts = matchSizes.map(size => qualifiersFor(size));
-    let nextTeams = qualifyCounts.reduce((a, b) => a + b, 0);
-    
-    let qType = (nextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
+    const r1Qualifiers = r1MatchSizes.map(size => qualifiersFor(size));
+    const r1NextTeams = r1Qualifiers.reduce((a, b) => a + b, 0);
+    const r1QType = (r1NextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
 
     rounds.push({
-      roundNumber,
-      matchCount: numMatches,
-      matchSizes,
-      qualifiersPerMatch: qualifyCounts,
-      totalTeamsBefore: currentTeams,
-      totalTeamsAfter: nextTeams,
-      qualificationType: qType
+      roundNumber: 1,
+      matchCount: numGroups,
+      matchSizes: r1MatchSizes,
+      qualifiersPerMatch: r1Qualifiers,
+      totalTeamsBefore: total,
+      totalTeamsAfter: r1NextTeams,
+      qualificationType: r1QType,
+      advancementType: 'per_district',
+      teamsAdvancingPerDistrict: advancePerMatch,
     });
-    
-    currentTeams = nextTeams;
-    roundNumber++;
+
+    let currentTeams = r1NextTeams;
+    let roundNumber = 2;
+
+    while (currentTeams > canonicalCapacity) {
+      let numMatches = Math.ceil(currentTeams / canonicalCapacity);
+      let base = Math.floor(currentTeams / numMatches);
+      let extra = currentTeams % numMatches;
+      let matchSizes = [];
+      for (let i = 0; i < numMatches; i++) matchSizes.push(base + (i < extra ? 1 : 0));
+      
+      let qualifyCounts = matchSizes.map(size => qualifiersFor(size));
+      let nextTeams = qualifyCounts.reduce((a, b) => a + b, 0);
+      let qType = (nextTeams <= canonicalCapacity) ? 'final_elimination' : 'normal';
+
+      rounds.push({
+        roundNumber,
+        matchCount: numMatches,
+        matchSizes,
+        qualifiersPerMatch: qualifyCounts,
+        totalTeamsBefore: currentTeams,
+        totalTeamsAfter: nextTeams,
+        qualificationType: qType,
+        advancementType: 'per_district',
+        teamsAdvancingPerDistrict: advancePerMatch,
+      });
+      
+      currentTeams = nextTeams;
+      roundNumber++;
+    }
+    return rounds;
   }
-  return rounds;
+
+  // Pure planner default: stops as soon as teams fit in Grand Final
+  const stages = planRoadmapStages({
+    slotsTotal: total,
+    teamsPerDistrict: tpg,
+    grandFinalTeams: cap,
+  });
+
+  const qualifierStages = stages.filter(s => s.roundType === 'qualifier');
+  return qualifierStages.map(s => {
+    const matchSizes = distributeDistrictSizes(s.teamsIn, tpg);
+    let qualifiersPerMatch;
+    if (s.advancementType === 'per_district' && s.teamsAdvancingPerDistrict != null) {
+      qualifiersPerMatch = matchSizes.map(size => Math.min(size, s.teamsAdvancingPerDistrict));
+    } else {
+      const count = matchSizes.length;
+      const base = Math.floor(s.teamsAdvancing / count);
+      const extra = s.teamsAdvancing % count;
+      qualifiersPerMatch = [];
+      for (let i = 0; i < count; i++) {
+        qualifiersPerMatch.push(base + (i < extra ? 1 : 0));
+      }
+    }
+    return {
+      roundNumber: s.roundNumber,
+      matchCount: s.districtCount,
+      matchSizes,
+      qualifiersPerMatch,
+      totalTeamsBefore: s.teamsIn,
+      totalTeamsAfter: s.teamsAdvancing,
+      qualificationType: s.teamsAdvancing <= cap ? 'final_elimination' : 'normal',
+      advancementType: s.advancementType,
+      teamsAdvancingPerDistrict: s.teamsAdvancingPerDistrict,
+    };
+  });
 }
 
 export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
@@ -172,7 +208,11 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
     const slotsTotal = rawSlots === undefined ? 64 : parseInt(rawSlots, 10);
     const rawTpg = pickFirst(tournament, ['teams_per_group', 'teams_per_match']);
     const teamsPerGroup = rawTpg === undefined ? DEFAULT_TEAMS_PER_GROUP : parseInt(rawTpg, 10);
-    const maxCapacity = teamsPerGroup;
+    const rawGf = pickFirst(tournament, ['grand_final_teams', 'grandFinalTeams', 'final_teams', 'finalTeams']);
+    const grandFinalTeams = (rawGf !== undefined && rawGf !== null && rawGf !== '')
+      ? Math.min(teamsPerGroup, Math.max(2, parseInt(rawGf, 10)))
+      : teamsPerGroup;
+    const maxCapacity = grandFinalTeams;
 
     // Organizer configuration (scheduling + qualification). Defaults reproduce
     // the platform's historical behavior, so existing tournaments are unchanged.
@@ -242,6 +282,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         round_type: 'grand_final',
         advancement_type: null,
         teams_advancing: null,
+        teams_advancing_per_district: null,
         date: startDate,
         time: formatTime(currentTimeMins),
         is_grand_final: true,
@@ -351,9 +392,11 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
           status: 'configured',
           teams_in: pRound.totalTeamsBefore,
           round_type: 'qualifier',
-          advancement_type: 'per_district',
+          advancement_type: pRound.advancementType || 'per_district',
           teams_advancing: pRound.totalTeamsAfter,
-          teams_advancing_per_district: advanceOverride != null ? advanceOverride : (pRound.qualifiersPerMatch?.[0] || 2),
+          teams_advancing_per_district: pRound.teamsAdvancingPerDistrict !== undefined
+            ? pRound.teamsAdvancingPerDistrict
+            : (advanceOverride != null ? advanceOverride : (pRound.qualifiersPerMatch?.[0] || 2)),
           date: roundStartDate,
           time: formatTime(firstMins),
           is_grand_final: false,
@@ -470,6 +513,7 @@ export function generateTournamentRoadmap(param1, legacyPlan, legacyTourn) {
         round_type: 'grand_final',
         advancement_type: null,
         teams_advancing: null,
+        teams_advancing_per_district: null,
         date: gfRoundDate,
         time: formatTime(currentTimeMins),
         is_grand_final: true,

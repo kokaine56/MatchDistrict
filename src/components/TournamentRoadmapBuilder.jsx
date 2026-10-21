@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar,
@@ -107,10 +107,14 @@ export function computeMinSelectableDate(regCloseDate) {
 function formatDateDisplay(dateStr) {
   if (!dateStr) return "Date TBD";
   try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
+    const clean = String(dateStr).slice(0, 10);
+    const parts = clean.split("-").map(Number);
+    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return dateStr;
+    const [y, m, d] = parts;
     const dayOfWeek = getDayOfWeek(dateStr);
-    const formatted = d.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" });
+    const dd = String(d).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    const formatted = `${dd}/${mm}/${y}`;
     return dayOfWeek ? `${dayOfWeek}, ${formatted}` : formatted;
   } catch {
     return dateStr;
@@ -194,6 +198,7 @@ export default function TournamentRoadmapBuilder({
   const effectiveOrganizer = Boolean(isOrganizer || (serverIsOrganizer === true));
 
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnceRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState(null);
@@ -218,6 +223,8 @@ export default function TournamentRoadmapBuilder({
   const [selectedRoundIdx, setSelectedRoundIdx] = useState(0);
   const [expandedMatches, setExpandedMatches] = useState(new Set());
   const [draggedAllocIdx, setDraggedAllocIdx] = useState(null);
+  const [myDistrictIds, setMyDistrictIds] = useState([]);
+  const [myMatchIds, setMyMatchIds] = useState([]);
 
   // Min selectable date derived from meta or prop (registration close date + 1 day)
   const minSelectableDate = useMemo(() => {
@@ -310,9 +317,11 @@ export default function TournamentRoadmapBuilder({
   }, [tournamentId]);
 
   // Fetch roadmap from database
-  const fetchRoadmap = useCallback(async () => {
+  const fetchRoadmap = useCallback(async ({ background = false } = {}) => {
     if (!tournamentId) return;
-    setLoading(true);
+    if (!background && !hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const token = await getAuthToken();
@@ -327,6 +336,15 @@ export default function TournamentRoadmapBuilder({
 
       const published = isRoadmapPublished(data);
       setIsPublished(published);
+
+      const myDistIds = Array.isArray(data.my_district_ids)
+        ? data.my_district_ids
+        : (data.participant?.my_district_ids || []);
+      const myMtchIds = Array.isArray(data.my_match_ids)
+        ? data.my_match_ids
+        : (data.participant?.my_match_ids || []);
+      setMyDistrictIds(myDistIds);
+      setMyMatchIds(myMtchIds);
 
       const serverOrg = typeof data.viewer_is_organizer === "boolean"
         ? data.viewer_is_organizer
@@ -381,11 +399,14 @@ export default function TournamentRoadmapBuilder({
         setRounds([]);
       }
     } catch (err) {
-      setError(err.message);
+      if (!background) setError(err.message);
     } finally {
-      setLoading(false);
+      hasLoadedOnceRef.current = true;
+      if (!background) {
+        setLoading(false);
+      }
     }
-  }, [tournamentId, isOrganizer, effectiveOrganizer]);
+  }, [tournamentId, isOrganizer]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -1240,7 +1261,7 @@ export default function TournamentRoadmapBuilder({
       }
       setRounds(roundsToSave);
       setSuccess("Roadmap draft saved to database successfully.");
-      await fetchRoadmap();
+      await fetchRoadmap({ background: true });
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
       setError(err.message);
@@ -1288,7 +1309,7 @@ export default function TournamentRoadmapBuilder({
       setRounds(roundsToPublish);
       setSuccess("Roadmap published successfully! Participants can now view the tournament schedule.");
       if (onApproved) onApproved();
-      await fetchRoadmap();
+      await fetchRoadmap({ background: true });
       return { success: true, warnings: data.warnings || [] };
     } catch (err) {
       setError(err.message);
@@ -1384,7 +1405,7 @@ export default function TournamentRoadmapBuilder({
   // ─────────────────────────────────────────────────────────────
   // RENDER: Loading State
   // ─────────────────────────────────────────────────────────────
-  if (loading) {
+  if (loading && !hasLoadedOnceRef.current) {
     return (
       <div className="w-full max-w-6xl mx-auto my-8 p-12 bg-white border border-[#E4E7EC] rounded-2xl text-[#667085] shadow-xs flex flex-col items-center justify-center text-center">
         <RefreshCw className="w-8 h-8 animate-spin text-[#2563EB] mb-3" />
@@ -1407,6 +1428,8 @@ export default function TournamentRoadmapBuilder({
         cardColor={meta?.card_color || meta?.cardColor || "white"}
         previewMode={Boolean(effectiveOrganizer && previewMode)}
         onExitPreview={() => setPreviewMode(false)}
+        myDistrictIds={myDistrictIds}
+        myMatchIds={myMatchIds}
       />
     );
   }

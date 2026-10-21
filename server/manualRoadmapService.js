@@ -31,9 +31,7 @@ import {
 
 export const ROUND_TYPES = Object.freeze([
   'qualifier',
-  'semi_final',
   'grand_final',
-  'custom',
 ]);
 
 export const ADVANCEMENT_TYPES = Object.freeze([
@@ -345,6 +343,12 @@ export function validateManualRoadmap(roadmapData, options = {}) {
     }
     roundOrderMap.set(round.id || `r-${rIdx}`, rNum);
 
+    // Stage type validation: only 'qualifier' and 'grand_final' are allowed
+    const rType = round.round_type || 'qualifier';
+    if (!ROUND_TYPES.includes(rType)) {
+      errors.push(`Round "${rName || `Round ${rNum}`}" has an invalid stage type "${round.round_type}". Only "Qualifiers" and "Grand Finals" are supported.`);
+    }
+
     const days = Array.isArray(round.days) ? round.days : [];
     if (days.length === 0) {
       errors.push(`Round "${rName || `Round ${rNum}`}" must have at least one match day.`);
@@ -389,6 +393,13 @@ export function validateManualRoadmap(roadmapData, options = {}) {
         continue;
       }
 
+      if (round.round_type === 'grand_final') {
+        const dayMatches = allocations.flatMap((a) => (Array.isArray(a.matches) ? a.matches : []));
+        if (dayMatches.length === 0) {
+          errors.push(`Day ${dNum} in Grand Finals requires at least one match with a valid time and map.`);
+        }
+      }
+
       const dayDistricts = new Set();
       for (const alloc of allocations) {
         const distId = alloc.district_id || alloc.id;
@@ -422,12 +433,21 @@ export function validateManualRoadmap(roadmapData, options = {}) {
           const match = matches[mIdx];
           const mLabel = match.district_match_number || mIdx + 1;
 
-          if (!match.start_time) {
-            if (options.isPublish) {
-              errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} requires a start time.`);
+          if (round.round_type === 'grand_final') {
+            if (!match.start_time || toMins(match.start_time) === null) {
+              errors.push(`Day ${dNum} Match ${mLabel} in Grand Finals requires a valid start time.`);
             }
-          } else if (toMins(match.start_time) === null) {
-            errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} has an invalid start time "${match.start_time}". Expected HH:MM format.`);
+            if (match.map !== undefined && !String(match.map).trim()) {
+              errors.push(`Day ${dNum} Match ${mLabel} in Grand Finals requires a valid map.`);
+            }
+          } else {
+            if (!match.start_time) {
+              if (options.isPublish) {
+                errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} requires a start time.`);
+              }
+            } else if (toMins(match.start_time) === null) {
+              errors.push(`Match ${mLabel} of "${distName}" on Day ${dNum} has an invalid start time "${match.start_time}". Expected HH:MM format.`);
+            }
           }
         }
 
@@ -531,6 +551,7 @@ export function validateManualRoadmap(roadmapData, options = {}) {
 
     // Progression / advancement validation (only for qualifying/non-final rounds)
     if (isGrandFinal && rIdx < rounds.length - 1) {
+      errors.push(`Grand Finals must be the last round of the tournament.`);
       warnings.push(`"${rName}" is designated as Grand Finals (terminal stage). Subsequent rounds configured after it will not be reached in standard progression.`);
     }
 
@@ -547,6 +568,11 @@ export function validateManualRoadmap(roadmapData, options = {}) {
         }
       }
     }
+  }
+
+  const grandFinalsCount = rounds.filter((r) => r.round_type === 'grand_final').length;
+  if (grandFinalsCount > 1) {
+    errors.push('At most one Grand Finals round is allowed.');
   }
 
   return {
@@ -613,9 +639,11 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
       throw err;
     }
 
-    // Check structural fields: round_type, advancement_type, teams_advancing, teams_advancing_per_district, teams_in, advancement_target_round_id
-    const oldType = oldRound.round_type || 'qualifier';
-    const newType = newRound.round_type || 'qualifier';
+    const isOldLast = oldRound.round_number === oldRounds.length;
+    const newRoundIndex = rounds.findIndex((r) => r.id === lockedRoundId);
+    const isNewLast = newRoundIndex === rounds.length - 1;
+    const oldType = (oldRound.round_type === 'grand_final' && isOldLast) ? 'grand_final' : 'qualifier';
+    const newType = (newRound.round_type === 'grand_final' && isNewLast) ? 'grand_final' : 'qualifier';
     const oldAdvType = oldRound.advancement_type || 'per_district';
     const newAdvType = newRound.advancement_type || 'per_district';
     const oldAdv = oldRound.teams_advancing ? Number(oldRound.teams_advancing) : null;
@@ -789,8 +817,12 @@ export async function saveManualRoadmapDraft(client, tournamentId, roadmapData, 
 
     const roundNumber = rIdx + 1;
     const roundName = (r.name || `Round ${roundNumber}`).trim();
-    const isGrandFinal = r.round_type === 'grand_final' || (!r.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
-    const roundType = isGrandFinal ? 'grand_final' : (r.round_type || 'qualifier');
+    const isLastRound = rIdx === rounds.length - 1;
+    const isGrandFinal = isLastRound && (
+      r.round_type === 'grand_final' ||
+      (!r.round_type && rounds.length > 1 && Boolean(r.name && /grand\s*final/i.test(r.name)))
+    );
+    const roundType = isGrandFinal ? 'grand_final' : 'qualifier';
     const advType = isGrandFinal ? null : (r.advancement_type || 'per_district');
     const teamsAdv = (!isGrandFinal && r.teams_advancing) ? Number(r.teams_advancing) : null;
     const teamsAdvPerDist = (!isGrandFinal && r.teams_advancing_per_district) ? Number(r.teams_advancing_per_district) : null;
@@ -1252,12 +1284,17 @@ export function buildHierarchicalRoadmap(rounds = [], days = [], groups = [], ma
       };
     });
 
-    const isGrandFinal = rnd.round_type === 'grand_final' || (!rnd.round_type && rIdx === rounds.length - 1 && rounds.length > 1);
+    const isLastRound = rIdx === sortedRounds.length - 1;
+    const isGrandFinal = isLastRound && (
+      rnd.round_type === 'grand_final' ||
+      (!rnd.round_type && sortedRounds.length > 1 && Boolean(rnd.name && /grand\s*final/i.test(rnd.name)))
+    );
+    const mappedRoundType = isGrandFinal ? 'grand_final' : 'qualifier';
     return {
       id: rnd.id,
       round_number: rnd.round_number,
       name: rnd.name,
-      round_type: rnd.round_type || (isGrandFinal ? 'grand_final' : 'qualifier'),
+      round_type: mappedRoundType,
       status: rnd.status || 'configured',
       teams_in: rnd.teams_in != null ? Number(rnd.teams_in) : null,
       advancement_type: isGrandFinal ? null : (rnd.advancement_type || 'per_district'),
@@ -1761,6 +1798,9 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
 
   // ── PUBLISHED PARTICIPANT / PUBLIC SCHEDULE ──
   let team = null;
+  let myDistrictIds = [];
+  let myMatchIds = [];
+
   if (authUser && authUser.id) {
     const teamRes = await clientOrPool.query(`
       SELECT t.id, t.team_name, t.status, t.tournament_id
@@ -1769,11 +1809,39 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
       WHERE t.tournament_id = $1 AND tm.user_id = $2
       LIMIT 1
     `, [tournamentId, authUser.id]);
-    if (teamRes.rows && teamRes.rows.length > 0) team = teamRes.rows[0];
+    if (teamRes.rows && teamRes.rows.length > 0) {
+      team = teamRes.rows[0];
+
+      // Query only the viewer's own assignments across all rounds (never other teams)
+      const myAssignmentsRes = await clientOrPool.query(`
+        SELECT a.match_id, a.room_id, a.group_id, a.day_id, a.tournament_team_id,
+               COALESCE(a.group_id, m.group_id, r.group_id) as district_id
+        FROM tournament_match_assignments a
+        LEFT JOIN tournament_matches m ON m.id = a.match_id
+        LEFT JOIN tournament_rooms r ON r.id = a.room_id
+        WHERE a.tournament_id = $1 AND a.tournament_team_id = $2
+      `, [tournamentId, team.id]);
+
+      const distSet = new Set();
+      const matchSet = new Set();
+      for (const row of (myAssignmentsRes.rows || [])) {
+        if (row.tournament_team_id && row.tournament_team_id !== team.id) {
+          continue;
+        }
+        if (row.district_id) distSet.add(row.district_id);
+        if (row.group_id) distSet.add(row.group_id);
+        if (row.match_id) matchSet.add(row.match_id);
+      }
+      myDistrictIds = Array.from(distSet);
+      myMatchIds = Array.from(matchSet);
+    }
   }
 
   return {
     statusCode: 200,
+    headers: {
+      'Cache-Control': 'private, no-cache, must-revalidate',
+    },
     body: {
       success: true,
       mode: team ? 'participant' : 'public',
@@ -1781,10 +1849,14 @@ export async function getTournamentRoadmapResponse(clientOrPool, tournamentId, a
       is_organizer: false,
       roadmap_status: t.roadmap_status || 'published',
       published: true,
+      my_district_ids: myDistrictIds,
+      my_match_ids: myMatchIds,
       participant: team ? {
         team_id: team.id,
         team_name: team.team_name,
         team_status: team.status,
+        my_district_ids: myDistrictIds,
+        my_match_ids: myMatchIds,
         is_disqualified: team.status === 'disqualified',
         disqualification_message: team.status === 'disqualified'
           ? 'Your team is disqualified and cannot receive room credentials or participate in matches.'

@@ -81,26 +81,29 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
     const round = rounds[rIdx];
     const isRound1 = rIdx === 0;
 
-    // Track advancing count for previous round calculation
-    const advancingFromThisRound = calculateAdvancingTeams(round);
-
     if (isRound1) {
-      prevRoundAdvancing = advancingFromThisRound;
+      if (options.slotsTotal && Number(options.slotsTotal) > 0) {
+        round.teams_in = Number(options.slotsTotal);
+      }
+      if (rIdx < rounds.length - 1 && round.round_type !== 'grand_final') {
+        round.advancement_target_round_id = rounds[rIdx + 1]?.id || null;
+      }
+      prevRoundAdvancing = calculateAdvancingTeams(round);
       continue;
     }
 
     // Later round (Round 2+, Grand Finals)
-    let teamsIn = round.teams_in != null && !isNaN(round.teams_in) && Number(round.teams_in) > 0
-      ? Number(round.teams_in)
-      : null;
+    let teamsIn = (options.forceAutoTeamsIn && prevRoundAdvancing != null && prevRoundAdvancing > 0)
+      ? prevRoundAdvancing
+      : (round.teams_in != null && !isNaN(round.teams_in) && Number(round.teams_in) > 0
+          ? Number(round.teams_in)
+          : (prevRoundAdvancing != null && prevRoundAdvancing > 0 ? prevRoundAdvancing : 16));
+    round.teams_in = teamsIn;
 
-    if (teamsIn == null) {
-      if (prevRoundAdvancing != null && prevRoundAdvancing > 0) {
-        teamsIn = prevRoundAdvancing;
-      } else {
-        teamsIn = round.round_type === 'grand_final' ? 16 : 16;
-      }
-      round.teams_in = teamsIn;
+    if (rIdx < rounds.length - 1 && round.round_type !== 'grand_final') {
+      round.advancement_target_round_id = rounds[rIdx + 1]?.id || null;
+    } else if (round.round_type === 'grand_final') {
+      round.advancement_target_round_id = null;
     }
 
     const neededDistrictCount = Math.max(1, Math.ceil(teamsIn / teamsPerGroup));
@@ -251,21 +254,66 @@ export function syncAutoDistrictsForLaterRounds(roadmapData, options = {}) {
     }
 
     // Step C: Re-assign target allocations to days
-    for (const day of round.days) {
-      day.allocations = [];
-    }
+    if (isGrandFinal) {
+      // In Grand Finals, all districts attach to EVERY Grand Finals day automatically (no district picker)
+      // Days are never collapsed; 1 to 4+ days are fully supported with their own matches
+      for (let dIdx = 0; dIdx < round.days.length; dIdx++) {
+        const d = round.days[dIdx];
+        const existingMap = new Map((d.allocations || []).map((a) => [a.district_id || a.id, a]));
+        const dayAllocs = [];
 
-    if (neededDistrictCount === 1) {
-      // Exactly one district: attach it to the round's only day automatically
-      round.days[0].allocations = [targetAllocations[0].alloc];
-      // If there are extra days with 0 allocations when exactly 1 district is needed, keep day 0
-      if (round.days.length > 1 && isGrandFinal) {
-        round.days = [round.days[0]];
+        for (let tIdx = 0; tIdx < targetAllocations.length; tIdx++) {
+          const td = targetAllocations[tIdx].alloc;
+          const distId = td.district_id || td.id;
+          const distName = td.district_name || td.name || (targetAllocations.length === 1 ? 'Grand Finals' : `District ${tIdx + 1}`);
+          const existing = existingMap.get(distId) || existingMap.get(td.name);
+
+          if (existing && Array.isArray(existing.matches) && existing.matches.length > 0) {
+            dayAllocs.push({
+              ...existing,
+              district_id: distId,
+              district_name: distName,
+              sequence: tIdx + 1,
+              display_order: tIdx + 1,
+              match_count: existing.matches.length,
+            });
+          } else {
+            dayAllocs.push({
+              id: existing?.id || `ALLOC-${distId}-D${dIdx + 1}`,
+              group_id: distId,
+              district_id: distId,
+              district_name: distName,
+              sequence: tIdx + 1,
+              display_order: tIdx + 1,
+              match_count: 1,
+              matches: [
+                {
+                  id: `MAT-${distId}-D${dIdx + 1}-1`,
+                  district_match_number: 1,
+                  start_time: '13:00',
+                  end_time: '13:30',
+                  map: 'Erangel',
+                  status: 'PENDING',
+                  notes: '',
+                },
+              ],
+            });
+          }
+        }
+        d.allocations = dayAllocs;
       }
     } else {
-      for (const item of targetAllocations) {
-        const targetDay = round.days.find((d) => d.id === item.day?.id || d.day_number === item.day?.day_number) || round.days[0];
-        targetDay.allocations.push(item.alloc);
+      for (const day of round.days) {
+        day.allocations = [];
+      }
+
+      if (neededDistrictCount === 1) {
+        round.days[0].allocations = [targetAllocations[0].alloc];
+      } else {
+        for (const item of targetAllocations) {
+          const targetDay = round.days.find((d) => d.id === item.day?.id || d.day_number === item.day?.day_number) || round.days[0];
+          targetDay.allocations.push(item.alloc);
+        }
       }
     }
 

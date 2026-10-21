@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Clock, Map as MapIcon, Sliders, Check, Copy, FileText, Layers } from 'lucide-react';
+import { X, Clock, Map as MapIcon, Sliders, Check, Copy, RotateCcw } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
 
 const DEFAULT_MAPS = {
@@ -12,6 +12,42 @@ const DEFAULT_MAPS = {
   'cod mobile': ['Crash', 'Standoff', 'Raid', 'Crossfire', 'Summit'],
   valorant: ['Ascent', 'Haven', 'Bind', 'Split', 'Sunset'],
 };
+
+function minsToHHMM(mins) {
+  const h = String(Math.floor(mins / 60) % 24).padStart(2, '0');
+  const m = String(mins % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function timeToMins(tStr) {
+  if (!tStr) return 780; // 13:00 default
+  const parts = tStr.split(':').map(Number);
+  if (parts.length < 2 || isNaN(parts[0]) || isNaN(parts[1])) return 780;
+  return parts[0] * 60 + parts[1];
+}
+
+function generateMatches(count, startStr, durationMins, gapMins, mapName, existing = []) {
+  const dur = Number(durationMins) || 30;
+  const gap = Number(gapMins) || 60;
+  let curMins = timeToMins(startStr);
+  const result = [];
+
+  for (let i = 0; i < count; i++) {
+    const sTime = minsToHHMM(curMins);
+    const eTime = minsToHHMM(curMins + dur);
+    const ex = existing[i] || {};
+    result.push({
+      id: ex.id || `MAT-${Date.now()}-${i}`,
+      district_match_number: i + 1,
+      start_time: sTime,
+      end_time: eTime,
+      map: mapName || 'Erangel',
+      notes: ex.notes || '',
+    });
+    curMins += gap;
+  }
+  return result;
+}
 
 export default function RoadmapDistrictSettingsModal({
   isOpen,
@@ -25,78 +61,139 @@ export default function RoadmapDistrictSettingsModal({
 }) {
   const theme = getRoadmapTheme(cardColor);
 
-  // Initial state derived from allocation
-  const [matchCount, setMatchCount] = useState(
-    allocation?.match_count || (Array.isArray(allocation?.matches) ? allocation.matches.length : 1) || 1
-  );
-  const [startTime, setStartTime] = useState(
-    allocation?.matches?.[0]?.start_time || '13:00'
-  );
-  const [selectedMap, setSelectedMap] = useState(
-    allocation?.matches?.[0]?.map || 'Erangel'
-  );
-  const [customMap, setCustomMap] = useState('');
-  const initialDuration = (() => {
-    const m = allocation?.matches?.[0];
-    if (m?.start_time && m?.end_time) {
-      const [sh, sm] = m.start_time.split(':').map(Number);
-      const [eh, em] = m.end_time.split(':').map(Number);
-      if (!isNaN(sh) && !isNaN(sm) && !isNaN(eh) && !isNaN(em)) {
-        const diff = (eh * 60 + em) - (sh * 60 + sm);
-        if (diff > 0) return diff;
-      }
-    }
-    return 30;
-  })();
+  const gameKey = (game || 'bgmi').toLowerCase().trim();
+  const mapOptions = DEFAULT_MAPS[gameKey] || DEFAULT_MAPS.bgmi;
 
-  const initialGap = (() => {
-    const m1 = allocation?.matches?.[0];
-    const m2 = allocation?.matches?.[1];
-    if (m1?.start_time && m2?.start_time) {
-      const [s1h, s1m] = m1.start_time.split(':').map(Number);
-      const [s2h, s2m] = m2.start_time.split(':').map(Number);
-      if (!isNaN(s1h) && !isNaN(s1m) && !isNaN(s2h) && !isNaN(s2m)) {
-        const diff = (s2h * 60 + s2m) - (s1h * 60 + s1m);
-        if (diff > 0) return diff;
-      }
-    }
-    return 60;
-  })();
-
-  const [durationMinutes, setDurationMinutes] = useState(initialDuration);
-  const [gapMinutes, setGapMinutes] = useState(initialGap);
-  const [notes, setNotes] = useState(
-    allocation?.matches?.[0]?.notes || ''
-  );
+  // Auto-fill parameters
+  const [matchCount, setMatchCount] = useState(1);
+  const [startTime, setStartTime] = useState('13:00');
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [gapMinutes, setGapMinutes] = useState(60);
+  const [defaultMap, setDefaultMap] = useState('Erangel');
+  const [notes, setNotes] = useState('');
   const [appliedNotice, setAppliedNotice] = useState(false);
+
+  // Per-match editable state
+  const [matches, setMatches] = useState([]);
+
+  // Initialize state when allocation opens
+  useEffect(() => {
+    if (!allocation) return;
+    const existingMatches = Array.isArray(allocation.matches) ? allocation.matches : [];
+    const count = allocation.match_count || existingMatches.length || 1;
+    const firstStart = existingMatches[0]?.start_time || '13:00';
+    const firstMap = existingMatches[0]?.map || 'Erangel';
+
+    let dur = 30;
+    if (existingMatches[0]?.start_time && existingMatches[0]?.end_time) {
+      const diff = timeToMins(existingMatches[0].end_time) - timeToMins(existingMatches[0].start_time);
+      if (diff > 0) dur = diff;
+    }
+
+    let gap = 60;
+    if (existingMatches.length > 1 && existingMatches[0]?.start_time && existingMatches[1]?.start_time) {
+      const diff = timeToMins(existingMatches[1].start_time) - timeToMins(existingMatches[0].start_time);
+      if (diff > 0) gap = diff;
+    }
+
+    setMatchCount(count);
+    setStartTime(firstStart);
+    setDefaultMap(firstMap);
+    setDurationMinutes(dur);
+    setGapMinutes(gap);
+    setNotes(existingMatches[0]?.notes || '');
+
+    if (existingMatches.length > 0) {
+      setMatches(
+        existingMatches.map((m, i) => ({
+          id: m.id || `MAT-${Date.now()}-${i}`,
+          district_match_number: m.district_match_number || i + 1,
+          start_time: m.start_time || minsToHHMM(timeToMins(firstStart) + i * gap),
+          end_time: m.end_time || minsToHHMM(timeToMins(firstStart) + i * gap + dur),
+          map: m.map || firstMap,
+          notes: m.notes || '',
+        }))
+      );
+    } else {
+      setMatches(generateMatches(count, firstStart, dur, gap, firstMap));
+    }
+  }, [allocation]);
 
   if (!isOpen || !allocation) return null;
 
-  const gameKey = (game || 'bgmi').toLowerCase().trim();
-  const mapOptions = DEFAULT_MAPS[gameKey] || DEFAULT_MAPS.bgmi;
-  const isCustomMapSelected = !mapOptions.includes(selectedMap);
+  // Handle Match Count change: adjust matches array size
+  const handleMatchCountChange = (newCountVal) => {
+    const newCount = Math.max(1, parseInt(newCountVal, 10) || 1);
+    setMatchCount(newCount);
+
+    setMatches((prev) => {
+      if (newCount === prev.length) return prev;
+      if (newCount < prev.length) {
+        return prev.slice(0, newCount);
+      }
+      // Expand matches
+      const expanded = [...prev];
+      let lastMins = prev.length > 0
+        ? timeToMins(prev[prev.length - 1].start_time) + gapMinutes
+        : timeToMins(startTime);
+
+      for (let i = prev.length; i < newCount; i++) {
+        expanded.push({
+          id: `MAT-${Date.now()}-${i}`,
+          district_match_number: i + 1,
+          start_time: minsToHHMM(lastMins),
+          end_time: minsToHHMM(lastMins + durationMinutes),
+          map: defaultMap,
+          notes: '',
+        });
+        lastMins += gapMinutes;
+      }
+      return expanded;
+    });
+  };
+
+  // Reset all matches to auto-filled values
+  const handleResetToAuto = () => {
+    const refreshed = generateMatches(matchCount, startTime, durationMinutes, gapMinutes, defaultMap, matches);
+    setMatches(refreshed);
+  };
+
+  // Individual match field editor
+  const handleMatchFieldChange = (idx, field, val) => {
+    setMatches((prev) =>
+      prev.map((m, i) => {
+        if (i !== idx) return m;
+        const updated = { ...m, [field]: val };
+        if (field === 'start_time') {
+          const startM = timeToMins(val);
+          updated.end_time = minsToHHMM(startM + durationMinutes);
+        }
+        return updated;
+      })
+    );
+  };
 
   const handleSaveIndividual = () => {
-    const finalMap = isCustomMapSelected ? (customMap.trim() || 'Erangel') : selectedMap;
     onSave({
-      matchCount: Math.max(1, parseInt(matchCount, 10) || 1),
-      startTime,
-      map: finalMap,
-      durationMinutes: Math.max(10, parseInt(durationMinutes, 10) || 30),
-      gapMinutes: Math.max(15, parseInt(gapMinutes, 10) || 60),
+      matchCount: matches.length,
+      matches,
+      startTime: matches[0]?.start_time || startTime,
+      map: matches[0]?.map || defaultMap,
+      durationMinutes,
+      gapMinutes,
       notes: notes.trim(),
     });
     onClose();
   };
 
   const handleApplyToAll = () => {
-    const finalMap = isCustomMapSelected ? (customMap.trim() || 'Erangel') : selectedMap;
     onApplyToAllOnDay({
-      matchCount: Math.max(1, parseInt(matchCount, 10) || 1),
-      startTime,
-      map: finalMap,
-      durationMinutes: Math.max(10, parseInt(durationMinutes, 10) || 30),
-      gapMinutes: Math.max(15, parseInt(gapMinutes, 10) || 60),
+      matchCount: matches.length,
+      matches,
+      startTime: matches[0]?.start_time || startTime,
+      map: matches[0]?.map || defaultMap,
+      durationMinutes,
+      gapMinutes,
       notes: notes.trim(),
     });
     setAppliedNotice(true);
@@ -108,15 +205,15 @@ export default function RoadmapDistrictSettingsModal({
 
   return (
     <AnimatePresence>
-      <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 ${theme.modalOverlay}`}>
+      <div className={`fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 ${theme.modalOverlay}`}>
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          className={`w-full max-w-lg rounded-2xl ${theme.modalBg} overflow-hidden shadow-2xl`}
+          className={`w-full max-w-xl rounded-2xl ${theme.modalBg} overflow-hidden shadow-2xl flex flex-col max-h-[90vh]`}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-200">
+          <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-200 shrink-0">
             <div className="flex items-center gap-2.5">
               <div className={`p-2 rounded-xl ${theme.isGold ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                 <Sliders className="w-5 h-5" />
@@ -126,7 +223,7 @@ export default function RoadmapDistrictSettingsModal({
                   {allocation.district_name || allocation.name || 'District'} Settings
                 </h3>
                 <p className={`text-xs ${theme.mutedText}`}>
-                  Day {dayNumber} match timing, map selection & schedule properties
+                  Day {dayNumber} individual match timing, map selection & schedule properties
                 </p>
               </div>
             </div>
@@ -138,156 +235,203 @@ export default function RoadmapDistrictSettingsModal({
             </button>
           </div>
 
-          {/* Form */}
-          <div className="p-4 sm:p-6 space-y-4 max-h-[75vh] overflow-y-auto">
-            {/* Match Count & Start Time */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                  Matches on Day {dayNumber}
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={matchCount}
-                  onChange={(e) => setMatchCount(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold ${theme.inputBg}`}
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">Number of matches played by this district</span>
+          {/* Form Scroll Body */}
+          <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1">
+            {/* Auto-fill Generator Controls */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-blue-600" />
+                  Auto-Fill Timing Generator
+                </span>
+                <button
+                  type="button"
+                  onClick={handleResetToAuto}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer flex items-center gap-1"
+                  title="Recalculate matches from first start time, gap, and default map"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Reset to auto</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                    Matches Count
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={matchCount}
+                    onChange={(e) => handleMatchCountChange(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                    First Start
+                  </label>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                    Duration (m)
+                  </label>
+                  <input
+                    type="number"
+                    min="10"
+                    max="120"
+                    value={durationMinutes}
+                    onChange={(e) => setDurationMinutes(Math.max(10, parseInt(e.target.value, 10) || 30))}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                    Interval (m)
+                  </label>
+                  <input
+                    type="number"
+                    min="15"
+                    max="180"
+                    value={gapMinutes}
+                    onChange={(e) => setGapMinutes(Math.max(15, parseInt(e.target.value, 10) || 60))}
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                  First Match Start Time (IST)
+                <label className="block text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-500">
+                  Default Map
                 </label>
-                <input
-                  type="time"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold ${theme.inputBg}`}
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">Format: HH:MM (24h IST)</span>
+                <select
+                  value={defaultMap}
+                  onChange={(e) => setDefaultMap(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-800"
+                >
+                  {mapOptions.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {/* Map Selection */}
-            <div>
-              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                Map
-              </label>
-              <select
-                value={isCustomMapSelected ? 'custom' : selectedMap}
-                onChange={(e) => {
-                  if (e.target.value === 'custom') {
-                    setSelectedMap('Custom');
-                  } else {
-                    setSelectedMap(e.target.value);
-                  }
-                }}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold ${theme.inputBg}`}
-              >
-                {mapOptions.map((m) => (
-                  <option key={m} value={m} className="bg-white text-slate-900">
-                    {m}
-                  </option>
+            {/* Individual Matches List */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className={`text-xs font-extrabold uppercase tracking-wider ${theme.mutedText}`}>
+                  Individual Match Settings ({matches.length})
+                </span>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Edit individual time and map per match
+                </span>
+              </div>
+
+              <div className="space-y-2 max-h-[36vh] overflow-y-auto pr-1">
+                {matches.map((m, idx) => (
+                  <div
+                    key={m.id || idx}
+                    className="p-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition-colors shadow-2xs space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 rounded-md font-mono text-[11px] font-bold bg-slate-100 text-slate-700">
+                        Match {m.district_match_number || idx + 1}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {m.start_time} - {m.end_time}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider mb-0.5 text-slate-500">
+                          Start Time (IST)
+                        </label>
+                        <input
+                          type="time"
+                          value={m.start_time || '13:00'}
+                          onChange={(e) => handleMatchFieldChange(idx, 'start_time', e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs font-bold border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider mb-0.5 text-slate-500">
+                          Map
+                        </label>
+                        <select
+                          value={m.map || defaultMap}
+                          onChange={(e) => handleMatchFieldChange(idx, 'map', e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          {mapOptions.map((mapName) => (
+                            <option key={mapName} value={mapName}>
+                              {mapName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
                 ))}
-                <option value="custom" className="bg-white text-slate-900">
-                  Other / Custom Map...
-                </option>
-              </select>
-
-              {isCustomMapSelected && (
-                <input
-                  type="text"
-                  placeholder="Enter custom map name"
-                  value={customMap}
-                  onChange={(e) => setCustomMap(e.target.value)}
-                  className={`w-full mt-2 px-3.5 py-2.5 rounded-xl text-sm font-medium ${theme.inputBg}`}
-                />
-              )}
-            </div>
-
-            {/* Match Duration & Gap */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                  Match Duration (mins)
-                </label>
-                <input
-                  type="number"
-                  min="10"
-                  max="120"
-                  value={durationMinutes}
-                  onChange={(e) => setDurationMinutes(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold ${theme.inputBg}`}
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">Default: 30 minutes</span>
-              </div>
-
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                  Interval Gap (mins)
-                </label>
-                <input
-                  type="number"
-                  min="15"
-                  max="180"
-                  value={gapMinutes}
-                  onChange={(e) => setGapMinutes(e.target.value)}
-                  className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold ${theme.inputBg}`}
-                />
-                <span className="text-[11px] text-slate-500 mt-1 block">Start-to-start interval (e.g. 60m)</span>
               </div>
             </div>
 
             {/* Notes */}
             <div>
-              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
+              <label className={`block text-xs font-bold uppercase tracking-wider mb-1 ${theme.mutedText}`}>
                 Match Notes (Optional)
               </label>
               <textarea
                 rows="2"
-                placeholder="e.g. Streamed live on YouTube, lobby host details, etc."
+                placeholder="e.g. Streamed live, lobby host info, etc."
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-normal ${theme.inputBg} resize-none`}
+                className={`w-full px-3 py-2 rounded-xl text-xs font-normal ${theme.inputBg} resize-none`}
               />
             </div>
 
             {/* Shortcut: Apply to All Districts on This Day */}
-            <div className="pt-2">
+            <div>
               <button
                 type="button"
                 onClick={handleApplyToAll}
-                className={`w-full py-2.5 px-4 rounded-xl border border-dashed flex items-center justify-center gap-2 text-xs font-extrabold transition cursor-pointer min-h-[38px] ${
+                className={`w-full py-2 px-3 rounded-xl border border-dashed flex items-center justify-center gap-1.5 text-xs font-bold transition cursor-pointer min-h-[36px] ${
                   appliedNotice
                     ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                    : theme.isGold
-                    ? 'border-amber-300 text-amber-800 hover:bg-amber-50'
                     : 'border-blue-300 text-blue-700 hover:bg-blue-50'
                 }`}
               >
                 {appliedNotice ? (
                   <>
-                    <Check className="w-4 h-4 text-emerald-600" />
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
                     <span>Applied to all districts on Day {dayNumber}!</span>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-4 h-4" />
-                    <span>Apply settings to all districts on Day {dayNumber}</span>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Apply these matches to all districts on Day {dayNumber}</span>
                   </>
                 )}
               </button>
-              <span className="text-[11px] text-slate-500 text-center block mt-1">
-                Copies start time, duration, gap, match count, and map across all Day {dayNumber} districts.
-              </span>
             </div>
           </div>
 
           {/* Footer Actions */}
-          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 p-4 border-t border-slate-200 bg-slate-50/80">
+          <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-end gap-2 sm:gap-3 p-4 border-t border-slate-200 bg-slate-50/80 shrink-0">
             <button
               onClick={onClose}
               className={`w-full sm:w-auto px-4 py-2 rounded-xl font-bold text-xs min-h-[38px] ${theme.secondaryBtn}`}

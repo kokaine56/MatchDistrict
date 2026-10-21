@@ -1,6 +1,6 @@
-import React from 'react';
-import { Plus, Trash2, ChevronUp, ChevronDown, Trophy, Shield, HelpCircle, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, ChevronUp, ChevronDown, Trophy, Shield, HelpCircle, AlertTriangle, ArrowRight, Lock } from 'lucide-react';
 import { getRoadmapTheme } from './RoadmapTheme';
+import { syncAutoDistrictsForLaterRounds } from '../../utils/roadmapAutoDistricts.js';
 
 export default function RoadmapRoundsManager({
   rounds = [],
@@ -8,21 +8,46 @@ export default function RoadmapRoundsManager({
   onSelectRound,
   onUpdateRounds,
   cardColor = 'white',
+  meta = {},
+  slotsTotal: propSlotsTotal,
   validationErrors = [],
   validationWarnings = [],
 }) {
   const theme = getRoadmapTheme(cardColor);
 
+  const slotsTotal = Number(propSlotsTotal || meta.total_slots || meta.slotsTotal || (rounds[0]?.teams_in) || 64);
+  const registeredCount = Number(meta.total_teams ?? meta.registeredCount ?? meta.registered_teams ?? 0);
+  const teamsPerGroup = Number(meta.teams_per_group || 16);
+
   const activeRound = rounds[selectedRoundIdx] || rounds[0] || null;
+
+  const syncAndNotify = (candidateRounds) => {
+    const copy = JSON.parse(JSON.stringify(candidateRounds || []));
+    syncAutoDistrictsForLaterRounds({ rounds: copy }, { teams_per_group: teamsPerGroup, slotsTotal, forceAutoTeamsIn: true });
+    onUpdateRounds(copy);
+  };
 
   // Add Round
   const handleAddRound = () => {
     const nextNum = rounds.length + 1;
-    const isNextGF = rounds.length >= 1; // if 2nd round, suggest grand finals or qualifier
+    // Any previous round that was grand_final becomes qualifier since Grand Finals must be the terminal round
+    const sanitizedPrev = rounds.map((r) => {
+      if (r.round_type === 'grand_final') {
+        return {
+          ...r,
+          round_type: 'qualifier',
+          advancement_type: r.advancement_type || 'per_district',
+          teams_advancing_per_district: r.teams_advancing_per_district || 2,
+          teams_advancing: r.teams_advancing || 16,
+        };
+      }
+      return r;
+    });
+
     const newRound = {
       id: `RND-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       round_number: nextNum,
-      name: isNextGF ? `Round ${nextNum}` : 'Qualifiers',
+      name: `Round ${nextNum}`,
       round_type: 'qualifier',
       teams_in: 16,
       advancement_type: 'per_district',
@@ -38,8 +63,8 @@ export default function RoadmapRoundsManager({
       ],
     };
 
-    const updated = [...rounds, newRound];
-    onUpdateRounds(updated);
+    const updated = [...sanitizedPrev, newRound];
+    syncAndNotify(updated);
     onSelectRound(updated.length - 1);
   };
 
@@ -48,8 +73,21 @@ export default function RoadmapRoundsManager({
     if (rounds.length <= 1) return;
     const updated = rounds
       .filter((_, i) => i !== idx)
-      .map((r, i) => ({ ...r, round_number: i + 1 }));
-    onUpdateRounds(updated);
+      .map((r, i, arr) => {
+        // If a grand_final was somehow not the last round, make sure only the last can be grand_final
+        if (r.round_type === 'grand_final' && i !== arr.length - 1) {
+          return {
+            ...r,
+            round_number: i + 1,
+            round_type: 'qualifier',
+            advancement_type: r.advancement_type || 'per_district',
+            teams_advancing_per_district: r.teams_advancing_per_district || 2,
+            teams_advancing: r.teams_advancing || 16,
+          };
+        }
+        return { ...r, round_number: i + 1 };
+      });
+    syncAndNotify(updated);
     onSelectRound(Math.max(0, idx - 1));
   };
 
@@ -63,16 +101,43 @@ export default function RoadmapRoundsManager({
     copy[idx] = copy[targetIdx];
     copy[targetIdx] = temp;
 
-    const renumbered = copy.map((r, i) => ({ ...r, round_number: i + 1 }));
-    onUpdateRounds(renumbered);
+    const renumbered = copy.map((r, i, arr) => {
+      const isLast = i === arr.length - 1;
+      if (r.round_type === 'grand_final' && !isLast) {
+        return {
+          ...r,
+          round_number: i + 1,
+          round_type: 'qualifier',
+          advancement_type: r.advancement_type || 'per_district',
+          teams_advancing_per_district: r.teams_advancing_per_district || 2,
+          teams_advancing: r.teams_advancing || 16,
+        };
+      }
+      return { ...r, round_number: i + 1 };
+    });
+    syncAndNotify(renumbered);
     onSelectRound(targetIdx);
   };
 
   // Field change on active round
   const handleUpdateActiveField = (field, value) => {
     if (!activeRound) return;
+    if (field === 'round_type' && value === 'grand_final' && selectedRoundIdx !== rounds.length - 1) {
+      return;
+    }
     const updated = rounds.map((r, idx) => {
-      if (idx !== selectedRoundIdx) return r;
+      if (idx !== selectedRoundIdx) {
+        if (field === 'round_type' && value === 'grand_final' && r.round_type === 'grand_final') {
+          return {
+            ...r,
+            round_type: 'qualifier',
+            advancement_type: r.advancement_type || 'per_district',
+            teams_advancing_per_district: r.teams_advancing_per_district || 2,
+            teams_advancing: r.teams_advancing || 16,
+          };
+        }
+        return r;
+      }
       const modified = { ...r, [field]: value };
 
       // If toggled to grand_final, clear advancement rules
@@ -84,7 +149,7 @@ export default function RoadmapRoundsManager({
       }
       return modified;
     });
-    onUpdateRounds(updated);
+    syncAndNotify(updated);
   };
 
   return (
@@ -127,9 +192,9 @@ export default function RoadmapRoundsManager({
 
       {/* Selected Round Settings Form */}
       {activeRound && (
-        <div className={`p-4 sm:p-5 rounded-2xl ${theme.innerCardBg} space-y-4`}>
+        <div className="space-y-4 pt-1">
           {/* Round Header & Reordering */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/80">
             <div className="flex items-center gap-2">
               <span className={`text-xs font-bold uppercase tracking-wider ${theme.mutedText}`}>
                 Configuring Round {activeRound.round_number || selectedRoundIdx + 1}
@@ -142,7 +207,7 @@ export default function RoadmapRoundsManager({
                   type="button"
                   disabled={selectedRoundIdx === 0}
                   onClick={() => handleMoveRound(selectedRoundIdx, -1)}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs disabled:opacity-30 cursor-pointer flex items-center gap-1 min-h-[32px]"
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200/90 shadow-2xs disabled:opacity-30 cursor-pointer flex items-center gap-1 min-h-[32px]"
                   title="Move round earlier"
                 >
                   <ChevronUp className="w-3.5 h-3.5" />
@@ -152,7 +217,7 @@ export default function RoadmapRoundsManager({
                   type="button"
                   disabled={selectedRoundIdx === rounds.length - 1}
                   onClick={() => handleMoveRound(selectedRoundIdx, 1)}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200 shadow-2xs disabled:opacity-30 cursor-pointer flex items-center gap-1 min-h-[32px]"
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 border border-slate-200/90 shadow-2xs disabled:opacity-30 cursor-pointer flex items-center gap-1 min-h-[32px]"
                   title="Move round later"
                 >
                   <ChevronDown className="w-3.5 h-3.5" />
@@ -196,31 +261,56 @@ export default function RoadmapRoundsManager({
                 Round Stage Type
               </label>
               <select
-                value={activeRound.round_type || 'qualifier'}
+                value={activeRound.round_type === 'grand_final' && selectedRoundIdx === rounds.length - 1 ? 'grand_final' : 'qualifier'}
                 onChange={(e) => handleUpdateActiveField('round_type', e.target.value)}
                 className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-semibold ${theme.inputBg}`}
               >
-                <option value="qualifier" className="bg-white text-slate-900">Qualifier Stage</option>
-                <option value="semi_final" className="bg-white text-slate-900">Semi-Finals Stage</option>
-                <option value="grand_final" className="bg-white text-slate-900">Grand Finals (Terminal Finale)</option>
-                <option value="custom" className="bg-white text-slate-900">Custom Stage</option>
+                <option value="qualifier" className="bg-white text-slate-900">Qualifiers</option>
+                <option
+                  value="grand_final"
+                  disabled={selectedRoundIdx !== rounds.length - 1}
+                  className="bg-white text-slate-900"
+                >
+                  Grand Finals{selectedRoundIdx !== rounds.length - 1 ? ' (Last round only)' : ''}
+                </option>
               </select>
             </div>
 
             {/* Planned Incoming Teams (teams_in) */}
             <div>
-              <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${theme.mutedText}`}>
-                Planned Incoming Teams
-              </label>
-              <input
-                type="number"
-                min="1"
-                placeholder="e.g. 128, 64, 16"
-                value={activeRound.teams_in != null ? activeRound.teams_in : ''}
-                onChange={(e) => handleUpdateActiveField('teams_in', e.target.value ? Number(e.target.value) : null)}
-                className={`w-full px-3.5 py-2.5 rounded-xl text-sm font-bold ${theme.inputBg}`}
-              />
-              <span className="text-[11px] text-slate-500 mt-1 block">Expected team capacity entering this round</span>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className={`block text-xs font-bold uppercase tracking-wider ${theme.mutedText}`}>
+                  Planned Incoming Teams
+                </label>
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5" /> Read-only
+                </span>
+              </div>
+              {selectedRoundIdx === 0 ? (
+                <>
+                  <input
+                    type="number"
+                    readOnly
+                    value={slotsTotal}
+                    className="w-full px-3.5 py-2.5 rounded-xl text-sm font-bold bg-slate-100/90 text-slate-700 cursor-not-allowed border border-slate-200/90 shadow-2xs"
+                  />
+                  <span className="text-[11px] text-slate-500 mt-1 block">
+                    {slotsTotal} tournament slots • <strong className="text-slate-700 font-semibold">{registeredCount} registered so far</strong>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="number"
+                    readOnly
+                    value={activeRound.teams_in != null ? activeRound.teams_in : 16}
+                    className="w-full px-3.5 py-2.5 rounded-xl text-sm font-bold bg-slate-100/90 text-slate-700 cursor-not-allowed border border-slate-200/90 shadow-2xs"
+                  />
+                  <span className="text-[11px] text-slate-500 mt-1 block">
+                    Auto-calculated from {rounds[selectedRoundIdx - 1]?.name || `Round ${selectedRoundIdx}`} qualifiers
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -283,27 +373,18 @@ export default function RoadmapRoundsManager({
                   </span>
                 </div>
 
-                {/* Target Next Round Selector */}
+                {/* Advancement Target (Plain text info) */}
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider mb-1 text-slate-600">
-                    Advancement Target Round
+                    Advancement Target
                   </label>
-                  <select
-                    value={activeRound.advancement_target_round_id || ''}
-                    onChange={(e) => handleUpdateActiveField('advancement_target_round_id', e.target.value || null)}
-                    className={`w-full px-3 py-2 rounded-xl text-xs font-semibold ${theme.inputBg}`}
-                  >
-                    <option value="" className="bg-white text-slate-900">
-                      Next Sequential Round (Default)
-                    </option>
-                    {rounds
-                      .filter((_, idx) => idx > selectedRoundIdx)
-                      .map((target) => (
-                        <option key={target.id} value={target.id} className="bg-white text-slate-900">
-                          {target.name} (Round {target.round_number})
-                        </option>
-                      ))}
-                  </select>
+                  <div className={`w-full px-3 py-2 rounded-xl text-xs font-bold ${theme.inputBg} flex items-center gap-1.5 text-slate-700 border border-slate-200/60 min-h-[38px]`}>
+                    <ArrowRight className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span>Next: {rounds[selectedRoundIdx + 1]?.name || `Round ${selectedRoundIdx + 2}`}</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    Advancing teams qualify automatically to the next round
+                  </span>
                 </div>
               </div>
             </div>
