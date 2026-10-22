@@ -1202,6 +1202,11 @@ Route `/tournaments/:id/register` is wrapped in `RegistrationRoute`:
 - Account Holder: `Match District`
 - UPI deep link: `upi://pay?pa=matchdistrict@upi&pn=Match District&am={amount}&cu=INR&tn={description}`
 
+### 12.3 Retired PGV companion integration
+
+The mobile PGV integration has been removed. Pairing, device-key authentication, SMS/UTR auto-matching, and `/api/v1/*` companion endpoints are retired; `/api/pair/*` and `/api/v1/*` requests return HTTP 410 Gone. Manual website and admin-panel payment verification remains active. Existing database tables/data are retained; no drop or cleanup migration is performed. The separate organizer `api_keys` table and API-key feature are not part of PGV and remain active.
+
+`unique_amount_suffix_enabled` remains configurable. Registration returns the suffixed `amount_to_pay` to the player, and proof submissions store it in `payment_submissions.amount`. With automatic matching removed, it can still help manual reconciliation, but the admin registration list currently displays the tournament base entry fee rather than the submitted suffixed amount.
 ### 12.3 Payment Verification Endpoints
 | Method | Path | Purpose |
 |---|---|---|

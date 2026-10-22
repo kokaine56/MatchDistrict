@@ -8,9 +8,7 @@ export const SCHEMA_TABLES = Object.freeze([
   'password_resets',
   'temp_users',
   'registration_cooldowns',
-  'paired_devices',
   'payment_verifications',
-  'payment_sms_verifications',
   'notifications',
   'alerts',
   'site_settings',
@@ -142,18 +140,6 @@ export async function runSchemaMigrations(clientOrPool) {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE TABLE IF NOT EXISTS paired_devices (
-        id VARCHAR(50) PRIMARY KEY,
-        user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        device_id VARCHAR(255) UNIQUE,
-        device_name VARCHAR(255),
-        api_key_hash VARCHAR(255) NOT NULL,
-        refresh_token_hash VARCHAR(255),
-        is_active BOOLEAN DEFAULT true,
-        app_version VARCHAR(50),
-        last_seen_at TIMESTAMPTZ,
-        paired_at TIMESTAMPTZ DEFAULT NOW()
-      );
 
       CREATE TABLE IF NOT EXISTS payment_verifications (
         id VARCHAR(50) PRIMARY KEY,
@@ -188,23 +174,6 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
       ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
-      CREATE TABLE IF NOT EXISTS payment_sms_verifications (
-        id VARCHAR(50) PRIMARY KEY,
-        utr VARCHAR(255) UNIQUE NOT NULL,
-        amount INTEGER NOT NULL,
-        bank VARCHAR(50),
-        sender VARCHAR(255),
-        sender_account VARCHAR(255),
-        sms_hash VARCHAR(64) UNIQUE,
-        device_id VARCHAR(255),
-        matched_payment_id VARCHAR(50),
-        matched_registration_id VARCHAR(50),
-        match_type VARCHAR(20) DEFAULT 'unmatched',
-        status VARCHAR(20) DEFAULT 'unmatched',
-        admin_id VARCHAR(50),
-        rejection_reason TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
 
       CREATE TABLE IF NOT EXISTS notifications (
         id VARCHAR(50) PRIMARY KEY,

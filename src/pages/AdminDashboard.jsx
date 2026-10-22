@@ -16,7 +16,6 @@ import DangerZoneSettings from '../components/admin/DangerZoneSettings.jsx'
 import { ReviewKYCModal } from '../components/admin/ReviewKYCModal.jsx'
 import { UserGovernance } from '../components/admin/UserGovernance.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import QRPairingModal from '../components/QRPairingModal.jsx'
 
 export default function AdminDashboard({ onNavigate }) {
   const { theme, setTheme } = useTheme()
@@ -63,12 +62,6 @@ export default function AdminDashboard({ onNavigate }) {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [purgeLoading, setPurgeLoading] = useState(false)
 
-  // Device pairing state
-  const [showPairingModal, setShowPairingModal] = useState(false)
-  const [pairedDevices, setPairedDevices] = useState([])
-  const [deviceLoading, setDeviceLoading] = useState(false)
-  const [generatingKey, setGeneratingKey] = useState(false)
-
   // Injector state
   const [injectTournamentId, setInjectTournamentId] = useState('')
   const [injectSlotCount, setInjectSlotCount] = useState(1000)
@@ -108,35 +101,6 @@ export default function AdminDashboard({ onNavigate }) {
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
-    }
-  }
-
-  const fetchPairedDevices = async () => {
-    setDeviceLoading(true)
-    const res = await subscriptionApi.getPairedDevices()
-    if (res?.success) setPairedDevices(res.devices || [])
-    setDeviceLoading(false)
-  }
-
-  const handleGenerateKey = async () => {
-    setGeneratingKey(true)
-    const res = await subscriptionApi.generatePairingKey()
-    setGeneratingKey(false)
-    if (res?.success) {
-      fetchPairedDevices()
-      return { server_url: res.server_url, api_key: res.api_key }
-    }
-    triggerToast(res?.error || 'Failed to generate pairing key')
-    return null
-  }
-
-  const handleUnpairDevice = async (deviceId) => {
-    const res = await subscriptionApi.unpairDevice(deviceId)
-    if (res?.success) {
-      triggerToast('Device unlinked successfully')
-      fetchPairedDevices()
-    } else {
-      triggerToast(res?.error || 'Failed to unlink device')
     }
   }
 
@@ -313,7 +277,6 @@ export default function AdminDashboard({ onNavigate }) {
     fetchTournaments()
     fetchFinancials()
     fetchGlobalThemeSetting()
-    fetchPairedDevices()
   }, [])
 
   const isAdmin = currentUser?.role === 'admin'
@@ -1091,81 +1054,6 @@ export default function AdminDashboard({ onNavigate }) {
         </div>
       )}
 
-      {/* TAB 5: PAYMENT VERIFIER */}
-      {activeTab === 'devices' && (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-on-background">Payment Auto-Verifier</h2>
-              <p className="text-xs text-on-surface-variant mt-1">
-                Link an Android device running the payment verification app to automatically approve subscription &amp; tournament payments
-              </p>
-            </div>
-            <button
-              onClick={() => setShowPairingModal(true)}
-              className="flex items-center gap-2 px-4 py-2.5 min-h-[44px] bg-primary text-white rounded-xl font-bold text-xs transition-all hover:-translate-y-0.5 hover:shadow-xl shadow-[0_0_20px_rgba(99,102,241,0.3)]"
-            >
-              <span className="material-symbols-outlined text-lg">qr_code_scanner</span>
-              Link Phone
-            </button>
-          </div>
-
-          <div className="bg-surface-container-low border border-outline-variant/20 rounded-xl p-5 space-y-4">
-            <h3 className="text-sm font-bold text-on-background flex items-center gap-2">
-              <span className="material-symbols-outlined text-lg text-primary">devices</span>
-              Active Device
-              {deviceLoading && <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin ml-1" />}
-            </h3>
-
-            {!deviceLoading && pairedDevices.length === 0 && (
-              <div className="flex flex-col items-center py-8 text-center gap-2">
-                <span className="material-symbols-outlined text-4xl text-on-surface-variant/30">smartphone</span>
-                <p className="text-sm text-on-surface-variant">No device paired</p>
-                <button
-                  onClick={() => setShowPairingModal(true)}
-                  className="text-xs font-bold text-primary hover:underline"
-                >
-                  Link a device
-                </button>
-              </div>
-            )}
-
-            {pairedDevices.length > 0 && (() => {
-              const d = pairedDevices[0]
-              const connected = !!d.last_seen_at
-              return (
-                <div className="flex items-center justify-between bg-surface/30 border border-outline-variant/20 rounded-lg px-4 py-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="material-symbols-outlined text-2xl text-primary/60">smartphone</span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-on-background truncate">{d.device_name || d.device_id}</p>
-                      <p className="text-[10px] text-on-surface-variant/60">
-                        {connected
-                          ? 'Last seen: ' + formatDateTime(d.last_seen_at)
-                          : 'Awaiting connection'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold ${connected ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                      {connected ? 'Connected' : 'Pending'}
-                    </span>
-                    <button
-                      onClick={() => handleUnpairDevice(d.id)}
-                      className="p-2 rounded-lg hover:bg-error/10 text-on-surface-variant hover:text-error transition-colors"
-                      title="Unlink Device"
-                    >
-                      <span className="material-symbols-outlined text-lg">link_off</span>
-                    </button>
-                  </div>
-                </div>
-              )
-            })()}
-          </div>
-        </div>
-      )}
-
       {/* TAB 4: USER GOVERNANCE & ROSTER */}
       {activeTab === 'users' && (
         <div className="space-y-6 animate-in fade-in duration-300">
@@ -1234,14 +1122,6 @@ export default function AdminDashboard({ onNavigate }) {
 
     </AdminLayout>
 
-      <QRPairingModal
-        isOpen={showPairingModal}
-        onClose={() => setShowPairingModal(false)}
-        onGenerateKey={handleGenerateKey}
-        devices={pairedDevices}
-        onUnpair={handleUnpairDevice}
-        generating={generatingKey}
-      />
     </>
   )
 }
