@@ -352,12 +352,19 @@ function RegistrationPage({ onNavigate }) {
         body: JSON.stringify(formPayload),
       })
       const sessionData = await sessionRes.json()
+      if (sessionData.already_registered) {
+        setRegisteredTeam(sessionData.registration)
+        setStep('success')
+        return
+      }
       if (!sessionData.success) {
-        setServerError(sessionData.message || 'Registration failed. Please try again.')
+        const raw = sessionData.message || sessionData.error || ''
+        const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
+        setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Registration failed. Please try again.'))
         return
       }
 
-      const newSessionId = sessionData.session.id
+      const newSessionId = sessionData.session?.id
       setSessionId(newSessionId)
 
       if (isPaid) {
@@ -371,13 +378,20 @@ function RegistrationPage({ onNavigate }) {
           body: JSON.stringify({}),
         })
         const completeData = await completeRes.json()
+        if (completeData.already_registered) {
+          setRegisteredTeam(completeData.registration)
+          setStep('success')
+          return
+        }
         if (completeData.success) {
           setRegisteredTeam(completeData.registration)
           setAmountToPay(completeData.amount_to_pay || null)
           setPredictedGroup(completeData.predicted_group || null)
           setStep('success')
         } else {
-          setServerError(completeData.message || 'Registration failed. Please try again.')
+          const raw = completeData.message || completeData.error || ''
+          const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
+          setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Could not save, please try again.'))
         }
       }
     } catch (err) {
@@ -857,12 +871,12 @@ function RegistrationPage({ onNavigate }) {
                   </button>
                   <button
                     type="button"
-                    disabled={paymentSubmittedRef.current}
+                    disabled={paymentSubmitting || paymentSubmittedRef.current}
                     onClick={async (e) => {
                       e.preventDefault()
                       e.stopPropagation()
                       if (!e.nativeEvent.isTrusted) return
-                      if (paymentSubmittedRef.current) return
+                      if (paymentSubmitting || paymentSubmittedRef.current) return
                       paymentSubmittedRef.current = true
                       setShowConfirmModal(false)
                       setPaymentSubmitting(true)
@@ -873,7 +887,7 @@ function RegistrationPage({ onNavigate }) {
                           try {
                             screenshotUrl = await uploadImage(payment.screenshotFile)
                           } catch (uploadErr) {
-                            setServerError(`Screenshot upload failed: ${uploadErr.message}. Please try again or choose a different image.`)
+                            setServerError('Upload failed. Please try again or choose a different image.')
                             setPaymentSubmitting(false)
                             paymentSubmittedRef.current = false
                             return
@@ -889,13 +903,20 @@ function RegistrationPage({ onNavigate }) {
                           }),
                         })
                         const data = await res.json()
+                        if (data.already_registered) {
+                          setRegisteredTeam(data.registration)
+                          setStep('success')
+                          return
+                        }
                         if (data.success) {
                           setRegisteredTeam(data.registration)
                           setAmountToPay(data.amount_to_pay || null)
                           setPredictedGroup(data.predicted_group || null)
                           setStep('success')
                         } else {
-                          setServerError(data.message || 'Payment submission failed. Please try again.')
+                          const raw = data.message || data.error || ''
+                          const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
+                          setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Could not save, please try again.'))
                           paymentSubmittedRef.current = false
                         }
                       } catch (err) {
@@ -905,9 +926,16 @@ function RegistrationPage({ onNavigate }) {
                         setPaymentSubmitting(false)
                       }
                     }}
-                    className="flex-1 bg-primary text-white font-bold py-3 rounded-xl hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 bg-primary text-white font-bold py-3 rounded-xl hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    Confirm
+                    {paymentSubmitting ? (
+                      <>
+                        <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                        <span>Submitting...</span>
+                      </>
+                    ) : (
+                      <span>Confirm</span>
+                    )}
                   </button>
                 </div>
               </motion.div>

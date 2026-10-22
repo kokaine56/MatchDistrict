@@ -25,10 +25,6 @@ export function computeSquadCapacity(registration, tournament) {
   if (members.length > 0) {
     return 1 + members.length;
   }
-  const ppt = parseInt(tournament?.players_per_team, 10);
-  if (Number.isFinite(ppt) && ppt > 0) {
-    return ppt;
-  }
   const matchType = String(tournament?.match_type || '').trim().toLowerCase();
   if (matchType === 'solo') return 1;
   if (matchType === 'duo') return 2;

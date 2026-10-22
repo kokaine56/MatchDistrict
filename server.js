@@ -245,6 +245,36 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
+// Helper: remove uploaded media (Cloudinary) if database transaction fails
+async function removeUploadedMedia(mediaUrl) {
+  if (!mediaUrl || typeof mediaUrl !== 'string') return;
+  try {
+    if (mediaUrl.includes('res.cloudinary.com') && CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
+      const match = mediaUrl.match(/\/upload\/(?:v\d+\/)?([^\.]+)/);
+      if (match && match[1]) {
+        const publicId = match[1];
+        const timestamp = Math.floor(Date.now() / 1000);
+        const toSign = `public_id=${publicId}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
+        const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+        const params = new URLSearchParams();
+        params.append('public_id', publicId);
+        params.append('timestamp', timestamp.toString());
+        params.append('api_key', CLOUDINARY_API_KEY);
+        params.append('signature', signature);
+
+        await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/destroy`, {
+          method: 'POST',
+          body: params
+        });
+        console.log(`[MediaCleanup] Removed uploaded media on rollback: ${publicId}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[MediaCleanup] Could not remove uploaded media:', err.message);
+  }
+}
+
 // Initialize Supabase Client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -340,6 +370,13 @@ async function initDb() {
         ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'pending';
         ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS submitted_by VARCHAR(50);
         ALTER TABLE tournament_match_results ADD COLUMN IF NOT EXISTS verified_by VARCHAR(50);
+
+        -- 8. Payment & organization schema enhancements
+        ALTER TABLE payment_submissions ALTER COLUMN amount TYPE NUMERIC(10, 2);
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgId" VARCHAR(50);
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgName" VARCHAR(255);
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS org_id VARCHAR(50);
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS org_name VARCHAR(255);
       `);
       console.log('📦 [MATCH DISTRICT DB] Roadmap & progression schema migrations applied.');
     } catch (migErr) {
@@ -7243,7 +7280,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
       }
       const tId = decodeURIComponent(myTeamMatch[1]);
-      const tRes = await pool.query('SELECT title, status, roadmap_status, players_per_team, match_type FROM tournaments WHERE id = $1', [tId]);
+      const tRes = await pool.query('SELECT title, status, roadmap_status, match_type FROM tournaments WHERE id = $1', [tId]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
@@ -7751,7 +7788,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, status: inv.status === 'active' ? 'expired' : inv.status, message: 'Invitation is expired or revoked.' }));
       }
 
-      const tRes = await pool.query('SELECT title, status, match_type, players_per_team FROM tournaments WHERE id = $1', [inv.tournament_id]);
+      const tRes = await pool.query('SELECT title, status, match_type FROM tournaments WHERE id = $1', [inv.tournament_id]);
       const teamRes = await pool.query('SELECT id, team_name, status, leader_user_id, registration_id FROM tournament_teams WHERE id = $1', [inv.tournament_team_id]);
       
       if (tRes.rows.length === 0 || teamRes.rows.length === 0) {
@@ -7861,7 +7898,7 @@ const server = http.createServer(async (req, res) => {
           }
 
           const tRes = await client.query(
-            'SELECT title, status, match_type, players_per_team, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE',
+            'SELECT title, status, match_type, finalized_at FROM tournaments WHERE id = $1 FOR UPDATE',
             [inv.tournament_id]
           );
           // A4: Lock the team row
@@ -8972,7 +9009,7 @@ const server = http.createServer(async (req, res) => {
             reg = regRes.rows[0] || null;
           }
 
-          const tourDetailsRes = await pool.query('SELECT players_per_team, match_type FROM tournaments WHERE id = $1', [tId]);
+          const tourDetailsRes = await pool.query('SELECT match_type FROM tournaments WHERE id = $1', [tId]);
           const tourRow = tourDetailsRes.rows[0] || {};
           const capacity = computeSquadCapacity(reg, tourRow);
 
@@ -9104,26 +9141,49 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Check duplicate registration
+        // Check duplicate registration / handle safe retry
+        let existingReg = null;
+        let isOrphanRetry = false;
         const dupRes = await pool.query(
-          'SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2',
+          `SELECT tr.id, tr.status, tr.screenshot_url, tr.transaction_id, tr.team_name, tr.captain, tr.captain_uid, tr.members,
+                  ps.id AS payment_id, ps.payment_status, ps.proof_url
+           FROM tournament_registrations tr
+           LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
+           WHERE tr.tournament_id = $1 AND tr.user_id = $2
+           ORDER BY tr.created_at DESC LIMIT 1`,
           [tournamentId, authUser.id]
         );
         if (dupRes.rows.length > 0) {
-          const currentStatus = dupRes.rows[0].status;
-          const reRegisterable = ['cancelled', 'expired', 'rejected', 'PAYMENT_REJECTED'];
+          existingReg = dupRes.rows[0];
+          const currentStatus = (existingReg.status || '').toLowerCase();
+          const reRegisterable = ['cancelled', 'expired', 'rejected', 'payment_rejected'];
           if (!reRegisterable.includes(currentStatus)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'ALREADY_REGISTERED', message: 'You have already registered a team for this tournament.' }));
-            return;
+            const hasPayment = Boolean(existingReg.payment_id || existingReg.proof_url || existingReg.screenshot_url || existingReg.transaction_id);
+            if (hasPayment) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                already_registered: true,
+                status: existingReg.payment_status || existingReg.status,
+                registration: existingReg,
+                message: `You have already registered for this tournament. Current status: ${existingReg.payment_status || existingReg.status}.`
+              }));
+              return;
+            } else {
+              // Registration exists with NO payment record and NO screenshot: allow retry and attach payment
+              isOrphanRetry = true;
+            }
           }
         }
 
-        // Check duplicate team name
-        const nameRes = await pool.query(
-          'SELECT id FROM tournament_registrations WHERE tournament_id = $1 AND LOWER(team_name) = LOWER($2) AND status NOT IN (\'cancelled\', \'expired\', \'rejected\', \'PAYMENT_REJECTED\')',
-          [tournamentId, formData.team_name.trim()]
-        );
+        // Check duplicate team name (exclude current orphan if retrying)
+        let nameQuery = 'SELECT id FROM tournament_registrations WHERE tournament_id = $1 AND LOWER(team_name) = LOWER($2) AND status NOT IN (\'cancelled\', \'expired\', \'rejected\', \'PAYMENT_REJECTED\')';
+        const nameParams = [tournamentId, formData.team_name.trim()];
+        if (isOrphanRetry && existingReg) {
+          nameQuery += ' AND id != $3';
+          nameParams.push(existingReg.id);
+        }
+        const nameRes = await pool.query(nameQuery, nameParams);
         if (nameRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'TEAM_NAME_TAKEN', message: 'This team name is already registered.' }));
@@ -9139,14 +9199,18 @@ const server = http.createServer(async (req, res) => {
           [authUser.id, tournamentId]
         );
 
-        // Create session
+        // Create session (preserving existing_registration_id for orphan attachment)
         const sessionId = 'SES-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
         const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 min expiry
+        const sessionFormData = {
+          ...formData,
+          existing_registration_id: isOrphanRetry && existingReg ? existingReg.id : null
+        };
 
         await pool.query(
           `INSERT INTO registration_sessions (id, tournament_id, user_id, form_data, idempotency_key, status, expires_at)
            VALUES ($1, $2, $3, $4, $5, 'active', $6)`,
-          [sessionId, tournamentId, authUser.id, JSON.stringify(formData), idempotencyKey, expiresAt]
+          [sessionId, tournamentId, authUser.id, JSON.stringify(sessionFormData), idempotencyKey, expiresAt]
         );
 
         const entryFeeAmount = parseInt(tournament.entry_fee_amount) || 0;
@@ -9374,35 +9438,75 @@ const server = http.createServer(async (req, res) => {
 
         await client.query('BEGIN');
 
-        // Duplicate registration guard (within transaction)
+        // Check duplicate registration / handle safe retry for orphans (within transaction)
         const dupGuard = await client.query(
-          `SELECT id, status FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2`,
+          `SELECT tr.id, tr.status, tr.screenshot_url, tr.transaction_id,
+                  ps.id AS payment_id, ps.payment_status, ps.proof_url
+           FROM tournament_registrations tr
+           LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
+           WHERE tr.tournament_id = $1 AND tr.user_id = $2
+           ORDER BY tr.created_at DESC LIMIT 1 FOR UPDATE`,
           [session.tournament_id, authUser.id]
         );
+
+        let targetRegId = formData.existing_registration_id || null;
+        let isUpdatingExisting = false;
+
         if (dupGuard.rows.length > 0) {
-          const reRegisterable = ['cancelled', 'expired', 'rejected', 'PAYMENT_REJECTED'];
-          if (!reRegisterable.includes(dupGuard.rows[0].status)) {
-            await client.query('ROLLBACK');
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'ALREADY_REGISTERED', message: 'You have already registered a team for this tournament.' }));
-            client.release();
-            return;
+          const existing = dupGuard.rows[0];
+          const reRegisterable = ['cancelled', 'expired', 'rejected', 'payment_rejected'];
+          const currentStatus = (existing.status || '').toLowerCase();
+          const hasPayment = Boolean(existing.payment_id || existing.proof_url || existing.screenshot_url || existing.transaction_id);
+
+          if (!reRegisterable.includes(currentStatus)) {
+            if (hasPayment) {
+              await client.query('ROLLBACK');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                already_registered: true,
+                status: existing.payment_status || existing.status,
+                registration: existing,
+                message: `You have already registered a team for this tournament. Current status: ${existing.payment_status || existing.status}.`
+              }));
+              client.release();
+              return;
+            } else {
+              // Orphan registration found! Safe retry attaches payment to this row
+              targetRegId = existing.id;
+              isUpdatingExisting = true;
+            }
           }
         }
 
-        // Create tournament registration
-        const regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
         const membersStr = formData.members ? (typeof formData.members === 'string' ? formData.members : JSON.stringify(formData.members)) : '[]';
-
         const status = isPaid ? (payload.screenshot_url ? 'pending' : 'pending_payment') : 'pending';
 
-        const regRes = await client.query(
-          `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING *`,
-          [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
-           membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
-           payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null]
-        );
+        let regRes;
+        let regId = targetRegId;
+
+        if (isUpdatingExisting && regId) {
+          regRes = await client.query(
+            `UPDATE tournament_registrations
+             SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
+                 status = $5, email = $6, phone = $7, screenshot_url = $8,
+                 transaction_id = $9, payment_app = $10, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $11 RETURNING *`,
+            [formData.team_name, formData.captain, formData.captain_uid || null, membersStr,
+             status, formData.email || null, formData.phone || null,
+             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null,
+             regId]
+          );
+        } else {
+          regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
+          regRes = await client.query(
+            `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING *`,
+            [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
+             membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
+             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null]
+          );
+        }
 
         let paymentRecord = null;
 
@@ -9457,8 +9561,12 @@ const server = http.createServer(async (req, res) => {
         }));
       } catch (err) {
         await client.query('ROLLBACK');
+        if (payload?.screenshot_url) {
+          await removeUploadedMedia(payload.screenshot_url);
+        }
+        console.error('[SessionComplete] Error:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'Could not save, please try again.' }));
       } finally {
         client.release();
       }
@@ -9488,15 +9596,37 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Check if user is already registered for this tournament
-        // Allow re-registration if previous attempt was rejected, cancelled, or expired
+        // Allow re-registration if previous attempt was rejected, cancelled, or expired; safe retry for orphans
+        let existingOrphanId = null;
         const dupRes = await pool.query(
-          "SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 AND status NOT IN ('rejected', 'cancelled', 'expired')",
+          `SELECT tr.id, tr.status, tr.screenshot_url, tr.transaction_id,
+                  ps.id AS payment_id, ps.payment_status, ps.proof_url
+           FROM tournament_registrations tr
+           LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
+           WHERE tr.tournament_id = $1 AND tr.user_id = $2
+           ORDER BY tr.created_at DESC LIMIT 1`,
           [id, authUser.id]
         );
         if (dupRes.rows.length > 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'ALREADY_REGISTERED', message: 'You have already registered a team for this tournament.' }));
-          return;
+          const existing = dupRes.rows[0];
+          const currentStatus = (existing.status || '').toLowerCase();
+          const reRegisterable = ['cancelled', 'expired', 'rejected', 'payment_rejected'];
+          if (!reRegisterable.includes(currentStatus)) {
+            const hasPayment = Boolean(existing.payment_id || existing.proof_url || existing.screenshot_url || existing.transaction_id);
+            if (hasPayment) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: true,
+                already_registered: true,
+                status: existing.payment_status || existing.status,
+                registration: existing,
+                message: `You have already registered a team for this tournament. Current status: ${existing.payment_status || existing.status}.`
+              }));
+              return;
+            } else {
+              existingOrphanId = existing.id;
+            }
+          }
         }
 
         const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate" FROM tournaments WHERE id = $1', [id]);
@@ -9565,11 +9695,22 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const dbRes = await pool.query(
-          `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1) RETURNING *`,
-          [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey]
-        );
+        let dbRes;
+        if (existingOrphanId) {
+          dbRes = await pool.query(
+            `UPDATE tournament_registrations
+             SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
+                 status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $10 RETURNING *`,
+            [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, existingOrphanId]
+          );
+        } else {
+          dbRes = await pool.query(
+            `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1) RETURNING *`,
+            [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey]
+          );
+        }
 
         await reconcileTournamentSlots(pool, id);
 
@@ -9711,7 +9852,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
         return;
       }
-      const tournRes = await pool.query('SELECT "orgId", match_type, players_per_team FROM tournaments WHERE id = $1', [id]);
+      const tournRes = await pool.query('SELECT "orgId", match_type FROM tournaments WHERE id = $1', [id]);
       if (tournRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
@@ -10293,7 +10434,7 @@ const server = http.createServer(async (req, res) => {
       let teamByLeaderId = new Map();
 
       if (tournIds.length > 0) {
-        const tRes = await pool.query('SELECT id, match_type, players_per_team FROM tournaments WHERE id = ANY($1)', [tournIds]);
+        const tRes = await pool.query('SELECT id, match_type FROM tournaments WHERE id = ANY($1)', [tournIds]);
         for (const t of tRes.rows) {
           tournamentsMap.set(t.id, t);
         }
@@ -13224,10 +13365,11 @@ const server = http.createServer(async (req, res) => {
                t.entry_fee_amount, ps.payment_status AS pay_status, ps.id AS payment_submission_id,
                ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr
         FROM tournament_registrations r
-        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
         WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
-        ORDER BY t.game, t.title, r.created_at ASC
+           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+        ORDER BY t.game NULLS LAST, t.title NULLS LAST, r.created_at ASC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
@@ -13250,16 +13392,16 @@ const server = http.createServer(async (req, res) => {
 
       const dbRes = await pool.query(`
         SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
-               t.entry_fee_amount, t.orgid AS tournament_org_id, t.orgname AS tournament_org_name,
+               t.entry_fee_amount, COALESCE(t."orgId", t.org_id) AS tournament_org_id, COALESCE(t."orgName", t.org_name) AS tournament_org_name,
                ps.payment_status AS pay_status, ps.id AS payment_submission_id,
                ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr,
                ps.payment_app AS pay_app, u.name AS user_name, u.email AS user_email
         FROM tournament_registrations r
-        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
         LEFT JOIN users u ON r.user_id = u.id
         WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
-           OR ps.payment_status IN ('pending', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
         ORDER BY r.created_at DESC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -13425,10 +13567,11 @@ const server = http.createServer(async (req, res) => {
                t.entry_fee_amount, ps.payment_status AS pay_status, ps.id AS payment_submission_id,
                ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr
         FROM tournament_registrations r
-        JOIN tournaments t ON r.tournament_id = t.id
+        LEFT JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
         WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
-        ORDER BY t.game, t.title, r.created_at ASC
+           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+        ORDER BY t.game NULLS LAST, t.title NULLS LAST, r.created_at ASC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
@@ -16168,7 +16311,7 @@ const server = http.createServer(async (req, res) => {
                   ps.utr_number AS user_provided_utr,
                   t.title as tournament_title, t.game, t.entry_fee_amount as amount
            FROM tournament_registrations tr
-           JOIN tournaments t ON tr.tournament_id = t.id
+           LEFT JOIN tournaments t ON tr.tournament_id = t.id
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            ${regWhere}
            ORDER BY tr.created_at DESC
@@ -16701,7 +16844,7 @@ const server = http.createServer(async (req, res) => {
                   t.entry_fee_amount as amount, t.title as tournament_title,
                   t.game, tr.created_at
            FROM tournament_registrations tr
-           JOIN tournaments t ON t.id = tr.tournament_id
+           LEFT JOIN tournaments t ON t.id = tr.tournament_id
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            WHERE tr.status IN ('pending_payment','pending')
            ORDER BY tr.created_at DESC`

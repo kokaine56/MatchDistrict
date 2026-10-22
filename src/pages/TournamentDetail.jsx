@@ -21,6 +21,7 @@ import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
 import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder.jsx';
 import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
+import { computeSquadCapacity } from '../utils/squadRegistration.js';
 import { isSystemAdmin } from '../utils/iamRoles.js';
 import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
 
@@ -1683,7 +1684,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <TournamentTeamHub
                 tournamentId={tourney.id}
                 tournamentTitle={tourney.title}
-                maxTeamSize={tourney.players_per_team || 4}
+                maxTeamSize={computeSquadCapacity(null, tourney)}
               />
             )}
             {activeTab === 'rules' && (

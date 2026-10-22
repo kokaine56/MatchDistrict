@@ -27,17 +27,12 @@ export function parseRosterMembers(rawMembers) {
 /**
  * Derives squad capacity from:
  * 1. Registration roster size (1 leader + registered members count) when non-empty.
- * 2. Fall back to tournament.players_per_team (if > 0).
- * 3. Fall back to match_type (solo=1, duo=2, else 4).
+ * 2. Fall back to match_type (solo=1, duo=2, else 4).
  */
 export function computeSquadCapacity(registration, tournament) {
   const members = parseRosterMembers(registration?.members);
   if (members.length > 0) {
     return 1 + members.length;
-  }
-  const ppt = parseInt(tournament?.players_per_team, 10);
-  if (Number.isFinite(ppt) && ppt > 0) {
-    return ppt;
   }
   const matchType = String(tournament?.match_type || '').trim().toLowerCase();
   if (matchType === 'solo') return 1;

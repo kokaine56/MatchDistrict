@@ -412,7 +412,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
           <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col items-center justify-center min-w-[120px]">
             <Users className="w-6 h-6 text-gray-400 mb-2" />
             <div className="text-2xl font-black text-white">
-              {Math.max(1, members.length)} <span className="text-gray-500 text-lg">/ {maxTeamSize}</span>
+              {Math.max(1, members.length)} <span className="text-gray-500 text-lg">/ {squad?.capacity || maxTeamSize}</span>
             </div>
             <div className="text-xs text-gray-500 font-semibold uppercase mt-1">Members</div>
           </div>
@@ -473,7 +473,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
               <div>
                 <h3 className="text-emerald-400 font-bold text-lg mb-1">TEAM COMPLETE</h3>
                 <p className="text-emerald-500/80 text-sm">
-                  All {maxTeamSize} / {maxTeamSize} members have joined. Your team is now ready for the next verification and tournament allocation stage.
+                  All {squad?.capacity || maxTeamSize} / {squad?.capacity || maxTeamSize} members have joined. Your team is now ready for the next verification and tournament allocation stage.
                 </p>
               </div>
             </div>

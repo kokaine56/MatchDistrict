@@ -242,7 +242,12 @@ export default function AdminPayments() {
       <div className="max-w-6xl mx-auto px-4 py-6 sm:py-10 space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="font-headline-lg text-lg sm:text-xl font-black text-on-background">Payment Verification</h1>
+            <div className="flex items-center gap-2.5">
+              <h1 className="font-headline-lg text-lg sm:text-xl font-black text-on-background">Payment Verification</h1>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                {pendingRegs.length} Pending
+              </span>
+            </div>
             <p className="font-body-sm text-[11px] text-on-surface-variant">Review pending payments and auto-verified registrations</p>
           </div>
           <div className="flex items-center gap-2">
@@ -394,7 +399,7 @@ export default function AdminPayments() {
                                                         <span className="material-symbols-outlined text-xs">image</span> View
                                                       </button>
                                                     ) : (
-                                                      <span className="text-[10px] text-on-surface-variant">—</span>
+                                                      <span className="text-[10px] text-amber-400/80 font-medium italic">No screenshot yet</span>
                                                     )}
                                                   </td>
                                                   <td className="px-4 py-2.5 text-right">
