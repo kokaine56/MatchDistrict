@@ -105,6 +105,9 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBanner" TEXT DEFAULT '';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgBio" TEXT DEFAULT '';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgImage" TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC(10, 2) DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS early_access BOOLEAN DEFAULT FALSE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_secret VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_activated BOOLEAN DEFAULT false;
 
@@ -154,9 +157,36 @@ export async function runSchemaMigrations(clientOrPool) {
 
       CREATE TABLE IF NOT EXISTS payment_verifications (
         id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50),
+        plan_name VARCHAR(100),
+        billing_cycle VARCHAR(50),
+        amount NUMERIC(10, 2),
+        transaction_id VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'pending',
+        admin_id VARCHAR(50),
+        rejection_reason TEXT,
+        reviewed_at TIMESTAMPTZ,
+        payment_screenshot_url TEXT,
+        payment_notes TEXT,
         utr_ref VARCHAR(255),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS user_id VARCHAR(50);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS plan_name VARCHAR(100);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(50);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS admin_id VARCHAR(50);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS payment_notes TEXT;
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
       CREATE TABLE IF NOT EXISTS payment_sms_verifications (
         id VARCHAR(50) PRIMARY KEY,
@@ -199,6 +229,15 @@ export async function runSchemaMigrations(clientOrPool) {
         value TEXT,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      CREATE TABLE IF NOT EXISTS organiser_followers (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        organiser_id VARCHAR(50) NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS organiser_id VARCHAR(50);
+      ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
     `);
 
     // 2. Organizer apps, plans, and subscriptions
@@ -263,8 +302,10 @@ export async function runSchemaMigrations(clientOrPool) {
         plan_id VARCHAR(50),
         billing_status VARCHAR(50) DEFAULT 'active',
         plan_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        plan_expiration TIMESTAMP
+        plan_expiration TIMESTAMP,
+        created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 
       CREATE TABLE IF NOT EXISTS plan_upgrade_requests (
         id VARCHAR(50) PRIMARY KEY,
@@ -321,6 +362,7 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS perspective VARCHAR(10) DEFAULT 'tpp';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS reserved_slots INTEGER DEFAULT 0;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS entry_fee_amount INTEGER DEFAULT 0;
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "entryFee" VARCHAR(100);
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_pool_type VARCHAR(20) DEFAULT 'fixed';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_pool_amount INTEGER DEFAULT 0;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_split_1st VARCHAR(50) DEFAULT '';

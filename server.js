@@ -65,6 +65,7 @@ import {
   parseDisplayLimit,
 } from './server/tournamentPromotion.js';
 import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
+import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -377,6 +378,29 @@ async function initDb() {
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgName" VARCHAR(255);
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS org_id VARCHAR(50);
         ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS org_name VARCHAR(255);
+
+        -- 9. Full column audit additive migrations (idempotent)
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgImage" TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC(10, 2) DEFAULT 0;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS early_access BOOLEAN DEFAULT FALSE;
+        ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "entryFee" VARCHAR(100);
+        ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS organiser_id VARCHAR(50);
+        ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS user_id VARCHAR(50);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS plan_name VARCHAR(100);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(50);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(255);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending';
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS admin_id VARCHAR(50);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS payment_screenshot_url TEXT;
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS payment_notes TEXT;
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
       `);
       console.log('📦 [MATCH DISTRICT DB] Roadmap & progression schema migrations applied.');
     } catch (migErr) {
@@ -1034,7 +1058,7 @@ function withTournamentDisplay(r) {
   } catch { /* malformed sponsor JSON is treated as no sponsors */ }
   const basePrize = parseInt(r.prize_pool_amount) || 0;
   const totalPrize = basePrize + sponsorRevenue;
-  return {
+  const sanitized = {
     ...r,
     timeline: sanitizeTimelineForUser(r.timeline),
     cover_image_url: r.cover_image_url || '',
@@ -1051,6 +1075,9 @@ function withTournamentDisplay(r) {
       return 'TBD';
     })(),
   };
+  delete sanitized.roomID;
+  delete sanitized.roomPassword;
+  return sanitized;
 }
 
 // Reads the centrally configured promoted-section display limit.
@@ -2741,8 +2768,8 @@ const server = http.createServer(async (req, res) => {
           orgHandle: row.orgHandle || row.gamerTag || `@${(row.name || 'org').toLowerCase().replace(/\s+/g, '')}`,
           orgImage: row.orgImage || row.avatar,
           orgMotto: row.orgMotto || '',
-          email: row.email,
-          phone: row.phone,
+          email: maskUserEmail(row.email),
+          phone: undefined,
           avatar: row.avatar,
           banner: row.banner,
           tier: row.tier || 'Free',
@@ -3487,6 +3514,10 @@ const server = http.createServer(async (req, res) => {
       row.hasApprovedSponsors = hasApprovedSponsors;
       row.basePrize = parseInt(row.prize_pool_amount) || 0;
       row.totalPrize = row.basePrize + sponsorRevenue;
+      if (!detailOwner) {
+        delete row.roomID;
+        delete row.roomPassword;
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, tournament: row }));
     } catch (err) {
@@ -7306,6 +7337,7 @@ const server = http.createServer(async (req, res) => {
         `, [tId, authUser.id]);
       }
 
+      const warnings = [];
       let members = [];
       let assignments = [];
       let groupStandings = [];
@@ -7316,129 +7348,172 @@ const server = http.createServer(async (req, res) => {
         const team = teamRes.rows[0];
         const teamId = team.id;
 
-        const membersRes = await pool.query(`
-          SELECT m.id, m.user_id, m.role, m.roster_slot, m.joined_at AS created_at, u.name, u.display_name, u.avatar
-          FROM tournament_team_members m
-          JOIN users u ON m.user_id = u.id
-          WHERE m.tournament_team_id = $1
-          ORDER BY m.roster_slot ASC NULLS LAST, m.joined_at ASC
-        `, [teamId]);
-        members = membersRes.rows;
-
-        // Fetch registration for roster slots & stage calculation
-        let regRes = null;
-        if (team.registration_id) {
-          regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [team.registration_id]);
-        }
-        if (!regRes || regRes.rows.length === 0) {
-          regRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [tId, team.leader_user_id]);
-        }
-        registration = regRes?.rows[0] || null;
-
-        const capacity = computeSquadCapacity(registration, tournament);
-        const parsedSlots = parseRosterSlots(registration, tournament);
-        const claimedSlotsMap = new Map();
-        for (const m of members) {
-          if (m.roster_slot !== null && m.roster_slot !== undefined) {
-            claimedSlotsMap.set(m.roster_slot, m);
-          }
-        }
-
-        const slotsWithStatus = parsedSlots.map((s) => {
-          const linkedMember = claimedSlotsMap.get(s.slot);
-          return {
-            slot: s.slot,
-            ign: s.ign,
-            role: s.role,
-            is_leader: s.is_leader,
-            linked: Boolean(linkedMember),
-            member: linkedMember ? {
-              id: linkedMember.id,
-              user_id: linkedMember.user_id,
-              name: linkedMember.display_name || linkedMember.name || 'Unknown',
-              avatar: linkedMember.avatar || null,
-              role: linkedMember.role,
-            } : null,
-          };
-        });
-
-        const isWaived = Boolean(team.squad_waived_by);
-        const stageInfo = computeRegistrationStage({
-          registrationStatus: registration?.status || 'approved',
-          capacity,
-          joinedCount: members.length,
-          isWaived,
-          teamStatus: team.status,
-        });
-
-        squadData = {
-          stage: stageInfo.stage,
-          label: stageInfo.label,
-          message: stageInfo.message,
-          isComplete: stageInfo.isComplete,
-          isWaived,
-          waivedReason: team.squad_waived_reason || null,
-          joined: members.length,
-          required: capacity,
-          capacity,
-          slots: slotsWithStatus,
-          unlinkedSlots: slotsWithStatus.filter((s) => !s.linked),
-          unlinkedCount: slotsWithStatus.filter((s) => !s.linked).length,
-        };
-
-        if (roadmapApproved) {
-          const assignRes = await pool.query(`
-            SELECT a.id, a.match_id, a.group_id, a.tournament_team_id, a.status,
-                   rnd.round_number, rnd.name as round_name,
-                   rnd.id as round_id,
-                   d.day_number, d.date as day_date,
-                   g.group_name,
-                   r.room_number,
-                   m.match_number, m.start_time, m.end_time
-            FROM tournament_match_assignments a
-            JOIN tournament_days d ON a.day_id = d.id
-            JOIN tournament_groups g ON a.group_id = g.id
-            JOIN tournament_rooms r ON a.room_id = r.id
-            JOIN tournament_matches m ON a.match_id = m.id
-            LEFT JOIN tournament_rounds rnd ON rnd.id = m.round_id AND rnd.tournament_id = a.tournament_id
-            WHERE a.tournament_team_id = $1 AND a.tournament_id = $2
-            ORDER BY rnd.round_number ASC NULLS LAST, d.day_number ASC, g.sequence ASC, m.match_number ASC
-          `, [teamId, tId]);
-          assignments = assignRes.rows;
-          const groupIdsByRound = new Map();
-          for (const assignment of assignments) {
-            if (!assignment.round_id || !assignment.group_id) continue;
-            const key = `${assignment.round_id}:${assignment.round_number}`;
-            if (!groupIdsByRound.has(key)) groupIdsByRound.set(key, new Map());
-            groupIdsByRound.get(key).set(assignment.group_id, assignment.group_name);
-          }
-          const roundScopes = [...groupIdsByRound.entries()];
-          const standingsByRound = await Promise.all(roundScopes.map(async ([key, groupIds]) => {
-            const [roundId, roundNumber] = key.split(':');
-            const standings = await getRoundStandings(pool, tId, roundId);
-            const teamIds = standings.map((row) => row.team_id);
-            let advancedTeamIds = new Set();
-            if (teamIds.length > 0) {
-              const nextAssignments = await pool.query(`
-                SELECT DISTINCT a.tournament_team_id AS team_id
-                FROM tournament_match_assignments a
-                JOIN tournament_matches m ON m.id = a.match_id AND m.tournament_id = $1
-                JOIN tournament_rounds next_round ON next_round.id = m.round_id
-                WHERE a.tournament_id = $1 AND next_round.round_number > $2
-              `, [tId, Number(roundNumber)]);
-              advancedTeamIds = new Set(nextAssignments.rows.map((row) => row.team_id));
-            }
-            return standings.flatMap((row) => [...groupIds].filter(([groupId]) =>
-              assignments.some((assignment) => assignment.group_id === groupId && assignment.round_id === roundId && assignment.tournament_team_id === row.team_id)
-            ).map(([groupId, groupName]) => ({
-              ...row,
-              group_id: groupId,
-              group_name: groupName,
-              round_number: Number(roundNumber),
-              advanced: advancedTeamIds.has(row.team_id),
-            })));
+        // 1. Team members with shared display name
+        try {
+          const membersRes = await pool.query(`
+            SELECT m.id, m.user_id, m.role, m.roster_slot, m.joined_at AS created_at,
+                   u.name, u."gamerTag", ${userDisplayNameSql('u')}, u.avatar
+            FROM tournament_team_members m
+            JOIN users u ON m.user_id = u.id
+            WHERE m.tournament_team_id = $1
+            ORDER BY m.roster_slot ASC NULLS LAST, m.joined_at ASC
+          `, [teamId]);
+          members = (membersRes.rows || []).map((m) => ({
+            ...m,
+            name: m.display_name || m.name || 'Player',
+            display_name: m.display_name || m.name || 'Player',
           }));
-          groupStandings = standingsByRound.flat();
+        } catch (membersErr) {
+          console.error('⚠️ [MY-TEAM] Failed to load team members:', membersErr.message);
+          warnings.push('Team members could not be fully loaded.');
+          members = [];
+        }
+
+        // 2. Fetch registration for roster slots & stage calculation
+        try {
+          let regRes = null;
+          if (team.registration_id) {
+            regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [team.registration_id]);
+          }
+          if (!regRes || regRes.rows.length === 0) {
+            regRes = await pool.query(
+              'SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1',
+              [tId, team.leader_user_id]
+            );
+          }
+          registration = regRes?.rows[0] || null;
+        } catch (regErr) {
+          console.warn('⚠️ [MY-TEAM] Registration lookup failed:', regErr.message);
+          warnings.push('Registration details could not be loaded.');
+          registration = null;
+        }
+
+        // 3. Compute squad capacity and roster slots
+        try {
+          const capacity = computeSquadCapacity(registration, tournament);
+          const parsedSlots = parseRosterSlots(registration, tournament);
+          const claimedSlotsMap = new Map();
+          for (const m of members) {
+            if (m.roster_slot !== null && m.roster_slot !== undefined) {
+              claimedSlotsMap.set(m.roster_slot, m);
+            }
+          }
+
+          const slotsWithStatus = parsedSlots.map((s) => {
+            const linkedMember = claimedSlotsMap.get(s.slot);
+            return {
+              slot: s.slot,
+              ign: s.ign,
+              role: s.role,
+              is_leader: s.is_leader,
+              linked: Boolean(linkedMember),
+              member: linkedMember ? {
+                id: linkedMember.id,
+                user_id: linkedMember.user_id,
+                name: linkedMember.display_name || linkedMember.name || 'Unknown',
+                avatar: linkedMember.avatar || null,
+                role: linkedMember.role,
+              } : null,
+            };
+          });
+
+          const isWaived = Boolean(team.squad_waived_by);
+          const stageInfo = computeRegistrationStage({
+            registrationStatus: registration?.status || 'approved',
+            capacity,
+            joinedCount: members.length,
+            isWaived,
+            teamStatus: team.status,
+          });
+
+          squadData = {
+            stage: stageInfo.stage,
+            label: stageInfo.label,
+            message: stageInfo.message,
+            isComplete: stageInfo.isComplete,
+            isWaived,
+            waivedReason: team.squad_waived_reason || null,
+            joined: members.length,
+            required: capacity,
+            capacity,
+            slots: slotsWithStatus,
+            unlinkedSlots: slotsWithStatus.filter((s) => !s.linked),
+            unlinkedCount: slotsWithStatus.filter((s) => !s.linked).length,
+          };
+        } catch (squadErr) {
+          console.warn('⚠️ [MY-TEAM] Squad calculation failed:', squadErr.message);
+          warnings.push('Squad status calculation failed.');
+        }
+
+        // 4. Roadmap assignments & group standings (fail-soft)
+        if (roadmapApproved) {
+          try {
+            const assignRes = await pool.query(`
+              SELECT a.id, a.match_id, a.group_id, a.tournament_team_id, a.status,
+                     rnd.round_number, rnd.name as round_name,
+                     rnd.id as round_id,
+                     d.day_number, d."date" as day_date,
+                     g.group_name,
+                     r.room_number,
+                     m.match_number, m.start_time, m.end_time
+              FROM tournament_match_assignments a
+              JOIN tournament_days d ON a.day_id = d.id
+              JOIN tournament_groups g ON a.group_id = g.id
+              JOIN tournament_rooms r ON a.room_id = r.id
+              JOIN tournament_matches m ON a.match_id = m.id
+              LEFT JOIN tournament_rounds rnd ON rnd.id = m.round_id AND rnd.tournament_id = a.tournament_id
+              WHERE a.tournament_team_id = $1 AND a.tournament_id = $2
+              ORDER BY rnd.round_number ASC NULLS LAST, d.day_number ASC, g.sequence ASC, m.match_number ASC
+            `, [teamId, tId]);
+            assignments = assignRes.rows || [];
+          } catch (assignErr) {
+            console.warn('⚠️ [MY-TEAM] Assignments query soft-failed:', assignErr.message);
+            warnings.push('Match assignments could not be loaded.');
+            assignments = [];
+          }
+
+          if (assignments.length > 0) {
+            try {
+              const groupIdsByRound = new Map();
+              for (const assignment of assignments) {
+                if (!assignment.round_id || !assignment.group_id) continue;
+                const key = `${assignment.round_id}:${assignment.round_number}`;
+                if (!groupIdsByRound.has(key)) groupIdsByRound.set(key, new Map());
+                groupIdsByRound.get(key).set(assignment.group_id, assignment.group_name);
+              }
+              const roundScopes = [...groupIdsByRound.entries()];
+              const standingsByRound = await Promise.all(roundScopes.map(async ([key, groupIds]) => {
+                const [roundId, roundNumber] = key.split(':');
+                const standings = await getRoundStandings(pool, tId, roundId);
+                const teamIds = standings.map((row) => row.team_id);
+                let advancedTeamIds = new Set();
+                if (teamIds.length > 0) {
+                  const nextAssignments = await pool.query(`
+                    SELECT DISTINCT a.tournament_team_id AS team_id
+                    FROM tournament_match_assignments a
+                    JOIN tournament_matches m ON m.id = a.match_id AND m.tournament_id = $1
+                    JOIN tournament_rounds next_round ON next_round.id = m.round_id
+                    WHERE a.tournament_id = $1 AND next_round.round_number > $2
+                  `, [tId, Number(roundNumber)]);
+                  advancedTeamIds = new Set(nextAssignments.rows.map((row) => row.team_id));
+                }
+                return standings.flatMap((row) => [...groupIds].filter(([groupId]) =>
+                  assignments.some((assignment) => assignment.group_id === groupId && assignment.round_id === roundId && assignment.tournament_team_id === row.team_id)
+                ).map(([groupId, groupName]) => ({
+                  ...row,
+                  group_id: groupId,
+                  group_name: groupName,
+                  round_number: Number(roundNumber),
+                  advanced: advancedTeamIds.has(row.team_id),
+                })));
+              }));
+              groupStandings = standingsByRound.flat();
+            } catch (standingsErr) {
+              console.warn('⚠️ [MY-TEAM] Standings query soft-failed:', standingsErr.message);
+              warnings.push('Group standings could not be loaded.');
+              groupStandings = [];
+            }
+          }
         }
       }
 
@@ -7456,10 +7531,18 @@ const server = http.createServer(async (req, res) => {
           status: registration.status,
         } : null,
         squad: squadData,
+        partial: warnings.length > 0,
+        warnings: warnings.length > 0 ? warnings : undefined,
       }));
     } catch (err) {
+      console.error('❌ [MY-TEAM] Server error loading team data:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({
+        success: false,
+        error: 'FAILED_TO_LOAD_TEAM',
+        message: 'Unable to load team data right now. Please try again.',
+        canRetry: true
+      }));
     }
     return;
   }
@@ -7822,8 +7905,8 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, status: 'full', message: 'Team is full.' }));
       }
 
-      const leaderRes = await pool.query('SELECT name, display_name FROM users WHERE id = $1', [team.leader_user_id]);
-      const leaderDisplayName = leaderRes.rows[0]?.display_name || leaderRes.rows[0]?.name || 'Team Leader';
+      const leaderRes = await pool.query(`SELECT name, "gamerTag", ${userDisplayNameSql('')} FROM users WHERE id = $1`, [team.leader_user_id]);
+      const leaderDisplayName = leaderRes.rows[0]?.display_name || formatUserDisplayName(leaderRes.rows[0]) || 'Team Leader';
 
       // Parse roster slots and list unlinked slots by IGN display name only (A8: no UIDs, emails, or phone numbers)
       const parsedSlots = parseRosterSlots(registration, tournament);
@@ -8670,7 +8753,7 @@ const server = http.createServer(async (req, res) => {
       const teamsRes = await pool.query(`
         SELECT t.id, t.team_name, t.status, t.created_at, u.name as leader_name,
                a.match_id, a.room_id, a.group_id, a.day_id, a.assigned_at, a.source,
-               r.room_number, m.match_number, g.group_name, d.day_number, d.date
+               r.room_number, m.match_number, g.group_name, d.day_number, d."date"
         FROM tournament_teams t
         LEFT JOIN users u ON t.leader_user_id = u.id
         LEFT JOIN tournament_match_assignments a ON t.id = a.tournament_team_id
@@ -9041,7 +9124,7 @@ const server = http.createServer(async (req, res) => {
 
       // A3: LEFT JOIN prevents 404 when match day_id is NULL
       const mRes = await pool.query(`
-        SELECT m.start_time, m.room_identifier, m.room_password, d.date 
+        SELECT m.start_time, m.room_identifier, m.room_password, d."date" 
         FROM tournament_matches m
         LEFT JOIN tournament_days d ON m.day_id = d.id
         WHERE m.id = $1 AND m.tournament_id = $2
@@ -13247,7 +13330,7 @@ const server = http.createServer(async (req, res) => {
         SELECT s.*, u.name as user_name, u.email as user_email, u.tier, u.status as user_status
         FROM subscriptions s
         JOIN users u ON u.id = s.organizer_id
-        ORDER BY s.created_at DESC
+        ORDER BY COALESCE(s.created_at, s.plan_start_date) DESC
       `);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -13449,7 +13532,7 @@ const server = http.createServer(async (req, res) => {
         SELECT s.*, u.name as user_name, u.email as user_email, u.tier, u.status as user_status
         FROM subscriptions s
         JOIN users u ON u.id = s.organizer_id
-        ORDER BY s.created_at DESC
+        ORDER BY COALESCE(s.created_at, s.plan_start_date) DESC
       `);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -14995,7 +15078,7 @@ const server = http.createServer(async (req, res) => {
       }
       const [tourneyRes, slotRes, orgRes, avgRes, staffRes, analyticsRes] = await Promise.all([
         pool.query('SELECT COUNT(*) as total FROM tournaments'),
-        pool.query('SELECT COALESCE(SUM(slotsFilled), 0) as total FROM tournaments'),
+        pool.query('SELECT COALESCE(SUM("slotsFilled"), 0) as total FROM tournaments'),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE 'organiser' = ANY(roles)`),
         pool.query(`SELECT COALESCE(AVG(tournament_count), 0) as avg FROM (SELECT COUNT(*) as tournament_count FROM tournaments GROUP BY "orgId") sub`),
         pool.query('SELECT COUNT(*) as total FROM staff_members'),
@@ -15479,7 +15562,8 @@ const server = http.createServer(async (req, res) => {
       const prevCount = parseInt(prevGrowthRes.rows[0].cnt);
       const participantGrowth = prevCount > 0 ? Math.round(((currentCount - prevCount) / prevCount) * 100) : currentCount > 0 ? 100 : 0;
       const revenueRes = await pool.query(
-        `SELECT SUM(CAST(t."slotsFilled" AS INTEGER) * CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER)) as revenue FROM tournaments t WHERE t."orgId" = $1`,
+        `SELECT COALESCE(SUM(CAST(COALESCE(t."slotsFilled", 0) AS INTEGER) * CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER)), 0) as revenue
+         FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1)`,
         [user.id]
       );
       const revenue = parseInt(revenueRes.rows[0]?.revenue) || 0;
@@ -15521,8 +15605,8 @@ const server = http.createServer(async (req, res) => {
 
       // Total revenue from entry fees
       const tourneyRes = await pool.query(
-        `SELECT id, title, "entryFee", "slotsFilled", prize_pool, created_at 
-         FROM tournaments WHERE "orgId" = $1 ORDER BY created_at DESC`,
+        `SELECT id, title, entry_fee_amount, entry, "slotsFilled", prize_pool_amount, created_at 
+         FROM tournaments WHERE ("orgId" = $1 OR org_id = $1) ORDER BY created_at DESC`,
         [user.id]
       );
       const tournaments = tourneyRes.rows;
@@ -15530,7 +15614,7 @@ const server = http.createServer(async (req, res) => {
       let registrationRevenue = 0;
       const monthlyRevenue = {};
       for (const t of tournaments) {
-        const entryFee = parseInt(String(t.entryFee || t.entry || '0').replace(/[^0-9]/g, '')) || 0;
+        const entryFee = parseInt(t.entry_fee_amount) || parseInt(String(t.entry || '0').replace(/[^0-9]/g, '')) || 0;
         const filled = parseInt(t.slotsFilled) || 0;
         const rev = entryFee * filled;
         totalRevenue += rev;
@@ -15727,18 +15811,18 @@ const server = http.createServer(async (req, res) => {
 
       // Tournament revenue (entry fees * slots filled)
       const tRevRes = await pool.query(
-        `SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER) * CAST("slotsFilled" AS INTEGER)), 0) as revenue
-         FROM tournaments t WHERE t."orgId" = $1 AND t."isDraft" = false`,
+        `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(t."slotsFilled", 0) AS INTEGER)), 0) as revenue
+         FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)`,
         [userId]
       );
       const tournamentRevenue = parseFloat(tRevRes.rows[0].revenue) || 0;
 
       // Registration revenue (from paid registrations)
       const regRevRes = await pool.query(
-        `SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER)), 0) as revenue
+        `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER)), 0) as revenue
          FROM tournament_registrations tr
          JOIN tournaments t ON t.id = tr.tournament_id
-         WHERE t."orgId" = $1 AND tr.status = 'approved'`,
+         WHERE (t."orgId" = $1 OR t.org_id = $1) AND tr.status = 'approved'`,
         [userId]
       );
       const registrationRevenue = parseFloat(regRevRes.rows[0].revenue) || 0;
@@ -15752,8 +15836,8 @@ const server = http.createServer(async (req, res) => {
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
         const revRes = await pool.query(
-          `SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(t."entryFee", ''), '0') AS INTEGER) * CAST("slotsFilled" AS INTEGER)), 0) as rev
-           FROM tournaments t WHERE t."orgId" = $1 AND t."isDraft" = false
+          `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(t."slotsFilled", 0) AS INTEGER)), 0) as rev
+           FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)
            AND EXTRACT(YEAR FROM t.created_at) = $2 AND EXTRACT(MONTH FROM t.created_at) = $3`,
           [userId, year, month]
         );

@@ -15,6 +15,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
   const [assignments, setAssignments] = useState([]);
   const [groupStandings, setGroupStandings] = useState([]);
   const [error, setError] = useState(null);
+  const [warnings, setWarnings] = useState([]);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState(null);
   
@@ -49,6 +50,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
       setSquad(data.squad || null);
       setAssignments(data.assignments || []);
       setGroupStandings(data.groupStandings || []);
+      setWarnings(data.warnings || []);
       if (data.team) {
         fetchInvitation(data.team.id);
       }
@@ -292,16 +294,17 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
 
   if (error) {
     return (
-      <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-6 rounded-2xl flex items-start gap-4">
+      <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 p-6 rounded-2xl flex items-start gap-4 max-w-xl mx-auto shadow-xl">
         <AlertCircle className="w-6 h-6 flex-shrink-0 mt-0.5" />
-        <div>
-          <h3 className="font-bold text-rose-500 text-lg mb-1">Failed to load team data</h3>
-          <p>{error}</p>
+        <div className="flex-1">
+          <h3 className="font-bold text-rose-400 text-lg mb-1">Failed to load team data</h3>
+          <p className="text-gray-300 text-sm leading-relaxed mb-4">{error}</p>
           <button 
             onClick={fetchMyTeam}
-            className="mt-4 px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 rounded-lg transition-colors font-medium text-sm"
+            className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-lg transition-colors font-medium text-sm inline-flex items-center gap-2"
           >
-            Try Again
+            <RefreshCw className="w-4 h-4" />
+            Retry
           </button>
         </div>
       </div>
@@ -387,6 +390,22 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
   return (
     <>
       <div className="space-y-6 max-w-4xl mx-auto pb-12">
+      {/* Partial warning banner */}
+      {warnings.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-300 px-4 py-3 rounded-xl flex items-center justify-between text-sm shadow-md">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span>Some team details were partially loaded: {warnings.join(', ')}</span>
+          </div>
+          <button
+            onClick={fetchMyTeam}
+            className="text-xs font-semibold px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 rounded-md transition-colors flex items-center gap-1.5 ml-4"
+          >
+            <RefreshCw className="w-3 h-3" /> Retry
+          </button>
+        </div>
+      )}
+
       {/* Header Card */}
       <div className="bg-[#0A0B10] border border-white/10 rounded-2xl p-6 relative overflow-hidden">
         {/* Decorative background element */}

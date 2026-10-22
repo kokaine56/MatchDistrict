@@ -1,0 +1,101 @@
+table_name,column_name,data_type
+admin_action_log,id,character varying
+admin_action_log,admin_id,character varying
+admin_action_log,action_type,character varying
+admin_action_log,target_type,character varying
+admin_action_log,target_id,character varying
+admin_action_log,details,text
+admin_action_log,created_at,timestamp without time zone
+alerts,id,character varying
+alerts,user_id,character varying
+alerts,title,character varying
+alerts,message,text
+alerts,is_read,boolean
+alerts,tournament_id,character varying
+alerts,created_at,timestamp without time zone
+analytics_events,id,character varying
+analytics_events,organizer_id,character varying
+analytics_events,event_type,character varying
+analytics_events,event_data,text
+analytics_events,tournament_id,character varying
+analytics_events,created_at,timestamp without time zone
+api_keys,id,character varying
+api_keys,organizer_id,character varying
+api_keys,key_prefix,character varying
+api_keys,key_hash,character varying
+api_keys,name,character varying
+api_keys,permissions,text
+api_keys,usage_count,integer
+api_keys,last_used_at,timestamp without time zone
+api_keys,status,character varying
+api_keys,created_at,timestamp without time zone
+api_keys,revoked_at,timestamp without time zone
+automation_rules,id,character varying
+automation_rules,organizer_id,character varying
+automation_rules,name,character varying
+automation_rules,trigger_event,character varying
+automation_rules,action_type,character varying
+automation_rules,action_config,text
+automation_rules,is_active,boolean
+automation_rules,last_run_at,timestamp without time zone
+automation_rules,created_at,timestamp without time zone
+billing_history,id,character varying
+billing_history,organizer_id,character varying
+billing_history,plan_name,character varying
+billing_history,billing_cycle,character varying
+billing_history,amount,integer
+billing_history,status,character varying
+billing_history,invoice_url,character varying
+billing_history,created_at,timestamp without time zone
+custom_links,id,character varying
+custom_links,organizer_id,character varying
+custom_links,tournament_id,character varying
+custom_links,slug,character varying
+custom_links,link_type,character varying
+custom_links,is_active,boolean
+custom_links,visit_count,integer
+custom_links,created_at,timestamp without time zone
+custom_registration_forms,id,character varying
+custom_registration_forms,organizer_id,character varying
+custom_registration_forms,tournament_id,character varying
+custom_registration_forms,form_schema,text
+custom_registration_forms,is_active,boolean
+custom_registration_forms,created_at,timestamp without time zone
+custom_registration_forms,updated_at,timestamp without time zone
+custom_subdomains,id,character varying
+custom_subdomains,organizer_id,character varying
+custom_subdomains,subdomain,character varying
+custom_subdomains,ssl_status,character varying
+custom_subdomains,cname_verified,boolean
+custom_subdomains,created_at,timestamp without time zone
+export_usage_log,id,character varying
+export_usage_log,organizer_id,character varying
+export_usage_log,tournament_id,character varying
+export_usage_log,export_type,character varying
+export_usage_log,format,character varying
+export_usage_log,created_at,timestamp without time zone
+feature_flags,id,character varying
+feature_flags,flag_key,character varying
+feature_flags,flag_label,character varying
+feature_flags,description,text
+feature_flags,enabled,boolean
+feature_flags,target_tier,character varying
+feature_flags,created_at,timestamp without time zone
+feature_flags,updated_at,timestamp without time zone
+games,id,character varying
+games,name,character varying
+games,icon,character varying
+games,active,boolean
+games,sort_order,integer
+games,created_at,timestamp without time zone
+monitoring_settings,key,character varying
+monitoring_settings,value,text
+monitoring_settings,updated_at,timestamp without time zone
+notifications,id,character varying
+notifications,user_id,character varying
+notifications,title,character varying
+notifications,message,text
+notifications,is_read,boolean
+notifications,created_at,timestamp with time zone
+organiser_followers,id,character varying
+organiser_followers,user_id,character varying
