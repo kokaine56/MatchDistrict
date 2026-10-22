@@ -79,12 +79,121 @@ function sanitizeImageUrlForDb(value) {
   return trimmed;
 }
 
+/**
+ * PAY-002 / SENS-009: Strict allow-list validation for payment proof / screenshot URLs.
+ * Requires https: and strictly matches trusted storage domains (Cloudinary or Supabase).
+ * Rejects javascript:, data:, http:, internal IP addresses, and unknown domains.
+ */
+function isAllowedStorageUrl(urlString) {
+  if (!urlString || typeof urlString !== 'string') return false;
+  const trimmed = urlString.trim();
+  if (trimmed.length > 2048) return false;
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+
+  const hostname = (parsed.hostname || '').toLowerCase();
+  
+  // Reject private/internal/loopback addresses
+  if (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '::1' ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal') ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname) ||
+    /^169\.254\./.test(hostname)
+  ) {
+    return false;
+  }
+
+  // Allowed storage hosts: Cloudinary or Supabase Storage
+  if (hostname === 'res.cloudinary.com' || hostname.endsWith('.cloudinary.com')) {
+    return true;
+  }
+
+  if (hostname.endsWith('.supabase.co') || hostname.endsWith('.supabase.in')) {
+    return true;
+  }
+
+  if (process.env.SUPABASE_URL) {
+    try {
+      const supaHost = new URL(process.env.SUPABASE_URL).hostname.toLowerCase();
+      if (hostname === supaHost) return true;
+    } catch {}
+  }
+
+  return false;
+}
+
+/**
+ * SEC-004: Validates real file content using magic byte inspection.
+ * Allowed formats: JPEG, PNG, GIF, WEBP.
+ */
+function isValidImageBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return false;
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return true;
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4E &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0D &&
+    buffer[5] === 0x0A &&
+    buffer[6] === 0x1A &&
+    buffer[7] === 0x0A
+  ) {
+    return true;
+  }
+
+  // GIF: GIF87a or GIF89a (47 49 46 38 37/39 61)
+  if (
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38 &&
+    (buffer[4] === 0x37 || buffer[4] === 0x39) &&
+    buffer[5] === 0x61
+  ) {
+    return true;
+  }
+
+  // WEBP: RIFF....WEBP (52 49 46 46 .... 57 45 42 50)
+  if (
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function publicUserRow(row) {
   if (!row) return null;
   const user = { ...row };
   delete user.password;
+  delete user.admin_totp_secret;
+  delete user.admin_totp_activated;
+  delete user.kycDoc;
+  user.display_name = formatUserDisplayName(user);
   user.avatar = sanitizeImageUrlForDb(user.avatar);
   user.banner = sanitizeImageUrlForDb(user.banner);
+  user.orgImage = sanitizeImageUrlForDb(user.orgImage);
+  user.orgBanner = sanitizeImageUrlForDb(user.orgBanner);
   return user;
 }
 
@@ -174,10 +283,15 @@ if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
   process.exit(1);
 }
 
+if (process.env.ADMIN_PASSWORD === '101010') {
+  console.error("❌ CRITICAL: ADMIN_PASSWORD is set to the known insecure default ('101010'). Set a strong, unique ADMIN_PASSWORD in your environment before starting.");
+  process.exit(1);
+}
+
 const DATABASE_URL = process.env.DATABASE_URL;
 const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error("❌ CRITICAL: JWT_SECRET environment variable is missing.");
+if (!JWT_SECRET || JWT_SECRET === 'matchdistrict_super_secure_jwt_secret_key_2026') {
+  console.error("❌ CRITICAL: JWT_SECRET environment variable is missing or set to the insecure default. Set a strong, unique JWT_SECRET in your environment before starting.");
   process.exit(1);
 }
 
@@ -1172,19 +1286,26 @@ const UNIQUE_AMOUNT_SUFFIX_RANGE = 99;         // max paisa suffix (0.01–0.99)
 // Keyed by device_id. Each entry = { count, windowStart }.
 const rateLimitMap = new Map();
 
-function checkRateLimit(deviceKey) {
+function checkRateLimit(key, maxRequests, windowMs) {
+  const isMultiParam = maxRequests !== undefined;
+  const limit = maxRequests !== undefined ? maxRequests : PAYMENT_VERIFY_RATE_LIMIT;
+  const window = windowMs !== undefined ? windowMs : PAYMENT_VERIFY_RATE_WINDOW_MS;
   const now = Date.now();
-  const entry = rateLimitMap.get(deviceKey);
-  if (!entry || now - entry.windowStart > PAYMENT_VERIFY_RATE_WINDOW_MS) {
-    rateLimitMap.set(deviceKey, { count: 1, windowStart: now });
-    return { allowed: true, remaining: PAYMENT_VERIFY_RATE_LIMIT - 1, retryAfter: 0 };
+  let entry = rateLimitMap.get(key);
+  if (!entry || now - entry.windowStart > window) {
+    entry = { count: 1, windowStart: now };
+    rateLimitMap.set(key, entry);
+    if (isMultiParam) return true;
+    return { allowed: true, remaining: limit - 1, retryAfter: 0 };
   }
   entry.count++;
-  if (entry.count > PAYMENT_VERIFY_RATE_LIMIT) {
-    const retryAfter = Math.ceil((entry.windowStart + PAYMENT_VERIFY_RATE_WINDOW_MS - now) / 1000);
+  if (entry.count > limit) {
+    if (isMultiParam) return false;
+    const retryAfter = Math.ceil((entry.windowStart + window - now) / 1000);
     return { allowed: false, remaining: 0, retryAfter };
   }
-  return { allowed: true, remaining: PAYMENT_VERIFY_RATE_LIMIT - entry.count, retryAfter: 0 };
+  if (isMultiParam) return true;
+  return { allowed: true, remaining: limit - entry.count, retryAfter: 0 };
 }
 
 // Periodic cleanup of stale rate-limit entries (every 5 min)
@@ -1245,11 +1366,41 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- SECURE MEDIA PROXY ---
+  // --- SECURE MEDIA PROXY (SEC-003 / SEC-004) ---
   if (urlPath === '/api/media/upload' && req.method === 'POST') {
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required to upload media.' }));
+      return;
+    }
+
+    if (!checkRateLimit(`upload:${authUser.id}`, 15, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many uploads. Please wait a minute and try again.' }));
+      return;
+    }
+
+    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB hard limit
     let body = '';
-    req.on('data', chunk => { body += chunk.toString(); });
+    let size = 0;
+    let aborted = false;
+
+    req.on('data', chunk => {
+      if (aborted) return;
+      size += chunk.length;
+      if (size > MAX_UPLOAD_BYTES) {
+        aborted = true;
+        req.destroy();
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Upload size exceeds maximum allowed limit (5 MB).' }));
+        return;
+      }
+      body += chunk.toString();
+    });
+
     req.on('end', async () => {
+      if (aborted) return;
       try {
         if (!CLOUDINARY_CLOUD_NAME) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1257,10 +1408,42 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const data = JSON.parse(body);
-        if (!data.file) {
+        let data;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Malformed JSON payload.' }));
+          return;
+        }
+
+        if (!data || !data.file || typeof data.file !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'No file data provided' }));
+          return;
+        }
+
+        // Validate real image magic bytes (PNG, JPEG, GIF, WEBP)
+        const base64Marker = 'base64,';
+        const markerIdx = data.file.indexOf(base64Marker);
+        let rawBuffer = null;
+        if (markerIdx !== -1) {
+          try {
+            rawBuffer = Buffer.from(data.file.slice(markerIdx + base64Marker.length), 'base64');
+          } catch {
+            rawBuffer = null;
+          }
+        } else if (!data.file.startsWith('http://') && !data.file.startsWith('https://')) {
+          try {
+            rawBuffer = Buffer.from(data.file, 'base64');
+          } catch {
+            rawBuffer = null;
+          }
+        }
+
+        if (rawBuffer && !isValidImageBuffer(rawBuffer)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_IMAGE_TYPE', message: 'Invalid image format. Allowed formats: PNG, JPEG, GIF, WEBP.' }));
           return;
         }
 
@@ -1568,7 +1751,7 @@ const server = http.createServer(async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (email)
            DO UPDATE SET name = $2, password = $3, "gamerTag" = $4, role = $5, expires_at = $6, created_at = CURRENT_TIMESTAMP`,
-          [userData.email, userData.name || '', hashedPassword, userData.gamerTag || '', userData.role || 'player', expiresAt]
+          [userData.email, userData.name || '', hashedPassword, userData.gamerTag || '', 'player', expiresAt]
         );
 
         console.log(`📦 [MATCH DISTRICT TEMP REGISTER] Temporary registration details saved for: ${userData.email}`);
@@ -1648,7 +1831,8 @@ const server = http.createServer(async (req, res) => {
           userUUID = 'USR-' + crypto.randomBytes(12).toString('hex');
         }
 
-        const defaultRole = tempUser.role || 'player';
+        const defaultRole = 'player';
+        const defaultRoles = ['user'];
         const defaultStatus = 'Active';
         const defaultGamerTag = tempUser.gamerTag || ('@' + (tempUser.name || tempUser.email.split('@')[0]).toLowerCase().replace(/\s+/g, '_'));
 
@@ -1665,7 +1849,7 @@ const server = http.createServer(async (req, res) => {
               tempUser.password, // Store hashed password from tempUser
               defaultGamerTag,
               defaultRole,
-              ['user'],
+              defaultRoles,
               'Amateur',
               'none',
               'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80',
@@ -2640,7 +2824,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 7b. Supabase Get All Users Service
+  // 7b. Supabase Get All Users Service (Admin-Only, Sanitized Projection)
   if (req.url === '/api/users' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
@@ -2650,9 +2834,25 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const dbRes = await pool.query('SELECT * FROM users ORDER BY created_at DESC');
+      const dbRes = await pool.query(`
+        SELECT id, uid, name, "gamerTag", email, phone, role, roles, tier, status,
+               avatar, banner, "orgName", "orgHandle", "orgApplicationStatus",
+               wallet_balance, created_at, ${userDisplayNameSql('users', 'display_name')}
+        FROM users
+        ORDER BY created_at DESC
+      `);
+      const users = (dbRes.rows || []).map(u => {
+        const safe = { ...u };
+        delete safe.password;
+        delete safe.admin_totp_secret;
+        delete safe.admin_totp_activated;
+        delete safe.kycDoc;
+        safe.avatar = sanitizeImageUrlForDb(safe.avatar);
+        safe.banner = sanitizeImageUrlForDb(safe.banner);
+        return safe;
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, users: dbRes.rows }));
+      res.end(JSON.stringify({ success: true, users }));
     } catch (err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Supabase fetch users failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -2894,6 +3094,13 @@ const server = http.createServer(async (req, res) => {
     if (parts.length === 4) {
       const userId = parts[3];
       try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+          return;
+        }
+
         const dbRes = await pool.query('SELECT * FROM users WHERE id = $1 OR uid = $1', [userId]);
         if (dbRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -2901,9 +3108,47 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const user = dbRes.rows[0];
-        delete user.password;
+        const isOwner = authUser.id === user.id || authUser.id === user.uid;
+        const isAdmin = hasRole(authUser, ROLES.ADMIN);
+
+        if (!isOwner && !isAdmin) {
+          // Public allow-list: other users only see public identity
+          const publicUser = {
+            id: user.id,
+            display_name: formatUserDisplayName(user),
+            gamerTag: user.gamerTag || '',
+            avatar: sanitizeImageUrlForDb(user.avatar),
+            banner: sanitizeImageUrlForDb(user.banner),
+            tier: user.tier || 'Amateur',
+            status: user.status || 'Active',
+            role: user.role || 'player',
+            orgName: user.orgName || '',
+            orgHandle: user.orgHandle || '',
+            orgImage: sanitizeImageUrlForDb(user.orgImage),
+            orgMotto: user.orgMotto || '',
+            orgBio: user.orgBio || '',
+            experience: user.experience || '',
+            socialLinks: user.socialLinks || null,
+          };
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, user: publicUser }));
+          return;
+        }
+
+        // Owner or Admin: full profile minus secrets
+        const safeUser = { ...user };
+        delete safeUser.password;
+        delete safeUser.admin_totp_secret;
+        delete safeUser.admin_totp_activated;
+        delete safeUser.kycDoc;
+        safeUser.display_name = formatUserDisplayName(safeUser);
+        safeUser.avatar = sanitizeImageUrlForDb(safeUser.avatar);
+        safeUser.banner = sanitizeImageUrlForDb(safeUser.banner);
+        safeUser.orgImage = sanitizeImageUrlForDb(safeUser.orgImage);
+        safeUser.orgBanner = sanitizeImageUrlForDb(safeUser.orgBanner);
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, user }));
+        res.end(JSON.stringify({ success: true, user: safeUser }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -3152,8 +3397,8 @@ const server = http.createServer(async (req, res) => {
             bannerUrl,
             gamertagLastChangedVal,
             emailLastChangedVal,
-            updateData.role,
-            updateData.role ? (
+            hasRole(authUserRecord, ROLES.ADMIN) ? updateData.role : undefined,
+            hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? (
               updateData.role === 'player' || updateData.role === 'user' ? ['user'] :
               updateData.role === 'organiser' ? ['user', 'organiser'] :
               updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
@@ -3514,10 +3759,9 @@ const server = http.createServer(async (req, res) => {
       row.hasApprovedSponsors = hasApprovedSponsors;
       row.basePrize = parseInt(row.prize_pool_amount) || 0;
       row.totalPrize = row.basePrize + sponsorRevenue;
-      if (!detailOwner) {
-        delete row.roomID;
-        delete row.roomPassword;
-      }
+      // Room credentials are strictly served via the dedicated credentials / lobby endpoint
+      delete row.roomID;
+      delete row.roomPassword;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, tournament: row }));
     } catch (err) {
@@ -4914,13 +5158,19 @@ const server = http.createServer(async (req, res) => {
         WHERE t."orgId" = $1
         ORDER BY t.created_at DESC
       `, [authUser.id]);
-      const tournaments = (dbRes.rows || []).map((r) => ({
-        ...r,
-        orgName: r.orgName || r.userOrgName || r.userName || 'Organizer',
-        orgLogo: r.orgLogo || r.userOrgImage || '',
-        registrationCount: parseInt(r.registrationCount) || 0,
-        sponsorRevenue: parseFloat(r.sponsorRevenue) || 0,
-      }));
+      const tournaments = (dbRes.rows || []).map((r) => {
+        const item = {
+          ...r,
+          timeline: sanitizeTimelineForUser(r.timeline, { isOwner: true }),
+          orgName: r.orgName || r.userOrgName || r.userName || 'Organizer',
+          orgLogo: r.orgLogo || r.userOrgImage || '',
+          registrationCount: parseInt(r.registrationCount) || 0,
+          sponsorRevenue: parseFloat(r.sponsorRevenue) || 0,
+        };
+        delete item.roomID;
+        delete item.roomPassword;
+        return item;
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, tournaments }));
     } catch (err) {
@@ -7183,36 +7433,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- RATE LIMITING HELPERS (A7) ---
-  const rateLimitBuckets = new Map();
-  function checkRateLimit(key, maxRequests = 20, windowMs = 60000) {
-    const now = Date.now();
-    let bucket = rateLimitBuckets.get(key);
-    if (!bucket || now - bucket.start > windowMs) {
-      bucket = { start: now, count: 1 };
-      rateLimitBuckets.set(key, bucket);
-      return true;
-    }
-    if (bucket.count >= maxRequests) {
-      return false;
-    }
-    bucket.count++;
-    return true;
-  }
-
   function getClientIp(req) {
     const forwarded = req.headers['x-forwarded-for'];
     if (forwarded) return forwarded.split(',')[0].trim();
     return req.socket?.remoteAddress || '127.0.0.1';
   }
-
-  // Periodic rate limit cache cleanup (every 5 mins)
-  setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of rateLimitBuckets.entries()) {
-      if (now - v.start > 300000) rateLimitBuckets.delete(k);
-    }
-  }, 300000).unref?.();
 
   // --- B2: AUTOMATIC / ON-DEMAND TEAM CREATION ---
   async function ensureTeamForRegistration(clientOrPool, tournamentId, userId, teamNameFallback = '') {
@@ -9561,6 +9786,13 @@ const server = http.createServer(async (req, res) => {
             }
           }
         }
+        if (payload && payload.screenshot_url && !isAllowedStorageUrl(payload.screenshot_url)) {
+          await client.query('ROLLBACK');
+          client.release();
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
+          return;
+        }
 
         const membersStr = formData.members ? (typeof formData.members === 'string' ? formData.members : JSON.stringify(formData.members)) : '[]';
         const status = isPaid ? (payload.screenshot_url ? 'pending' : 'pending_payment') : 'pending';
@@ -9849,6 +10081,11 @@ const server = http.createServer(async (req, res) => {
         }
 
         const bodyData = JSON.parse(body);
+        if (bodyData.screenshot_url && !isAllowedStorageUrl(bodyData.screenshot_url)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
+          return;
+        }
         const dbRes = await pool.query(
           `UPDATE tournament_registrations SET status = 'pending', transaction_id = $1, payment_app = $2, screenshot_url = $3 WHERE id = $4 RETURNING *`,
           [bodyData.transaction_id || null, bodyData.payment_app || null, bodyData.screenshot_url || null, regId]
@@ -9883,9 +10120,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         const bodyData = JSON.parse(body);
-        if (!bodyData.screenshot_url) {
+        if (!bodyData.screenshot_url || !isAllowedStorageUrl(bodyData.screenshot_url)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'MISSING_SCREENSHOT', message: 'Payment screenshot is required.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'A valid payment screenshot from an allowed https storage URL (Cloudinary or Supabase) is required.' }));
           return;
         }
 
@@ -11760,6 +11997,12 @@ const server = http.createServer(async (req, res) => {
         if (!plan || !amount || !transactionId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Plan, amount, and transaction ID are required.' }));
+          return;
+        }
+
+        if (screenshotUrl && !isAllowedStorageUrl(screenshotUrl)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
           return;
         }
 
@@ -14716,9 +14959,9 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'PAYMENT_APP_INVALID', message: 'Please select a payment app.' }));
           return;
         }
-        if (!screenshotUrl || !/^https?:\/\/.+/.test(screenshotUrl)) {
+        if (!screenshotUrl || !isAllowedStorageUrl(screenshotUrl)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'SCREENSHOT_REQUIRED', message: 'A payment screenshot is required. Please upload the UPI payment screenshot.' }));
+          res.end(JSON.stringify({ success: false, error: 'SCREENSHOT_REQUIRED', message: 'A valid payment screenshot URL hosted on an approved storage domain (https) is required.' }));
           return;
         }
         // Tournament must exist. Public spot-sponsorships are platform-run: they are always accepted for review
@@ -16333,14 +16576,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET /api/v1/payments/all — All payment records with their current status
-  // v1.1: Supports ?status=&since=ISO8601&limit=50&cursor=<opaque>&screenshots_only=true
+  // PAY-001: Restricted to verified admin OR scoped device key.
+  // Sensitive customer data (email, phone, UTR, screenshots) are stripped for device key callers.
   if (req.url.startsWith('/api/v1/payments/all') && req.method === 'GET') {
     try {
-      const deviceAuth = await authenticateDevice(req);
-      if (!deviceAuth) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
-        return;
+      const authUser = getAuthUser(req);
+      const isAdmin = authUser && hasRole(authUser, ROLES.ADMIN);
+      let deviceAuth = null;
+      if (!isAdmin) {
+        deviceAuth = await authenticateDevice(req);
+        if (!deviceAuth) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          return;
+        }
       }
       const urlObj = new URL(req.url, `http://${req.headers.host}`);
       const statusFilter = urlObj.searchParams.get('status');
@@ -16407,8 +16656,27 @@ const server = http.createServer(async (req, res) => {
       const subRows = subRes.rows.length > limitParam ? subRes.rows.slice(0, limitParam) : subRes.rows;
       const regRows = regRes.rows.length > limitParam ? regRes.rows.slice(0, limitParam) : regRes.rows;
       const payments = [
-        ...subRows.map(r => ({ ...r, payment_type: 'subscription' })),
-        ...regRows.map(r => ({ ...r, payment_type: 'registration' }))
+        ...subRows.map(r => {
+          const item = { ...r, payment_type: 'subscription' };
+          if (!isAdmin) {
+            delete item.user_email;
+            delete item.user_phone;
+            delete item.utr_ref;
+            delete item.payment_screenshot_url;
+          }
+          return item;
+        }),
+        ...regRows.map(r => {
+          const item = { ...r, payment_type: 'registration' };
+          if (!isAdmin) {
+            delete item.email;
+            delete item.phone;
+            delete item.user_provided_utr;
+            delete item.screenshot_url;
+            delete item.payment_submission_proof_url;
+          }
+          return item;
+        })
       ];
       payments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
@@ -17104,18 +17372,12 @@ const server = http.createServer(async (req, res) => {
         shotRes.rows[0] = subRes.rows[0];
       }
       const imageUrl = shotRes.rows[0].image_url;
-      // If it's a data URI, decode and return binary
-      if (imageUrl.startsWith('data:')) {
-        const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (matches) {
-          const mimeType = matches[1];
-          const buffer = Buffer.from(matches[2], 'base64');
-          res.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': buffer.length });
-          res.end(buffer);
-          return;
-        }
+      if (!imageUrl || !isAllowedStorageUrl(imageUrl)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'INVALID_IMAGE_URL', message: 'Screenshot URL must be an https URL on an approved storage domain.' }));
+        return;
       }
-      // Otherwise proxy the remote URL
+      // Proxy the remote URL
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
