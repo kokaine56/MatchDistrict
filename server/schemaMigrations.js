@@ -182,6 +182,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_secret VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_activated BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgSlug" VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS otps (
         email VARCHAR(255) PRIMARY KEY,

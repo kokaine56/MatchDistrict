@@ -6,10 +6,18 @@ export const UserContext = createContext();
 
 function clearBrowserAuthState() {
   try {
-    const preserved = {};
-    const preserveKeys = ['md_remembered_accounts', 'md_user'];
+    const currentTheme = localStorage.getItem('matchdistrict_theme') ||
+      (document.documentElement.classList.contains('light') ? 'light' : 'dark');
+
+    const preserved = {
+      matchdistrict_theme: currentTheme
+    };
+    const preserveKeys = ['md_remembered_accounts', 'md_user', 'matchdistrict_theme'];
     preserveKeys.forEach((k) => {
-      try { const v = localStorage.getItem(k); if (v) preserved[k] = v; } catch {}
+      try {
+        const v = localStorage.getItem(k);
+        if (v) preserved[k] = v;
+      } catch {}
     });
 
     const authStorageKeys = [];
@@ -21,18 +29,21 @@ function clearBrowserAuthState() {
         key === 'md_persistent_session' ||
         normalizedKey.includes('supabase') ||
         normalizedKey.includes('auth') ||
-        normalizedKey.includes('token')
+        normalizedKey.includes('token') ||
+        normalizedKey.includes('session')
       ) {
         authStorageKeys.push(key);
       }
     }
 
     authStorageKeys.forEach((key) => localStorage.removeItem(key));
-    localStorage.clear();
     sessionStorage.clear();
 
+    // Ensure theme and other preserved preferences remain intact across sign-out
     Object.entries(preserved).forEach(([k, v]) => {
-      try { localStorage.setItem(k, v); } catch {}
+      try {
+        localStorage.setItem(k, v);
+      } catch {}
     });
   } catch (e) {
     console.warn('Storage clear failed:', e);

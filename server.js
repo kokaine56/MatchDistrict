@@ -1886,7 +1886,214 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 2b. Google Sign-In & Sign-Up Service (GIS ID Token Verification)
+  if ((req.url === '/api/auth/google' || urlPath === '/api/auth/google') && req.method === 'POST') {
+    let body = '';
+    let bodySize = 0;
+    const MAX_AUTH_BODY = 16 * 1024;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_AUTH_BODY) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Request body exceeds limit.' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', async () => {
+      if (bodySize > MAX_AUTH_BODY) return;
+      try {
+        const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket ? req.socket.remoteAddress : '') || 'unknown';
+        if (!checkRateLimit('google_auth:' + clientIp, 20, 60000)) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a moment and try again.' }));
+          return;
+        }
+
+        const configuredClientId = process.env.GOOGLE_CLIENT_ID;
+        if (!configuredClientId) {
+          console.error('❌ [AUTH ERROR] GOOGLE_CLIENT_ID is not configured in server environment.');
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'Google authentication is not configured on this server.' }));
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Malformed JSON payload.' }));
+          return;
+        }
+
+        const idToken = (parsed.idToken || parsed.credential || '').trim();
+        if (!idToken || typeof idToken !== 'string' || idToken.length > 4096 || idToken.split('.').length !== 3) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_TOKEN', message: 'A valid Google ID token credential is required.' }));
+          return;
+        }
+
+        // Cryptographically verify ID token against Google\'s tokeninfo API
+        let googlePayload;
+        try {
+          const verifyUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+          const googleRes = await fetch(verifyUrl, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(10000)
+          });
+          if (!googleRes.ok) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_CREDENTIALS', message: 'Google credential verification failed.' }));
+            return;
+          }
+          googlePayload = await googleRes.json();
+        } catch (fetchErr) {
+          console.error('⚠️ [GOOGLE AUTH] Token verification request failed:', fetchErr.message);
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UPSTREAM_ERROR', message: 'Unable to reach Google verification service.' }));
+          return;
+        }
+
+        // Verify claims
+        const isTrustedIssuer = ['https://accounts.google.com', 'accounts.google.com'].includes(googlePayload.iss);
+        const isAudienceMatch = googlePayload.aud === configuredClientId;
+        const isEmailVerified = googlePayload.email_verified === 'true' || googlePayload.email_verified === true;
+        const googleSub = (googlePayload.sub || '').trim();
+        const googleEmail = (googlePayload.email || '').trim().toLowerCase();
+
+        if (!isTrustedIssuer || !isAudienceMatch) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_CREDENTIALS', message: 'Invalid token audience or issuer.' }));
+          return;
+        }
+
+        if (!googleSub || !googleEmail || !googleEmail.includes('@')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_PAYLOAD', message: 'Incomplete identity payload from Google.' }));
+          return;
+        }
+
+        if (!isEmailVerified) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'EMAIL_NOT_VERIFIED', message: 'Your Google email is not verified. Please verify your email with Google first.' }));
+          return;
+        }
+
+        if (googlePayload.exp && Number(googlePayload.exp) < Math.floor(Date.now() / 1000)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TOKEN_EXPIRED', message: 'Google credential has expired.' }));
+          return;
+        }
+
+        // Account Resolution & Linking
+        let targetUser = null;
+        const byGoogleIdRes = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleSub]);
+        if (byGoogleIdRes.rows.length > 0) {
+          targetUser = byGoogleIdRes.rows[0];
+        } else {
+          const byEmailRes = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [googleEmail]);
+          if (byEmailRes.rows.length > 0) {
+            targetUser = byEmailRes.rows[0];
+            if (targetUser.google_id && targetUser.google_id !== googleSub) {
+              res.writeHead(409, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'This account is already linked to a different Google identity.' }));
+              return;
+            }
+            await pool.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleSub, targetUser.id]);
+            targetUser.google_id = googleSub;
+          }
+        }
+
+        // Check Admin MFA / Security
+        if (targetUser) {
+          const isRootAdmin = targetUser.email.toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase();
+          const isAdmin = isRootAdmin || hasRole(targetUser, ROLES.ADMIN);
+          if (isAdmin && (targetUser.admin_totp_activated && targetUser.admin_totp_secret)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'ADMIN_MFA_REQUIRED',
+              message: 'Administrator accounts require dedicated two-factor authentication via the Admin Login portal.'
+            }));
+            return;
+          }
+        } else {
+          // New User Registration with least-privileged participant defaults
+          const userUUID = 'USR-' + crypto.randomBytes(12).toString('hex');
+          const cleanName = (googlePayload.name || googleEmail.split('@')[0]).trim().slice(0, 50);
+          const baseTag = (cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
+          const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
+          const randomPassHash = hashPassword('GOOGLE_OAUTH_' + crypto.randomBytes(16).toString('hex'));
+          const avatarUrl = sanitizeImageUrlForDb(googlePayload.picture) || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
+
+          const insertRes = await pool.query(
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (email)
+             DO UPDATE SET google_id = COALESCE(users.google_id, EXCLUDED.google_id)
+             RETURNING *`,
+            [
+              userUUID,
+              userUUID,
+              cleanName,
+              googleEmail,
+              randomPassHash,
+              gamerTag,
+              'player',
+              ['user'],
+              'Amateur',
+              'none',
+              avatarUrl,
+              'Active',
+              googleSub
+            ]
+          );
+          targetUser = insertRes.rows[0];
+          await ensureSupabaseProfile(pool, targetUser);
+        }
+
+        // Generate native Match District JWT & HttpOnly Session Cookie
+        const token = signJwt({
+          email: targetUser.email,
+          role: targetUser.role,
+          roles: targetUser.roles || [targetUser.role],
+          id: targetUser.uid || targetUser.id
+        });
+        const encryptedSession = encryptSessionData(JSON.stringify({
+          token,
+          userId: targetUser.uid || targetUser.id,
+          email: targetUser.email
+        }));
+        const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
+        const cookieHeader = `token=${token}; Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
+
+        logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'google_signin', req).catch(() => {});
+        console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Google Identity Services.\n`);
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Set-Cookie': cookieHeader
+        });
+        res.end(JSON.stringify({
+          success: true,
+          token,
+          encryptedSession,
+          user: publicUserRow(targetUser),
+          message: `Welcome${targetUser.name ? ', ' + targetUser.name : ''}! Signed in with Google.`
+        }));
+      } catch (err) {
+        console.error('❌ [MATCH DISTRICT GOOGLE AUTH EXCEPTION]:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Authentication processing failed.' }));
+      }
+    });
+    return;
+  }
+
   // 3-temp. Temporary User Registration Details (saves for 5 minutes)
+
   if (req.url === '/api/auth/register-temp' && req.method === 'POST') {
     let body = '';
     let bodySize = 0;

@@ -226,6 +226,13 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const { signOut } = useUser()
   const REMEMBERED_KEY = 'md_remembered_accounts'
 
+  // Google Identity Services (GIS) state & refs
+  const googleLoginBtnRef = useRef(null)
+  const googleRegBtnRef = useRef(null)
+  const isGoogleAuthSubmitting = useRef(false)
+  const [gisLoaded, setGisLoaded] = useState(false)
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
+
   // Register form state (without browser-side persistence as requested)
   const [regForm, setRegForm] = useState({
     name: '',
@@ -340,89 +347,147 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     }
   }, [initialMode])
 
-  // Handle Google OAuth session sync
+  // --- Google Identity Services (GIS) Integration ---
+
+  // Dynamically ensure Google Identity Services client library is loaded
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session && session.user) {
-        setIsLoading(true)
-        try {
-          // Pull user profile directly from server-side database using a single query
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single()
-          
-          if (profile) {
-            setCurrentUser(profile)
-            triggerToast(`Welcome back, ${profile.name}!`)
-          } else {
-            // First-time social sign-in: register local database profile
-            const nameFromMetadata = session.user.user_metadata?.full_name || session.user.user_metadata?.name
-            const autoGamerTag = '@' + generateUniqueUsername(nameFromMetadata || session.user.email.split('@')[0])
-            const newUser = {
-              name: nameFromMetadata || session.user.email.split('@')[0],
-              email: session.user.email,
-              password: 'OAuthAccountPasswordPlaceholder_' + Math.random().toString(36).slice(-8),
-              gamerTag: autoGamerTag
-            }
-            
-            const regRes = await fetch('/api/auth/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(newUser)
-            })
-            const regData = await regRes.json()
-            
-            if (regRes.ok && regData.success) {
-              const { data: createdProfile } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', session.user.id)
-                .single()
-              
-              if (createdProfile) {
-                setCurrentUser(createdProfile)
-              }
-              triggerToast('Account registered successfully via Google!')
-            } else {
-              triggerToast('Failed to initialize profile record. Please configure registration.')
-            }
-          }
-          
-          setTimeout(() => {
-            setIsLoading(false)
-            onNavigate && onNavigate('home')
-          }, 2000)
-        } catch (e) {
-          setIsLoading(false)
-          triggerToast('Error synchronizing database profile.')
-        }
-      }
-    })
-
-    return () => {
-      subscription.unsubscribe()
+    if (typeof window === 'undefined') return
+    if (window.google?.accounts?.id) {
+      setGisLoaded(true)
+      return
     }
-  }, [onNavigate])
+    const existing = document.querySelector('script[src="https://accounts.google.com/gsi/client"]')
+    if (existing) {
+      const handleLoad = () => setGisLoaded(true)
+      existing.addEventListener('load', handleLoad)
+      return () => existing.removeEventListener('load', handleLoad)
+    }
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = () => setGisLoaded(true)
+    document.head.appendChild(script)
+  }, [])
 
-  // Google OAuth triggers
-  const handleGoogleSignIn = async () => {
+  // Process verified ID token returned from Google popup/credential flow
+  const handleGoogleCredentialResponse = useCallback(async (response) => {
+    if (!response || !response.credential) {
+      triggerToast('No Google credentials received.')
+      return
+    }
+    if (isGoogleAuthSubmitting.current) return
+    isGoogleAuthSubmitting.current = true
     setIsLoading(true)
+    setLoadingMessage('Authenticating with Google...')
+
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin + '/login'
-        }
+      const res = await fetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: response.credential })
       })
-      if (error) {
+      const data = await res.json()
+      if (res.ok && data.success) {
+        if (data.encryptedSession) {
+          try {
+            localStorage.setItem('md_persistent_session', data.encryptedSession)
+          } catch {}
+          if (data.token) {
+            setAuthTokenInMemory(data.token)
+          }
+        }
+        addRememberedAccount(data.user)
+        setCurrentUser(data.user)
+        triggerToast(data.message || 'Welcome to Match District!')
+        setTimeout(() => {
+          setIsLoading(false)
+          if (redirectTo) {
+            navigate(redirectTo, { replace: true })
+          } else {
+            onNavigate ? onNavigate('home') : navigate('/')
+          }
+        }, 1500)
+      } else {
         setIsLoading(false)
-        triggerToast(error.message || 'Google authentication failed.')
+        if (data.error === 'ADMIN_MFA_REQUIRED') {
+          triggerToast('Admin accounts require TOTP login. Please use the Admin login above.')
+        } else if (data.error === 'ACCOUNT_CONFLICT') {
+          triggerToast('This account is already linked to a different Google identity.')
+        } else if (data.error === 'EMAIL_NOT_VERIFIED') {
+          triggerToast('Your Google email address is unverified. Please verify your Google account.')
+        } else {
+          triggerToast(data.message || data.error || 'Google authentication failed.')
+        }
       }
     } catch (err) {
       setIsLoading(false)
-      triggerToast('Google authentication failed. Please try again.')
+      triggerToast('Unable to connect to Match District authentication server.')
+    } finally {
+      isGoogleAuthSubmitting.current = false
+    }
+  }, [navigate, onNavigate, redirectTo, setCurrentUser])
+
+  // Initialize GIS and render official secure buttons for Login and Register views
+  useEffect(() => {
+    if (!gisLoaded || !window.google?.accounts?.id || !googleClientId) return
+
+    try {
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+        cancel_on_tap_outside: true,
+      })
+
+      const btnTheme = theme === 'dark' ? 'filled_black' : 'outline'
+
+      if (authMode === 'login' && googleLoginBtnRef.current) {
+        googleLoginBtnRef.current.innerHTML = ''
+        window.google.accounts.id.renderButton(googleLoginBtnRef.current, {
+          type: 'standard',
+          theme: btnTheme,
+          size: 'large',
+          text: 'signin_with',
+          shape: 'rectangular',
+          width: 320,
+          logo_alignment: 'left',
+        })
+      } else if (authMode === 'register' && googleRegBtnRef.current) {
+        googleRegBtnRef.current.innerHTML = ''
+        window.google.accounts.id.renderButton(googleRegBtnRef.current, {
+          type: 'standard',
+          theme: btnTheme,
+          size: 'large',
+          text: 'signup_with',
+          shape: 'rectangular',
+          width: 320,
+          logo_alignment: 'left',
+        })
+      }
+    } catch (err) {
+      console.warn('Google Identity Services initialization warning:', err)
+    }
+  }, [gisLoaded, googleClientId, authMode, theme, handleGoogleCredentialResponse])
+
+  // Fallback click handler if button iframe is not directly clicked
+  const handleGoogleClick = () => {
+    if (!googleClientId) {
+      triggerToast('Google Sign-In is not configured (missing VITE_GOOGLE_CLIENT_ID).')
+      return
+    }
+    if (!gisLoaded || !window.google?.accounts?.id) {
+      triggerToast('Google Identity Services is loading. Please try again.')
+      return
+    }
+    try {
+      window.google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          console.warn('Google One Tap notification:', notification)
+        }
+      })
+    } catch (err) {
+      triggerToast('Failed to trigger Google prompt.')
     }
   }
 
@@ -551,6 +616,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         const data = await res.json()
         if (res.ok && data.success) {
           if (data.encryptedSession) {
+            try { localStorage.setItem('md_persistent_session', data.encryptedSession); } catch {}
             if (data.token) { setAuthTokenInMemory(data.token); }
           }
           setCurrentUser(data.user)
@@ -605,6 +671,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       const data = await res.json()
       if (res.ok && data.success) {
         if (data.encryptedSession) {
+          try { localStorage.setItem('md_persistent_session', data.encryptedSession); } catch {}
           if (data.token) { setAuthTokenInMemory(data.token); }
         }
         const loginRoles = data.user?.roles || (data.user?.role ? [data.user.role] : []);
@@ -1745,31 +1812,37 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       <span className="absolute bg-white dark:bg-[#1B1B1F] px-3 font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider">or continue with</span>
                     </div>
                     
-                    <button
-                      type="button"
-                      onClick={handleGoogleSignIn}
-                      className="w-full h-11 bg-slate-50 hover:bg-slate-100 dark:bg-white/5 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 hover:border-primary/30 rounded-xl font-headline-md text-xs font-bold text-slate-900 dark:text-white transition-all flex items-center justify-center gap-2.5 group"
-                    >
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <path
-                          fill="#4285F4"
-                          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                        />
-                        <path
-                          fill="#34A853"
-                          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                        />
-                        <path
-                          fill="#FBBC05"
-                          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.23-.67-.35-1.37-.35-2.09z"
-                        />
-                        <path
-                          fill="#EA4335"
-                          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                        />
-                      </svg>
-                      <span>Sign in with Google</span>
-                    </button>
+                    <div className="w-full flex flex-col items-center justify-center">
+                      <div ref={googleLoginBtnRef} className="w-full flex justify-center min-h-[44px]" />
+                      {(!gisLoaded || !googleClientId) && (
+                        <button
+                          type="button"
+                          onClick={handleGoogleClick}
+                          disabled={isLoading}
+                          className="w-full h-11 bg-slate-50 hover:bg-slate-100 dark:bg-white/5 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 hover:border-primary/30 rounded-xl font-headline-md text-xs font-bold text-slate-900 dark:text-white transition-all flex items-center justify-center gap-2.5 group"
+                        >
+                          <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                              fill="#4285F4"
+                              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                            />
+                            <path
+                              fill="#34A853"
+                              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                            />
+                            <path
+                              fill="#FBBC05"
+                              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.23-.67-.35-1.37-.35-2.09z"
+                            />
+                            <path
+                              fill="#EA4335"
+                              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                            />
+                          </svg>
+                          <span>Sign in with Google</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               ) : (
@@ -1906,6 +1979,46 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       <span className="material-symbols-outlined text-[18px]">sports_esports</span>
                     </button>
                   </form>
+
+                  {/* Google Sign-up Option */}
+                  <div className="space-y-4 pt-2 w-full">
+                    <div className="relative flex items-center justify-center">
+                      <div className="border-t border-slate-200 dark:border-white/10 w-full" />
+                      <span className="absolute bg-white dark:bg-[#1B1B1F] px-3 font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider">or sign up with</span>
+                    </div>
+                    
+                    <div className="w-full flex flex-col items-center justify-center">
+                      <div ref={googleRegBtnRef} className="w-full flex justify-center min-h-[44px]" />
+                      {(!gisLoaded || !googleClientId) && (
+                        <button
+                          type="button"
+                          onClick={handleGoogleClick}
+                          disabled={isLoading}
+                          className="w-full h-11 bg-slate-50 hover:bg-slate-100 dark:bg-white/5 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 hover:border-primary/30 rounded-xl font-headline-md text-xs font-bold text-slate-900 dark:text-white transition-all flex items-center justify-center gap-2.5 group"
+                        >
+                          <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path
+                              fill="#4285F4"
+                              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                            />
+                            <path
+                              fill="#34A853"
+                              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                            />
+                            <path
+                              fill="#FBBC05"
+                              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.23-.67-.35-1.37-.35-2.09z"
+                            />
+                            <path
+                              fill="#EA4335"
+                              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                            />
+                          </svg>
+                          <span>Sign up with Google</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
