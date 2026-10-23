@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import TournamentCard from '../../../components/TournamentCard'
 import CropModal from '../CropModal'
-import { uploadImage } from '../../../utils/cloudinaryUpload'
+import { uploadImage } from '../../../utils/imagekitUpload'
 
 import { getThemesByTier, isThemeUnlocked } from '../../../utils/themeEngine'
 

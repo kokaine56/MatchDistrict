@@ -22,7 +22,7 @@ export async function uploadImage(image) {
   }
 
   try {
-    const token = getAuthToken();
+    const token = await getAuthToken();
     const headers = { 'Content-Type': 'application/json' };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;

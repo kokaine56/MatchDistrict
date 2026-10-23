@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
-import { uploadImage } from '../utils/cloudinaryUpload.js';
+import { uploadImage } from '../utils/imagekitUpload.js';
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx';
 
 const countriesList = ["India"];

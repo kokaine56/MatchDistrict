@@ -81,7 +81,7 @@ function sanitizeImageUrlForDb(value) {
 
 /**
  * PAY-002 / SENS-009: Strict allow-list validation for payment proof / screenshot URLs.
- * Requires https: and strictly matches trusted storage domains (Cloudinary or Supabase).
+ * Requires https: and strictly matches the configured ImageKit endpoint or Supabase Storage.
  * Rejects javascript:, data:, http:, internal IP addresses, and unknown domains.
  */
 function isAllowedStorageUrl(urlString) {
@@ -114,9 +114,20 @@ function isAllowedStorageUrl(urlString) {
     return false;
   }
 
-  // Allowed storage hosts: Cloudinary or Supabase Storage
-  if (hostname === 'res.cloudinary.com' || hostname.endsWith('.cloudinary.com')) {
-    return true;
+  // Match the configured ImageKit endpoint host and path, including custom URL endpoints.
+  if (process.env.IMAGEKIT_URL_ENDPOINT) {
+    try {
+      const imageKitEndpoint = new URL(process.env.IMAGEKIT_URL_ENDPOINT);
+      const endpointPath = imageKitEndpoint.pathname.replace(/\/+$/, '');
+      if (
+        imageKitEndpoint.protocol === 'https:' &&
+        hostname === imageKitEndpoint.hostname.toLowerCase() &&
+        parsed.port === imageKitEndpoint.port &&
+        (!endpointPath || parsed.pathname === endpointPath || parsed.pathname.startsWith(endpointPath + '/'))
+      ) {
+        return true;
+      }
+    } catch {}
   }
 
   if (hostname.endsWith('.supabase.co') || hostname.endsWith('.supabase.in')) {
@@ -325,9 +336,9 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
-const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
-const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
+const IMAGEKIT_PRIVATE_KEY = process.env.IMAGEKIT_PRIVATE_KEY || '';
+const IMAGEKIT_URL_ENDPOINT = process.env.IMAGEKIT_URL_ENDPOINT || '';
+const IMAGEKIT_UPLOAD_IDS_BY_URL = new Map();
 // Sponsorship feature flag — gated until production-ready. Flip `ENABLE_SPONSORSHIP=true` to activate the full flow.
 const SPONSORSHIP_ENABLED = process.env.ENABLE_SPONSORSHIP === 'true';
 
@@ -363,31 +374,25 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
-// Helper: remove uploaded media (Cloudinary) if database transaction fails
+// Helper: remove a recently uploaded ImageKit file if its database transaction fails.
 async function removeUploadedMedia(mediaUrl) {
   if (!mediaUrl || typeof mediaUrl !== 'string') return;
   try {
-    if (mediaUrl.includes('res.cloudinary.com') && CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
-      const match = mediaUrl.match(/\/upload\/(?:v\d+\/)?([^\.]+)/);
-      if (match && match[1]) {
-        const publicId = match[1];
-        const timestamp = Math.floor(Date.now() / 1000);
-        const toSign = `public_id=${publicId}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
-        const signature = crypto.createHash('sha1').update(toSign).digest('hex');
-
-        const params = new URLSearchParams();
-        params.append('public_id', publicId);
-        params.append('timestamp', timestamp.toString());
-        params.append('api_key', CLOUDINARY_API_KEY);
-        params.append('signature', signature);
-
-        await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/destroy`, {
-          method: 'POST',
-          body: params
-        });
-        console.log(`[MediaCleanup] Removed uploaded media on rollback: ${publicId}`);
-      }
+    const now = Date.now();
+    for (const [url, file] of IMAGEKIT_UPLOAD_IDS_BY_URL) {
+      if (now - file.createdAt > 10 * 60 * 1000) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(url);
     }
+    const uploadedFile = IMAGEKIT_UPLOAD_IDS_BY_URL.get(mediaUrl);
+    if (!uploadedFile || !IMAGEKIT_PRIVATE_KEY) return;
+
+    const auth = Buffer.from(IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+    const response = await fetch('https://api.imagekit.io/v1/files/' + encodeURIComponent(uploadedFile.fileId), {
+      method: 'DELETE',
+      headers: { Authorization: 'Basic ' + auth }
+    });
+    if (!response.ok) throw new Error('ImageKit file deletion failed with status ' + response.status);
+    IMAGEKIT_UPLOAD_IDS_BY_URL.delete(mediaUrl);
+    console.log('[MediaCleanup] Removed uploaded ImageKit file after transaction rollback.');
   } catch (err) {
     console.warn('[MediaCleanup] Could not remove uploaded media:', err.message);
   }
@@ -1316,7 +1321,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // --- SECURE MEDIA PROXY (SEC-003 / SEC-004) ---
+  // --- SECURE IMAGEKIT MEDIA PROXY ---
   if (urlPath === '/api/media/upload' && req.method === 'POST') {
     const authUser = getAuthUser(req);
     if (!authUser) {
@@ -1325,13 +1330,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!checkRateLimit(`upload:${authUser.id}`, 15, 60000)) {
+    if (!checkRateLimit('upload:' + authUser.id, 15, 60000)) {
       res.writeHead(429, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many uploads. Please wait a minute and try again.' }));
       return;
     }
 
-    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB hard limit
+    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
     let body = '';
     let size = 0;
     let aborted = false;
@@ -1352,9 +1357,16 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       if (aborted) return;
       try {
-        if (!CLOUDINARY_CLOUD_NAME) {
+        if (!IMAGEKIT_PRIVATE_KEY || !IMAGEKIT_URL_ENDPOINT) {
+          const missingImageKitSettings = [
+            !IMAGEKIT_PRIVATE_KEY && 'IMAGEKIT_PRIVATE_KEY',
+            !IMAGEKIT_URL_ENDPOINT && 'IMAGEKIT_URL_ENDPOINT',
+          ].filter(Boolean);
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'Server missing media proxy configuration' }));
+          res.end(JSON.stringify({
+            success: false,
+            message: `Server missing ImageKit media configuration: ${missingImageKitSettings.join(', ')}`,
+          }));
           return;
         }
 
@@ -1373,22 +1385,52 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Validate real image magic bytes (PNG, JPEG, GIF, WEBP)
-        const base64Marker = 'base64,';
-        const markerIdx = data.file.indexOf(base64Marker);
+        if (/^https:\/\//i.test(data.file)) {
+          try {
+            const sourceUrl = new URL(data.file);
+            const imageKitEndpoint = new URL(IMAGEKIT_URL_ENDPOINT);
+            const endpointPath = imageKitEndpoint.pathname.replace(/\/+$/, '');
+            if (
+              sourceUrl.origin === imageKitEndpoint.origin &&
+              (!endpointPath || sourceUrl.pathname === endpointPath || sourceUrl.pathname.startsWith(endpointPath + '/'))
+            ) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: true, secure_url: sourceUrl.toString() }));
+              return;
+            }
+          } catch {}
+        }
+
+        const dataUrlMatch = data.file.match(/^data:(image\/(?:jpeg|png|gif|webp));base64,([\s\S]*)$/i);
+        const isRemoteUrl = /^https:\/\//i.test(data.file);
         let rawBuffer = null;
-        if (markerIdx !== -1) {
+        let uploadSource = null;
+        let mimeType = 'image/jpeg';
+
+        if (dataUrlMatch) {
+          mimeType = dataUrlMatch[1].toLowerCase();
+          rawBuffer = Buffer.from(dataUrlMatch[2], 'base64');
+          uploadSource = new Blob([rawBuffer], { type: mimeType });
+        } else if (isRemoteUrl) {
+          let sourceUrl;
           try {
-            rawBuffer = Buffer.from(data.file.slice(markerIdx + base64Marker.length), 'base64');
+            sourceUrl = new URL(data.file);
           } catch {
-            rawBuffer = null;
+            sourceUrl = null;
           }
-        } else if (!data.file.startsWith('http://') && !data.file.startsWith('https://')) {
-          try {
-            rawBuffer = Buffer.from(data.file, 'base64');
-          } catch {
-            rawBuffer = null;
+          const host = sourceUrl?.hostname.toLowerCase() || '';
+          if (!sourceUrl || sourceUrl.protocol !== 'https:' || host === 'localhost' || host.endsWith('.local') ||
+              host.endsWith('.internal') || /^127\./.test(host) || /^10\./.test(host) ||
+              /^192\.168\./.test(host) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
+              /^169\.254\./.test(host) || host === '::1' || host.includes(':') || sourceUrl.username || sourceUrl.password) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_IMAGE_URL', message: 'Image source must be a public HTTPS URL.' }));
+            return;
           }
+          uploadSource = data.file;
+        } else {
+          rawBuffer = Buffer.from(data.file, 'base64');
+          uploadSource = new Blob([rawBuffer], { type: mimeType });
         }
 
         if (rawBuffer && !isValidImageBuffer(rawBuffer)) {
@@ -1397,33 +1439,44 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // We use the unsigned upload preset because the API Key may not have create permissions,
-        // but we still proxy it through the backend to avoid exposing upload logic in the frontend.
-        const uploadPreset = process.env.VITE_CLOUDINARY_UPLOAD_PRESET || process.env.CLOUDINARY_UPLOAD_PRESET || 'matchdistrict_default';
+        const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/gif' ? 'gif' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+        const uploadName = 'matchdistrict-' + crypto.randomBytes(12).toString('hex') + '.' + extension;
+        const imageKitForm = new FormData();
+        if (typeof uploadSource === 'string') {
+          imageKitForm.append('file', uploadSource);
+        } else {
+          imageKitForm.append('file', uploadSource, uploadName);
+        }
+        imageKitForm.append('fileName', uploadName);
+        imageKitForm.append('folder', '/matchdistrict');
 
-        const cloudinaryParams = new URLSearchParams();
-        cloudinaryParams.append('file', data.file);
-        cloudinaryParams.append('upload_preset', uploadPreset);
-
-        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
-
-        const cloudinaryResponse = await fetch(cloudinaryUrl, {
+        const imageKitAuth = Buffer.from(IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+        const imageKitResponse = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
           method: 'POST',
-          body: cloudinaryParams,
+          headers: { Authorization: 'Basic ' + imageKitAuth },
+          body: imageKitForm,
         });
 
-        const cloudinaryData = await cloudinaryResponse.json();
-
-        if (cloudinaryResponse.ok && cloudinaryData.secure_url) {
+        const imageKitData = await imageKitResponse.json();
+        if (imageKitResponse.ok && imageKitData.url && imageKitData.fileId) {
+          const now = Date.now();
+          for (const [url, file] of IMAGEKIT_UPLOAD_IDS_BY_URL) {
+            if (now - file.createdAt > 10 * 60 * 1000) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(url);
+          }
+          if (IMAGEKIT_UPLOAD_IDS_BY_URL.size >= 500) {
+            const oldestUrl = IMAGEKIT_UPLOAD_IDS_BY_URL.keys().next().value;
+            if (oldestUrl) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(oldestUrl);
+          }
+          IMAGEKIT_UPLOAD_IDS_BY_URL.set(imageKitData.url, { fileId: imageKitData.fileId, createdAt: now });
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, secure_url: cloudinaryData.secure_url }));
+          res.end(JSON.stringify({ success: true, secure_url: imageKitData.url }));
         } else {
-          console.error('[MediaProxy] Cloudinary Error:', cloudinaryData);
+          console.error('[MediaProxy] ImageKit upload failed with status:', imageKitResponse.status);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'Upstream upload failed' }));
         }
       } catch (err) {
-        console.error('[MediaProxy] Exception:', err);
+        console.error('[MediaProxy] Exception:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: 'Internal Server Error' }));
       }
@@ -9782,7 +9835,7 @@ const server = http.createServer(async (req, res) => {
           await client.query('ROLLBACK');
           client.release();
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must use HTTPS and an allowed ImageKit or Supabase storage endpoint.' }));
           return;
         }
 
@@ -10075,7 +10128,7 @@ const server = http.createServer(async (req, res) => {
         const bodyData = JSON.parse(body);
         if (bodyData.screenshot_url && !isAllowedStorageUrl(bodyData.screenshot_url)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must use HTTPS and an allowed ImageKit or Supabase storage endpoint.' }));
           return;
         }
         const dbRes = await pool.query(
@@ -10114,7 +10167,7 @@ const server = http.createServer(async (req, res) => {
         const bodyData = JSON.parse(body);
         if (!bodyData.screenshot_url || !isAllowedStorageUrl(bodyData.screenshot_url)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'A valid payment screenshot from an allowed https storage URL (Cloudinary or Supabase) is required.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'A valid payment screenshot from an allowed HTTPS ImageKit or Supabase storage endpoint is required.' }));
           return;
         }
 
@@ -10427,7 +10480,7 @@ const server = http.createServer(async (req, res) => {
         const files = fs.readdirSync(distAssetsPath).filter(f => f.endsWith('.js'));
         const secretsToHunt = [
           { name: 'SUPABASE_SERVICE_ROLE_KEY', val: process.env.SUPABASE_SERVICE_ROLE_KEY },
-          { name: 'CLOUDINARY_API_SECRET', val: process.env.CLOUDINARY_API_SECRET },
+          { name: 'IMAGEKIT_PRIVATE_KEY', val: process.env.IMAGEKIT_PRIVATE_KEY },
           { name: 'DATABASE_URL', val: process.env.DATABASE_URL },
           { name: 'JWT_SECRET', val: process.env.JWT_SECRET }
         ].filter(s => s.val && s.val.length > 5); // Only hunt if secret is substantial
@@ -11994,7 +12047,7 @@ const server = http.createServer(async (req, res) => {
 
         if (screenshotUrl && !isAllowedStorageUrl(screenshotUrl)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must be an allowed https storage URL (Cloudinary or Supabase).' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must use HTTPS and an allowed ImageKit or Supabase storage endpoint.' }));
           return;
         }
 
@@ -17064,17 +17117,19 @@ function startMonitoringWorker() {
              });
              statusCode = res.status;
              isHealthy = res.ok;
-          } else if (srv.slug === 'cloudinary') {
-             if (CLOUDINARY_CLOUD_NAME) {
-               const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/ping`, {
+          } else if (srv.slug === 'imagekit') {
+             if (IMAGEKIT_PRIVATE_KEY) {
+               const imageKitAuth = Buffer.from(IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+               const res = await fetch('https://api.imagekit.io/v1/files?limit=1', {
+                 headers: { Authorization: 'Basic ' + imageKitAuth },
                  signal: controller.signal,
                  redirect: 'manual'
                });
                statusCode = res.status;
-               isHealthy = res.ok || res.status === 401; 
+               isHealthy = res.ok;
              } else {
                isHealthy = false;
-               errorMessage = 'Missing CLOUDINARY_CLOUD_NAME';
+               errorMessage = 'Missing IMAGEKIT_PRIVATE_KEY';
              }
           }
           clearTimeout(timeoutId);
@@ -17136,4 +17191,3 @@ function startMonitoringWorker() {
     console.log(`🔑 API Endpoints active (OTP, JWT Auth, Supabase DB)\n`);
   });
 })();
-

@@ -10,7 +10,7 @@ import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
 import { getTournamentLifecycleStatus, getRegistrationButtonState } from '../utils/tournamentLifecycle.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
-import { uploadImage } from '../utils/cloudinaryUpload.js';
+import { uploadImage } from '../utils/imagekitUpload.js';
 import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 import { formatDate, formatDateTime } from '../utils/timeFormat';
@@ -968,6 +968,41 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     : 'text-[13px] sm:text-sm text-slate-600 leading-relaxed whitespace-pre-wrap';
 
   if (isTournamentsLoading) return <LoadingScreen message="Loading tournament..." />;
+
+  if (!tourney) {
+    return (
+      <div className="min-h-screen bg-[#07080C] text-white">
+        <Header activePage="tournaments" onNavigate={onNavigate} />
+        <main className="mx-auto flex min-h-[70vh] max-w-3xl flex-col items-center justify-center px-6 text-center">
+          <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5 text-3xl" aria-hidden="true">
+            🏆
+          </div>
+          <h1 className="text-2xl font-black sm:text-3xl">Tournament unavailable</h1>
+          <p className="mt-3 max-w-lg text-sm leading-relaxed text-white/60">
+            This tournament may have been deleted or is no longer available.
+          </p>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => (onNavigate ? onNavigate('tournaments') : navigate('/tournaments'))}
+              className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white transition hover:brightness-110"
+            >
+              Browse tournaments
+            </button>
+            {loadError && (
+              <button
+                type="button"
+                onClick={loadTournament}
+                className="rounded-xl border border-white/15 px-5 py-3 text-sm font-bold text-white/80 transition hover:bg-white/5"
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen text-white relative overflow-x-hidden w-full max-w-[100vw] selection:bg-amber-500/30 selection:text-white transition-colors duration-500 ${

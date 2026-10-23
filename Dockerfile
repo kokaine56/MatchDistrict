@@ -27,14 +27,6 @@ ENV NODE_ENV=production
 # Copy application source
 COPY . .
 
-# Build-time ARGs for Cloudinary (injected by Render environment)
-ARG VITE_CLOUDINARY_CLOUD_NAME
-ARG VITE_CLOUDINARY_UPLOAD_PRESET
-
-# Vite requires these at build time to embed them in the client bundle
-ENV VITE_CLOUDINARY_CLOUD_NAME=$VITE_CLOUDINARY_CLOUD_NAME
-ENV VITE_CLOUDINARY_UPLOAD_PRESET=$VITE_CLOUDINARY_UPLOAD_PRESET
-
 RUN npm run build
 
 # Stage 2: Production runtime

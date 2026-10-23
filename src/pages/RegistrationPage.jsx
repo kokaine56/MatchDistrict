@@ -5,7 +5,7 @@ import LoadingScreen from '../components/LoadingScreen.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
-import { uploadImage } from '../utils/cloudinaryUpload.js'
+import { uploadImage } from '../utils/imagekitUpload.js'
 import GameIcon from '../components/GameIcon'
 import { normalizeGameName } from '../utils/gameUtils.js'
 

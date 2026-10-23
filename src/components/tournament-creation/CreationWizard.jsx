@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import { useUser } from '../../UserContext'
 import { getAuthToken } from '../../utils/getAuthToken'
-import { uploadImage } from '../../utils/cloudinaryUpload'
+import { uploadImage } from '../../utils/imagekitUpload'
 import { hasOrganizerRights, isSystemAdmin, hasRole, getUserRoles } from '../../utils/iamRoles.js'
 import StepIndicator from './StepIndicator'
 import StepNavigation from './StepNavigation'
@@ -391,11 +391,11 @@ const body = {
         card_color: formData.card_color || 'white',
       }
 
-      // Use pre-uploaded Cloudinary URL from Step9Publish if provided
+      // Use the ImageKit URL returned by Step9Publish if provided.
       if (preUploadedImageUrl) {
         body.cover_image_url = preUploadedImageUrl
       } else {
-        // Upload cover image to Cloudinary if local file is pending
+        // Upload the cover image to ImageKit if a local file is pending.
         const hasNewFile = !!formData.cover_image_file
         const hasBlobUrl = typeof formData.cover_image_url === 'string' && formData.cover_image_url.startsWith('blob:')
         if (hasNewFile || hasBlobUrl) {

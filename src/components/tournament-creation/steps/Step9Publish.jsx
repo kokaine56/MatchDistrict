@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { uploadImage } from '../../../utils/cloudinaryUpload'
+import { uploadImage } from '../../../utils/imagekitUpload'
 
 export default function Step9Publish({ data, userTier, isSubmitting, uploadingMedia, onSaveDraft, onPublishStep9, publishError, isEditMode }) {
   const navigate = useNavigate()
@@ -30,7 +30,7 @@ export default function Step9Publish({ data, userTier, isSubmitting, uploadingMe
 
     let finalImageUrl = data.cover_image_url || ''
 
-    if (finalImageUrl && !finalImageUrl.includes('cloudinary.com') && !finalImageUrl.includes('unsplash.com')) {
+    if (finalImageUrl && !finalImageUrl.includes('imagekit.io') && !finalImageUrl.includes('unsplash.com')) {
       setMediaUploading(true)
       try {
         finalImageUrl = await uploadImage(finalImageUrl)

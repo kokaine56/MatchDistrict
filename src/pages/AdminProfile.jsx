@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken'
 import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js'
-import { uploadImage } from '../utils/cloudinaryUpload'
+import { uploadImage } from '../utils/imagekitUpload'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 
 export default function AdminProfile() {
