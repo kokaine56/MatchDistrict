@@ -4,6 +4,7 @@ import TournamentCard from '../components/TournamentCard'
 import { useCurrentUser } from '../hooks/useCurrentUser'
 import { getAuthToken } from '../utils/getAuthToken'
 import { fetchJsonWithRetry } from '../utils/api'
+import { getTournamentLifecycleStatus, getRegistrationButtonState } from '../utils/tournamentLifecycle'
 
 const REG_STATUS_CONFIG = {
   'approved': { label: 'Registered', bg: 'bg-green-500 text-white', btnText: 'View Details', group: 'Registered' },
@@ -153,6 +154,15 @@ export default function MyTournaments({ onNavigate }) {
         }
       }
 
+      // Compute button state using shared utility
+      const lifecycle = getTournamentLifecycleStatus({
+        registrationOpenDate: t.registrationOpenDate || t.registration_open_date,
+        registrationCloseDate: t.registrationCloseDate || t.registration_close_date,
+        startDate: t.startDate || t.start_date || t.date,
+        status: t.status
+      })
+      const btnState = getRegistrationButtonState({ status: regStatus, rejection_reason: reg.rejection_reason }, lifecycle)
+
       cards.push({
         id: t.id,
         title: t.title,
@@ -170,8 +180,8 @@ export default function MyTournaments({ onNavigate }) {
         orgTier: t.orgTier || 'Free',
         badgeText,
         badgeBg,
-        buttonText: config.btnText,
-        buttonClassName: config.btnClassName || '',
+        buttonText: btnState.text,
+        buttonClassName: btnState.styleClass,
         regStatus,
         squadIncomplete: isApproved && !reg.is_squad_complete && !reg.squad_waived,
         squadJoined: reg.squad_joined != null ? reg.squad_joined : 1,

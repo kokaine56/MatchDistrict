@@ -7444,6 +7444,44 @@ const server = http.createServer(async (req, res) => {
 
   // --- PHASE 4: TOURNAMENT-SPECIFIC TEAMS ENDPOINTS ---
 
+  // GET /api/tournaments/:id/my-registration
+  // Returns the caller's own registration row (+ payment proof status) for this tournament.
+  // Auth-required; returns registration: null for logged-out or unregistered users.
+  // Never returns other users' data. Single query, no N+1.
+  const myRegMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/my-registration$/);
+  if (myRegMatch && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        // Unauthenticated — return null registration rather than 401 so the client
+        // can safely call this without a login guard and get "not registered".
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, registration: null }));
+      }
+      const tId = decodeURIComponent(myRegMatch[1]);
+      const regRes = await pool.query(
+        `SELECT tr.*,
+                ps.id          AS payment_submission_id,
+                ps.payment_status,
+                ps.proof_url,
+                ps.utr_number  AS payment_utr
+         FROM   tournament_registrations tr
+         LEFT JOIN payment_submissions ps ON ps.id = tr.payment_id
+         WHERE  tr.tournament_id = $1
+           AND  tr.user_id       = $2
+         ORDER BY tr.created_at DESC
+         LIMIT 1`,
+        [tId, authUser.id]
+      );
+      const registration = regRes.rows.length > 0 ? regRes.rows[0] : null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, registration }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+  }
+
   // GET /api/tournaments/:id/my-team
   const myTeamMatch = urlPath.match(/^\/api\/tournaments\/([^/]+)\/my-team$/);
   if (myTeamMatch && req.method === 'GET') {

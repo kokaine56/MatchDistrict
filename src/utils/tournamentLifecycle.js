@@ -123,10 +123,130 @@ export function getStatusBadgeConfig(status) {
   }
 }
 
-export function getCTAButtonConfig(status) {
+export function getCTAButtonConfig(lifecycleStatus) {
+  // Default CTA for un-registered viewers — overridden by getRegistrationButtonState
+  // when the viewer has a registration record.
+  if (lifecycleStatus === 'open') {
+    return {
+      text: 'Join Now',
+      disabled: false,
+      styleClass: 'bg-primary hover:bg-primary/90 text-white shadow-[0_4px_16px_rgba(99,102,241,0.3)]'
+    }
+  }
+  if (lifecycleStatus === 'upcoming') {
+    return {
+      text: 'Registration Opens Later',
+      disabled: true,
+      styleClass: 'bg-slate-400/70 text-white cursor-not-allowed opacity-70'
+    }
+  }
+  if (lifecycleStatus === 'closed') {
+    return {
+      text: 'Registration Ended',
+      disabled: true,
+      styleClass: 'bg-slate-400/70 text-white cursor-not-allowed opacity-70'
+    }
+  }
+  if (lifecycleStatus === 'live') {
+    return {
+      text: 'Registration Closed',
+      disabled: true,
+      styleClass: 'bg-slate-400/70 text-white cursor-not-allowed opacity-70'
+    }
+  }
+  if (lifecycleStatus === 'archived') {
+    return {
+      text: 'Tournament Ended',
+      disabled: true,
+      styleClass: 'bg-slate-400/70 text-white cursor-not-allowed opacity-70'
+    }
+  }
+  // fallback
   return {
     text: 'View Details',
     disabled: false,
-    styleClass: 'bg-primary hover:bg-primary/95 text-white active:scale-95 shadow-[0_0_12px_rgba(99,102,241,0.25)]'
+    styleClass: 'bg-primary hover:bg-primary/95 text-white'
   }
 }
+
+/**
+ * Maps a viewer's registration row + tournament lifecycle → button config.
+ *
+ * @param {object|null} reg     - Row from GET /api/tournaments/:id/my-registration,
+ *                                or a row from /api/users/:id/registrations.
+ *                                May be null (not registered).
+ * @param {string}      lifecycle - Output of getTournamentLifecycleStatus()
+ *                                ('open'|'closed'|'upcoming'|'live'|'archived')
+ * @returns {{ text: string, styleClass: string, disabled: boolean, icon: string|null, action: string|null }}
+ *   action:
+ *     'join'     → navigate to registration page (new registration)
+ *     'pay'      → navigate to registration page at payment step (has registration, missing proof)
+ *     null       → no navigation (disabled)
+ */
+export function getRegistrationButtonState(reg, lifecycle) {
+  const rawStatus = ((reg && reg.status) || '').toLowerCase().trim()
+
+  // ── 1. User has an active registration ────────────────────────────────────
+  if (rawStatus && !['rejected', 'payment_rejected', 'cancelled', 'expired'].includes(rawStatus)) {
+    // Approved / Confirmed / VERIFIED_BY_HOST
+    if (['approved', 'confirmed', 'verified_by_host', 'verified'].includes(rawStatus)) {
+      return {
+        text: 'Registered Successfully',
+        icon: 'check',
+        disabled: true,
+        action: null,
+        styleClass: 'bg-green-500 text-white cursor-not-allowed opacity-95 shadow-[0_4px_12px_rgba(34,197,94,0.3)]'
+      }
+    }
+    // Proof uploaded, waiting for admin
+    if (['pending', 'pending_admin_review', 'waitlisted'].includes(rawStatus)) {
+      return {
+        text: 'Verification Pending',
+        icon: 'clock',
+        disabled: true,
+        action: null,
+        styleClass: 'bg-amber-500 text-white cursor-not-allowed opacity-90 shadow-[0_4px_12px_rgba(245,158,11,0.3)]'
+      }
+    }
+    // Proof not yet uploaded (registration exists, no payment proof)
+    if (rawStatus === 'pending_payment') {
+      return {
+        text: 'Complete Payment',
+        icon: null,
+        disabled: false,
+        action: 'pay',
+        styleClass: 'bg-orange-500 hover:bg-orange-600 text-white shadow-[0_4px_12px_rgba(249,115,22,0.3)]'
+      }
+    }
+    // Catch-all pending states
+    return {
+      text: 'Verification Pending',
+      icon: 'clock',
+      disabled: true,
+      action: null,
+      styleClass: 'bg-amber-500 text-white cursor-not-allowed opacity-90'
+    }
+  }
+
+  // ── 2. Registration rejected / no registration — fall back to lifecycle CTA ─
+  const lifecycleCta = getCTAButtonConfig(lifecycle)
+  // But if rejected, show red state regardless of lifecycle
+  if (['rejected', 'payment_rejected'].includes(rawStatus)) {
+    const reason = reg && reg.rejection_reason ? ` — ${reg.rejection_reason}` : ''
+    return {
+      text: `Payment Rejected — Re-upload${reason}`,
+      icon: 'x',
+      disabled: false,
+      action: 'join',
+      styleClass: 'bg-red-500 hover:bg-red-600 text-white shadow-[0_4px_12px_rgba(239,68,68,0.3)] text-xs',
+      rejectionReason: reg && reg.rejection_reason
+    }
+  }
+  return {
+    ...lifecycleCta,
+    icon: null,
+    action: lifecycleCta.disabled ? null : 'join',
+    rejectionReason: null
+  }
+}
+

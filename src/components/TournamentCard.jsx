@@ -9,7 +9,8 @@ import gameValorant from '../assets/supported_games/valorant.png'
 import {
   getTournamentLifecycleStatus,
   getStatusBadgeConfig,
-  getCTAButtonConfig
+  getCTAButtonConfig,
+  getRegistrationButtonState
 } from '../utils/tournamentLifecycle'
 import { DEFAULT_BANNER } from '../utils/defaults.js'
 import { getThemeConfig, getThemeTypography } from '../utils/themeEngine'
@@ -433,7 +434,10 @@ function TournamentCardBase({
   startDate,
   date,
   forceWalletCard,
-  cardColor
+  cardColor,
+  // Optional: viewer's own registration status for this tournament.
+  // When supplied, overrides the generic lifecycle CTA.
+  regStatus
 }) {
   const isSponsored = hasSponsors || (parseInt(sponsoredAmount) > 0)
   const [isExpanded, setIsExpanded] = useState(false)
@@ -448,7 +452,12 @@ function TournamentCardBase({
   })
 
   const badgeConfig = getStatusBadgeConfig(lifecycleStatus)
-  const buttonConfig = getCTAButtonConfig(lifecycleStatus)
+
+  // If we have the viewer's own registration status, use it to drive the button.
+  // Otherwise fall back to the generic lifecycle CTA.
+  const regRow = regStatus ? { status: regStatus } : null
+  const registrationBtnState = getRegistrationButtonState(regRow, lifecycleStatus)
+  const buttonConfig = registrationBtnState
 
   const displayBadgeText = badgeText || badgeConfig.text
   const displayBadgeBg = badgeBg || badgeConfig.bg

@@ -7,7 +7,7 @@ import { useCurrentUser } from '../hooks/useCurrentUser.js';
 import { useUser } from '../UserContext.jsx';
 import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js';
 import { fetchJsonWithRetry, normalizeTournamentRow } from '../utils/api.js';
-import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle.js';
+import { getTournamentLifecycleStatus, getRegistrationButtonState } from '../utils/tournamentLifecycle.js';
 import { supabase } from '../utils/supabaseClient';
 import { getAuthToken } from '../utils/getAuthToken.js';
 import { uploadImage } from '../utils/cloudinaryUpload.js';
@@ -199,7 +199,22 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   }, [showSponsorForm, currentUser]);
 
   const [slotsData, setSlotsData] = useState({ slotsTotal: 100, slotsFilled: 0, slotsAvailable: 100, slots: [] });
+  const [myRegistration, setMyRegistration] = useState(null);
 
+  // Fetch the caller's own registration (+ payment proof status) for the button state.
+  // Uses the dedicated /my-registration endpoint that never exposes other users' data.
+  const fetchMyRegistration = useCallback(async () => {
+    if (!tournamentId) return;
+    try {
+      const token = await getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { headers });
+      const data = await res.json();
+      if (data.success) setMyRegistration(data.registration || null);
+    } catch (_) {}
+  }, [tournamentId]);
+
+  // Keep the full registrations list fetch for the organizer registrations tab.
   const fetchRegistrations = useCallback(async () => {
     if (!tournamentId) return;
     try {
@@ -207,6 +222,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`/api/tournaments/${tournamentId}/registrations`, { headers });
       const data = await res.json();
+      // This endpoint is organizer-only; silently ignore 401/403 for regular users.
       if (data.success && data.registrations) setRegistrations(data.registrations);
     } catch (_) {}
   }, [tournamentId]);
@@ -249,12 +265,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   useEffect(() => { loadTournamentsList(); }, [loadTournamentsList]);
 
   useEffect(() => {
+    fetchMyRegistration();
     fetchRegistrations();
     fetchSlots();
-  }, [fetchRegistrations, fetchSlots]);
+  }, [fetchMyRegistration, fetchRegistrations, fetchSlots]);
 
   useRefetchOnFocus(loadTournament, !!tournamentId);
   useRefetchOnFocus(loadTournamentsList);
+  // Refetch the viewer's own registration on tab focus so approval/rejection updates without a manual reload.
+  useRefetchOnFocus(fetchMyRegistration, !!tournamentId);
   useRefetchOnFocus(fetchRegistrations, !!tournamentId);
 
   // Fetch approved sponsor data for public wall
@@ -1147,81 +1166,55 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               {/* Action Area */}
               <div className="flex items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-white/10">
                 {(() => {
-                  const regStatus = myRoster ? (myRoster.status || '').toLowerCase() : '';
-                  const showJoin = !regStatus || ['rejected', 'cancelled', 'expired', 'payment_rejected'].includes(regStatus);
-                  const showWaiting = ['pending_payment', 'pending', 'waitlisted'].includes(regStatus);
-                  const showRegistered = ['approved', 'confirmed'].includes(regStatus);
+                  // Use the viewer's own registration row (from /my-registration) to drive the CTA.
+                  // Fall back to myRoster (organizer-tab enriched data) if the dedicated fetch hasn't run yet.
+                  const regSource = myRegistration || myRoster || null;
                   const lifecycle = getTournamentLifecycleStatus(tourney, new Date());
-                  if ((lifecycle === 'closed' || lifecycle === 'live' || lifecycle === 'archived') && showJoin) {
-                    const label = lifecycle === 'live' ? 'Registration Closed' : lifecycle === 'archived' ? 'Tournament Ended' : 'Registration Ended';
-                    return (
-                      <button
-                        disabled
-                        className="flex-1 bg-slate-400 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed opacity-70"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {label}
-                      </button>
+                  const btnState = getRegistrationButtonState(regSource, lifecycle);
+
+                  // Icon helper
+                  const BtnIcon = ({ icon }) => {
+                    if (icon === 'check') return (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
                     );
-                  }
-                  if (lifecycle === 'upcoming' && showJoin) {
-                    return (
-                      <button
-                        disabled
-                        className="flex-1 bg-slate-400 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed opacity-70"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Registration Opens Later
-                      </button>
+                    if (icon === 'clock') return (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
                     );
-                  }
-                  if (showRegistered) {
-                    return (
-                      <button
-                        disabled
-                        className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed ${
-                          isGoldTheme 
-                            ? 'bg-gradient-to-r from-[#D4A017] to-[#B8860B] text-white border border-[#FFE082]/40 shadow-[inset_0_1px_3px_rgba(255,255,255,0.3)] opacity-95'
-                            : 'bg-green-500 text-white opacity-90'
-                        }`}
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Registered Successfully
-                      </button>
+                    if (icon === 'x') return (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
                     );
-                  }
-                  if (showWaiting) {
                     return (
-                      <button
-                        disabled
-                        className="flex-1 bg-amber-500 text-white font-bold text-sm px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 opacity-80 cursor-not-allowed"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        Waiting for Verification
-                      </button>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                      </svg>
                     );
+                  };
+
+                  // Gold-theme overrides for the registered/join states
+                  let finalClass = btnState.styleClass;
+                  if (isGoldTheme) {
+                    if (btnState.action === 'join' && !btnState.disabled) {
+                      finalClass = 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-[0_4px_16px_rgba(80,50,0,0.5)] hover:shadow-[0_6px_24px_rgba(255,193,7,0.6)]';
+                    } else if (btnState.icon === 'check') {
+                      finalClass = 'bg-gradient-to-r from-[#D4A017] to-[#B8860B] text-white border border-[#FFE082]/40 shadow-[inset_0_1px_3px_rgba(255,255,255,0.3)] opacity-95 cursor-not-allowed';
+                    }
                   }
+
                   return (
                     <button
+                      disabled={btnState.disabled || isNavigatingToRegister}
                       onClick={() => {
-                        if (isNavigatingToRegister) return;
+                        if (btnState.disabled || isNavigatingToRegister || !btnState.action) return;
                         setIsNavigatingToRegister(true);
                         navigate(`/tournaments/${tourney.id}/register`);
                       }}
-                      disabled={isNavigatingToRegister}
-                      className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${
-                        isGoldTheme
-                          ? 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-[0_4px_16px_rgba(80,50,0,0.5)] hover:shadow-[0_6px_24px_rgba(255,193,7,0.6)]'
-                          : 'bg-primary hover:bg-primary/90 text-white shadow-[0_4px_16px_rgba(59,130,246,0.3)] hover:shadow-[0_6px_24px_rgba(59,130,246,0.4)]'
-                      } ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
+                      className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${finalClass} ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
                     >
                       {isNavigatingToRegister ? (
                         <>
@@ -1230,10 +1223,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         </>
                       ) : (
                         <>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                          </svg>
-                          <span>Join Now</span>
+                          <BtnIcon icon={btnState.icon} />
+                          <span>{btnState.text}</span>
                         </>
                       )}
                     </button>
