@@ -231,7 +231,8 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const googleRegBtnRef = useRef(null)
   const isGoogleAuthSubmitting = useRef(false)
   const [gisLoaded, setGisLoaded] = useState(false)
-  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
+  const [runtimeGoogleClientId, setRuntimeGoogleClientId] = useState('')
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || runtimeGoogleClientId
 
   // Register form state (without browser-side persistence as requested)
   const [regForm, setRegForm] = useState({
@@ -370,6 +371,20 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     document.head.appendChild(script)
   }, [])
 
+  // Fetch runtime Google Client ID from backend if build-time variable is absent
+  useEffect(() => {
+    if (!import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+      fetch('/api/auth/config')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.googleClientId) {
+            setRuntimeGoogleClientId(data.googleClientId)
+          }
+        })
+        .catch(() => {})
+    }
+  }, [])
+
   // Process verified ID token returned from Google popup/credential flow
   const handleGoogleCredentialResponse = useCallback(async (response) => {
     if (!response || !response.credential) {
@@ -471,9 +486,20 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   }, [gisLoaded, googleClientId, authMode, theme, handleGoogleCredentialResponse])
 
   // Fallback click handler if button iframe is not directly clicked
-  const handleGoogleClick = () => {
-    if (!googleClientId) {
-      triggerToast('Google Sign-In is not configured (missing VITE_GOOGLE_CLIENT_ID).')
+  const handleGoogleClick = async () => {
+    let effectiveClientId = googleClientId
+    if (!effectiveClientId) {
+      try {
+        const res = await fetch('/api/auth/config')
+        const data = await res.json()
+        if (data.success && data.googleClientId) {
+          effectiveClientId = data.googleClientId
+          setRuntimeGoogleClientId(data.googleClientId)
+        }
+      } catch {}
+    }
+    if (!effectiveClientId) {
+      triggerToast('Google Sign-In is not configured. Please add VITE_GOOGLE_CLIENT_ID to your .env file.')
       return
     }
     if (!gisLoaded || !window.google?.accounts?.id) {

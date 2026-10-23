@@ -251,7 +251,7 @@ function loadEnv() {
             if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
               val = val.slice(1, -1);
             }
-            if (!process.env[key]) {
+            if (val) {
               process.env[key] = val;
             }
           }
@@ -1886,6 +1886,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 2a-2. Public Auth Configuration Endpoint (Runtime client ID fallback)
+  if ((req.url === '/api/auth/config' || urlPath === '/api/auth/config') && req.method === 'GET') {
+    loadEnv();
+    const googleClientId = (process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '').trim();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      success: true,
+      googleClientId
+    }));
+    return;
+  }
+
   // 2b. Google Sign-In & Sign-Up Service (GIS ID Token Verification)
   if ((req.url === '/api/auth/google' || urlPath === '/api/auth/google') && req.method === 'POST') {
     let body = '';
@@ -1911,7 +1923,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const configuredClientId = process.env.GOOGLE_CLIENT_ID;
+        loadEnv();
+        const configuredClientId = (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim();
         if (!configuredClientId) {
           console.error('❌ [AUTH ERROR] GOOGLE_CLIENT_ID is not configured in server environment.');
           res.writeHead(500, { 'Content-Type': 'application/json' });
