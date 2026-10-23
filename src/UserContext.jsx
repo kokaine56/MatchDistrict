@@ -1,8 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './utils/supabaseClient';
-import { getAuthToken } from './utils/getAuthToken';
+import { getAuthToken, setAuthTokenInMemory } from './utils/getAuthToken';
 import { emailConfig } from './config/email.js';
 export const UserContext = createContext();
+
+const LOGGED_OUT_KEY = 'md_logged_out';
+const LOGOUT_EVENT_KEY = 'md_logout_event';
 
 function clearBrowserAuthState() {
   try {
@@ -12,13 +15,12 @@ function clearBrowserAuthState() {
     const preserved = {
       matchdistrict_theme: currentTheme
     };
-    const preserveKeys = ['md_remembered_accounts', 'md_user', 'matchdistrict_theme'];
-    preserveKeys.forEach((k) => {
-      try {
-        const v = localStorage.getItem(k);
-        if (v) preserved[k] = v;
-      } catch {}
-    });
+    
+    // Preserve remembered account names for the account switcher UI if explicitly saved, but NEVER auth tokens or user records
+    const rememberedAccounts = localStorage.getItem('md_remembered_accounts');
+    if (rememberedAccounts) {
+      preserved['md_remembered_accounts'] = rememberedAccounts;
+    }
 
     const authStorageKeys = [];
     for (let i = 0; i < localStorage.length; i += 1) {
@@ -27,6 +29,7 @@ function clearBrowserAuthState() {
       const normalizedKey = key.toLowerCase();
       if (
         key === 'md_persistent_session' ||
+        key === 'md_user' ||
         normalizedKey.includes('supabase') ||
         normalizedKey.includes('auth') ||
         normalizedKey.includes('token') ||
@@ -38,6 +41,11 @@ function clearBrowserAuthState() {
 
     authStorageKeys.forEach((key) => localStorage.removeItem(key));
     sessionStorage.clear();
+
+    // Set short-lived logged out flag in sessionStorage
+    try {
+      sessionStorage.setItem(LOGGED_OUT_KEY, 'true');
+    } catch {}
 
     // Ensure theme and other preserved preferences remain intact across sign-out
     Object.entries(preserved).forEach(([k, v]) => {
@@ -55,13 +63,25 @@ export function UserProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const userRef = useRef(null);
   const fetchUserRef = useRef(null);
+  const isLoggingOutRef = useRef(false);
 
   useEffect(() => {
     userRef.current = userState;
+    if (userState) {
+      // Any explicit authenticated user state clears the logged-out lockout flag
+      try {
+        sessionStorage.removeItem(LOGGED_OUT_KEY);
+      } catch {}
+    }
   }, [userState]);
 
   // Re-fetch user profile from server (handles external changes like admin KYC approval)
   const refetchUser = useCallback(async () => {
+    if (isLoggingOutRef.current) return;
+    try {
+      if (sessionStorage.getItem(LOGGED_OUT_KEY) === 'true') return;
+    } catch {}
+
     if (!userRef.current?.id) return;
     try {
       const token = await getAuthToken();
@@ -71,7 +91,9 @@ export function UserProvider({ children }) {
       });
       const data = await res.json();
       if (res.ok && data.success && data.user) {
-        setUserState(data.user);
+        if (!isLoggingOutRef.current) {
+          setUserState(data.user);
+        }
       }
     } catch (e) {
       // silent — don't disrupt the UI for a background refetch
@@ -82,9 +104,59 @@ export function UserProvider({ children }) {
 
   // Re-fetch on tab focus (catches admin KYC/role changes)
   useEffect(() => {
-    const onFocus = () => fetchUserRef.current();
+    const onFocus = () => {
+      if (isLoggingOutRef.current) return;
+      try {
+        if (sessionStorage.getItem(LOGGED_OUT_KEY) === 'true') return;
+      } catch {}
+      fetchUserRef.current?.();
+    };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
+  }, []);
+
+  // Multi-tab synchronization: broadcast channel & storage event listener
+  useEffect(() => {
+    const handleRemoteLogout = () => {
+      isLoggingOutRef.current = true;
+      setUserState(null);
+      userRef.current = null;
+      setAuthTokenInMemory(null);
+      clearBrowserAuthState();
+      try {
+        if (window.google?.accounts?.id?.disableAutoSelect) {
+          window.google.accounts.id.disableAutoSelect();
+        }
+      } catch {}
+      // Replace window location to prevent stale back-button state
+      window.location.replace('/');
+    };
+
+    let channel = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel('matchdistrict_auth');
+        channel.onmessage = (event) => {
+          if (event.data?.type === 'LOGOUT') {
+            handleRemoteLogout();
+          }
+        };
+      }
+    } catch {}
+
+    const onStorage = (e) => {
+      if (e.key === LOGOUT_EVENT_KEY) {
+        handleRemoteLogout();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    return () => {
+      if (channel) {
+        try { channel.close(); } catch {}
+      }
+      window.removeEventListener('storage', onStorage);
+    };
   }, []);
 
   useEffect(() => {
@@ -92,6 +164,14 @@ export function UserProvider({ children }) {
     let supabaseSub = null;
 
     async function initializeAuth() {
+      // If the user explicitly logged out in this browser session, block automatic session restoration
+      try {
+        if (sessionStorage.getItem(LOGGED_OUT_KEY) === 'true') {
+          setLoading(false);
+          return;
+        }
+      } catch {}
+
       const persistentSession = localStorage.getItem('md_persistent_session');
       if (persistentSession) {
         try {
@@ -195,35 +275,90 @@ export function UserProvider({ children }) {
   };
 
   /**
-   * Perform a full sign-out: invalidates the Supabase session on the server,
-   * clears all browser storage/caches, and redirects cleanly.
+   * Perform a full sign-out:
+   * 1. Informs server to clear HttpOnly cookies (/api/auth/logout).
+   * 2. Clears in-memory token cache and React context state.
+   * 3. Wipes localStorage / sessionStorage auth keys (retaining theme only).
+   * 4. Broadcasts logout to all open tabs via BroadcastChannel & storage event.
+   * 5. Invalidates Supabase session.
+   * 6. Disables Google One Tap / auto-select.
+   * 7. Sets short-lived logged-out flag to prevent instant restore.
+   * 8. Navigates with replace to home so browser back button never shows authenticated views.
    */
   const signOut = async () => {
+    isLoggingOutRef.current = true;
+
+    // 1. Clear in-memory token and React state immediately
     setUserState(null);
+    userRef.current = null;
+    setAuthTokenInMemory(null);
+
+    // 2. Set the short-lived logged out flag
+    try {
+      sessionStorage.setItem(LOGGED_OUT_KEY, 'true');
+    } catch {}
+
+    // 3. Clear browser storage (theme preserved, md_user wiped)
     clearBrowserAuthState();
 
+    // 4. Broadcast to other open browser tabs
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const channel = new BroadcastChannel('matchdistrict_auth');
+        channel.postMessage({ type: 'LOGOUT', timestamp: Date.now() });
+        channel.close();
+      }
+      localStorage.setItem(LOGOUT_EVENT_KEY, String(Date.now()));
+    } catch (bcErr) {
+      console.warn('BroadcastChannel error:', bcErr);
+    }
+
+    // 5. Invalidate Supabase session
     try {
       await supabase.auth.signOut();
     } catch (e) {
       console.warn('Supabase signOut failed:', e);
     }
-    
-    // Clear cookies
-    document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
 
-    // Clear Cache Storage API caches
+    // 6. Disable Google auto-select / One Tap so it cannot auto re-login
+    try {
+      if (window.google?.accounts?.id?.disableAutoSelect) {
+        window.google.accounts.id.disableAutoSelect();
+      }
+    } catch (gErr) {
+      console.warn('Google disableAutoSelect failed:', gErr);
+    }
+
+    // 7. Clear client-accessible cookie variants as a secondary defense
+    try {
+      document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
+      document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; Secure';
+    } catch {}
+
+    // 8. Clear Cache Storage API caches
     if ('caches' in window) {
       try {
         const cacheNames = await caches.keys();
         await Promise.all(cacheNames.map(name => caches.delete(name)));
-        console.log('Cache Storage cleared successfully.');
       } catch (cacheErr) {
         console.warn('Failed to clear Cache Storage:', cacheErr);
       }
     }
-    
-    // Reload page to hard reset memory space and service worker registrations
-    window.location.reload();
+
+    // 9. Call server logout endpoint to clear HttpOnly cookies on the server
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (netErr) {
+      // Local cleanup proceeds regardless; never display server network error on logout
+      console.warn('Server logout request failed:', netErr);
+    }
+
+    // 10. Navigate with replace to root/home so back-button does not show protected views
+    window.location.replace('/');
   };
 
   return (

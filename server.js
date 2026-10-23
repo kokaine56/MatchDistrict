@@ -219,6 +219,38 @@ function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
   return defaultPath;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Shared Session Cookie Engine
+// Ensures set and clear operations use identical attributes so cookies never drift.
+// ─────────────────────────────────────────────────────────────
+function isHttpsRequest(req) {
+  if (process.env.NODE_ENV === 'production') return true;
+  if (!req) return false;
+  const proto = req.headers && req.headers['x-forwarded-proto'];
+  if (proto === 'https') return true;
+  return Boolean(req.socket && req.socket.encrypted);
+}
+
+function buildSessionCookie(token, req, options = {}) {
+  const isSecure = isHttpsRequest(req);
+  const maxAge = options.maxAge !== undefined ? options.maxAge : 86400; // 24 hours default
+  const expires = new Date(Date.now() + maxAge * 1000).toUTCString();
+  let cookie = `token=${token}; Path=/; SameSite=Lax; HttpOnly; Max-Age=${maxAge}; Expires=${expires}`;
+  if (isSecure) cookie += '; Secure';
+  return cookie;
+}
+
+function buildClearSessionCookies(req) {
+  const isSecure = isHttpsRequest(req);
+  const expiredDate = 'Thu, 01 Jan 1970 00:00:00 GMT';
+  const cookies = [];
+  cookies.push(`token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0; Expires=${expiredDate}${isSecure ? '; Secure' : ''}`);
+  if (isSecure) {
+    cookies.push(`token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0; Expires=${expiredDate}`);
+  }
+  return cookies;
+}
+
 // Hash a password using pbkdf2
 function hashPassword(password) {
   if (password == null || typeof password !== 'string') return '';
@@ -1382,9 +1414,12 @@ const server = http.createServer(async (req, res) => {
     (requestOrigin && !originAllowed) ||
     (!requestOrigin && hasSessionCookie && fetchSite === 'cross-site')
   )) {
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: false, error: 'CSRF_BLOCKED', message: 'Cross-site request blocked.' }));
-    return;
+    // Exclude logout endpoints so logout cannot be blocked by CSRF check
+    if (urlPath !== '/api/auth/logout' && urlPath !== '/api/admin/logout') {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'CSRF_BLOCKED', message: 'Cross-site request blocked.' }));
+      return;
+    }
   }
 
   // --- SECURE IMAGEKIT MEDIA PROXY ---
@@ -1819,7 +1854,7 @@ const server = http.createServer(async (req, res) => {
           console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via database verification. JWT Generated.\n`);
           res.writeHead(200, {
             'Content-Type': 'application/json',
-            'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
+            'Set-Cookie': buildSessionCookie(token, req)
           });
           res.end(JSON.stringify({
             success: true,
@@ -1885,7 +1920,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via Supabase Auth. JWT Generated.\n`);
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
+          'Set-Cookie': buildSessionCookie(token, req)
         });
         res.end(JSON.stringify({ success: true, token, encryptedSession, user: publicUserRow(foundUser), message: `Welcome back, ${foundUser.name || foundUser.email.split('@')[0]}! Redirecting...` }));
       } catch (err) {
@@ -2096,8 +2131,7 @@ const server = http.createServer(async (req, res) => {
           userId: targetUser.uid || targetUser.id,
           email: targetUser.email
         }));
-        const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
-        const cookieHeader = `token=${token}; Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
+        const cookieHeader = buildSessionCookie(token, req);
 
         logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'google_signin', req).catch(() => {});
         console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Google Identity Services.\n`);
@@ -2446,7 +2480,7 @@ const server = http.createServer(async (req, res) => {
         roles: targetUser.roles || [targetUser.role],
         id: targetUser.uid || targetUser.id
       });
-      const cookieHeader = `token=${token}; Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
+      const cookieHeader = buildSessionCookie(token, req);
 
       logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'discord_signin', req).catch(() => {});
       console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Discord.\n`);
@@ -2519,6 +2553,17 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Failed to disconnect Discord account.' }));
     }
+    return;
+  }
+
+  // 2f. Logout Service (/api/auth/logout)
+  if ((urlPath === '/api/auth/logout' || req.url === '/api/auth/logout') && (req.method === 'POST' || req.method === 'GET')) {
+    const clearCookies = buildClearSessionCookies(req);
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Set-Cookie': clearCookies
+    });
+    res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
     return;
   }
 
@@ -2743,8 +2788,6 @@ const server = http.createServer(async (req, res) => {
         await ensureSupabaseProfile(pool, newUser);
 
         const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
-        const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
-        const cookieFlags = `Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
 
         // Strip sensitive fields from user response
         const safeUser = { ...newUser };
@@ -2754,7 +2797,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; ${cookieFlags}`
+          'Set-Cookie': buildSessionCookie(token, req)
         });
         res.end(JSON.stringify({ success: true, token, user: safeUser }));
       } catch (err) {
@@ -3134,7 +3177,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${freshToken}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
+          'Set-Cookie': buildSessionCookie(freshToken, req)
         });
         res.end(JSON.stringify({
           success: true,
@@ -17557,7 +17600,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly; Max-Age=1800${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
+          'Set-Cookie': buildSessionCookie(token, req, { maxAge: 1800 })
         });
         res.end(JSON.stringify({
           success: true,
@@ -17579,10 +17622,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   // POST /api/admin/logout — Admin logout
-  if (req.url === '/api/admin/logout' && req.method === 'POST') {
+  if ((req.url === '/api/admin/logout' || urlPath === '/api/admin/logout') && (req.method === 'POST' || req.method === 'GET')) {
+    const clearCookies = buildClearSessionCookies(req);
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Set-Cookie': 'token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0'
+      'Set-Cookie': clearCookies
     });
     res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
     return;

@@ -38,15 +38,20 @@ function secureLogout() {
   try {
     sessionStorage.removeItem('md_persistent_session')
     localStorage.removeItem('md_persistent_session')
+    localStorage.removeItem('md_user')
+    sessionStorage.setItem('md_logged_out', 'true')
+    try {
+      fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {})
+    } catch {}
     document.cookie.split(';').forEach((c) => {
       document.cookie = c
         .replace(/^ +/, '')
         .replace(/=.*/, `=;expires=${new Date(0).toUTCString()};path=/`)
     })
     sessionStorage.setItem(SESSION_EXPIRED_KEY, 'true')
-    window.location.href = `${LOGIN_PATH}?session_expired=true`
+    window.location.replace(`${LOGIN_PATH}?session_expired=true`)
   } catch {
-    window.location.href = LOGIN_PATH
+    window.location.replace(LOGIN_PATH)
   }
 }
 

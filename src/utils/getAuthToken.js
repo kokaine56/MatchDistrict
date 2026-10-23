@@ -6,6 +6,10 @@ export function setAuthTokenInMemory(token) {
   inMemoryAuthToken = token || null;
 }
 
+export function clearAuthTokenInMemory() {
+  inMemoryAuthToken = null;
+}
+
 export function getAuthTokenInMemory() {
   return inMemoryAuthToken;
 }
@@ -20,6 +24,11 @@ export function getAuthTokenInMemory() {
  * @returns {Promise<string|null>}
  */
 export async function getAuthToken() {
+  try {
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('md_logged_out') === 'true') {
+      return null;
+    }
+  } catch {}
   if (inMemoryAuthToken) return inMemoryAuthToken;
   try {
     const match = document.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);

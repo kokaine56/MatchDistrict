@@ -519,6 +519,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // --- Discord OAuth2 Integration ---
   const handleDiscordClick = () => {
+    try { sessionStorage.removeItem('md_logged_out'); } catch {}
     const safeRedirect = redirectTo || ''
     const target = `/api/auth/discord?intent=login${safeRedirect ? `&redirect=${encodeURIComponent(safeRedirect)}` : ''}`
     window.location.href = target
