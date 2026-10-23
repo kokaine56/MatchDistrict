@@ -206,6 +206,9 @@ export async function runSchemaMigrations(clientOrPool) {
         expires_at TIMESTAMP NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE temp_users ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
+      ALTER TABLE temp_users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255);
+      ALTER TABLE otps ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS registration_cooldowns (
         client_key VARCHAR(64) PRIMARY KEY,

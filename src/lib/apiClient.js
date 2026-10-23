@@ -72,7 +72,7 @@ async function request(url, options = {}) {
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const config = { ...options, headers }
+  const config = { credentials: 'include', ...options, headers }
 
   let lastError = null
   let lastData = null

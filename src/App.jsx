@@ -363,6 +363,29 @@ function AppInner() {
     )
   }
 
+  // Reusable Admin route guard to protect all admin pages (FE-001)
+  const AdminRouteGuard = ({ children }) => {
+    const { currentUser, loading } = useUser()
+
+    if (loading) {
+      return <LoadingArena />
+    }
+
+    if (!currentUser) {
+      return <Navigate to="/login" replace />
+    }
+
+    if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
+      return <Navigate to="/" replace />
+    }
+
+    return (
+      <PageTransition>
+        {children}
+      </PageTransition>
+    )
+  }
+
   // AdminAuthenticator adapter with frontend route guard
   const AdminAuthenticatorRoute = () => {
     const { currentUser, loading } = useUser()
@@ -376,7 +399,7 @@ function AppInner() {
     }
 
     if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
-      return <Navigate to="/admin" replace />
+      return <Navigate to="/" replace />
     }
 
     return (
@@ -398,7 +421,7 @@ function AppInner() {
     }
 
     if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
-      return <Navigate to="/admin" replace />
+      return <Navigate to="/" replace />
     }
 
     return (
@@ -420,7 +443,7 @@ function AppInner() {
     }
 
     if (!hasRole(getUserRoles(currentUser), ROLES.ADMIN)) {
-      return <Navigate to="/admin" replace />
+      return <Navigate to="/" replace />
     }
 
     return (
@@ -541,27 +564,27 @@ function AppInner() {
                 <Route path="/org-management" element={<OrganizationManagementRoute />} />
 
                 <Route path="/admin" element={
-                  <PageTransition>
+                  <AdminRouteGuard>
                     <AdminDashboard onNavigate={handleNavigate} />
-                  </PageTransition>
+                  </AdminRouteGuard>
                 } />
 
                 <Route path="/admin/payments" element={
-                  <PageTransition>
+                  <AdminRouteGuard>
                     <AdminPayments />
-                  </PageTransition>
+                  </AdminRouteGuard>
                 } />
 
                 <Route path="/admin/sponsorships" element={
-                  <PageTransition>
+                  <AdminRouteGuard>
                     <AdminSponsorships />
-                  </PageTransition>
+                  </AdminRouteGuard>
                 } />
 
                 <Route path="/admin/system-health" element={
-                  <PageTransition>
+                  <AdminRouteGuard>
                     <AdminSystemHealth />
-                  </PageTransition>
+                  </AdminRouteGuard>
                 } />
 
                 <Route path="/admin/security/authenticator" element={

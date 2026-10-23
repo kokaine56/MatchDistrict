@@ -1,21 +1,30 @@
 import { supabase } from './supabaseClient';
 
+let inMemoryAuthToken = null;
+
+export function setAuthTokenInMemory(token) {
+  inMemoryAuthToken = token || null;
+}
+
+export function getAuthTokenInMemory() {
+  return inMemoryAuthToken;
+}
+
 /**
- * Returns an auth token for API requests. Prefers our custom JWT from the
- * `token` cookie (signed with JWT_SECRET and accepted by verifyJwt()),
- * falling back to the Supabase access_token for OAuth users.
+ * Returns an auth token for API requests. Prefers in-memory token,
+ * then custom JWT from the 'token' cookie if readable,
+ * falling back to Supabase access_token for OAuth users.
+ * Note: When HttpOnly cookies are enabled, credentials: 'include' in fetch
+ * handles authentication directly on the server.
  *
  * @returns {Promise<string|null>}
  */
 export async function getAuthToken() {
+  if (inMemoryAuthToken) return inMemoryAuthToken;
   try {
-    // Prefer our custom JWT from the token cookie (signed with our JWT_SECRET,
-    // which the server's verifyJwt() accepts). The Supabase access_token is
-    // signed by Supabase and will be rejected by our server.
     const match = document.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);
     if (match) return decodeURIComponent(match[2]);
 
-    // Fallback to Supabase session (for OAuth users)
     const { data } = await supabase.auth.getSession();
     if (data?.session?.access_token) {
       return data.session.access_token;
@@ -27,14 +36,11 @@ export async function getAuthToken() {
 }
 
 /**
- * Synchronously returns our custom JWT from the token cookie.
- * Useful for non-async contexts. Falls back gracefully to null.
- *
+ * Synchronously returns custom JWT from memory or cookie.
  * @returns {string|null}
  */
 export function getAuthTokenSync() {
-  // Supabase stores the session in its own internal storage layer.
-  // We surface the most recently cached value if already loaded.
+  if (inMemoryAuthToken) return inMemoryAuthToken;
   try {
     const match = document.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);
     return match ? decodeURIComponent(match[2]) : null;

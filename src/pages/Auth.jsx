@@ -1,3 +1,4 @@
+import { setAuthTokenInMemory } from '../utils/getAuthToken';
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -550,7 +551,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         const data = await res.json()
         if (res.ok && data.success) {
           if (data.encryptedSession) {
-            localStorage.setItem('md_persistent_session', data.encryptedSession)
+            if (data.token) { setAuthTokenInMemory(data.token); }
           }
           setCurrentUser(data.user)
 
@@ -604,7 +605,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       const data = await res.json()
       if (res.ok && data.success) {
         if (data.encryptedSession) {
-          localStorage.setItem('md_persistent_session', data.encryptedSession)
+          if (data.token) { setAuthTokenInMemory(data.token); }
         }
         const loginRoles = data.user?.roles || (data.user?.role ? [data.user.role] : []);
         if (loginRoles.includes('admin')) {
@@ -824,12 +825,16 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: regForm.email, password: regForm.password })
+        body: JSON.stringify({
+          email: regForm.email,
+          password: regForm.password,
+          verificationToken: verifyData.verificationToken
+        })
       })
       const data = await res.json()
       if (res.ok && data.success) {
         if (data.encryptedSession) {
-          localStorage.setItem('md_persistent_session', data.encryptedSession)
+          if (data.token) { setAuthTokenInMemory(data.token); }
         }
         // Sign in via Supabase
         // If email confirmation is enabled, this will fail. We bypass the error to log the user in locally.

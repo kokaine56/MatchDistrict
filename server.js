@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { startSlotManagerWorker, reconcileTournamentSlots } from './workers/slotManagerWorker.js';
 import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
+import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
 import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings } from './server/leaderboardService.js';
@@ -557,6 +558,9 @@ async function initDb() {
         ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS utr_ref VARCHAR(255);
         ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
         ALTER TABLE payment_verifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+        ALTER TABLE temp_users ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false;
+        ALTER TABLE temp_users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255);
+        ALTER TABLE otps ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;
       `);
       console.log('📦 [MATCH DISTRICT DB] Roadmap & progression schema migrations applied.');
     } catch (migErr) {
@@ -850,14 +854,27 @@ async function logTermsAcceptance(pool, email, userId, action, req) {
     console.warn(`⚠️ [TERMS ACCEPTANCE] Failed to log ${action} for ${email}:`, err.message);
   }
 }
-// Helper to get authenticated user from authorization header
+// Helper to get authenticated user from cookies or Authorization header
 function getAuthUser(req) {
+  let token = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.headers.cookie) {
+    const match = req.headers.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);
+    if (match) {
+      try {
+        token = decodeURIComponent(match[2]);
+      } catch {
+        token = match[2];
+      }
+    }
+  }
+
+  if (!token) {
     req.authUser = null;
     return null;
   }
-  const token = authHeader.split(' ')[1];
   const res = verifyJwt(token);
   const user = res.valid ? res.payload : null;
   req.authUser = user;
@@ -1049,6 +1066,7 @@ function hasOrganizerRights(user) {
 const PERMISSIONS = Object.freeze({
   PUBLISH_TOURNAMENT: [ROLES.ADMIN, ROLES.ORGANISER],
   VERIFY_PAYMENTS:    [ROLES.ADMIN, ROLES.REG_PAYMENT_VERIFIER],
+  VERIFY_SUBSCRIPTIONS: [ROLES.ADMIN],
   MANAGE_ROLES:       [ROLES.ADMIN],
 });
 
@@ -1310,14 +1328,52 @@ setInterval(() => {
 
 const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || '').split('?')[0];
-  // CORS Headers for Render
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // Hardened CORS & Origin Validation
+  const requestOrigin = req.headers.origin;
+  const isAllowedOrigin = (origin) => {
+    if (!origin) return false;
+    if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+    if (['https://matchdistrict.com', 'https://www.matchdistrict.com'].includes(origin)) return true;
+    if (process.env.ALLOWED_ORIGINS) {
+      const allowed = process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim());
+      if (allowed.includes(origin)) return true;
+    }
+    return false;
+  };
+
+  const originAllowed = isAllowedOrigin(requestOrigin);
+
+  if (originAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else if (!requestOrigin) {
+    // Same-origin or non-browser server request
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else {
+    // Untrusted external browser origin
+    res.setHeader('Access-Control-Allow-Origin', 'null');
+  }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,content-type,Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,Content-Type,Authorization,X-CSRF-Token');
+  res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
-    res.writeHead(200);
+    res.writeHead(204);
     res.end();
+    return;
+  }
+
+  // Basic CSRF mitigation: Reject cross-site state mutations from unapproved browser origins
+  const isStateChangingRequest = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method);
+  const fetchSite = req.headers['sec-fetch-site'];
+  const hasSessionCookie = /(?:^|;\s*)token=/.test(req.headers.cookie || '');
+  if (isStateChangingRequest && (
+    (requestOrigin && !originAllowed) ||
+    (!requestOrigin && hasSessionCookie && fetchSite === 'cross-site')
+  )) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'CSRF_BLOCKED', message: 'Cross-site request blocked.' }));
     return;
   }
 
@@ -1494,22 +1550,33 @@ const server = http.createServer(async (req, res) => {
   // 1. OTP Sending Service
   if (req.url === '/api/auth/send-otp' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bodySize = 0;
+    const MAX_AUTH_BODY = 16 * 1024; // 16KB limit
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_AUTH_BODY) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Request body exceeds limit.' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
+      if (bodySize > MAX_AUTH_BODY) return;
       try {
         const parsed = JSON.parse(body);
-        const email = parsed.email;
-        let otp = parsed.otp;
-        let expiry = parsed.expiry;
-
-        if (!otp) {
-          otp = Math.floor(100000 + Math.random() * 900000).toString();
-        }
-        if (!expiry) {
-          expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+        const email = (parsed.email || '').trim().toLowerCase();
+        if (!email || !email.includes('@')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_EMAIL', message: 'A valid email address is required.' }));
+          return;
         }
 
-
+        // Generate cryptographically secure 6-digit OTP on server only.
+        // Never allow client to supply otp!
+        const otp = crypto.randomInt(100000, 1000000).toString();
+        const expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
 
         // Rate limiting: Check if OTP was sent in the last 3 minutes
         const lastOtpRes = await pool.query('SELECT created_at FROM otps WHERE email = $1', [email]);
@@ -1530,17 +1597,15 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        console.log('\n=================================================================');
-        console.log(`🔑 [MATCH DISTRICT OTP SERVICE] Verification Code Generated`);
-        console.log(`📧 Email: ${email}`);
-        console.log(`🔢 OTP:   ${otp}`);
-        console.log(`⏱️  Valid: 5 minutes (until ${new Date(expiry).toLocaleTimeString()})`);
-        console.log('=================================================================\n');
+        console.log(`🔑 [MATCH DISTRICT OTP SERVICE] Verification Code Generated for email: ${email}`);
 
-        // Store OTP in database
+        // Store OTP in database with attempts reset to 0
         const expiresAt = new Date(expiry);
         await pool.query(
-          'INSERT INTO otps (email, otp, expires_at) VALUES ($1, $2, $3) ON CONFLICT (email) DO UPDATE SET otp = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP',
+          `INSERT INTO otps (email, otp, expires_at, attempts, created_at)
+           VALUES ($1, $2, $3, 0, CURRENT_TIMESTAMP)
+           ON CONFLICT (email)
+           DO UPDATE SET otp = $2, expires_at = $3, attempts = 0, created_at = CURRENT_TIMESTAMP`,
           [email, otp, expiresAt]
         );
 
@@ -1566,7 +1631,7 @@ const server = http.createServer(async (req, res) => {
         const emailSent = emailResult.success;
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, emailSent }));
+        res.end(JSON.stringify({ success: true, emailSent, expiry }));
       } catch (err) {
         const isSchemaError = err.message && err.message.includes('does not exist');
         const message = isSchemaError
@@ -1582,28 +1647,120 @@ const server = http.createServer(async (req, res) => {
   // 1b. OTP Verification Service
   if (req.url === '/api/auth/verify-otp' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bodySize = 0;
+    const MAX_AUTH_BODY = 16 * 1024;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_AUTH_BODY) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
+      if (bodySize > MAX_AUTH_BODY) return;
       try {
-        const { email, otp } = JSON.parse(body);
+        const parsed = JSON.parse(body);
+        const email = (parsed.email || '').trim().toLowerCase();
+        const otp = (parsed.otp || '').trim();
 
-        // Explicitly check for 5-minute validity using current time
-        const now = new Date();
-        const dbRes = await pool.query(
-          'SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3',
-          [email, otp, now]
-        );
-
-        if (dbRes.rows.length > 0) {
-          // OTP is valid, delete it so it can't be reused
-          await pool.query('DELETE FROM otps WHERE email = $1', [email]);
-
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'OTP verified successfully.' }));
-        } else {
+        if (!email || !otp) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Invalid or expired OTP.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Email and OTP are required.' }));
+          return;
         }
+
+        const now = new Date();
+        const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1', [email]);
+        if (otpRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'OTP_NOT_FOUND', message: 'No active verification code found. Please request a new one.' }));
+          return;
+        }
+
+        const otpRecord = otpRes.rows[0];
+
+        // Check expiry
+        if (new Date(otpRecord.expires_at) <= now) {
+          await pool.query('DELETE FROM otps WHERE email = $1', [email]);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'OTP_EXPIRED', message: 'Verification code has expired. Please request a new one.' }));
+          return;
+        }
+
+        // Check attempts limit (max 5)
+        const attempts = parseInt(otpRecord.attempts || 0, 10);
+        if (attempts >= 5) {
+          await pool.query('DELETE FROM otps WHERE email = $1', [email]);
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'TOO_MANY_ATTEMPTS',
+            message: 'Too many incorrect attempts. Verification code invalidated. Please request a new code.'
+          }));
+          return;
+        }
+
+        // Timing-safe comparison
+        const otpBuf = Buffer.from(otp);
+        const storedBuf = Buffer.from(otpRecord.otp);
+        const isMatch = otpBuf.length === storedBuf.length && crypto.timingSafeEqual(otpBuf, storedBuf);
+
+        if (!isMatch) {
+          const attemptRes = await pool.query(
+            `UPDATE otps SET attempts = COALESCE(attempts, 0) + 1
+             WHERE email = $1 AND expires_at > NOW() AND COALESCE(attempts, 0) < 5
+             RETURNING attempts`,
+            [email]
+          );
+          const attemptsNow = attemptRes.rows[0]?.attempts ?? 5;
+          const remaining = Math.max(0, 5 - attemptsNow);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_OTP',
+            message: remaining > 0
+              ? `Incorrect verification code. ${remaining} attempt(s) remaining.`
+              : 'Incorrect verification code. Maximum attempts exceeded. Please request a new code.'
+          }));
+          return;
+        }
+
+        // Consume atomically so concurrent requests cannot verify the same OTP.
+        const consumeRes = await pool.query(
+          `DELETE FROM otps WHERE email = $1 AND otp = $2
+             AND expires_at > NOW() AND COALESCE(attempts, 0) < 5 RETURNING email`,
+          [email, otpRecord.otp]
+        );
+        if (consumeRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is invalid or expired. Please request a new code.' }));
+          return;
+        }
+
+        // Issue cryptographically secure verification token
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+
+        // Mark temp_users as verified
+        const verifiedRes = await pool.query(
+          `UPDATE temp_users SET verified = true, verification_token = $1
+           WHERE email = $2 AND expires_at > NOW() RETURNING email`,
+          [verificationToken, email]
+        );
+        if (verifiedRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'REGISTRATION_SESSION_EXPIRED', message: 'Registration session expired. Please submit your details again.' }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'OTP verified successfully.',
+          verificationToken
+        }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -1652,7 +1809,7 @@ const server = http.createServer(async (req, res) => {
           console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via database verification. JWT Generated.\n`);
           res.writeHead(200, {
             'Content-Type': 'application/json',
-            'Set-Cookie': `token=${token}; Path=/; SameSite=Lax`
+            'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
           });
           res.end(JSON.stringify({
             success: true,
@@ -1718,7 +1875,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via Supabase Auth. JWT Generated.\n`);
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax`
+          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
         });
         res.end(JSON.stringify({ success: true, token, encryptedSession, user: publicUserRow(foundUser), message: `Welcome back, ${foundUser.name || foundUser.email.split('@')[0]}! Redirecting...` }));
       } catch (err) {
@@ -1732,16 +1889,34 @@ const server = http.createServer(async (req, res) => {
   // 3-temp. Temporary User Registration Details (saves for 5 minutes)
   if (req.url === '/api/auth/register-temp' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bodySize = 0;
+    const MAX_AUTH_BODY = 16 * 1024;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_AUTH_BODY) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
+      if (bodySize > MAX_AUTH_BODY) return;
       try {
         const userData = JSON.parse(body);
+        const email = (userData.email || '').trim().toLowerCase();
+        if (!email || !email.includes('@')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_EMAIL', message: 'Valid email is required.' }));
+          return;
+        }
 
         // Cleanup expired temp users
         await pool.query('DELETE FROM temp_users WHERE expires_at < NOW()');
 
         // Check if the user email is already registered permanently
-        const checkUser = await pool.query('SELECT * FROM users WHERE email = $1', [userData.email]);
+        const checkUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
         if (checkUser.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Email is already registered.' }));
@@ -1749,21 +1924,21 @@ const server = http.createServer(async (req, res) => {
         }
 
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+        const hashedPassword = hashPassword(userData.password || '');
 
-        const hashedPassword = hashPassword(userData.password);
         await pool.query(
-          `INSERT INTO temp_users (email, name, password, "gamerTag", role, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO temp_users (email, name, password, "gamerTag", role, verified, verification_token, expires_at)
+           VALUES ($1, $2, $3, $4, $5, false, NULL, $6)
            ON CONFLICT (email)
-           DO UPDATE SET name = $2, password = $3, "gamerTag" = $4, role = $5, expires_at = $6, created_at = CURRENT_TIMESTAMP`,
-          [userData.email, userData.name || '', hashedPassword, userData.gamerTag || '', 'player', expiresAt]
+           DO UPDATE SET name = $2, password = $3, "gamerTag" = $4, role = $5, verified = false, verification_token = NULL, expires_at = $6, created_at = CURRENT_TIMESTAMP`,
+          [email, userData.name || '', hashedPassword, userData.gamerTag || '', 'player', expiresAt]
         );
 
-        console.log(`📦 [MATCH DISTRICT TEMP REGISTER] Temporary registration details saved for: ${userData.email}`);
+        console.log(`📦 [MATCH DISTRICT TEMP REGISTER] Temporary registration details saved for: ${email}`);
 
-        // Log terms acceptance if user agreed (fire-and-forget — don't block the response)
+        // Log terms acceptance if user agreed (fire-and-forget)
         if (userData.agreeTerms === true) {
-          logTermsAcceptance(pool, userData.email, null, 'temp_submit', req).catch(() => {});
+          logTermsAcceptance(pool, email, null, 'temp_submit', req).catch(() => {});
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1782,10 +1957,23 @@ const server = http.createServer(async (req, res) => {
   // 3. Supabase User Registration Service (finalizes from temp_users)
   if (req.url === '/api/auth/register' && req.method === 'POST') {
     let body = '';
-    req.on('data', chunk => { body += chunk; });
+    let bodySize = 0;
+    const MAX_AUTH_BODY = 16 * 1024;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_AUTH_BODY) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', async () => {
+      if (bodySize > MAX_AUTH_BODY) return;
       try {
-        const { email, password } = JSON.parse(body);
+        const { email: rawEmail, password, verificationToken } = JSON.parse(body);
+        const email = (rawEmail || '').trim().toLowerCase();
 
         // Cleanup expired temp users
         await pool.query('DELETE FROM temp_users WHERE expires_at < NOW()');
@@ -1800,10 +1988,54 @@ const server = http.createServer(async (req, res) => {
 
         const tempUser = tempUserRes.rows[0];
 
-        // Register user in Supabase Auth using password passed from client
+        // CRITICAL CHECK: Enforce that email OTP was verified!
+        if (!tempUser.verified) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'EMAIL_NOT_VERIFIED',
+            message: 'Email address has not been verified. Please verify your OTP code before finalizing registration.'
+          }));
+          return;
+        }
+
+        // Verify verificationToken matches if token was issued
+        if (tempUser.verification_token && verificationToken) {
+          if (typeof verificationToken !== 'string' || !/^[a-f0-9]{64}$/i.test(verificationToken)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'INVALID_VERIFICATION_TOKEN',
+              message: 'Please complete email verification before finalizing registration.'
+            }));
+            return;
+          }
+          const storedTokenBuf = Buffer.from(tempUser.verification_token);
+          const clientTokenBuf = Buffer.from(verificationToken);
+          const isTokenMatch = storedTokenBuf.length === clientTokenBuf.length && crypto.timingSafeEqual(storedTokenBuf, clientTokenBuf);
+          if (!isTokenMatch) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'INVALID_VERIFICATION_TOKEN',
+              message: 'Invalid verification token. Please complete verification again.'
+            }));
+            return;
+          }
+        } else {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_VERIFICATION_TOKEN',
+            message: 'Please complete email verification before finalizing registration.'
+          }));
+          return;
+        }
+
+        // Register user in Supabase Auth
         let userUUID = null;
         let isLocalFallback = false;
-        const registerPassword = password || ('MatchDistrictTempPass' + Math.random().toString(36).slice(-8));
+        const registerPassword = password || ('MatchDistrictTempPass' + crypto.randomBytes(6).toString('hex'));
 
         try {
           const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -1811,17 +2043,12 @@ const server = http.createServer(async (req, res) => {
             password: registerPassword
           });
 
-          if (authError) {
-            console.warn(`⚠️ [SUPABASE SIGNUP ERROR] ${authError.message}. Falling back to local database registration.`);
-            isLocalFallback = true;
-          } else if (!authData || !authData.user) {
-            console.warn(`⚠️ [SUPABASE SIGNUP] No auth user returned. Falling back to local database registration.`);
+          if (authError || !authData || !authData.user) {
             isLocalFallback = true;
           } else {
             userUUID = authData.user.id;
           }
         } catch (signUpErr) {
-          console.warn(`⚠️ [SUPABASE SIGNUP EXCEPTION] ${signUpErr.message}. Falling back to local database registration.`);
           isLocalFallback = true;
         }
 
@@ -1847,8 +2074,8 @@ const server = http.createServer(async (req, res) => {
             `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
             [
-              userUUID, // id
-              userUUID, // uid
+              userUUID,
+              userUUID,
               tempUser.name || '',
               tempUser.email,
               tempUser.password, // Store hashed password from tempUser
@@ -1863,11 +2090,11 @@ const server = http.createServer(async (req, res) => {
           );
           newUser = dbRes.rows[0];
 
-          // Delete from temp_users (registration completed)
+          // Delete from temp_users (single-use: registration completed)
           await pool.query('DELETE FROM temp_users WHERE email = $1', [tempUser.email]);
           console.log(`\n📦 [MATCH DISTRICT DB] User "${newUser.email}" registered permanently.\n`);
 
-          // Log final terms acceptance (fire-and-forget — don't block JWT response)
+          // Log final terms acceptance
           logTermsAcceptance(pool, newUser.email, newUser.id || newUser.uid, 'final_register', req).catch(() => {});
         } catch (dbErr) {
           const errorMsg = dbErr.message.includes('duplicate key value') ? 'Email is already registered.' : dbErr.message;
@@ -1879,12 +2106,20 @@ const server = http.createServer(async (req, res) => {
         await ensureSupabaseProfile(pool, newUser);
 
         const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
-        const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: newUser.uid || newUser.id, email: newUser.email }));
+        const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
+        const cookieFlags = `Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
+
+        // Strip sensitive fields from user response
+        const safeUser = { ...newUser };
+        delete safeUser.password;
+        delete safeUser.salt;
+        delete safeUser.admin_totp_secret;
+
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax`
+          'Set-Cookie': `token=${token}; ${cookieFlags}`
         });
-        res.end(JSON.stringify({ success: true, token, encryptedSession, user: newUser }));
+        res.end(JSON.stringify({ success: true, token, user: safeUser }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -1893,16 +2128,33 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 3a. POST /api/auth/reset-password Service
+  // 3a. POST /api/auth/reset-password Service — Token-enforced password reset (AUTH-003)
   if (req.url === '/api/auth/reset-password' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { email, password } = JSON.parse(body);
+        const { token, password } = JSON.parse(body);
+        if (!token || !password) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'A valid reset token and new password are required.' }));
+          return;
+        }
 
+        const now = new Date();
+        const resetRes = await pool.query(
+          'SELECT * FROM password_resets WHERE token = $1 AND expires_at > $2',
+          [token, now]
+        );
+
+        if (resetRes.rows.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid or expired reset token.' }));
+          return;
+        }
+
+        const email = resetRes.rows[0].email;
         const hashedPassword = hashPassword(password);
-        // Update user's password in database
         const dbRes = await pool.query(
           'UPDATE users SET password = $1 WHERE email = $2 RETURNING *',
           [hashedPassword, email]
@@ -1910,13 +2162,13 @@ const server = http.createServer(async (req, res) => {
 
         if (dbRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'User email not found.' }));
+          res.end(JSON.stringify({ success: false, error: 'User associated with token not found.' }));
           return;
         }
 
         const updatedUser = dbRes.rows[0];
+        await pool.query('DELETE FROM password_resets WHERE token = $1', [token]);
 
-        // Try to update in Supabase Auth if user has UUID
         if (updatedUser.uid && !updatedUser.uid.startsWith('USR-')) {
           try {
             if (supabaseAdmin) await supabaseAdmin.auth.admin.updateUserById(updatedUser.uid, { password });
@@ -1925,7 +2177,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        console.log(`🔑 [MATCH DISTRICT AUTH] Password reset successfully for user: ${email}`);
+        console.log(`🔑 [MATCH DISTRICT AUTH] Password reset successfully via token for user: ${email}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Password reset successful.' }));
       } catch (err) {
@@ -2013,24 +2265,24 @@ const server = http.createServer(async (req, res) => {
       try {
         const { email } = JSON.parse(body);
 
-        // Check if user exists in database
+        // Check if user exists in database (generic response to prevent user enumeration - AUTH-006)
         const userRes = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
         if (userRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'User with this email does not exist.' }));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'If an account exists with this email, a password reset link has been sent.' }));
           return;
         }
 
         const token = crypto.randomBytes(32).toString('hex');
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiry (AUTH-005)
 
         await pool.query(
           'INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (email) DO UPDATE SET token = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP',
           [email, token, expiresAt]
         );
 
-        // Send reset email via Resend
-        const resetLink = `http://${req.headers.host}/reset-password?token=${token}`;
+        const proto = req.headers['x-forwarded-proto'] || (process.env.NODE_ENV === 'production' ? 'https' : 'http');
+        const resetLink = `${proto}://${req.headers.host}/reset-password?token=${token}`;
         await sendEmail({
           to: email,
           subject: 'Reset Your Match District Password',
@@ -2219,7 +2471,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${freshToken}; Path=/; SameSite=Lax`
+          'Set-Cookie': `token=${freshToken}; Path=/; SameSite=Lax; HttpOnly${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
         });
         res.end(JSON.stringify({
           success: true,
@@ -7441,9 +7693,17 @@ const server = http.createServer(async (req, res) => {
   }
 
   function getClientIp(req) {
+    const remoteAddr = req.socket?.remoteAddress || '127.0.0.1';
+    const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+    if (!trustProxy) {
+      return remoteAddr;
+    }
     const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) return forwarded.split(',')[0].trim();
-    return req.socket?.remoteAddress || '127.0.0.1';
+    if (forwarded) {
+      const parts = forwarded.split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length > 0) return parts[0];
+    }
+    return remoteAddr;
   }
 
   // --- B2: AUTOMATIC / ON-DEMAND TEAM CREATION ---
@@ -9989,87 +10249,115 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
-        const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate" FROM tournaments WHERE id = $1', [id]);
-        if (tRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
-          return;
-        }
-        const t = tRes.rows[0];
-
-        // Check if registration window has closed
-        if (t.registrationCloseDate && new Date(t.registrationCloseDate) < new Date()) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration has ended for this tournament.' }));
-          return;
-        }
-
-        const entryFeeAmount = parseInt(t.entry_fee_amount) || 0;
-        const isPaid = entryFeeAmount > 0;
-
-        // v1.1: Unique amount suffix for high-volume tournaments
-        let amountToPay = entryFeeAmount;
-        if (isPaid && t.unique_amount_suffix_enabled) {
-          const suffix = Math.floor(Math.random() * UNIQUE_AMOUNT_SUFFIX_RANGE) + 1;
-          amountToPay = entryFeeAmount + suffix / 100;
-        }
-        const isWaitlisted = t.slotsFilled >= t.slotsTotal;
-
-        // Status: paid tournaments use pending_payment, free use pending
-        let status;
-        if (isWaitlisted) {
-          status = 'waitlisted';
-        } else if (isPaid) {
-          status = 'pending_payment';
-        } else {
-          status = 'pending';
-        }
-
-        let slotNumber = data.slot_number ? parseInt(data.slot_number) : null;
-        if (slotNumber) {
-          const slotCheck = await pool.query(
-            "SELECT id FROM tournament_registrations WHERE tournament_id = $1 AND slot_number = $2 AND status IN ('approved', 'confirmed', 'pending', 'pending_payment')",
-            [id, slotNumber]
-          );
-          if (slotCheck.rows.length > 0) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'SLOT_TAKEN', message: `Slot #${slotNumber} is already reserved by another team.` }));
-            return;
-          }
-        }
-
-        const regId = 'REG-' + Date.now().toString().slice(-6);
-        const membersStr = data.members ? (typeof data.members === 'string' ? data.members : JSON.stringify(data.members)) : '[]';
-        const idempotencyKey = data.idempotency_key || null;
-
-        // Idempotency check
-        if (idempotencyKey) {
-          const existingReg = await pool.query(
-            'SELECT * FROM tournament_registrations WHERE idempotency_key = $1',
-            [idempotencyKey]
-          );
-          if (existingReg.rows.length > 0) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, registration: existingReg.rows[0], requiresPayment: isPaid, idempotent: true }));
-            return;
-          }
-        }
-
+        const regClient = await pool.connect();
         let dbRes;
-        if (existingOrphanId) {
-          dbRes = await pool.query(
-            `UPDATE tournament_registrations
-             SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
-                 status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $10 RETURNING *`,
-            [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, existingOrphanId]
+        let entryFeeAmount = 0;
+        let isPaid = false;
+        let amountToPay = 0;
+        try {
+          await regClient.query('BEGIN');
+
+          // Transaction row-lock on tournament row (PAY-004 concurrency control)
+          const tRes = await regClient.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate" FROM tournaments WHERE id = $1 FOR UPDATE', [id]);
+          if (tRes.rows.length === 0) {
+            await regClient.query('ROLLBACK');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+            regClient.release();
+            return;
+          }
+          const t = tRes.rows[0];
+
+          // Check if registration window has closed
+          if (t.registrationCloseDate && new Date(t.registrationCloseDate) < new Date()) {
+            await regClient.query('ROLLBACK');
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration has ended for this tournament.' }));
+            regClient.release();
+            return;
+          }
+
+          entryFeeAmount = parseInt(t.entry_fee_amount) || 0;
+          isPaid = entryFeeAmount > 0;
+          amountToPay = entryFeeAmount;
+
+          if (isPaid && t.unique_amount_suffix_enabled) {
+            const suffix = Math.floor(Math.random() * UNIQUE_AMOUNT_SUFFIX_RANGE) + 1;
+            amountToPay = entryFeeAmount + suffix / 100;
+          }
+
+          // Count active non-waitlisted registrations within transaction
+          const activeCountRes = await regClient.query(
+            "SELECT COUNT(*) AS active_count FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'pending', 'pending_payment')",
+            [id]
           );
-        } else {
-          dbRes = await pool.query(
-            `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1) RETURNING *`,
-            [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey]
-          );
+          const activeCount = parseInt(activeCountRes.rows[0]?.active_count || '0');
+          const isWaitlisted = activeCount >= t.slotsTotal;
+
+          let status;
+          if (isWaitlisted) {
+            status = 'waitlisted';
+          } else if (isPaid) {
+            status = 'pending_payment';
+          } else {
+            status = 'pending';
+          }
+
+          let slotNumber = data.slot_number ? parseInt(data.slot_number) : null;
+          if (slotNumber && !isWaitlisted) {
+            const slotCheck = await regClient.query(
+              "SELECT id FROM tournament_registrations WHERE tournament_id = $1 AND slot_number = $2 AND status IN ('approved', 'confirmed', 'pending', 'pending_payment') FOR UPDATE",
+              [id, slotNumber]
+            );
+            if (slotCheck.rows.length > 0) {
+              await regClient.query('ROLLBACK');
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: false, error: 'SLOT_TAKEN', message: `Slot #${slotNumber} is already reserved by another team.` }));
+              regClient.release();
+              return;
+            }
+          }
+
+          const regId = 'REG-' + Date.now().toString().slice(-6);
+          const membersStr = data.members ? (typeof data.members === 'string' ? data.members : JSON.stringify(data.members)) : '[]';
+          const idempotencyKey = data.idempotency_key || null;
+
+          if (idempotencyKey) {
+            const existingReg = await regClient.query(
+              'SELECT * FROM tournament_registrations WHERE idempotency_key = $1',
+              [idempotencyKey]
+            );
+            if (existingReg.rows.length > 0) {
+              await regClient.query('COMMIT');
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ success: true, registration: existingReg.rows[0], requiresPayment: isPaid, idempotent: true }));
+              regClient.release();
+              return;
+            }
+          }
+
+          if (existingOrphanId) {
+            dbRes = await regClient.query(
+              `UPDATE tournament_registrations
+               SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
+                   status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $10 RETURNING *`,
+              [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, existingOrphanId]
+            );
+          } else {
+            dbRes = await regClient.query(
+              `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1) RETURNING *`,
+              [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey]
+            );
+          }
+
+          await regClient.query('COMMIT');
+        } catch (txnErr) {
+          await regClient.query('ROLLBACK');
+          throw txnErr;
+        } finally {
+          regClient.release();
         }
 
         await reconcileTournamentSlots(pool, id);
@@ -10913,7 +11201,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         // Get current registration
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [regId]);
+        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, id]);
         if (regRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
@@ -10932,8 +11220,8 @@ const server = http.createServer(async (req, res) => {
         let dbRes;
         if (newStatus === 'rejected' || newStatus === 'PAYMENT_REJECTED') {
           dbRes = await pool.query(
-            `UPDATE tournament_registrations SET status = $1, rejected_at = NOW(), rejection_reason = COALESCE($2, rejection_reason) WHERE id = $3 RETURNING *`,
-            [newStatus, rejectionReason, regId]
+            `UPDATE tournament_registrations SET status = $1, rejected_at = NOW(), rejection_reason = COALESCE($2, rejection_reason) WHERE id = $3 AND tournament_id = $4 RETURNING *`,
+            [newStatus, rejectionReason, regId, id]
           );
 
           // Also update payment_submissions if linked
@@ -10998,8 +11286,8 @@ const server = http.createServer(async (req, res) => {
           }
         } else {
           dbRes = await pool.query(
-            `UPDATE tournament_registrations SET status = $1 WHERE id = $2 RETURNING *`,
-            [newStatus, regId]
+            `UPDATE tournament_registrations SET status = $1 WHERE id = $2 AND tournament_id = $3 RETURNING *`,
+            [newStatus, regId, id]
           );
         }
 
@@ -12207,9 +12495,9 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Subscription payment approval requires Admin privileges.' }));
           return;
         }
 
@@ -12369,9 +12657,9 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const authUser = getAuthUser(req);
-        if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Subscription payment rejection requires Admin privileges.' }));
           return;
         }
 
@@ -12429,9 +12717,9 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/payments/stats' && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || !hasCapability(authUser, 'VERIFY_PAYMENTS')) {
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Requires Payment Verifier or Admin permissions.' }));
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Access denied: Subscription stats require Admin privileges.' }));
         return;
       }
 
@@ -13967,7 +14255,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [regId]);
+        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, id]);
         if (regRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
@@ -16485,18 +16773,36 @@ const server = http.createServer(async (req, res) => {
     return res.rows[0] || null;
   }
 
-  // Helper: Verify TOTP code against a secret
-  function verifyTOTP(secret, token) {
-    const totp = new OTPAuth.TOTP({
-      issuer: 'Match District',
-      label: 'admin',
-      algorithm: 'SHA1',
-      digits: 6,
-      period: 30,
-      secret: OTPAuth.Secret.fromBase32(secret)
-    });
-    const delta = totp.validate({ token, window: 1 });
-    return delta !== null;
+  // Helper: Verify TOTP code against an encrypted or plaintext secret with opportunistic migration (SENS-003)
+  async function verifyTOTP(secretOrCiphertext, token, adminUserId = null) {
+    try {
+      const decrypted = decryptSecret(secretOrCiphertext);
+      if (!decrypted || !decrypted.secret) return false;
+      const totp = new OTPAuth.TOTP({
+        issuer: 'Match District',
+        label: 'admin',
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32(decrypted.secret)
+      });
+      const delta = totp.validate({ token, window: 1 });
+      const isValid = delta !== null;
+      if (isValid && decrypted.isLegacy && adminUserId) {
+        try {
+          await pool.query(
+            'UPDATE users SET admin_totp_secret = $1 WHERE id = $2',
+            [encryptSecret(decrypted.secret), adminUserId]
+          );
+          console.log('🔐 [ADMIN TOTP] Opportunistically migrated legacy plaintext TOTP secret to AES-256-GCM.');
+        } catch (migErr) {
+          console.warn('⚠️ [ADMIN TOTP] Opportunistic migration failed:', migErr.message);
+        }
+      }
+      return isValid;
+    } catch {
+      return false;
+    }
   }
 
   // GET /api/admin/totp-status — Public: check if TOTP is activated (no auth needed)
@@ -16550,7 +16856,7 @@ const server = http.createServer(async (req, res) => {
             return;
           }
 
-          const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
+          const isValid = await verifyTOTP(adminUser.admin_totp_secret, otp.trim(), adminUser.id);
           if (!isValid) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
@@ -16588,7 +16894,7 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; Max-Age=1800`
+          'Set-Cookie': `token=${token}; Path=/; SameSite=Lax; HttpOnly; Max-Age=1800${(process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https') ? '; Secure' : ''}`
         });
         res.end(JSON.stringify({
           success: true,
@@ -16613,7 +16919,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/admin/logout' && req.method === 'POST') {
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Set-Cookie': 'token=; Path=/; SameSite=Lax; Max-Age=0'
+      'Set-Cookie': 'token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0'
     });
     res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
     return;
@@ -16672,8 +16978,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       // TOTP not activated — generate or reuse secret for initial setup
-      let secret = adminUser.admin_totp_secret;
-      if (!secret) {
+      let secret = null;
+      if (!adminUser.admin_totp_secret) {
         const totp = new OTPAuth.TOTP({
           issuer: 'Match District',
           label: 'admin',
@@ -16685,8 +16991,17 @@ const server = http.createServer(async (req, res) => {
 
         await pool.query(
           'UPDATE users SET admin_totp_secret = $1 WHERE id = $2',
-          [secret, adminUser.id]
+          [encryptSecret(secret), adminUser.id]
         );
+      } else {
+        const decrypted = decryptSecret(adminUser.admin_totp_secret);
+        secret = decrypted.secret;
+        if (decrypted.isLegacy && secret) {
+          await pool.query(
+            'UPDATE users SET admin_totp_secret = $1 WHERE id = $2',
+            [encryptSecret(secret), adminUser.id]
+          );
+        }
       }
 
       const totp = new OTPAuth.TOTP({
@@ -16765,7 +17080,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const isValid = verifyTOTP(adminUser.admin_totp_secret, otp.trim());
+        const isValid = await verifyTOTP(adminUser.admin_totp_secret, otp.trim(), adminUser.id);
         if (!isValid) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Invalid verification code. Please use the latest code from Google Authenticator.' }));
@@ -16830,7 +17145,7 @@ const server = http.createServer(async (req, res) => {
 
         await pool.query(
           'UPDATE users SET admin_totp_secret = $1, admin_totp_activated = false WHERE id = $2',
-          [newSecret, adminUser.id]
+          [encryptSecret(newSecret), adminUser.id]
         );
 
         const otpauthUri = totp.toString();
