@@ -1,185 +1,150 @@
-# 🎮 Match District
+# Match District
 
-Match District is a production-grade web application platform for esports tournament registration, bracket hosting, lobby orchestration, and notice publishing. It utilizes a modern tech stack consisting of **React**, **Node.js**, **PostgreSQL (Supabase)**, and **Tailwind CSS**, built with **Vite** for optimized assets.
+Match District is an esports tournament discovery and management platform for players, teams, tournament organizers, and administrators in the Indian gaming community.
 
----
+The platform brings tournament discovery, team registration, payment review, match planning, results, and standings together in one place. Its goal is to make it easier for players to find competitions and for organizers to run them with clear schedules, fair processes, and useful communication.
 
-## 🏗️ Architecture Overview
+## What Match District offers
 
-Match District follows a hybrid architecture optimized for both high-fidelity client-side rendering and lightweight backend serving:
+### Discover tournaments
 
-```
-                  ┌────────────────────────────────────────┐
-                  │          Vite Dev Server (Port 5173)   │
-                  │   - Hot Modules Replacement (HMR)      │
-                  │   - Development assets                 │
-                  └─────────┬──────────────────────────────┘
-                            │ (Proxy `/api` requests)
-                            ▼
-┌──────────────────────────────────────────────────────────┐
-│              Express Node.js Server (Port 10000)         │
-│   - Serves API routes (`/api/*`)                         │
-│   - Interacts with PostgreSQL Database via PG Pool       │
-│   - Validates user sessions using JWT auth tokens        │
-│   - Integrates with Supabase Auth & Realtime client      │
-│   - Serves compiled React production assets from `./dist`│
-└───────────────────────────┬──────────────────────────────┘
-                            │
-                            ▼
-┌──────────────────────────────────────────────────────────┐
-│                     Supabase Services                    │
-│   - PostgreSQL Database (Hosted Instance)                │
-│   - Supabase Auth (Signups, Rate limits, Auth API)       │
-│   - Supabase Realtime (Notice / Message broadasting)     │
-└──────────────────────────────────────────────────────────┘
-```
+Players can browse tournaments, review their details, and decide which events fit their game, team, and schedule. Tournament information can include:
 
----
+- Game and match format
+- Total team slots and team-size expectations
+- Entry fee and prize information
+- Rules, maps, and other event details
+- Registration opening and closing dates
+- Tournament schedule and roadmap
+- Organizer information and updates
 
-## ⚙️ Supabase Setup
+The tournament pages are intended to give participants the information they need before they commit to an event.
 
-1. Create a new Supabase project and wait for its database to finish provisioning.
-2. Copy the PostgreSQL **pooler** connection string from the project’s database connection settings into `DATABASE_URL` in the server environment. Do not put it in client-side `VITE_` variables.
-3. Configure the project URL and anon key for Supabase Auth, plus `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and a strong `JWT_SECRET`. Add `SUPABASE_SERVICE_ROLE_KEY` only if Supabase Auth password synchronization is needed; keep it server-side and out of client/build environments. Add optional email and Cloudinary variables when those services are enabled.
-4. Start the server once with `npm start`. Before it accepts traffic, startup runs the idempotent schema migrations in `initDb()` / `server/schemaMigrations.js` and seeds the root administrator, standard plans, default site settings, and initial games without overwriting existing rows.
+### Register a team
 
-See `.env.example` for the environment variable names and their purposes. Never commit populated environment files or expose a Supabase service-role key to the browser.
+The team leader completes registration for the tournament and provides the squad details required for its match type. The leader then follows the tournament’s payment instructions and submits payment proof for review.
 
----
-## 🛡️ User Account Creation & Input Rules
+Registration status is communicated through clear participant-facing states:
 
-To ensure a highly secure, clean, and professional gaming environment, strict input constraints are verified on both the client side and backend database layer:
+| Status | What the participant sees |
+| --- | --- |
+| Not registered | Join Now |
+| Payment proof not submitted | Complete payment |
+| Proof submitted and awaiting review | Verification pending |
+| Registration approved | Registered successfully |
+| Registration rejected | A rejection state with the option to submit proof again |
 
-### 1. Username (Gamer Tag) Validation
-* **Casing**: Small lowercase letters only (`a-z`).
-* **Content**: Numbers (`0-9`) are allowed. No spaces, punctuation, or special symbols are permitted.
-* **Length**: Strict maximum size of **12 characters**.
+Approval by the tournament administrator confirms the team’s place. Participants should only be shown the status of their own registration.
 
-### 2. Full Name Validation
-* **Content**: Must contain only alphabets and spaces. No numbers or special characters.
-* **Length**: Strict maximum size of **20 characters**.
+### Review payments
 
-### 3. Password Integrity
-* Must be at least **6 characters** long.
-* Must contain at least one alphabet character, one numeric digit, and one special symbol (e.g. `!@#$%^&*`).
+Payment verification is handled manually by administrators through the website. Participants submit proof with their registration, and an authorized reviewer checks it before approving or rejecting the payment.
 
----
+Payment proof is expected to come from approved HTTPS storage locations. A unique amount suffix may be used to help match a payment to a registration during manual review.
 
-## 🛡️ Spam Protection & Rate Limiting System
+### Create and manage tournaments
 
-Match District implements a strict client-side (browser-based) spam protection model during registration and OTP request loops. This is tracked using `localStorage` (as `matchdistrict_reg_attempts`) rather than backend IP blocks, ensuring users sharing a Wi-Fi network are not lock-restricted together.
+Organizers can create tournament listings and manage the details needed to run an event. Their work may include:
 
-### 1. Attempt Thresholds & Locks
-* **Attempts 1-3**: Free submissions. No delays or locks.
-* **4th Attempt**: Triggers a **59-second lockout** on registration submissions and OTP code dispatches.
-* **5th Attempt**: Triggers a **120-second lockout**.
-* **6th Attempt**: Triggers a **300-second lockout**.
-* **7th+ Attempts**: Triggers a **600-second lockout**.
+- Setting tournament information, game, format, and team capacity
+- Writing rules and providing event details
+- Configuring registration and payment information
+- Planning match days, times, and districts
+- Publishing updates for participants
+- Recording match results and managing standings
+- Reviewing tournament registrations and team details
 
-### 2. Lockout Behavior & UI Feedback
-* The manual registration **Submit** button and OTP modal **Request/Resend Verification Code** buttons are disabled.
-* Button labels dynamically display the countdown timer (e.g., `Spam Lock: Wait Xs`).
-* Toast messages are completely suppressed during account creation and OTP verification.
+Administrative controls are intended for the tournament’s organizer and site administrators.
 
-### 3. Post-Lockout Grace Attempt ("One Chance")
-* Once the progressive lockout countdown finishes, the user is granted exactly **one free chance** to submit details or request a code.
-* If that grace attempt fails or is submitted again, the next progressive lockout level (e.g., 120s, 300s) immediately kicks in.
-* This grace state is persisted inside `localStorage` (as `matchdistrict_has_free_chance`) to resist page refreshes.
+### Plan the tournament roadmap
 
----
+The roadmap is the event’s planned structure before competition begins. It helps participants understand how the tournament is expected to progress and when matches are scheduled.
 
-## 🏗️ Database Schema & Storage Configuration
+A district represents one lobby of teams. A tournament may have several districts in a round. If the expected number of advancing teams is too large for the final lobby, the roadmap can include additional rounds before the Grand Final.
 
-The Supabase PostgreSQL database houses the following tables, verified and initialized at runtime:
+The roadmap is a plan based on tournament capacity and the configured district size. It is not a live bracket that changes whenever registrations, results, standings, or disqualifications change. Qualification is handled separately after results are available.
 
-### 1. `users`
-* Stores permanent registered user records, including role permissions (`player`, `admin`), subscription tier (`Amateur`, `Basic`, `Pro`), gamer tag, phone number, wallet balance, and organizer application status (`none`, `pending`, `approved`).
+Organizers can assign a district to each match, schedule multiple matches on a day, and set the dates and times for each round. Schedule information is presented in Indian Standard Time.
 
-### 2. `temp_users`
-* Temporary table storing registration details for up to 5 minutes until verified via OTP email. Expired records are auto-cleaned.
+### Record results and follow standings
 
-### 3. `tournaments`
-* Stores tournament listings with dynamic detail fields, slot capacity, rules, maps, registration status, draft status, and escrow parameters.
+Organizers can enter and verify match results. The leaderboard presents team standings using tournament scoring rules.
 
-### 4. `site_settings`
-* Dynamic app configuration store. Key entries include:
-  - `bad_words`: JSON string list containing banned terms (censored via client-side worker/regex validations).
-  - `theme`: Global interface parameters.
+When teams have equal total points, ranking follows these tie-breakers in order:
 
-### 5. `alerts` & `organiser_followers`
-* Orchestrates follower subscription tracking and real-time alert broadcasts when organizers publish new events.
+1. Total Winner Winner Chicken Dinners (WWCDs)
+2. Total placement points
+3. Total elimination points
+4. Best placement in the most recent match
 
----
+If teams remain tied after all of these criteria, the organizer makes the final decision.
 
-## ⚙️ Background Workers & Workers Daemons
+### Qualify teams for later rounds
 
-Match District utilizes daemon tasks to automate background checks:
-* **Slot Manager Worker**: Periodically runs every 30 seconds to reconcile tournament registration slots, update current entrant tallies, release expired slots, and sync status properties back to the database.
+After a round’s results are ready, the organizer can use the qualification process to move eligible teams forward. Later rounds regroup qualified teams into new districts based on the number of teams advancing.
 
----
+Qualification does not rewrite the published pre-tournament roadmap. The roadmap remains the schedule and structure that was planned for the event; qualification records which teams have advanced.
 
-## 🛠️ Local Development
+The Grand Final is the last stage. It has no further advancement rule, and the final standings determine the outcome of the tournament.
 
-### 1. Installation
-Install the necessary node modules for development:
-```bash
-npm install
-```
+### Manage teams and invitations
 
-### 2. Start Services
-Since Vite config is configured with a development proxy, you should run the backend and frontend servers in separate terminal sessions:
+Match District includes team-management and invitation experiences for tournament squads. The intended participant flow is for teammates to join through an invitation link or QR code and to use registered Match District accounts.
 
-*   **Terminal 1 (Backend Server)**:
-    ```bash
-    npm start
-    ```
-    This loads the `.env` variables, verifies/runs schema updates on the PostgreSQL database, and starts the API listener on `http://localhost:10000`.
+The squad size comes from the team leader’s tournament registration. Teammates are associated with the roster slots they occupy. Team changes such as leaving, removing a member, or transferring captaincy are intended to happen before allocation.
 
-*   **Terminal 2 (Frontend Server)**:
-    ```bash
-    npm run dev
-    ```
-    This starts the Vite HMR server on `http://localhost:5173`. Any API requests to `/api` are automatically proxied to the backend on port 10000.
+The strict team-access rule is that room credentials remain hidden from everyone, including the leader, until every roster slot is linked to a real registered account. Organizers may waive this requirement for an individual team with a reason. Teams allocated before this rule is introduced are treated as grandfathered.
 
----
+### Protect match-room information
 
-## 🚀 Production Deployment
+Room IDs and passwords are sensitive event information. They should not appear in public tournament details or the general roadmap. Participants receive them through the dedicated, access-controlled credential flow when the applicable release conditions are met.
 
-In production, the backend server acts as a single-entry server serving both API endpoints and compiling the built React SPA assets.
+The detailed design for how each teammate will see match credentials is still to be specified.
 
-### 1. Build and Run
-Build the optimized React bundle and run the Node.js production web server:
-```bash
-# Compile and package production assets
-npm run build
+### Support organizers and administrators
 
-# Start the unified Node.js production server
-npm start
-```
-Vite will compile the React code into the `./dist` folder, which is served statically by `server.js` on port `10000`.
+Organizers have pages for managing their profile, tournaments, and event operations. Administrators have separate tools for reviewing payments, managing organizers, and overseeing platform operations.
 
-### 2. Docker Deployment
-To build and run the application inside a container, use the provided multi-stage `Dockerfile`:
+The platform’s role boundaries are intended to keep organizer controls limited to the tournament owner and site administrators, with payment review available only to authorized reviewers.
 
-```bash
-# 1. Build the Docker Image (provide Supabase build-time args for client bundles)
-docker build \
-  --build-arg SUPABASE_URL="https://your-ref-id.supabase.co" \
-  --build-arg SUPABASE_ANON_KEY="your-supabase-public-anon-key" \
-  -t matchdistrict:latest .
+## Who Match District is for
 
-# 2. Run the Container (provide run-time env variables)
-docker run -d \
-  -p 10000:10000 \
-  -e DATABASE_URL="postgresql://postgres.<ref>:<password>@<host>:5432/postgres" \
-  -e JWT_SECRET="your-production-jwt-secret" \
-  -e SUPABASE_URL="https://your-ref-id.supabase.co" \
-  -e SUPABASE_ANON_KEY="your-supabase-public-anon-key" \
-  --name matchdistrict-app \
-  matchdistrict:latest
-```
+### Players and team leaders
 
+Use Match District to explore events, understand their requirements, register a squad, submit payment proof, follow the review status, and check the tournament schedule and standings.
 
-## Database
+### Teammates
 
-The application uses one database: live Supabase PostgreSQL configured through DATABASE_URL for both deployment and local application development. There are no local or test database settings. Schema changes are made only through idempotent migrations in initDb() and server/schemaMigrations.js.
+Join a squad through its invitation and connect your account to the correct roster slot. Registered accounts help organizers identify the people participating in an event.
+
+### Tournament organizers
+
+Use Match District to publish events, organize registrations, plan rounds and match schedules, communicate event details, record results, and qualify teams.
+
+### Administrators and payment reviewers
+
+Use the administrative workflows to review submitted payment proof, manage platform operations, and support organizers and participants.
+
+## Principles behind the experience
+
+- **Clear participation status:** Players should understand what they need to do next and whether their registration is awaiting review or approved.
+- **Accountable teams:** Squad members are associated with registered player accounts and roster slots.
+- **Private match credentials:** Room IDs and passwords are shared through a controlled participant flow.
+- **Planned schedules:** The published roadmap communicates the event plan; later results and qualification are tracked separately.
+- **Consistent standings:** Ranking follows published scoring and tie-break rules, with organizers resolving true ties.
+- **Organizer ownership:** Tournament management controls belong to the organizer and site administrators.
+- **Indian gaming context:** Tournament communication and scheduling are designed for the platform’s Indian market, including IST schedule display.
+
+## Current scope
+
+Match District focuses on tournament discovery and operations: event pages, registration, manual payment review, team management, roadmaps, match results, leaderboards, and qualification.
+
+The former PGV companion Android integration has been removed. Payment verification takes place through the website’s manual review process.
+
+Some team-management requirements are still being developed or verified. The intended rules described above should be treated as the product direction where a workflow is not yet fully available.
+
+## Project status and contributions
+
+This repository contains the Match District application and supporting project documentation. The detailed project context, product decisions, known issues, and working guidelines are maintained in the private OVERVIEW.md file for authorized project collaborators.
+
+Before changing participant, organizer, payment, roadmap, qualification, or credential behavior, review the existing project decisions and confirm the current workflow in the application.
