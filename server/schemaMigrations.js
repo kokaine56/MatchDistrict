@@ -1,6 +1,6 @@
 // server/schemaMigrations.js
 // Single authoritative source of truth for MatchDistrict database schema and DDL migrations.
-// Shared between production startup (server.js initDb) and scratch DB initialization (scripts/init-scratch-db.js).
+// Applied at production startup by server.js initDb to the live Supabase database.
 
 export const SCHEMA_TABLES = Object.freeze([
   'users',
@@ -12,6 +12,7 @@ export const SCHEMA_TABLES = Object.freeze([
   'notifications',
   'alerts',
   'site_settings',
+  'organiser_followers',
   'organizer_applications',
   'organizer_drafts',
   'organizer_plans',
@@ -54,7 +55,79 @@ export const SCHEMA_TABLES = Object.freeze([
   'security_findings',
   'monitoring_settings',
   'tournament_promotions',
+  'analytics_events',
+  'api_keys',
+  'automation_rules',
+  'billing_history',
+  'custom_links',
+  'custom_registration_forms',
+  'custom_subdomains',
+  'export_usage_log',
+  'feature_flags',
+  'games',
+  'staff_members',
+  'wallet_transactions',
+  'tournament_notices',
+  'tournament_messages',
+  'notices',
+  'white_label_settings',
+  'profiles',
 ]);
+
+function splitSqlStatements(sql) {
+  const statements = [];
+  let start = 0;
+  let quote = null;
+  let dollarTag = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (lineComment) { if (ch === '\n') lineComment = false; continue; }
+    if (blockComment) { if (ch === '*' && next === '/') { blockComment = false; i += 1; } continue; }
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, i)) { i += dollarTag.length - 1; dollarTag = null; }
+      continue;
+    }
+    if (quote) {
+      if (ch === quote && next === quote) { i += 1; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '-' && next === '-') { lineComment = true; i += 1; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; i += 1; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === '$') {
+      const match = sql.slice(i).match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
+      if (match) { dollarTag = match[0]; i += dollarTag.length - 1; continue; }
+    }
+    if (ch === ';') {
+      const statement = sql.slice(start, i).trim();
+      if (statement) statements.push(statement);
+      start = i + 1;
+    }
+  }
+  const tail = sql.slice(start).trim();
+  if (tail) statements.push(tail);
+  return statements;
+}
+
+export async function runMigrationBatch(client, sql) {
+  for (const statement of splitSqlStatements(sql)) {
+    const target = statement.match(/\bTABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/i)?.[1]
+      || statement.match(/\bON\s+(?:public\.)?"?([a-z_][a-z0-9_]*)/i)?.[1]
+      || statement.match(/\b(?:INTO|UPDATE|FROM)\s+(?:public\.)?"?([a-z_][a-z0-9_]*)/i)?.[1]
+      || statement.match(/\b(?:FUNCTION|TRIGGER)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)/i)?.[1]
+      || 'unknown';
+    try {
+      await client.query(statement);
+    } catch (error) {
+      console.error(`[SCHEMA] Statement failed for ${target}: ${error.message}`);
+      throw new Error(`Schema statement failed for ${target}: ${error.message}`, { cause: error });
+    }
+  }
+}
 
 /**
  * Runs all idempotent DDL migrations to ensure all required tables, columns,
@@ -69,7 +142,7 @@ export async function runSchemaMigrations(clientOrPool) {
 
   try {
     // 1. Users, OTPs, password resets, and session tracking
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(50) PRIMARY KEY,
         name VARCHAR(255),
@@ -108,6 +181,7 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS early_access BOOLEAN DEFAULT FALSE;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_secret VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_totp_activated BOOLEAN DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgSlug" VARCHAR(100);
 
       CREATE TABLE IF NOT EXISTS otps (
         email VARCHAR(255) PRIMARY KEY,
@@ -210,7 +284,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 2. Organizer apps, plans, and subscriptions
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS organizer_applications (
         id VARCHAR(50) PRIMARY KEY,
         "applicantName" VARCHAR(255),
@@ -275,6 +349,10 @@ export async function runSchemaMigrations(clientOrPool) {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
       ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS early_access_enabled BOOLEAN DEFAULT false;
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(50);
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS renewal_date TIMESTAMPTZ;
+      ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 
       CREATE TABLE IF NOT EXISTS plan_upgrade_requests (
         id VARCHAR(50) PRIMARY KEY,
@@ -291,7 +369,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 3. Tournaments, registrations, registration sessions, and payments
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS tournaments (
         id VARCHAR(50) PRIMARY KEY,
         title VARCHAR(255),
@@ -394,6 +472,10 @@ export async function runSchemaMigrations(clientOrPool) {
         payment_id VARCHAR(50),
         rejection_reason TEXT
       );
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_status ON tournament_registrations(status);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_idempotency ON tournament_registrations(idempotency_key);
 
       CREATE TABLE IF NOT EXISTS tournament_registration_groups (
         id VARCHAR(50) PRIMARY KEY,
@@ -423,7 +505,7 @@ export async function runSchemaMigrations(clientOrPool) {
         registration_id VARCHAR(50),
         tournament_id VARCHAR(50) NOT NULL,
         user_id VARCHAR(50) NOT NULL,
-        amount INTEGER NOT NULL DEFAULT 0,
+        amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
         proof_url TEXT NOT NULL,
         utr_number VARCHAR(255),
         payment_app VARCHAR(50),
@@ -463,6 +545,10 @@ export async function runSchemaMigrations(clientOrPool) {
         details TEXT,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS action TEXT;
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS action_type TEXT;
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS target_user VARCHAR(50);
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS details TEXT;
       CREATE INDEX IF NOT EXISTS idx_admin_action_log_admin ON admin_action_log(admin_id);
       CREATE INDEX IF NOT EXISTS idx_admin_action_log_created ON admin_action_log(created_at DESC);
 
@@ -535,7 +621,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 4. Roadmap and Rounds structural foundation
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS tournament_planning_config (
         id VARCHAR(50) PRIMARY KEY,
         tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -739,7 +825,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 5. Teams, team members, invitations, and match assignments
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS tournament_teams (
         id VARCHAR(50) PRIMARY KEY,
         tournament_id VARCHAR(50) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
@@ -809,7 +895,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 6. Scoring, results, leaderboard, standings, prize awards, and prize payments
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS tournament_scoring_rules (
         tournament_id VARCHAR(50) PRIMARY KEY REFERENCES tournaments(id) ON DELETE CASCADE,
         kill_points_multiplier INTEGER DEFAULT 1,
@@ -947,7 +1033,7 @@ export async function runSchemaMigrations(clientOrPool) {
     `);
 
     // 7. System monitoring and promotions
-    await client.query(`
+    await runMigrationBatch(client, `
       CREATE TABLE IF NOT EXISTS system_services (
         id VARCHAR(50) PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -1015,8 +1101,220 @@ export async function runSchemaMigrations(clientOrPool) {
       CREATE UNIQUE INDEX IF NOT EXISTS uq_tournament_promotions_tournament ON tournament_promotions(tournament_id);
     `);
 
-    // 8. Default site settings seeds
-    await client.query(`
+    // 8. Organizer dashboard and legacy operational tables queried by server.js
+    await runMigrationBatch(client, `
+      CREATE TABLE IF NOT EXISTS analytics_events (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        event_type VARCHAR(100),
+        event_data TEXT,
+        tournament_id VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_analytics_events_organizer_created ON analytics_events(organizer_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50) NOT NULL,
+        key_prefix VARCHAR(32) NOT NULL,
+        key_hash TEXT NOT NULL,
+        name VARCHAR(255),
+        permissions TEXT DEFAULT '[]',
+        usage_count INTEGER DEFAULT 0,
+        last_used_at TIMESTAMP,
+        status VARCHAR(30) DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        revoked_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_api_keys_organizer ON api_keys(organizer_id);
+
+      CREATE TABLE IF NOT EXISTS automation_rules (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        name VARCHAR(255),
+        trigger_event VARCHAR(100),
+        action_type VARCHAR(100),
+        action_config TEXT DEFAULT '{}',
+        is_active BOOLEAN DEFAULT false,
+        last_run_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS billing_history (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        plan_name VARCHAR(100),
+        billing_cycle VARCHAR(50),
+        amount INTEGER DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'pending',
+        invoice_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS custom_links (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        tournament_id VARCHAR(50),
+        slug VARCHAR(255) UNIQUE NOT NULL,
+        link_type VARCHAR(50),
+        is_active BOOLEAN DEFAULT true,
+        visit_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS custom_registration_forms (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        tournament_id VARCHAR(50) UNIQUE,
+        form_schema TEXT DEFAULT '{}',
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS custom_subdomains (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        subdomain VARCHAR(255) UNIQUE NOT NULL,
+        ssl_status VARCHAR(50) DEFAULT 'pending',
+        cname_verified BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS export_usage_log (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50),
+        tournament_id VARCHAR(50),
+        export_type VARCHAR(100),
+        format VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS feature_flags (
+        id VARCHAR(50) PRIMARY KEY,
+        flag_key VARCHAR(100) UNIQUE NOT NULL,
+        flag_label VARCHAR(255),
+        description TEXT,
+        enabled BOOLEAN DEFAULT false,
+        target_tier VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS games (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        icon TEXT,
+        active BOOLEAN DEFAULT true,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_members (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50) NOT NULL,
+        name VARCHAR(255),
+        email VARCHAR(255) NOT NULL,
+        role VARCHAR(50),
+        admin_role VARCHAR(50),
+        permissions TEXT DEFAULT '[]',
+        status VARCHAR(30) DEFAULT 'pending',
+        invited_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(organizer_id, email)
+      );
+
+      CREATE TABLE IF NOT EXISTS wallet_transactions (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        description TEXT,
+        type VARCHAR(50),
+        amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS tournament_notices (
+        id VARCHAR(50) PRIMARY KEY,
+        tournament_id VARCHAR(50) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        text TEXT,
+        pin BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS tournament_messages (
+        id VARCHAR(50) PRIMARY KEY,
+        tournament_id VARCHAR(50) NOT NULL,
+        sender_name VARCHAR(255),
+        sender_role VARCHAR(50),
+        text TEXT NOT NULL,
+        is_system BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS notices (
+        id VARCHAR(50) PRIMARY KEY,
+        tournament_id VARCHAR(50),
+        title VARCHAR(255),
+        content TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS white_label_settings (
+        id VARCHAR(50) PRIMARY KEY,
+        organizer_id VARCHAR(50) UNIQUE NOT NULL,
+        primary_color VARCHAR(20),
+        secondary_color VARCHAR(20),
+        logo_url TEXT,
+        banner_url TEXT,
+        favicon_url TEXT,
+        custom_css TEXT,
+        tournament_page_branded BOOLEAN DEFAULT false,
+        hide_matchdistrict_branding BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS profiles (
+        id VARCHAR(50) PRIMARY KEY,
+        uid VARCHAR(255),
+        name VARCHAR(255),
+        email VARCHAR(255) UNIQUE NOT NULL,
+        "gamerTag" VARCHAR(255),
+        role VARCHAR(50) DEFAULT 'gamer',
+        roles TEXT[] DEFAULT '{user}',
+        tier VARCHAR(50) DEFAULT 'Amateur',
+        avatar TEXT,
+        banner TEXT,
+        phone VARCHAR(255),
+        status VARCHAR(50) DEFAULT 'Active',
+        "riotId" VARCHAR(255),
+        "bgmiId" VARCHAR(255),
+        "steamId" VARCHAR(255),
+        "discordTag" VARCHAR(255),
+        "socialLinks" TEXT,
+        "orgName" VARCHAR(255),
+        "orgMotto" VARCHAR(255),
+        "orgHandle" VARCHAR(100),
+        "orgImage" TEXT,
+        "orgBio" TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    await runMigrationBatch(client, `
+      INSERT INTO games (id, name, icon, active, sort_order)
+      VALUES
+        ('bgmi', 'BGMI', '', true, 10),
+        ('valorant', 'VALORANT', '', true, 20),
+        ('free-fire', 'Free Fire', '', true, 30),
+        ('codm', 'Call of Duty: Mobile', '', true, 40)
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // 9. Default site settings seeds
+    await runMigrationBatch(client, `
       INSERT INTO site_settings (key, value, updated_at)
       VALUES 
         ('platform_fee_percentage', '10', CURRENT_TIMESTAMP),

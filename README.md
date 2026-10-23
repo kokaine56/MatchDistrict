@@ -36,43 +36,16 @@ Match District follows a hybrid architecture optimized for both high-fidelity cl
 
 ---
 
-## ⚙️ Environment Variables Setup
+## ⚙️ Supabase Setup
 
-Before running the application, create a `.env` file in the root directory. Copy the values from your credential console.
+1. Create a new Supabase project and wait for its database to finish provisioning.
+2. Copy the PostgreSQL **pooler** connection string from the project’s database connection settings into `DATABASE_URL` in the server environment. Do not put it in client-side `VITE_` variables.
+3. Configure the project URL and anon key for Supabase Auth, plus `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and a strong `JWT_SECRET`. Add `SUPABASE_SERVICE_ROLE_KEY` only if Supabase Auth password synchronization is needed; keep it server-side and out of client/build environments. Add optional email and Cloudinary variables when those services are enabled.
+4. Start the server once with `npm start`. Before it accepts traffic, startup runs the idempotent schema migrations in `initDb()` / `server/schemaMigrations.js` and seeds the root administrator, standard plans, default site settings, and initial games without overwriting existing rows.
 
-```bash
-# --- APPLICATION SETTINGS ---
-APP_NAME="Match District"
-APP_VERSION="1.0.0"
-APP_ENV="production" # "development" or "production"
-
-# --- SERVER CONFIGURATION ---
-PORT=10000 # Server port in production
-
-# --- SECURITY & AUTHENTICATION ---
-AUTH_DOMAIN="matchdistrict.in"
-OTP_EXPIRY_MINUTES=5
-ADMIN_EMAIL="matchdistrict.in@gmail.com" # Superadmin username
-ADMIN_PASSWORD="your-admin-password"       # Superadmin login password
-JWT_SECRET="your-high-entropy-jwt-secret-key-phrase"
-
-# --- DATABASE CONFIGURATION (REQUIRED) ---
-# Connection string to your PostgreSQL instance (e.g., Supabase PostgreSQL Pooler)
-DATABASE_URL="postgresql://postgres.<ref>:<password>@<host>:<port>/postgres"
-
-# --- SUPABASE CLIENT CONFIGURATION (REQUIRED) ---
-# Supabase client parameters used for auth API fallback and metadata synchronization
-SUPABASE_URL="https://your-ref-id.supabase.co"
-SUPABASE_ANON_KEY="your-supabase-public-anon-key"
-
-# --- FEATURE FLAGS ---
-ENABLE_ESCROW_CONTRACTS=true
-ENABLE_DISCORD_WEBHOOKS=true
-ENABLE_ANTI_CHEAT_LOGS=true
-```
+See `.env.example` for the environment variable names and their purposes. Never commit populated environment files or expose a Supabase service-role key to the browser.
 
 ---
-
 ## 🛡️ User Account Creation & Input Rules
 
 To ensure a highly secure, clean, and professional gaming environment, strict input constraints are verified on both the client side and backend database layer:
@@ -205,3 +178,8 @@ docker run -d \
   --name matchdistrict-app \
   matchdistrict:latest
 ```
+
+
+## Database
+
+The application uses one database: live Supabase PostgreSQL configured through DATABASE_URL for both deployment and local application development. There are no local or test database settings. Schema changes are made only through idempotent migrations in initDb() and server/schemaMigrations.js.

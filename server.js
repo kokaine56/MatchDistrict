@@ -2,7 +2,6 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import pg from 'pg';
 import { Resend } from 'resend';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
@@ -51,7 +50,8 @@ import {
   PROGRESSION_ERR,
 } from './server/roundProgressionService.js';
 import { mapPublicMatchResult } from './server/matchResultService.js';
-import { runSchemaMigrations } from './server/schemaMigrations.js';
+import { runSchemaMigrations, runMigrationBatch, SCHEMA_TABLES } from './server/schemaMigrations.js';
+import { createDatabasePool } from './server/db.js';
 import { updateTeamQualificationStatus } from './server/teamDisqualificationService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
@@ -252,7 +252,11 @@ function loadEnv() {
 }
 loadEnv();
 
-const { Pool } = pg;
+const REQUIRED_ENV_KEYS = ['DATABASE_URL', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_ANON_KEY'];
+for (const key of REQUIRED_ENV_KEYS) {
+  console.log(`[ENV] ${key}: ${process.env[key] ? 'present' : 'missing'}`);
+}
+
 const PORT = process.env.PORT || 10000;
 
 // Derive the public-facing server URL from the incoming request
@@ -270,12 +274,11 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-if (!process.env.SUPABASE_URL) {
-  console.warn('⚠️ [WARNING] SUPABASE_URL is not defined in the environment. Falling back to default public URL.');
-}
-
-if (!process.env.SUPABASE_ANON_KEY) {
-  console.warn('⚠️ [WARNING] SUPABASE_ANON_KEY is not defined in the environment. Supabase client authentication will fail.');
+for (const key of ['DATABASE_URL', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_ANON_KEY']) {
+  if (!process.env[key]) {
+    console.error(`❌ CRITICAL: ${key} is required. Set it in the server environment before starting.`);
+    process.exit(1);
+  }
 }
 
 if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
@@ -288,7 +291,6 @@ if (process.env.ADMIN_PASSWORD === '101010') {
   process.exit(1);
 }
 
-const DATABASE_URL = process.env.DATABASE_URL;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET === 'matchdistrict_super_secure_jwt_secret_key_2026') {
   console.error("❌ CRITICAL: JWT_SECRET environment variable is missing or set to the insecure default. Set a strong, unique JWT_SECRET in your environment before starting.");
@@ -321,7 +323,8 @@ function decryptSessionData(text) {
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
@@ -392,28 +395,62 @@ async function removeUploadedMedia(mediaUrl) {
 
 // Initialize Supabase Client
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
-// PostgreSQL Connection Pool
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
+// The shared module is the sole PostgreSQL pool factory; it reads DATABASE_URL only.
+const pool = createDatabasePool();
+
+async function ensureSupabaseProfile(client, user) {
+  if (!user || !(user.uid || user.id) || !user.email) return;
+  await client.query(
+    `INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+                          "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+     ON CONFLICT (id) DO NOTHING`,
+    [user.uid || user.id, user.uid || null, user.name || null, user.email, user.gamerTag || user['gamerTag'] || null,
+      user.role || 'gamer', user.roles || ['user'], user.tier || 'Amateur', user.avatar || null, user.banner || null,
+      user.phone || null, user.status || 'Active', user.riotId || user['riotId'] || null, user.bgmiId || user['bgmiId'] || null,
+      user.steamId || user['steamId'] || null, user.discordTag || user['discordTag'] || null,
+      user.socialLinks || user['socialLinks'] || null, user.orgName || user['orgName'] || null,
+      user.orgMotto || user['orgMotto'] || null, user.orgHandle || user['orgHandle'] || null,
+      user.orgImage || user['orgImage'] || null, user.orgBio || user['orgBio'] || null]
+  );
+}
 
 // Initialize Supabase Tables & Verify Connection
 async function initDb() {
+  let client;
   try {
-    const client = await pool.connect();
+    client = await pool.connect();
     console.log('\n📦 [MATCH DISTRICT DB] Connected to Supabase PostgreSQL Database.');
 
-    // Authoritative unified schema migrations (shared with scripts/init-scratch-db.js)
+    const beforeTables = await client.query(
+      `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = ANY($1::text[])`,
+      [SCHEMA_TABLES]
+    );
+    const existingTables = new Set(beforeTables.rows.map(row => row.tablename));
+
+    // Authoritative idempotent schema migrations for the live Supabase database.
     // Runs shared DDL for all core tables (CREATE TABLE IF NOT EXISTS tournament_planning_config, etc.)
     await runSchemaMigrations(client);
-    console.log('📦 [MATCH DISTRICT DB] Core schema tables ensured via shared schemaMigrations.');
+    for (const table of SCHEMA_TABLES) {
+      console.log(`[SCHEMA] ${table}: ${existingTables.has(table) ? 'already present; checked' : 'created'}`);
+    }
+    await client.query(`
+      INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+                           "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
+      SELECT uid, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+             "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio"
+      FROM users WHERE uid IS NOT NULL AND uid NOT LIKE 'ADM-%'
+      ON CONFLICT (id) DO NOTHING
+    `);
 
     // ── ROADMAP & LIVE SCHEMA COLUMN MIGRATIONS (TASK 2 & 3) ───────────────
     // Idempotent migrations for tournament_matches, tournament_rounds, etc.
     try {
-      await client.query(`
+      await runMigrationBatch(client, `
         -- 1. tournament_matches additive columns
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
@@ -519,6 +556,7 @@ async function initDb() {
       console.log('📦 [MATCH DISTRICT DB] Roadmap & progression schema migrations applied.');
     } catch (migErr) {
       console.error('❌ [MATCH DISTRICT DB] Roadmap schema migration failed:', migErr.message);
+      throw migErr;
     }
 
     // ── BACKFILL: Inferred district_id for legacy matches (TASK 4) ───────────
@@ -648,19 +686,11 @@ async function initDb() {
         );
         console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
       } else {
-        // Safety repair: ensure the admin roles array always contains 'admin'
-        const existing = checkAdmin.rows[0];
-        const currentRoles = existing.roles || [];
-        if (!currentRoles.includes('admin')) {
-          await client.query(
-            `UPDATE users SET role = 'admin', roles = $1 WHERE email = $2`,
-            [['user', 'admin'], adminEmail]
-          );
-          console.log(`🛡️ [MATCH DISTRICT DB] Repaired admin roles for ${adminEmail} — 'admin' was missing.`);
-        }
+        console.log('[SEED] Root-admin email already exists; existing account data was left unchanged.');
       }
     } catch (seedErr) {
-      console.warn('⚠️ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
+      console.error('❌ [MATCH DISTRICT DB] Failed to seed admin user:', seedErr.message);
+      throw seedErr;
     }
 
     // Seed default fee percentages if not set
@@ -751,10 +781,12 @@ async function initDb() {
       console.warn('⚠️ [BRIDGE] Registration→Team backfill skipped:', bridgeBfErr.message);
     }
 
-    client.release();
     console.log('📦 [MATCH DISTRICT DB] Supabase Tables Initialized Successfully.\n');
   } catch (err) {
     console.error('❌ [MATCH DISTRICT DB] Failed to initialize Supabase DB:', err.message);
+    throw err;
+  } finally {
+    client?.release();
   }
 }
 
@@ -1626,6 +1658,8 @@ const server = http.createServer(async (req, res) => {
           foundUser = insertRes.rows[0];
         }
 
+        await ensureSupabaseProfile(pool, foundUser);
+
         const token = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
         console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${foundUser.name || email}" logged in successfully via Supabase Auth. JWT Generated.\n`);
@@ -1789,6 +1823,8 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        await ensureSupabaseProfile(pool, newUser);
+
         const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: newUser.uid || newUser.id, email: newUser.email }));
         res.writeHead(200, {
@@ -1830,7 +1866,7 @@ const server = http.createServer(async (req, res) => {
         // Try to update in Supabase Auth if user has UUID
         if (updatedUser.uid && !updatedUser.uid.startsWith('USR-')) {
           try {
-            await supabase.auth.admin.updateUserById(updatedUser.uid, { password: password });
+            if (supabaseAdmin) await supabaseAdmin.auth.admin.updateUserById(updatedUser.uid, { password });
           } catch (supErr) {
             console.warn('⚠️ [RESET PASSWORD] Could not update Supabase Auth user password:', supErr.message);
           }
@@ -1899,7 +1935,7 @@ const server = http.createServer(async (req, res) => {
         // Try to update in Supabase Auth if user has UUID
         if (updatedUser.uid && !updatedUser.uid.startsWith('USR-')) {
           try {
-            await supabase.auth.admin.updateUserById(updatedUser.uid, { password: newPassword });
+            if (supabaseAdmin) await supabaseAdmin.auth.admin.updateUserById(updatedUser.uid, { password: newPassword });
           } catch (supErr) {
             console.warn('⚠️ [CHANGE PASSWORD] Could not update Supabase Auth user password:', supErr.message);
           }
@@ -2019,7 +2055,7 @@ const server = http.createServer(async (req, res) => {
         // Try to update in Supabase Auth if user has UUID
         if (updatedUser.uid && !updatedUser.uid.startsWith('USR-')) {
           try {
-            await supabase.auth.admin.updateUserById(updatedUser.uid, { password: password });
+            if (supabaseAdmin) await supabaseAdmin.auth.admin.updateUserById(updatedUser.uid, { password });
           } catch (supErr) {
             console.warn('⚠️ [RESET PASSWORD] Could not update Supabase Auth user password:', supErr.message);
           }
@@ -17085,7 +17121,12 @@ function startMonitoringWorker() {
 }
 
 (async () => {
-  await initDb();
+  try {
+    await initDb();
+  } catch {
+    console.error('❌ [STARTUP] Database schema initialization failed. Server startup aborted.');
+    process.exit(1);
+  }
   startSlotManagerWorker(pool);
   startAutomationProcessor();
   startMonitoringWorker();

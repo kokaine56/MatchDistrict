@@ -31,7 +31,8 @@ export default defineConfig({
       'Referrer-Policy': 'strict-origin-when-cross-origin',
     }
   },
-  envPrefix: ['APP_', 'ENABLE_', 'SUPABASE_', 'VITE_'],
+  // Expose only the two public Supabase values used by the browser; never expose service-role keys.
+  envPrefix: ['APP_', 'ENABLE_', 'SUPABASE_URL', 'SUPABASE_ANON_KEY', 'VITE_'],
   build: {
     chunkSizeWarningLimit: 1500,
     rollupOptions: {

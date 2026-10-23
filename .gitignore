@@ -27,3 +27,8 @@ dist-ssr
 .env
 .env.*.local
 .env.local
+
+# Review-only files and retained audit snapshots
+_trash_review/
+AUDIT_*.md
+schema_live.csv

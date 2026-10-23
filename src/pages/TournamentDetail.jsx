@@ -91,7 +91,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [totalSponsorAmount, setTotalSponsorAmount] = useState(0);
   const [showSponsorForm, setShowSponsorForm] = useState(false);
   const [showSponsorComingSoon, setShowSponsorComingSoon] = useState(false);
-  const [sponsorshipEnabled, setSponsorshipEnabled] = useState(() => import.meta.env.ENABLE_SPONSORSHIP !== 'false');
+  const [sponsorshipEnabled, setSponsorshipEnabled] = useState(() => import.meta.env.ENABLE_SPONSORSHIP === 'true');
   const [sponsorForm, setSponsorForm] = useState({ name: '', email: '', amount: '', message: '', transaction_id: '', payment_app: '' });
   const [sponsorSubmitting, setSponsorSubmitting] = useState(false);
   const [sponsorScreenshot, setSponsorScreenshot] = useState(null);
