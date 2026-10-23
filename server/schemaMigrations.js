@@ -184,6 +184,9 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "orgSlug" VARCHAR(100);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(255);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(32);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN DEFAULT true;
 
       CREATE TABLE IF NOT EXISTS otps (
         email VARCHAR(255) PRIMARY KEY,

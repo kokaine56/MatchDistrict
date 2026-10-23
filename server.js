@@ -209,6 +209,16 @@ function publicUserRow(row) {
   return user;
 }
 
+// Validate same-site relative redirect path; rejects protocol-relative ('//'), backslashes ('\'), and external URLs
+function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
+  if (!redirectUrl || typeof redirectUrl !== 'string') return defaultPath;
+  const trimmed = redirectUrl.trim();
+  if ((/^\/[^/\\]/.test(trimmed) || trimmed === '/') && !trimmed.includes(':') && !trimmed.startsWith('//')) {
+    return trimmed;
+  }
+  return defaultPath;
+}
+
 // Hash a password using pbkdf2
 function hashPassword(password) {
   if (password == null || typeof password !== 'string') return '';
@@ -1890,10 +1900,16 @@ const server = http.createServer(async (req, res) => {
   if ((req.url === '/api/auth/config' || urlPath === '/api/auth/config') && req.method === 'GET') {
     loadEnv();
     const googleClientId = (process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '').trim();
+    const discordEnabled = Boolean(
+      (process.env.DISCORD_CLIENT_ID || '').trim() &&
+      (process.env.DISCORD_CLIENT_SECRET || '').trim() &&
+      (process.env.DISCORD_REDIRECT_URI || '').trim()
+    );
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       success: true,
-      googleClientId
+      googleClientId,
+      discordEnabled
     }));
     return;
   }
@@ -2042,8 +2058,8 @@ const server = http.createServer(async (req, res) => {
           const avatarUrl = sanitizeImageUrlForDb(googlePayload.picture) || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
 
           const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              ON CONFLICT (email)
              DO UPDATE SET google_id = COALESCE(users.google_id, EXCLUDED.google_id)
              RETURNING *`,
@@ -2060,7 +2076,8 @@ const server = http.createServer(async (req, res) => {
               'none',
               avatarUrl,
               'Active',
-              googleSub
+              googleSub,
+              false
             ]
           );
           targetUser = insertRes.rows[0];
@@ -2102,6 +2119,406 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Authentication processing failed.' }));
       }
     });
+    return;
+  }
+
+  // 2c. Discord OAuth2 Flow: Start Authorization (/api/auth/discord)
+  if ((req.url.startsWith('/api/auth/discord?') || req.url === '/api/auth/discord' || urlPath === '/api/auth/discord') && req.method === 'GET' && !urlPath.includes('/callback') && !urlPath.includes('/unlink')) {
+    const clientIp = getClientIp(req);
+    if (!checkRateLimit('discord_auth:' + clientIp, 20, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a minute.' }));
+      return;
+    }
+
+    loadEnv();
+    const discordClientId = (process.env.DISCORD_CLIENT_ID || '').trim();
+    const discordClientSecret = (process.env.DISCORD_CLIENT_SECRET || '').trim();
+    const discordRedirectUri = (process.env.DISCORD_REDIRECT_URI || '').trim();
+
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const intent = (parsedUrl.searchParams.get('intent') || 'login').toLowerCase();
+    const rawRedirect = parsedUrl.searchParams.get('redirect');
+    const defaultRedirect = intent === 'link' ? '/profile' : '/';
+    const safeRedirect = getSafeRelativeRedirect(rawRedirect, defaultRedirect);
+
+    // If intent is link, verify caller is authenticated
+    let authUser = null;
+    if (intent === 'link') {
+      authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(302, { Location: `/auth?error=auth_required&redirect=${encodeURIComponent(safeRedirect)}` });
+        res.end();
+        return;
+      }
+    }
+
+    if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
+      const target = intent === 'link' ? '/profile?error=discord_not_configured' : '/auth?error=discord_not_configured';
+      res.writeHead(302, { Location: target });
+      res.end();
+      return;
+    }
+
+    const stateRandom = crypto.randomBytes(32).toString('hex');
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+
+    const statePayload = {
+      state: stateRandom,
+      intent: intent === 'link' ? 'link' : 'login',
+      redirect: safeRedirect,
+      userId: intent === 'link' ? (authUser.id || authUser.uid) : null,
+      codeVerifier,
+      createdAt: Date.now()
+    };
+
+    const stateToken = encryptSessionData(JSON.stringify(statePayload));
+    const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
+    const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isProdOrHttps ? '; Secure' : ''}`;
+
+    const discordAuthUrl = new URL('https://discord.com/oauth2/authorize');
+    discordAuthUrl.searchParams.set('client_id', discordClientId);
+    discordAuthUrl.searchParams.set('redirect_uri', discordRedirectUri);
+    discordAuthUrl.searchParams.set('response_type', 'code');
+    discordAuthUrl.searchParams.set('scope', 'identify email');
+    discordAuthUrl.searchParams.set('state', stateRandom);
+    discordAuthUrl.searchParams.set('code_challenge', codeChallenge);
+    discordAuthUrl.searchParams.set('code_challenge_method', 'S256');
+    discordAuthUrl.searchParams.set('prompt', 'consent');
+
+    res.writeHead(302, {
+      'Set-Cookie': stateCookie,
+      'Location': discordAuthUrl.toString()
+    });
+    res.end();
+    return;
+  }
+
+  // 2d. Discord OAuth2 Flow: Callback Handler (/api/auth/discord/callback)
+  if ((req.url.startsWith('/api/auth/discord/callback') || urlPath === '/api/auth/discord/callback') && req.method === 'GET') {
+    const clientIp = getClientIp(req);
+    const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
+    const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProdOrHttps ? '; Secure' : ''}`;
+
+    if (!checkRateLimit('discord_auth:' + clientIp, 20, 60000)) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=rate_limited' });
+      res.end();
+      return;
+    }
+
+    loadEnv();
+    const discordClientId = (process.env.DISCORD_CLIENT_ID || '').trim();
+    const discordClientSecret = (process.env.DISCORD_CLIENT_SECRET || '').trim();
+    const discordRedirectUri = (process.env.DISCORD_REDIRECT_URI || '').trim();
+
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const queryCode = parsedUrl.searchParams.get('code');
+    const queryState = parsedUrl.searchParams.get('state');
+    const queryError = parsedUrl.searchParams.get('error');
+
+    // Extract state cookie
+    let stateCookieValue = null;
+    if (req.headers.cookie) {
+      const match = req.headers.cookie.match(/(^|;)\s*discord_oauth_state\s*=\s*([^;]+)/);
+      if (match) {
+        try {
+          stateCookieValue = decodeURIComponent(match[2]);
+        } catch {
+          stateCookieValue = match[2];
+        }
+      }
+    }
+
+    if (!stateCookieValue) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=invalid_state' });
+      res.end();
+      return;
+    }
+
+    let statePayload = null;
+    try {
+      const decrypted = decryptSessionData(stateCookieValue);
+      statePayload = JSON.parse(decrypted);
+    } catch {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=invalid_state' });
+      res.end();
+      return;
+    }
+
+    const fallbackRedirect = statePayload?.intent === 'link' ? '/profile' : '/auth';
+
+    // Verify expiration (10 min)
+    if (!statePayload.createdAt || Date.now() - statePayload.createdAt > 600000) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_state` });
+      res.end();
+      return;
+    }
+
+    // Timing-safe state comparison
+    const stateBuf = Buffer.from(statePayload.state || '');
+    const queryBuf = Buffer.from(queryState || '');
+    if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_state` });
+      res.end();
+      return;
+    }
+
+    if (queryError) {
+      const errCode = queryError === 'access_denied' ? 'discord_cancelled' : 'discord_failed';
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=${errCode}` });
+      res.end();
+      return;
+    }
+
+    if (!queryCode) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=missing_code` });
+      res.end();
+      return;
+    }
+
+    if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_not_configured` });
+      res.end();
+      return;
+    }
+
+    try {
+      // Exchange code for token
+      const tokenBody = new URLSearchParams({
+        client_id: discordClientId,
+        client_secret: discordClientSecret,
+        grant_type: 'authorization_code',
+        code: queryCode,
+        redirect_uri: discordRedirectUri
+      });
+      if (statePayload.codeVerifier) {
+        tokenBody.append('code_verifier', statePayload.codeVerifier);
+      }
+
+      const tokenAbort = new AbortController();
+      const tokenTimer = setTimeout(() => tokenAbort.abort(), 10000);
+      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody.toString(),
+        signal: tokenAbort.signal
+      });
+      clearTimeout(tokenTimer);
+
+      if (!tokenRes.ok) {
+        console.error('⚠️ [DISCORD AUTH] Token exchange failed with status', tokenRes.status);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_token_failed` });
+        res.end();
+        return;
+      }
+
+      const tokenJson = await tokenRes.json();
+      const accessToken = tokenJson.access_token;
+      const tokenType = tokenJson.token_type || 'Bearer';
+
+      // Fetch user profile from Discord
+      const userAbort = new AbortController();
+      const userTimer = setTimeout(() => userAbort.abort(), 10000);
+      const userRes = await fetch('https://discord.com/api/users/@me', {
+        headers: { 'Authorization': `${tokenType} ${accessToken}` },
+        signal: userAbort.signal
+      });
+      clearTimeout(userTimer);
+
+      if (!userRes.ok) {
+        console.error('⚠️ [DISCORD AUTH] Profile fetch failed with status', userRes.status);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_profile_failed` });
+        res.end();
+        return;
+      }
+
+      const discordUser = await userRes.json();
+      const discordId = (discordUser.id || '').trim();
+      const discordEmail = (discordUser.email || '').trim().toLowerCase();
+      const isEmailVerified = discordUser.verified === true || discordUser.verified === 'true';
+      const discordUsername = (discordUser.username || '').trim();
+      const discordGlobalName = (discordUser.global_name || discordUser.username || '').trim();
+
+      if (!discordId) {
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_payload` });
+        res.end();
+        return;
+      }
+
+      // Handle intent === 'link'
+      if (statePayload.intent === 'link') {
+        const linkUserId = statePayload.userId;
+        if (!linkUserId) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=auth_required' });
+          res.end();
+          return;
+        }
+
+        const conflictCheck = await pool.query('SELECT id FROM users WHERE discord_id = $1 AND id != $2', [discordId, linkUserId]);
+        if (conflictCheck.rows.length > 0) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=discord_already_linked' });
+          res.end();
+          return;
+        }
+
+        await pool.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, linkUserId]);
+        console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${linkUserId}" connected Discord account (${discordId}).\n`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=linked' });
+        res.end();
+        return;
+      }
+
+      // Handle intent === 'login' (or signup)
+      let targetUser = null;
+      const byDiscordRes = await pool.query('SELECT * FROM users WHERE discord_id = $1', [discordId]);
+      if (byDiscordRes.rows.length > 0) {
+        targetUser = byDiscordRes.rows[0];
+      } else {
+        if (!discordEmail || !isEmailVerified || !discordEmail.includes('@')) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=unverified_email' });
+          res.end();
+          return;
+        }
+
+        const byEmailRes = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [discordEmail]);
+        if (byEmailRes.rows.length > 0) {
+          targetUser = byEmailRes.rows[0];
+          if (targetUser.discord_id && targetUser.discord_id !== discordId) {
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=account_conflict' });
+            res.end();
+            return;
+          }
+          await pool.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, targetUser.id]);
+          targetUser.discord_id = discordId;
+        } else {
+          // New User Registration with least-privileged participant defaults
+          const userUUID = 'USR-' + crypto.randomBytes(12).toString('hex');
+          const cleanName = (discordGlobalName || discordUsername || discordEmail.split('@')[0]).trim().slice(0, 50).replace(/[<>]/g, '');
+          const baseTag = (discordUsername.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
+          const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
+          const randomPassHash = hashPassword('DISCORD_OAUTH_' + crypto.randomBytes(16).toString('hex'));
+          const avatarUrl = discordUser.avatar
+            ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.png`
+            : 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
+
+          const insertRes = await pool.query(
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT (email)
+             DO UPDATE SET discord_id = COALESCE(users.discord_id, EXCLUDED.discord_id)
+             RETURNING *`,
+            [
+              userUUID,
+              userUUID,
+              cleanName,
+              discordEmail,
+              randomPassHash,
+              gamerTag,
+              'player',
+              ['user'],
+              'Amateur',
+              'none',
+              avatarUrl,
+              'Active',
+              discordId,
+              false
+            ]
+          );
+          targetUser = insertRes.rows[0];
+          await ensureSupabaseProfile(pool, targetUser);
+        }
+      }
+
+      // Check Admin MFA
+      const isRootAdmin = targetUser.email.toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase();
+      const isAdmin = isRootAdmin || hasRole(targetUser, ROLES.ADMIN);
+      if (isAdmin && (targetUser.admin_totp_activated && targetUser.admin_totp_secret)) {
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=admin_mfa_required' });
+        res.end();
+        return;
+      }
+
+      // Generate native Match District JWT & HttpOnly Session Cookie
+      const token = signJwt({
+        email: targetUser.email,
+        role: targetUser.role,
+        roles: targetUser.roles || [targetUser.role],
+        id: targetUser.uid || targetUser.id
+      });
+      const cookieHeader = `token=${token}; Path=/; SameSite=Lax; HttpOnly${isProdOrHttps ? '; Secure' : ''}`;
+
+      logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'discord_signin', req).catch(() => {});
+      console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Discord.\n`);
+
+      const destination = getSafeRelativeRedirect(statePayload.redirect, '/');
+      res.writeHead(302, {
+        'Set-Cookie': [cookieHeader, clearStateCookie],
+        'Location': destination
+      });
+      res.end();
+      return;
+    } catch (err) {
+      console.error('❌ [MATCH DISTRICT DISCORD AUTH EXCEPTION]:', err.message);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_failed` });
+      res.end();
+      return;
+    }
+  }
+
+  // 2e. Discord OAuth2 Flow: Unlink Discord (/api/auth/discord/unlink)
+  if (urlPath === '/api/auth/discord/unlink' && req.method === 'POST') {
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      return;
+    }
+
+    if (!checkRateLimit('discord_unlink:' + authUser.id, 10, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a moment.' }));
+      return;
+    }
+
+    try {
+      const userRes = await pool.query('SELECT id, password, google_id, discord_id, password_set FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+      if (userRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User account not found.' }));
+        return;
+      }
+
+      const dbUser = userRes.rows[0];
+      if (!dbUser.discord_id) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_LINKED', message: 'No Discord account is currently connected.' }));
+        return;
+      }
+
+      const hasGoogle = Boolean(dbUser.google_id);
+      const hasUsablePassword = Boolean(dbUser.password && dbUser.password_set !== false);
+
+      if (!hasGoogle && !hasUsablePassword) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: 'CANNOT_UNLINK_LAST_AUTH_METHOD',
+          message: 'You must set a password or connect Google before disconnecting Discord so you do not get locked out of your account.'
+        }));
+        return;
+      }
+
+      await pool.query('UPDATE users SET discord_id = NULL WHERE id = $1', [dbUser.id]);
+      console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${dbUser.id}" disconnected Discord.\n`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Discord disconnected successfully.' }));
+    } catch (err) {
+      console.error('❌ [DISCORD UNLINK EXCEPTION]:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Failed to disconnect Discord account.' }));
+    }
     return;
   }
 
@@ -2644,8 +3061,34 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }));
         return;
       }
+      const user = dbRes.rows[0];
+      let token = null;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+      } else if (req.headers.cookie) {
+        const match = req.headers.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);
+        if (match) {
+          try { token = decodeURIComponent(match[2]); } catch { token = match[2]; }
+        }
+      }
+      let encryptedSession = null;
+      if (token) {
+        try {
+          encryptedSession = encryptSessionData(JSON.stringify({
+            token,
+            userId: user.uid || user.id,
+            email: user.email
+          }));
+        } catch {}
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, user: publicUserRow(dbRes.rows[0]) }));
+      res.end(JSON.stringify({
+        success: true,
+        user: publicUserRow(user),
+        ...(encryptedSession ? { encryptedSession } : {})
+      }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));

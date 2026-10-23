@@ -116,6 +116,26 @@ export function UserProvider({ children }) {
         }
       }
 
+      // Check for active cookie-backed session via /api/auth/me (e.g. from Discord or Google auth redirects)
+      try {
+        const meRes = await fetch('/api/auth/me', { credentials: 'include' });
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          if (active && meData.success && meData.user) {
+            setUserState(meData.user);
+            if (meData.encryptedSession) {
+              try {
+                localStorage.setItem('md_persistent_session', meData.encryptedSession);
+              } catch {}
+            }
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        // silent fallback to Supabase
+      }
+
       // Fallback: Supabase's built-in session engine
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!active) return;
