@@ -41,26 +41,6 @@
     padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   }
 
-  /* Mobile-only integrated authentication layout (removes floating-card appearance) */
-  @media (max-width: 639px) {
-    .auth-card--mobile-flat {
-      background-color: transparent !important;
-      background-image: none !important;
-      border: none !important;
-      box-shadow: none !important;
-      backdrop-filter: none !important;
-      -webkit-backdrop-filter: none !important;
-      border-radius: 0 !important;
-      padding: 0 !important;
-      outline: none !important;
-    }
-    .auth-card--mobile-flat:hover {
-      background-color: transparent !important;
-      box-shadow: none !important;
-      transform: none !important;
-    }
-  }
-
   .mobile-bottom-nav {
     position: fixed;
     z-index: 60;
@@ -193,3 +173,57 @@ html, body {
 html::-webkit-scrollbar, body::-webkit-scrollbar {
     display: none; /* Chrome, Safari, Opera */
 }
+
+/* Mobile-only softly rounded authentication card (removes harsh dark outline and floating glow) */
+@media (max-width: 639px) {
+  html:not(.dark) .glass-card.auth-card--mobile-soft,
+  html:not(.dark) .auth-card--mobile-soft,
+  html.light .glass-card.auth-card--mobile-soft,
+  html.light .auth-card--mobile-soft {
+    background-color: rgba(255, 255, 255, 0.96) !important;
+    background-image: none !important;
+    border: 1px solid rgba(226, 232, 240, 0.7) !important;
+    border-radius: 1.5rem !important;
+    padding: 1.25rem !important;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    outline: none !important;
+    overflow: hidden !important;
+    transform: none !important;
+  }
+
+  html:not(.dark) .glass-card.auth-card--mobile-soft:hover,
+  html:not(.dark) .auth-card--mobile-soft:hover,
+  html.light .glass-card.auth-card--mobile-soft:hover,
+  html.light .auth-card--mobile-soft:hover {
+    background-color: rgba(255, 255, 255, 0.96) !important;
+    border-color: rgba(226, 232, 240, 0.7) !important;
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+    transform: none !important;
+  }
+
+  html.dark .glass-card.auth-card--mobile-soft,
+  html.dark .auth-card--mobile-soft {
+    background-color: rgba(12, 14, 20, 0.9) !important;
+    background-image: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 1.5rem !important;
+    padding: 1.25rem !important;
+    box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.35) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    outline: none !important;
+    overflow: hidden !important;
+    transform: none !important;
+  }
+
+  html.dark .glass-card.auth-card--mobile-soft:hover,
+  html.dark .auth-card--mobile-soft:hover {
+    background-color: rgba(12, 14, 20, 0.9) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.35) !important;
+    transform: none !important;
+  }
+}
+

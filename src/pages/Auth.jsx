@@ -1288,7 +1288,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         <button
           type="button"
           onClick={() => handleAccountSelect(account)}
-          className="w-full flex items-center gap-3.5 p-3.5 sm:p-4 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 hover:bg-slate-50 dark:hover:bg-white/[0.08] active:scale-[0.99] transition-all text-left relative min-h-[64px] shadow-sm hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none duration-200"
+          className="w-full flex items-center gap-3.5 p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 hover:bg-slate-100 dark:hover:bg-white/[0.08] active:scale-[0.99] transition-all text-left relative min-h-[64px] shadow-sm hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none duration-200"
         >
           <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-transparent group-hover:ring-primary/20 transition-all">
             {account.avatar ? (
@@ -1395,7 +1395,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           <motion.div 
             layout
             transition={cardLayoutTransition}
-            className="glass-card auth-card--mobile-flat bg-transparent sm:bg-[#07080C]/65 border-0 sm:border sm:border-white/10 backdrop-blur-none sm:backdrop-blur-xl rounded-none sm:rounded-3xl shadow-none sm:shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:dark:shadow-[0_0_40px_rgba(99,102,241,0.1)] relative overflow-visible sm:overflow-hidden p-0 sm:p-4"
+            className="glass-card auth-card--mobile-soft bg-white/95 dark:bg-[#07080C]/85 sm:bg-[#07080C]/65 border border-slate-200/60 dark:border-white/10 sm:border sm:border-white/10 backdrop-blur-xl rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_20px_rgba(0,0,0,0.3)] sm:shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:dark:shadow-[0_0_40px_rgba(99,102,241,0.1)] relative overflow-hidden p-5 sm:p-4"
           >
             {/* Loading Arena Overlay */}
             <AnimatePresence>
@@ -1819,7 +1819,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       aria-expanded={isSavedAccountsExpanded}
                       aria-controls="mobile-saved-accounts-list"
                       aria-label={isSavedAccountsExpanded ? "Collapse saved accounts" : "Expand saved accounts"}
-                      className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 active:scale-[0.99] transition-all text-left"
+                      className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 active:scale-[0.99] transition-all text-left"
                     >
                       <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
