@@ -267,9 +267,21 @@ function Header({ activePage, onNavigate }) {
               </div>
             )}
 
+            {/* Compact "Log in" button on phones (<768px) when logged out */}
+            {!currentUser && (
+              <button 
+                onClick={() => onNavigate && onNavigate('login')} 
+                className="md:hidden flex items-center gap-1 px-3 py-1 rounded-lg bg-primary hover:bg-primary/90 text-white font-headline-md text-xs font-bold transition-all shadow-sm shrink-0"
+              >
+                <span className="material-symbols-outlined text-sm">login</span>
+                <span>Log in</span>
+              </button>
+            )}
+
+            {/* Hamburger button: hidden on phones (<768px), only visible on tablet (768px-1023px) */}
             <button 
               onClick={() => setIsMenuOpen(!isMenuOpen)} 
-              className="lg:hidden w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-indigo-500/10 dark:hover:bg-white/10 hover:text-primary transition-all text-black dark:text-white border border-outline-variant shrink-0 ml-1 relative z-50"
+              className="hidden md:flex lg:hidden w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-surface-container-highest items-center justify-center hover:bg-indigo-500/10 dark:hover:bg-white/10 hover:text-primary transition-all text-black dark:text-white border border-outline-variant shrink-0 ml-1 relative z-50"
               aria-label="Toggle navigation menu"
             >
               <span className="material-symbols-outlined text-[18px] sm:text-[20px]">
@@ -278,7 +290,7 @@ function Header({ activePage, onNavigate }) {
             </button>
           </div>
 
-          {/* Mobile Overlay Menu */}
+          {/* Tablet Dropdown Menu (hidden on mobile <768px and desktop >=1024px) */}
           <AnimatePresence>
             {isMenuOpen && (
               <motion.div 
@@ -286,7 +298,7 @@ function Header({ activePage, onNavigate }) {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -10 }}
                 transition={{ duration: 0.15, ease: "easeOut" }}
-                className="absolute top-full right-3 sm:right-sm md:right-lg mt-2 w-52 bg-white dark:bg-[#07080C]/95 backdrop-blur-2xl p-3 rounded-2xl border border-outline-variant/50 shadow-md dark:shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-50"
+                className="hidden md:block lg:hidden absolute top-full right-3 sm:right-sm md:right-lg mt-2 w-52 bg-white dark:bg-[#07080C]/95 backdrop-blur-2xl p-3 rounded-2xl border border-outline-variant/50 shadow-md dark:shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-50"
               >
                 <div className="flex flex-col gap-0.5">
                   {hasRole(getUserRoles(currentUser), 'admin') ? (

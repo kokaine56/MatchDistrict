@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { useSearchParams, useLocation } from 'react-router-dom'
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import CountUp from '../components/CountUp'
 import Header from '../components/Header.jsx'
@@ -321,15 +321,16 @@ function Profile({ onNavigate, selectedUserProfile }) {
     return loggedIn.id === profileUserId
   }, [currentUserFromContext, selectedUserProfile])
 
+  const navigate = useNavigate()
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const resolveTab = (tab) => {
     if (!tab) return 'teams';
     const lower = String(tab).toLowerCase();
-    if (lower === 'overview') return 'teams';
+    if (lower === 'overview' || lower === 'tournaments') return 'teams';
     if (lower === 'wallet' || lower === 'prize-payments' || lower === 'payment-history' || lower === 'payments') return 'payments';
-    if (lower === 'teams' || lower === 'tournaments' || lower === 'settings' || lower === 'verifier') return lower;
+    if (lower === 'teams' || lower === 'settings' || lower === 'verifier') return lower;
     return 'teams';
   };
 
@@ -348,7 +349,43 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }, { replace: true });
   };
 
+  // Redirect old /profile?tab=tournaments to /my-tournaments
   useEffect(() => {
+    const requestedTab = searchParams.get('tab') || location.state?.activeTab;
+    if (requestedTab && String(requestedTab).toLowerCase() === 'tournaments') {
+      navigate('/my-tournaments', { replace: true });
+    }
+  }, [searchParams, location.state, navigate]);
+
+  // Handle OAuth returns & URL tab sync
+  useEffect(() => {
+    const discordParam = searchParams.get('discord');
+    const googleParam = searchParams.get('google');
+    const errCode = searchParams.get('code') || searchParams.get('error') || searchParams.get('discord_error');
+
+    if (discordParam || googleParam || (errCode && (discordParam || googleParam))) {
+      setActiveTabState('settings');
+      if (discordParam === 'connected' || discordParam === 'linked') {
+        setShowToast(true);
+        setToastMessage('Discord account connected successfully!');
+      } else if (discordParam === 'error') {
+        setShowToast(true);
+        setToastMessage('Discord connection failed.');
+      } else if (googleParam === 'connected' || googleParam === 'linked') {
+        setShowToast(true);
+        setToastMessage('Google account connected successfully!');
+      } else if (googleParam === 'error') {
+        setShowToast(true);
+        setToastMessage('Google connection failed.');
+      }
+      setSearchParams({ tab: 'settings' }, { replace: true });
+      setTimeout(() => {
+        const el = document.getElementById('login-methods-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 300);
+      return;
+    }
+
     const tabFromUrl = searchParams.get('tab');
     if (tabFromUrl) {
       const resolved = resolveTab(tabFromUrl);
@@ -356,7 +393,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
         setActiveTabState(resolved);
       }
     }
-  }, [searchParams]);
+  }, [searchParams, activeTab, setSearchParams]);
+
+  const [copiedDistrictId, setCopiedDistrictId] = useState(false)
+  const [isChangingEmail, setIsChangingEmail] = useState(false)
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const [profileMode, setProfileMode] = useState('player') // 'player' | 'organiser'
@@ -1358,7 +1400,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     e.preventDefault()
     if (!currentUser) return
     
-    if (playerNameAbuse || playerTagAbuse || playerBioAbuse) {
+    if (playerNameAbuse || playerTagAbuse) {
       triggerToast('Cannot save profile: Inappropriate words detected in fields.')
       return
     }
@@ -1374,20 +1416,20 @@ function Profile({ onNavigate, selectedUserProfile }) {
         },
         body: JSON.stringify({
           name: playerEditForm.name,
-          experience: playerEditForm.bio,
+          gamerTag: playerEditForm.gamerTag,
+          phone: playerEditForm.phone,
           avatar: sanitizeImageUrl(playerEditForm.avatar),
-          banner: sanitizeImageUrl(playerEditForm.banner),
         })
       })
       const data = await res.json()
       if (data.success) {
         const savedAvatar = sanitizeImageUrl(playerEditForm.avatar)
-        const savedBanner = sanitizeImageUrl(playerEditForm.banner)
         const nextPlayer = {
-          ...playerEditForm,
-          bio: data.user.experience ?? playerEditForm.bio ?? '',
+          ...playerData,
+          name: playerEditForm.name,
+          gamerTag: playerEditForm.gamerTag,
+          phone: playerEditForm.phone,
           avatar: savedAvatar || playerData.avatar,
-          banner: savedBanner || playerData.banner,
         }
         setPlayerData(nextPlayer)
         setPlayerEditForm(nextPlayer)
@@ -1396,9 +1438,9 @@ function Profile({ onNavigate, selectedUserProfile }) {
           setCurrentUserFromContext(data.user)
         }
         setIsEditingProfile(false)
-        triggerToast('Player profile updated successfully in Supabase!')
+        triggerToast('Profile updated successfully!')
       } else {
-        triggerToast(`Failed to update profile: ${data.error}`)
+        triggerToast(`Failed to update profile: ${data.error || data.message || 'Error'}`)
       }
     } catch (err) {
       console.error(err)
@@ -2404,628 +2446,109 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
           {/* Own Profile View — only rendered when viewing your own profile */}
           {isOwnProfile && (
             <>
-              <div className="space-y-6">
-                    {/* Compact Player Header Hero Card */}
-                    <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-slate-200/60 dark:border-slate-700/60 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
-                      {/* Cover Banner */}
-                      <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
-                        {(uploadPreviewUrls.banner || playerData.banner) ? (
-                          <>
-                            {!localMediaLoaded.banner && <div className="absolute inset-0 bg-slate-800 animate-pulse" />}
-                            <img
-                              src={(uploadPreviewUrls.banner || playerData.banner) + `?v=${profileImageVersion}`}
-                              alt="Profile Banner"
-                              className="w-full h-full object-cover object-center absolute inset-0"
-                              onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
-                              onError={() => setLocalMediaLoaded(prev => ({ ...prev, banner: true }))}
-                              style={{ opacity: localMediaLoaded.banner ? 1 : 0 }}
-                            />
-                          </>
-                        ) : (
-                          <img src={DEFAULT_BANNER} alt="Profile Banner" className="w-full h-full object-cover object-center absolute inset-0" />
-                        )}
-                        {activeUploadField === 'banner' && profileUploadProgress !== null && (
-                          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                            <CircularUploadProgress progress={profileUploadProgress} />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Avatar / Logo — overlaps banner edge 50/50 */}
-                      <div className="flex justify-center md:justify-start px-4 md:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
-                        <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] shrink-0">
-                          <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-surface bg-surface-variant">
-                            {(uploadPreviewUrls.avatar || playerData.avatar) ? (
-                              <>
-                                {!localMediaLoaded.avatar && <div className="absolute inset-0 bg-surface-variant animate-pulse" />}
-                                <img
-                                  src={(uploadPreviewUrls.avatar || playerData.avatar) + `?v=${profileImageVersion}`}
-                                  alt={playerData.name}
-                                  className="avatar-img relative z-[1]"
-                                  onLoad={() => setLocalMediaLoaded(prev => ({ ...prev, avatar: true }))}
-                                  onError={() => setLocalMediaLoaded(prev => ({ ...prev, avatar: true }))}
-                                  style={{ opacity: localMediaLoaded.avatar ? 1 : 0 }}
-                                />
-                              </>
-                            ) : (
-                              <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img relative z-[1]" />
-                            )}
-                            {activeUploadField === 'avatar' && profileUploadProgress !== null && (
-                              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 rounded-full">
-                                <CircularUploadProgress progress={profileUploadProgress} />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Content section */}
-                      <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4 relative z-10">
-                        {/* Top row: Info + Buttons */}
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                          <div className="flex-1 min-w-0 text-center md:text-left">
-                            {/* Name */}
-                            <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{playerData.name}</h1>
-
-                            {/* Username + Email */}
-                            <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
-                              <span className="inline-flex items-center gap-0.5 text-primary font-bold">
-                                <span className="material-symbols-outlined text-xs">alternate_email</span>
-                                {ownDistrictId}
-                              </span>
-                              <span className="inline-flex items-center gap-1">
-                                <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
-                                {playerData.email}
-                              </span>
-                            </div>
-
-                            {/* Bio / Description */}
-                            <p className="mt-4 font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 max-w-[700px] mx-auto md:mx-0 leading-relaxed text-center md:text-left">
-                              {playerData.bio || 'Competitive Arena Contender. Defending champions in the esports league.'}
-                            </p>
-                          </div>
-
-                          {/* Desktop buttons — right side */}
-                          <div className="hidden md:flex flex-row items-center gap-3 shrink-0">
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                              className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                            >
-                              <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                            </motion.button>
-                            {isSystemAdmin(currentUser) ? (
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => onNavigate && onNavigate('admin')}
-                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                              >
-                                <span className="material-symbols-outlined text-sm">admin_panel_settings</span> Admin Panel
-                              </motion.button>
-                            ) : hasOrganizerRights(currentUser) ? (
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => onNavigate && onNavigate('org-management')}
-                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                              >
-                                <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                              </motion.button>
-                            ) : (
-                              <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={() => onNavigate && onNavigate('become-organizer')}
-                                className="min-h-[40px] sm:min-h-[44px] px-4 sm:px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                              >
-                                <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                              </motion.button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Mobile buttons — stacked, full width */}
-                        <div className="flex md:hidden flex-col gap-3 mt-6">
-                          <motion.button
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                            onClick={() => { setPlayerEditForm({ ...playerData }); setIsEditingProfile(true); }}
-                            className="min-h-[44px] w-full px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-                          >
-                            <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">edit</span> Edit Cover
-                          </motion.button>
-                          {isSystemAdmin(currentUser) ? (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('admin')}
-                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">admin_panel_settings</span> Admin Panel
-                            </motion.button>
-                          ) : hasOrganizerRights(currentUser) ? (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('org-management')}
-                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">corporate_fare</span> Organiser Hub
-                            </motion.button>
-                          ) : (
-                            <motion.button
-                              whileHover={{ scale: 1.02 }}
-                              whileTap={{ scale: 0.98 }}
-                              onClick={() => onNavigate && onNavigate('become-organizer')}
-                              className="min-h-[44px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-                            >
-                              <span className="material-symbols-outlined text-sm">workspace_premium</span> Host Events
-                            </motion.button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Segmented Tab Navigation for Desktop (Hidden on mobile) */}
-                    <div className="hidden md:block glass-card p-1 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm mt-6">
-                      <div className="flex gap-1">
-                        {[
-                          { id: 'teams', label: 'Teams & Squads', icon: 'group' },
-                          { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
-                          { id: 'payments', label: 'Payment History', icon: 'payments' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' }
-                        ].map((tab) => {
-                          const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
-                          return (
-                            <button
-                              key={tab.id}
-                              data-tab={tab.id}
-                              onClick={() => setActiveTab(tab.id)}
-                              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 font-headline-md text-xs font-bold rounded-xl transition-all duration-200 relative ${
-                                isActive
-                                  ? 'text-white'
-                                  : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
-                              }`}
-                            >
-                              {isActive && (
-                                <motion.div
-                                  layoutId="activePlayerTab"
-                                  className="absolute inset-0 bg-primary rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.4)] border border-primary/20 z-0"
-                                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                                />
-                              )}
-                              <span className="material-symbols-outlined text-base relative z-10">{tab.icon}</span>
-                              <span className="relative z-10">{tab.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Navigation for Mobile */}
-                    <div className="md:hidden glass-card p-1 rounded-xl border border-outline-variant/30 bg-surface/40 w-full overflow-hidden mt-4">
-                      <div className="grid grid-cols-4 gap-1 w-full">
-                        {[
-                          { id: 'teams', label: 'Teams', icon: 'group' },
-                          { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
-                          { id: 'payments', label: 'Payment History', icon: 'payments' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' }
-                        ].map((tab) => {
-                          const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
-                          return (
-                            <button
-                              key={tab.id}
-                              data-tab={tab.id}
-                              onClick={() => setActiveTab(tab.id)}
-                              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg transition-all relative min-h-[48px] select-none ${
-                                isActive
-                                  ? 'text-white'
-                                  : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
-                              }`}
-                            >
-                              {isActive && (
-                                <motion.div
-                                  layoutId="activePlayerTabMobile"
-                                  className="absolute inset-0 bg-primary rounded-lg shadow-md z-0"
-                                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                                />
-                              )}
-                              <span className="material-symbols-outlined text-lg leading-none relative z-10">{tab.icon}</span>
-                              <span className="text-[10px] font-bold tracking-tight text-center relative z-10 leading-tight line-clamp-2 mt-1 px-0.5">
-                                {tab.label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
+              <div className="space-y-4">
+                {/* Minimal Profile Header */}
+                <div className="flex flex-col items-center justify-center text-center pt-2 sm:pt-4 pb-1 max-w-sm mx-auto">
+                  {/* Round profile image (no edit button or pencil on it) */}
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border-2 border-outline-variant bg-surface-variant shrink-0 shadow-sm">
+                    {(uploadPreviewUrls.avatar || playerData.avatar) ? (
+                      <img
+                        src={(uploadPreviewUrls.avatar || playerData.avatar) + `?v=${profileImageVersion}`}
+                        alt={playerData.name}
+                        className="avatar-img w-full h-full object-cover"
+                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
+                      />
+                    ) : (
+                      <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img w-full h-full object-cover" />
+                    )}
                   </div>
 
+                  {/* Display name under it */}
+                  <h1 className="font-headline-md text-lg sm:text-xl font-black text-on-background tracking-tight mt-2.5 truncate max-w-full">
+                    {playerData.name}
+                  </h1>
+
+                  {/* District ID under that shown as a plain label "District ID" with the number (no "@" prefix) and small copy button */}
+                  <div className="flex items-center gap-1.5 mt-1 text-on-surface-variant font-body-sm text-xs">
+                    <span className="font-medium text-on-surface-variant">District ID {ownDistrictId}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (ownDistrictId) {
+                          navigator.clipboard?.writeText(String(ownDistrictId));
+                          setCopiedDistrictId(true);
+                          setTimeout(() => setCopiedDistrictId(false), 1500);
+                        }
+                      }}
+                      className="p-1 rounded hover:bg-surface-variant transition-colors text-on-surface-variant hover:text-primary flex items-center justify-center"
+                      title="Copy District ID"
+                      aria-label="Copy District ID"
+                    >
+                      <span className="material-symbols-outlined text-[15px]">
+                        {copiedDistrictId ? 'check' : 'content_copy'}
+                      </span>
+                    </button>
+                    {copiedDistrictId && (
+                      <span className="text-[10px] font-bold text-primary animate-fade-in">
+                        Copied
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Directly under header: exactly three section buttons in one row */}
+                <div className="w-full max-w-md mx-auto p-1 rounded-xl sm:rounded-2xl border border-outline-variant/30 bg-surface-container-low/60 backdrop-blur-md shadow-sm mt-3">
+                  <div className="grid grid-cols-3 gap-1">
+                    {[
+                      { id: 'teams', label: 'Teams & Squads', icon: 'groups' },
+                      { id: 'payments', label: 'Payment History', icon: 'payments' },
+                      { id: 'settings', label: 'Settings', icon: 'settings' }
+                    ].map((tab) => {
+                      const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
+                      return (
+                        <button
+                          key={tab.id}
+                          data-tab={tab.id}
+                          type="button"
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 sm:py-2.5 px-1 sm:px-2 rounded-lg sm:rounded-xl font-headline-md text-[11px] sm:text-xs font-bold transition-all relative select-none min-h-[44px] ${
+                            isActive
+                              ? 'text-white'
+                              : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
+                          }`}
+                        >
+                          {isActive && (
+                            <motion.div
+                              layoutId="activeProfileSection"
+                              className="absolute inset-0 bg-primary rounded-lg sm:rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.35)] border border-primary/20 z-0"
+                              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                            />
+                          )}
+                          <span className="material-symbols-outlined text-[18px] sm:text-[20px] relative z-10 shrink-0">
+                            {tab.icon}
+                          </span>
+                          <span className="relative z-10 text-center leading-tight line-clamp-2">
+                            {tab.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </>
           )}
 
           {/* Own Profile Tab Content wrapper */}
           {isOwnProfile && (
-            <div className="pb-4 md:pb-0 pt-4 sm:pt-6">
+            <div 
+              className="pt-4 sm:pt-6 pb-28 sm:pb-12"
+              style={{ paddingBottom: 'calc(84px + env(safe-area-inset-bottom, 0px))' }}
+            >
               <AnimatePresence mode="wait">
 
 
-              {/* Tab 2: My Tournaments — Redesigned */}
-              {activeTab === 'tournaments' && (
-                <motion.div
-                  key="tournaments"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  className="space-y-3"
-                >
-                  {/* ── Header row: title + subtitle + pill filters ── */}
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2">
-                    <div>
-                      <h3 className="font-headline-md text-lg font-bold text-on-background tracking-tight">
-                        My Tournament Registrations
-                      </h3>
-                      <p className="text-[11px] text-on-surface-variant mt-0.5">
-                        View and manage all tournaments you have registered for.
-                      </p>
-                    </div>
-                    {/* Compact Segmented Filter Chips */}
-                    <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 sm:pb-0 shrink-0">
-                      {['all', 'live', 'upcoming', 'completed'].map((filter) => {
-                        return (
-                          <button
-                            key={filter}
-                            onClick={() => { setTournamentFilter(filter); setSelectedCalDate(null); }}
-                            className={`px-3.5 py-1.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap shadow-sm border ${
-                              tournamentFilter === filter
-                                ? 'bg-primary text-white border-primary'
-                                : 'bg-surface border-outline-variant/30 text-on-surface-variant hover:text-on-background hover:bg-surface-variant/50'
-                            }`}
-                          >
-                            {filter}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {playerTournamentsList.length === 0 ? (
-                    /* ── Empty state ── */
-                    <div className="glass-card text-center py-14 space-y-4 rounded-2xl border border-outline-variant/15 bg-surface p-6">
-                      <div className="w-14 h-14 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
-                        <span className="material-symbols-outlined text-3xl">emoji_events</span>
-                      </div>
-                      <div className="space-y-1">
-                        <h4 className="font-headline-md text-sm font-black text-on-background">No Tournament Registrations</h4>
-                        <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">You haven't signed up for any competitive events yet. Browse active tournaments to kickstart your journey!</p>
-                      </div>
-                      <button
-                        onClick={() => onNavigate && onNavigate('tournaments')}
-                        className="px-5 py-2 bg-primary hover:bg-primary/90 text-white font-headline-md text-xs font-bold rounded-lg transition-all shadow-sm inline-flex items-center gap-1.5 mx-auto"
-                      >
-                        <span className="material-symbols-outlined text-sm">explore</span> Explore Tournaments
-                      </button>
-                    </div>
-                  ) : (
-                    /* ── Main content: two-column grid (calendar + cards) ── */
-                    <div className="grid grid-cols-1 md:grid-cols-[minmax(280px,320px)_minmax(0,1fr)] gap-4 items-start">
-
-                      {/* ── Mini Calendar ── */}
-                      <div className="glass-card rounded-2xl border border-outline-variant/30 bg-surface p-5 w-full shrink-0 self-start shadow-sm">
-                        {/* Month nav */}
-                        <div className="flex items-center justify-center gap-5 mb-4">
-                          <button
-                            onClick={() => setCalendarMonth(prev => {
-                              const d = new Date(prev.year, prev.month - 1);
-                              return { year: d.getFullYear(), month: d.getMonth() };
-                            })}
-                            className="text-on-surface-variant hover:text-on-background transition-colors flex items-center"
-                            aria-label="Previous month"
-                          >
-                            <span className="material-symbols-outlined" style={{fontSize:'18px'}}>chevron_left</span>
-                          </button>
-                          <span className="text-sm font-black text-on-background font-headline-md tracking-wide">
-                            {new Date(calendarMonth.year, calendarMonth.month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                          </span>
-                          <button
-                            onClick={() => setCalendarMonth(prev => {
-                              const d = new Date(prev.year, prev.month + 1);
-                              return { year: d.getFullYear(), month: d.getMonth() };
-                            })}
-                            className="text-on-surface-variant hover:text-on-background transition-colors flex items-center"
-                            aria-label="Next month"
-                          >
-                            <span className="material-symbols-outlined" style={{fontSize:'18px'}}>chevron_right</span>
-                          </button>
-                        </div>
-                        {/* Day labels */}
-                        <div className="grid grid-cols-7 mb-1.5">
-                          {['S','M','T','W','T','F','S'].map((d, i) => (
-                            <div key={i} className="text-center text-[9px] font-bold text-on-surface-variant/40 uppercase py-0.5">{d}</div>
-                          ))}
-                        </div>
-                        {/* Calendar grid */}
-                        {(() => {
-                          const today = new Date();
-                          const todayY = today.getFullYear();
-                          const todayM = today.getMonth();
-                          const todayD = today.getDate();
-                          const firstDay = new Date(calendarMonth.year, calendarMonth.month, 1).getDay();
-                          const daysInMonth = new Date(calendarMonth.year, calendarMonth.month + 1, 0).getDate();
-                          const cells = [];
-                          for (let i = 0; i < firstDay; i++) cells.push(null);
-                          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-                          while (cells.length % 7 !== 0) cells.push(null);
-                          const dateKey = (d) => `${calendarMonth.year}-${calendarMonth.month}-${d}`;
-                          return (
-                            <div className="grid grid-cols-7 gap-y-1 gap-x-0.5">
-                              {cells.map((day, idx) => {
-                                if (!day) return <div key={idx} className="aspect-square" />;
-                                const key = dateKey(day);
-                                const hasTournament = tournamentDateSet.has(key);
-                                const isToday = todayY === calendarMonth.year && todayM === calendarMonth.month && todayD === day;
-                                const isSelected = selectedCalDate === key;
-                                const ariaLabel = [
-                                  new Date(calendarMonth.year, calendarMonth.month, day).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }),
-                                  isSelected ? 'selected' : '',
-                                  isToday ? 'today' : '',
-                                  hasTournament ? 'has registered tournaments' : '',
-                                ].filter(Boolean).join(', ');
-                                return (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() => {
-                                      if (!hasTournament) return;
-                                      setSelectedCalDate(prev => prev === key ? null : key);
-                                    }}
-                                    aria-pressed={isSelected}
-                                    aria-label={ariaLabel}
-                                    className={`relative aspect-square flex items-center justify-center transition-colors rounded-lg ${hasTournament ? 'cursor-pointer hover:bg-surface-variant/40' : 'cursor-default'}`}
-                                  >
-                                    {/* TODAY: filled primary circle (shows even when selected) */}
-                                    {isToday && (
-                                      <span className="absolute inset-[4px] rounded-full bg-primary" />
-                                    )}
-                                    {/* SELECTED: primary ring outline (rounded square) */}
-                                    {isSelected && (
-                                      <span className="absolute inset-[2px] rounded-lg ring-2 ring-primary pointer-events-none" />
-                                    )}
-                                    {/* TOURNAMENT: amber ring (always a circle) */}
-                                    {hasTournament && !isToday && (
-                                      <span className="absolute inset-[3px] rounded-full ring-[1.5px] ring-amber-400/90 pointer-events-none" />
-                                    )}
-                                    
-                                    {/* Date number */}
-                                    <span className={`relative z-10 text-[11px] leading-none select-none transition-colors ${
-                                      isToday
-                                        ? 'text-white font-bold'
-                                        : (isSelected || hasTournament)
-                                          ? 'text-on-background font-semibold'
-                                          : 'text-on-surface-variant/60 font-medium'
-                                    }`}>
-                                      {day}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          );
-                        })()}
-                        {/* Legend */}
-                        <div className="mt-4 pt-3 border-t border-outline-variant/20 grid grid-cols-3 gap-1.5 justify-items-center">
-                          {/* Selected */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 flex items-center justify-center shrink-0">
-                              <span className="w-3.5 h-3.5 rounded-[4px] ring-2 ring-primary" />
-                            </span>
-                            <span className="text-[9px] text-on-surface-variant leading-tight">Selected</span>
-                          </div>
-                          {/* Today */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0" />
-                            <span className="text-[9px] text-on-surface-variant leading-tight">Today</span>
-                          </div>
-                          {/* Tournament */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-4 h-4 flex items-center justify-center shrink-0">
-                              <span className="w-3.5 h-3.5 rounded-full ring-[1.5px] ring-amber-400/90" />
-                            </span>
-                            <span className="text-[9px] text-on-surface-variant leading-tight">Tournament</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* ── Right column: context header + tournament cards ── */}
-                      <div className="flex flex-col gap-2 min-w-0 w-full">
-
-                        {/* Selected date context header */}
-                        {selectedCalDate ? (() => {
-                          const [y, m, d] = selectedCalDate.split('-').map(Number);
-                          const dateObj = new Date(y, m, d);
-                          const label = dateObj.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-                          const count = filteredPlayerTournaments.length;
-                          return (
-                            <div className="px-1 flex items-center justify-between gap-3 pb-1 border-b border-outline-variant/20 mb-1">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="material-symbols-outlined text-primary shrink-0" style={{fontSize:'16px'}}>calendar_month</span>
-                                <span className="text-[13px] font-bold text-on-background truncate">Tournaments on {label}</span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-on-surface-variant text-[10px] font-medium">
-                                  {count} {count === 1 ? 'Tournament' : 'Tournaments'}
-                                </span>
-                                <button
-                                  onClick={() => setSelectedCalDate(null)}
-                                  className="text-on-surface-variant hover:text-on-background transition-colors flex items-center justify-center"
-                                  aria-label="Clear date selection"
-                                >
-                                  <span className="material-symbols-outlined" style={{fontSize:'16px'}}>cancel</span>
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })() : (
-                          <div className="px-1 flex items-center gap-1.5 text-[10px] text-on-surface-variant/50">
-                            <span className="material-symbols-outlined" style={{fontSize:'12px'}}>touch_app</span>
-                            <span>Tap a highlighted date on the calendar to filter by day</span>
-                          </div>
-                        )}
-
-                        {/* Tournament cards */}
-                        {filteredPlayerTournaments.length === 0 ? (
-                          <div className="glass-card text-center py-10 rounded-xl border border-outline-variant/15 bg-surface-container-low/30 backdrop-blur-md p-6 space-y-2">
-                            <span className="material-symbols-outlined text-3xl text-on-surface-variant/30">event_busy</span>
-                            <p className="text-xs font-semibold text-on-surface-variant">
-                              {selectedCalDate ? 'No tournaments on this date.' : 'No tournaments match this filter.'}
-                            </p>
-                            <p className="text-[10px] text-on-surface-variant/60 max-w-[220px] mx-auto leading-relaxed">
-                              {selectedCalDate
-                                ? 'Select another highlighted date from the calendar to view your registered tournaments.'
-                                : 'Try switching to the All filter to see everything.'}
-                            </p>
-                            {selectedCalDate && (
-                              <button onClick={() => setSelectedCalDate(null)} className="mt-1 text-[10px] text-primary hover:underline font-semibold">Clear date filter</button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-3">
-                            {filteredPlayerTournaments.map((t) => {
-                              const regApproved = t.result === 'Approved & Registered';
-                              const regRejected = t.result === 'Rejected';
-                              const regPayment = t.result === 'Payment Pending';
-                              const regWait = t.result === 'Waitlisted';
-                              
-                              const regStatusColor = regApproved
-                                ? 'text-emerald-700 dark:text-emerald-400'
-                                : regRejected ? 'text-rose-700 dark:text-rose-400'
-                                : regPayment ? 'text-amber-700 dark:text-amber-400'
-                                : regWait ? 'text-sky-700 dark:text-sky-400'
-                                : 'text-primary';
-                              const regStatusBg = regApproved
-                                ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-400/10 dark:border-emerald-400/25'
-                                : regRejected ? 'bg-rose-50 border-rose-200 dark:bg-rose-400/10 dark:border-rose-400/25'
-                                : regPayment ? 'bg-amber-50 border-amber-200 dark:bg-amber-400/10 dark:border-amber-400/25'
-                                : regWait ? 'bg-sky-50 border-sky-200 dark:bg-sky-400/10 dark:border-sky-400/25'
-                                : 'bg-primary/10 border-primary/25';
-                              const regStatusIcon = regApproved ? 'check_circle' : regRejected ? 'cancel' : regPayment ? 'pending' : regWait ? 'hourglass_empty' : 'info';
-
-                              const statusPill = getTournamentStatusPill(t.status);
-                              const isLive = statusPill.label === 'LIVE';
-
-                              return (
-                                <div
-                                  key={t.regId || t.id}
-                                  className="glass-card w-full rounded-2xl border border-outline-variant/30 bg-surface p-2.5 sm:p-3 hover:border-primary/40 hover:shadow-md transition-all flex flex-row gap-3 sm:gap-4 items-stretch"
-                                >
-                                  {/* Poster — vertical on mobile, wide on desktop */}
-                                  <div className="relative w-[90px] sm:w-[160px] md:w-[220px] shrink-0 bg-surface-container-highest overflow-hidden rounded-xl">
-                                    <RegCardPoster poster={t.poster} game={t.game} title={t.title} />
-                                    {/* Game badge embedded in poster (top left) */}
-                                    <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-1 py-0.5 sm:px-1.5 rounded bg-primary text-white font-label-caps text-[8px] sm:text-[9px] font-bold flex items-center gap-1 shadow-sm">
-                                      <GameIcon game={t.game} size={10} rounded="rounded-[2px]" />
-                                      {t.game}
-                                    </div>
-                                  </div>
-
-                                  {/* Content area */}
-                                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5 sm:py-1">
-                                    <div className="space-y-1.5 sm:space-y-2">
-                                      {/* Top Row: Game + Slot (Left) & Reg Status (Right) */}
-                                      <div className="flex items-start justify-between gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
-                                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                                          <span className="inline-flex items-center gap-1 px-1 py-0.5 sm:px-1.5 rounded bg-primary/15 text-primary font-label-caps text-[8px] sm:text-[9px] font-bold">
-                                            <GameIcon game={t.game} size={10} rounded="rounded-[3px]" />
-                                            <span className="hidden sm:inline">{t.game}</span>
-                                          </span>
-                                          {t.slotNumber && (
-                                            <span className="inline-flex items-center gap-0.5 text-on-surface-variant font-label-caps text-[9px] sm:text-[10px] font-medium">
-                                              # Slot {t.slotNumber}
-                                            </span>
-                                          )}
-                                        </div>
-                                        
-                                        {/* Reg status pill */}
-                                        <div className={`shrink-0 flex items-center gap-1 px-2 py-1 rounded-full border text-[9px] font-bold uppercase tracking-wider ${regStatusColor} ${regStatusBg}`}>
-                                          <span className="material-symbols-outlined" style={{fontSize:'12px'}}>{regStatusIcon}</span>
-                                          <span>
-                                            <span className="hidden lg:inline text-[7px] text-on-surface-variant/70 mr-1">REG. STATUS</span>
-                                            {t.result}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      {/* Title + org */}
-                                      <div className="min-w-0">
-                                        <h4 className="font-headline-md text-sm sm:text-base font-bold text-on-background line-clamp-1 leading-snug">{t.title}</h4>
-                                        {t.orgName && <p className="text-[11px] text-on-surface-variant/80 truncate mt-0.5">by {t.orgName}</p>}
-                                      </div>
-                                    </div>
-
-                                    {/* Bottom Info Row & View Button */}
-                                    <div className="flex items-end justify-between gap-4 mt-3">
-                                      <div className="flex flex-col gap-2">
-                                        {/* Meta row 1: date, prize, team */}
-                                        <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-on-surface-variant">
-                                          <span className="inline-flex items-center gap-1 shrink-0">
-                                            <span className="material-symbols-outlined" style={{fontSize:'14px'}}>calendar_today</span>
-                                            {t.dateFormatted}
-                                          </span>
-                                          {t.prize && t.prize !== 'TBA' && t.prize !== 'TBD' && (
-                                            <span className="inline-flex items-center gap-1 text-amber-500 font-bold shrink-0">
-                                              <span className="material-symbols-outlined" style={{fontSize:'14px'}}>emoji_events</span>
-                                              {t.prize}
-                                            </span>
-                                          )}
-                                          {t.teamName && (
-                                            <span className="inline-flex items-center gap-1 min-w-0">
-                                              <span className="material-symbols-outlined shrink-0" style={{fontSize:'14px'}}>groups</span>
-                                              <span className="truncate max-w-[120px] sm:max-w-[180px]">{t.teamName}</span>
-                                            </span>
-                                          )}
-                                        </div>
-                                        
-                                        {/* Meta row 2: Tourney status, time */}
-                                        <div className="flex items-center gap-2">
-                                          <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm ${
-                                            isLive ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-primary/10 text-primary border border-primary/20'
-                                          }`}>
-                                            {isLive && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
-                                            {statusPill.label}
-                                          </div>
-                                          {/* Mock time placeholder since we don't have it in data directly */}
-                                          <span className="inline-flex items-center gap-1 text-[11px] text-on-surface-variant/80">
-                                            <span className="material-symbols-outlined" style={{fontSize:'13px'}}>schedule</span>
-                                            6:00 PM
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <button
-                                        onClick={() => onNavigate && onNavigate(`tournament-${t.id}`)}
-                                        className="shrink-0 inline-flex items-center gap-1.5 px-4 sm:px-5 py-1.5 sm:py-2 rounded-lg sm:rounded-xl bg-primary hover:bg-primary/90 text-white text-[10px] sm:text-xs font-bold transition-all shadow-sm"
-                                        aria-label={`View ${t.title}`}
-                                      >
-                                        View
-                                        <span className="material-symbols-outlined" style={{fontSize:'12px'}}>arrow_forward</span>
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              )}
-
-              {/* ===== TAB 3: TEAMS & SQUADS ===== */}
+              {/* ===== TAB 1: TEAMS & SQUADS ===== */}
               {activeTab === 'teams' && (
                 <motion.div
                   key="teams"
@@ -3520,6 +3043,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 </motion.div>
               )}
               {/* Tab 5: Settings */}
+              {/* Tab 5: Settings */}
               {activeTab === 'settings' && (
                 <motion.div
                   key="settings"
@@ -3527,116 +3051,139 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   initial="initial"
                   animate="animate"
                   exit="exit"
-                  className="space-y-6 sm:space-y-8"
+                  className="space-y-4 sm:space-y-5"
                 >
-                  {/* Unified Profile Settings Card */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-6">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-                      <span className="material-symbols-outlined text-primary text-xl">settings</span> Profile Settings
+                  {/* GROUP 1: ACCOUNT */}
+                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
+                    <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-3 border-b border-outline-variant/30">
+                      <span className="material-symbols-outlined text-primary text-xl">manage_accounts</span> Account
                     </h3>
 
-                    {/* District ID is the public account handle. */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                          <span className="material-symbols-outlined text-primary text-lg">badge</span> District ID
-                        </h4>
-                        <button
-                          type="button"
-                          disabled={!(currentUser || currentUserFromContext)?.district_id}
-                          onClick={async () => {
-                            const districtId = (currentUser || currentUserFromContext)?.district_id
-                            if (!districtId) return
-                            try {
-                              await navigator.clipboard.writeText(String(districtId))
-                              triggerToast('District ID copied.')
-                            } catch {
-                              triggerToast('Could not copy the District ID. Select and copy it manually.')
-                            }
-                          }}
-                          className="shrink-0 min-h-[32px] rounded-lg border border-outline-variant/60 px-2.5 py-1 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50 flex items-center gap-1 transition-colors"
-                          aria-label="Copy District ID"
-                        >
-                          <span className="material-symbols-outlined text-sm">content_copy</span> Copy
-                        </button>
-                      </div>
-                      <p className="rounded-xl border border-outline-variant/30 bg-surface-container p-3 font-mono text-sm text-on-background tracking-wider">
-                        {(currentUser || currentUserFromContext)?.district_id || 'Assigned when the account is verified'}
-                      </p>
-                      <p className="text-[11px] text-on-surface-variant">Permanent public account identifier on Match District.</p>
-                    </div>
-                    {/* Section 2: Change Email Address */}
-                    <div className="border-t border-outline-variant/20 pt-5 space-y-4">
-                      <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                        <span className="material-symbols-outlined text-primary text-lg">mail</span> Change Email
-                      </h4>
-                      {emailCooldownDays > 0 ? (
-                        <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                          <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">schedule</span>
-                          <p className="text-xs text-amber-300 leading-relaxed">
-                            Email was recently changed. You can change it again in <strong>{emailCooldownDays} days</strong>.
+                    {/* Row 1: Edit Profile summary row */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative w-12 h-12 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shrink-0 overflow-hidden">
+                          <img 
+                            src={sanitizeImageUrl(playerData.avatar) || DEFAULT_AVATAR} 
+                            alt={playerData.name || 'User avatar'} 
+                            className="w-full h-full rounded-full object-cover bg-surface-container-high"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-bold text-on-background truncate">
+                            {playerData.name || 'Player'}
+                          </h4>
+                          <p className="text-xs text-on-surface-variant truncate">
+                            {playerData.gamerTag ? `@${playerData.gamerTag}` : 'No gamer tag'} {playerData.phone ? `• ${playerData.phone}` : ''}
                           </p>
                         </div>
-                      ) : (
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-3 p-3 bg-surface-container rounded-xl border border-outline-variant/30">
-                            <span className="material-symbols-outlined text-on-surface-variant text-lg shrink-0">info</span>
-                            <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                              Current email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>. Changing requires a verification code sent to your old email.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPlayerEditForm({ ...playerData });
+                          setIsEditingProfile(true);
+                        }}
+                        className="px-3.5 py-1.5 min-h-[36px] self-start sm:self-auto rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> Edit Profile
+                      </button>
+                    </div>
+
+                    {/* Row 2: Email row */}
+                    <div className="p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="material-symbols-outlined text-primary text-lg shrink-0">mail</span>
+                          <div className="min-w-0">
+                            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email Address</span>
+                            <p className="text-xs font-semibold text-on-background truncate">
+                              {playerData.email || orgData.email || (currentUser || currentUserFromContext)?.email || 'No email set'}
                             </p>
                           </div>
-                          <div className="space-y-1">
-                            <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Email Address</label>
-                            <input
-                              type="email"
-                              value={settingsEmail}
-                              onChange={(e) => setSettingsEmail(e.target.value)}
-                              placeholder="e.g. newemail@domain.com"
-                              className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm"
-                            />
-                          </div>
-                          {settingsEmail.trim() && settingsEmail.trim().toLowerCase() !== (playerData.email || orgData.email || '').toLowerCase() && (
-                            <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-3 animate-in fade-in duration-200">
-                              <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Verification Required</p>
-                              <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                                A code will be sent to your old email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsChangingEmail(!isChangingEmail)}
+                          className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1 transition-colors shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-sm">{isChangingEmail ? 'expand_less' : 'edit'}</span>
+                          <span>{isChangingEmail ? 'Cancel' : 'Change'}</span>
+                        </button>
+                      </div>
+
+                      {/* Expandable Email Change Form */}
+                      {isChangingEmail && (
+                        <div className="pt-3 border-t border-outline-variant/20 space-y-3">
+                          {emailCooldownDays > 0 ? (
+                            <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                              <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">schedule</span>
+                              <p className="text-xs text-amber-300 leading-relaxed">
+                                Email was recently changed. You can change it again in <strong>{emailCooldownDays} days</strong>.
                               </p>
-                              <div className="flex gap-2">
-                                <input
-                                  type="text"
-                                  placeholder="Enter 6-digit Code"
-                                  value={emailOtpCode}
-                                  onChange={(e) => setEmailOtpCode(e.target.value)}
-                                  maxLength={6}
-                                  className="flex-1 bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background text-xs outline-none focus:border-primary tracking-widest font-mono"
-                                />
-                                {emailOtpSent ? (
-                                  <button
-                                    type="button"
-                                    onClick={handleVerifyAndSaveEmail}
-className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                                    >
-                                      <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    disabled={isEmailSendingOtp}
-                                    onClick={() => {
-                                      sendEmailOtp(playerData.email || orgData.email)
-                                    }}
-                                    className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
-                                  >
-                                    {isEmailSendingOtp ? (
-                                      <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Sending…</>
-                                    ) : (
-                                      <><span className="material-symbols-outlined text-sm">send</span> Send Code</>
-                                    )}
-                                  </button>
-                                )}
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-3 p-2.5 bg-surface-container rounded-xl border border-outline-variant/30">
+                                <span className="material-symbols-outlined text-on-surface-variant text-base shrink-0">info</span>
+                                <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                                  Current email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>. Changing requires a verification code sent to your old email.
+                                </p>
                               </div>
-                              {emailOtpSent && emailOtpCountdown > 0 && (
-                                <p className="text-[10px] text-on-surface-variant">Resend in <strong className="text-primary">{emailOtpCountdown}s</strong></p>
+                              <div className="space-y-1">
+                                <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Email Address</label>
+                                <input
+                                  type="email"
+                                  value={settingsEmail}
+                                  onChange={(e) => setSettingsEmail(e.target.value)}
+                                  placeholder="e.g. newemail@domain.com"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm"
+                                />
+                              </div>
+                              {settingsEmail.trim() && settingsEmail.trim().toLowerCase() !== (playerData.email || orgData.email || '').toLowerCase() && (
+                                <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-3 animate-in fade-in duration-200">
+                                  <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Verification Required</p>
+                                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                                    A code will be sent to your old email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <input
+                                      type="text"
+                                      placeholder="6-digit Code"
+                                      value={emailOtpCode}
+                                      onChange={(e) => setEmailOtpCode(e.target.value)}
+                                      maxLength={6}
+                                      className="flex-1 bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background text-xs outline-none focus:border-primary tracking-widest font-mono"
+                                    />
+                                    {emailOtpSent ? (
+                                      <button
+                                        type="button"
+                                        onClick={handleVerifyAndSaveEmail}
+                                        className="px-4 min-h-[40px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                      >
+                                        <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={isEmailSendingOtp}
+                                        onClick={() => {
+                                          sendEmailOtp(playerData.email || orgData.email)
+                                        }}
+                                        className="px-4 min-h-[40px] bg-primary hover:bg-primary/90 disabled:opacity-50 rounded-lg text-white font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
+                                      >
+                                        {isEmailSendingOtp ? (
+                                          <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Sending…</>
+                                        ) : (
+                                          <><span className="material-symbols-outlined text-sm">send</span> Send Code</>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
+                                  {emailOtpSent && emailOtpCountdown > 0 && (
+                                    <p className="text-[10px] text-on-surface-variant">Resend in <strong className="text-primary">{emailOtpCountdown}s</strong></p>
+                                  )}
+                                </div>
                               )}
                             </div>
                           )}
@@ -3644,341 +3191,389 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       )}
                     </div>
 
-                    {/* Section 3: Password Management (Create Password for Google-only users / Change Password for users with credentials) */}
-                    <div id="password-management" className="border-t border-outline-variant/20 pt-5 space-y-4">
-                      {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? (
-                        /* --- CREATE PASSWORD (Google Account without password) --- */
-                        <div className="space-y-4">
-                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                            <div>
-                              <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                                <span className="material-symbols-outlined text-primary text-lg">key</span> Create Password
-                              </h4>
-                              <p className="text-[11px] text-on-surface-variant mt-0.5">
-                                You registered with Google. Create a password to enable email and password sign-in alongside your Google account.
-                              </p>
-                            </div>
-                            <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
-                              <span className="material-symbols-outlined text-[12px]">verified_user</span> Google Account
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
-                              <div className="relative">
-                                <input
-                                  type={showNewPassword ? "text" : "password"}
-                                  value={newPassword}
-                                  onChange={(e) => setNewPassword(e.target.value)}
-                                  placeholder="Min 6 characters"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowNewPassword(!showNewPassword)}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                                >
-                                  <span className="material-symbols-outlined text-base select-none">
-                                    {showNewPassword ? 'visibility_off' : 'visibility'}
-                                  </span>
-                                </button>
-                              </div>
-                              {newPassword && newPassword.length < 6 && (
-                                <p className="text-red-500 text-[10px] font-bold pl-1">Password must be at least 6 characters.</p>
-                              )}
-                            </div>
-
-                            <div className="space-y-1">
-                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm New Password</label>
-                              <div className="relative">
-                                <input
-                                  type={showConfirmPassword ? "text" : "password"}
-                                  value={confirmPassword}
-                                  onChange={(e) => setConfirmPassword(e.target.value)}
-                                  placeholder="Re-type new password"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                                >
-                                  <span className="material-symbols-outlined text-base select-none">
-                                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                                  </span>
-                                </button>
-                              </div>
-                              {confirmPassword && newPassword !== confirmPassword && (
-                                <p className="text-red-500 text-[10px] font-bold pl-1">Passwords do not match.</p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex justify-end items-center gap-2 pt-2">
-                            {(newPassword || confirmPassword) && (
-                              <button
-                                type="button"
-                                onClick={() => { setNewPassword(''); setConfirmPassword(''); }}
-                                className="px-3 min-h-[40px] text-on-surface-variant hover:text-on-background rounded-lg font-headline-md text-xs font-semibold transition-all"
-                              >
-                                Cancel
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              disabled={isPasswordSubmitting || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
-                              onClick={() => autoSavePassword('', newPassword, confirmPassword)}
-                              className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                            >
-                              <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'key'}</span>
-                              <span>{isPasswordSubmitting ? 'Saving...' : 'Save Password'}</span>
-                            </button>
-                          </div>
+                    {/* Row 3: District ID row */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-primary text-lg shrink-0">badge</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">District ID</span>
+                          <p className="text-xs font-mono font-bold text-on-background tracking-wider truncate">
+                            {(currentUser || currentUserFromContext)?.district_id || 'Assigned when verified'}
+                          </p>
                         </div>
-                      ) : (
-                        /* --- CHANGE PASSWORD (Account with existing password) --- */
-                        <div className="space-y-4">
-                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                            <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                              <span className="material-symbols-outlined text-primary text-lg">lock</span> Change Password
-                            </h4>
-                            <button
-                              type="button"
-                              onClick={handleForgotPassword}
-                              className="font-label-caps text-[10px] text-primary hover:text-primary uppercase transition-colors font-bold flex items-center gap-1"
-                            >
-                              <span className="material-symbols-outlined text-[14px]">help_outline</span> Forget Password?
-                            </button>
-                          </div>
-                          
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="space-y-1">
-                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Current Password</label>
-                              <div className="relative">
-                                <input
-                                  type={showCurrentPassword ? "text" : "password"}
-                                  value={currentPassword}
-                                  onChange={(e) => setCurrentPassword(e.target.value)}
-                                  placeholder="Enter current password"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                                >
-                                  <span className="material-symbols-outlined text-base select-none">
-                                    {showCurrentPassword ? 'visibility_off' : 'visibility'}
-                                  </span>
-                                </button>
-                              </div>
-                            </div>
-                            
-                            <div className="space-y-1">
-                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
-                              <div className="relative">
-                                <input
-                                  type={showNewPassword ? "text" : "password"}
-                                  value={newPassword}
-                                  onChange={(e) => setNewPassword(e.target.value)}
-                                  placeholder="Min 6 characters"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowNewPassword(!showNewPassword)}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                                >
-                                  <span className="material-symbols-outlined text-base select-none">
-                                    {showNewPassword ? 'visibility_off' : 'visibility'}
-                                  </span>
-                                </button>
-                              </div>
-                              {newPassword && newPassword.length < 6 && (
-                                <p className="text-red-500 text-[10px] font-bold pl-1">Password must be at least 6 characters.</p>
-                              )}
-                            </div>
-
-                            <div className="space-y-1">
-                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
-                              <div className="relative">
-                                <input
-                                  type={showConfirmPassword ? "text" : "password"}
-                                  value={confirmPassword}
-                                  onChange={(e) => setConfirmPassword(e.target.value)}
-                                  placeholder="Re-type new password"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                                >
-                                  <span className="material-symbols-outlined text-base select-none">
-                                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                                  </span>
-                                </button>
-                              </div>
-                              {confirmPassword && newPassword !== confirmPassword && (
-                                <p className="text-red-500 text-[10px] font-bold pl-1">Passwords do not match.</p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex justify-end pt-2">
-                            <button
-                              type="button"
-                              disabled={isPasswordSubmitting || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
-                              onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
-                              className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                            >
-                              <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'lock_reset'}</span>
-                              <span>{isPasswordSubmitting ? 'Updating...' : 'Change Password'}</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!(currentUser || currentUserFromContext)?.district_id}
+                        onClick={async () => {
+                          const districtId = (currentUser || currentUserFromContext)?.district_id
+                          if (!districtId) return
+                          try {
+                            await navigator.clipboard.writeText(String(districtId))
+                            triggerToast('District ID copied.')
+                          } catch {
+                            triggerToast('Could not copy District ID.')
+                          }
+                        }}
+                        className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50 flex items-center gap-1 transition-colors shrink-0"
+                        aria-label="Copy District ID"
+                      >
+                        <span className="material-symbols-outlined text-sm">content_copy</span> Copy
+                      </button>
                     </div>
 
-                    {/* Section 4: Contact Number */}
-                    <div className="border-t border-outline-variant/20 pt-5 space-y-4">
-                      <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                        <span className="material-symbols-outlined text-primary text-lg">call</span> Contact Number
-                      </h4>
-                      <div className="flex flex-col sm:flex-row gap-3 items-end">
-                        <div className="flex-1 w-full space-y-1">
-                          <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Phone Number</label>
-                          <input 
-                            type="tel" 
-                            value={playerData.phone} 
-                            onChange={(e) => setPlayerData({...playerData, phone: e.target.value})} 
-                            placeholder="e.g. +91 98765 43210"
-                            className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm" 
-                          />
+                    {/* Row 4: Password row */}
+                    <div id="password-management" className="p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="material-symbols-outlined text-primary text-lg shrink-0">lock</span>
+                          <div className="min-w-0">
+                            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Password</span>
+                            <p className="text-xs font-semibold text-on-background truncate">
+                              {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id))
+                                ? 'No password set (Google account)'
+                                : '••••••••••••'}
+                            </p>
+                          </div>
                         </div>
                         <button
                           type="button"
-                          onClick={() => handleSaveSettings({ phone: playerData.phone })}
-                          className="w-full sm:w-auto px-4.5 min-h-[44px] bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0"
+                          onClick={() => setIsChangingPassword(!isChangingPassword)}
+                          className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1 transition-colors shrink-0"
                         >
-                          <span className="material-symbols-outlined text-sm">save</span> Save
+                          <span className="material-symbols-outlined text-sm">{isChangingPassword ? 'expand_less' : 'key'}</span>
+                          <span>
+                            {isChangingPassword 
+                              ? 'Cancel' 
+                              : (!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? 'Set Up' : 'Change')}
+                          </span>
                         </button>
                       </div>
-                    </div>
 
-                    {/* Login methods */}
+                      {/* Expandable Password Form */}
+                      {isChangingPassword && (
+                        <div className="pt-3 border-t border-outline-variant/20 space-y-3">
+                          {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? (
+                            /* --- CREATE PASSWORD (Google Account without password) --- */
+                            <div className="space-y-3">
+                              <p className="text-[11px] text-on-surface-variant">
+                                You registered with Google. Create a password to enable email & password sign-in.
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
+                                  <div className="relative">
+                                    <input
+                                      type={showNewPassword ? "text" : "password"}
+                                      value={newPassword}
+                                      onChange={(e) => setNewPassword(e.target.value)}
+                                      placeholder="Min 6 characters"
+                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowNewPassword(!showNewPassword)}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-base">
+                                        {showNewPassword ? 'visibility_off' : 'visibility'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
+                                  <div className="relative">
+                                    <input
+                                      type={showConfirmPassword ? "text" : "password"}
+                                      value={confirmPassword}
+                                      onChange={(e) => setConfirmPassword(e.target.value)}
+                                      placeholder="Re-type new password"
+                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-base">
+                                        {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  disabled={isPasswordSubmitting || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
+                                  onClick={() => autoSavePassword('', newPassword, confirmPassword)}
+                                  className="px-4 min-h-[38px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                >
+                                  <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'key'}</span>
+                                  <span>{isPasswordSubmitting ? 'Saving...' : 'Save Password'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* --- CHANGE PASSWORD (Account with existing password) --- */
+                            <div className="space-y-3">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[11px] text-on-surface-variant">Update your account login password</span>
+                                <button
+                                  type="button"
+                                  onClick={handleForgotPassword}
+                                  className="font-label-caps text-[10px] text-primary hover:underline uppercase font-bold flex items-center gap-1"
+                                >
+                                  <span className="material-symbols-outlined text-xs">help_outline</span> Forgot?
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Current Password</label>
+                                  <div className="relative">
+                                    <input
+                                      type={showCurrentPassword ? "text" : "password"}
+                                      value={currentPassword}
+                                      onChange={(e) => setCurrentPassword(e.target.value)}
+                                      placeholder="Current password"
+                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-base">
+                                        {showCurrentPassword ? 'visibility_off' : 'visibility'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
+                                  <div className="relative">
+                                    <input
+                                      type={showNewPassword ? "text" : "password"}
+                                      value={newPassword}
+                                      onChange={(e) => setNewPassword(e.target.value)}
+                                      placeholder="Min 6 characters"
+                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowNewPassword(!showNewPassword)}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-base">
+                                        {showNewPassword ? 'visibility_off' : 'visibility'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
+                                  <div className="relative">
+                                    <input
+                                      type={showConfirmPassword ? "text" : "password"}
+                                      value={confirmPassword}
+                                      onChange={(e) => setConfirmPassword(e.target.value)}
+                                      placeholder="Confirm password"
+                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
+                                    >
+                                      <span className="material-symbols-outlined text-base">
+                                        {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                                      </span>
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end pt-1">
+                                <button
+                                  type="button"
+                                  disabled={isPasswordSubmitting || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
+                                  onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
+                                  className="px-4 min-h-[38px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                >
+                                  <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'lock_reset'}</span>
+                                  <span>{isPasswordSubmitting ? 'Updating...' : 'Change Password'}</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* GROUP 2: LOGIN METHODS */}
+                  <div id="login-methods-section">
                     <LoginMethodsCard
                       currentUser={currentUser || currentUserFromContext}
                       onUserUpdated={refreshProfileUser}
                       triggerToast={triggerToast}
                     />
-
                   </div>
 
-                  {/* ---- Notification Settings ---- */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight"><span className="material-symbols-outlined text-primary text-xl">notifications</span> Notification Settings</h3>
-                    <div className="divide-y divide-outline-variant/20 pt-1">
+                  {/* GROUP 3: ORGANIZER */}
+                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
+                    <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
+                      <span className="material-symbols-outlined text-primary text-xl">military_tech</span> Organizer
+                    </h3>
+
+                    <div className="divide-y divide-outline-variant/20">
+                      {!hasOrganizerRights(currentUser) && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate && onNavigate('become-organizer')}
+                          className="w-full py-3 flex items-center justify-between text-left hover:opacity-80 transition-opacity group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-lg">stadium</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs sm:text-sm font-bold text-on-background group-hover:text-primary transition-colors">Host Events</p>
+                              <p className="text-[11px] text-on-surface-variant truncate">Apply to host tournaments and create verified esports cups</p>
+                            </div>
+                          </div>
+                          <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors shrink-0">arrow_forward</span>
+                        </button>
+                      )}
+
+                      {hasOrganizerRights(currentUser) && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate && onNavigate('org-management')}
+                          className="w-full py-3 flex items-center justify-between text-left hover:opacity-80 transition-opacity group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-secondary/10 text-secondary flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-lg">dashboard</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs sm:text-sm font-bold text-on-background group-hover:text-secondary transition-colors">Organizer Dashboard</p>
+                              <p className="text-[11px] text-on-surface-variant truncate">Manage your hosted tournaments, brackets, and check-ins</p>
+                            </div>
+                          </div>
+                          <span className="material-symbols-outlined text-on-surface-variant group-hover:text-secondary transition-colors shrink-0">arrow_forward</span>
+                        </button>
+                      )}
+
+                      {isSystemAdmin(currentUser) && (
+                        <button
+                          type="button"
+                          onClick={() => onNavigate && onNavigate('admin')}
+                          className="w-full py-3 flex items-center justify-between text-left hover:opacity-80 transition-opacity group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center shrink-0">
+                              <span className="material-symbols-outlined text-lg">admin_panel_settings</span>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs sm:text-sm font-bold text-rose-500 transition-colors">Admin Panel</p>
+                              <p className="text-[11px] text-on-surface-variant truncate">Platform administration, user management, and audit logs</p>
+                            </div>
+                          </div>
+                          <span className="material-symbols-outlined text-on-surface-variant group-hover:text-rose-500 transition-colors shrink-0">arrow_forward</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* GROUP 4: MORE */}
+                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
+                    <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
+                      <span className="material-symbols-outlined text-primary text-xl">more_horiz</span> More
+                    </h3>
+
+                    <div className="divide-y divide-outline-variant/20">
                       {[
-                        { id: 'matchReminders', label: 'Match Schedule Reminders', desc: 'Alert notifications 30 minutes before your registered squad match starts.' },
-                        { id: 'prizePayouts', label: 'Prize Payout Notifications', desc: 'Instant notifications when tournament prize money is credited to your wallet.' },
-                        { id: 'promotions', label: 'Platform Announcements', desc: 'Emails regarding platform updates, sponsored cups, and premium features.' }
-                      ].map((pref) => (
-                        <div key={pref.id} className="flex items-center justify-between gap-4 py-3.5 first:pt-0 last:pb-0">
-                          <div className="space-y-0.5 min-w-0">
-                            <h4 className="font-headline-md text-xs sm:text-sm font-semibold text-on-background truncate">{pref.label}</h4>
-                            <p className="font-body-sm text-[11px] text-on-surface-variant leading-relaxed">{pref.desc}</p>
+                        { id: 'archive', label: 'Archive', icon: 'inventory_2', desc: 'Past tournaments and completed match records' },
+                        { id: 'about', label: 'About', icon: 'info', desc: 'Learn more about Match District' },
+                        { id: 'help-support', label: 'Help & Support', icon: 'help_outline', desc: 'Contact support team and FAQs' },
+                        { id: 'terms-service', label: 'Terms & Conditions', icon: 'gavel', desc: 'Usage terms, rules, and player agreements' },
+                        { id: 'privacy-policy', label: 'Privacy Policy', icon: 'policy', desc: 'How your data is protected and handled' },
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => onNavigate && onNavigate(item.id)}
+                          className="w-full py-2.5 flex items-center justify-between text-left hover:opacity-80 transition-opacity group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors text-lg shrink-0">
+                              {item.icon}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-xs sm:text-sm font-semibold text-on-background group-hover:text-primary transition-colors">
+                                {item.label}
+                              </p>
+                              <p className="text-[11px] text-on-surface-variant truncate">{item.desc}</p>
+                            </div>
                           </div>
-                          <div className="min-h-[44px] min-w-[44px] flex items-center justify-center">
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={playerData.notifications[pref.id]}
-                            onClick={() => {
-                              const updatedNotifications = {
-                                ...playerData.notifications,
-                                [pref.id]: !playerData.notifications[pref.id]
-                              };
-                              setPlayerData({
-                                ...playerData,
-                                notifications: updatedNotifications
-                              });
-                              triggerToast('Notification preferences updated!');
-                            }}
-                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-300 ease-in-out focus:outline-none ${
-                              playerData.notifications[pref.id] ? 'bg-primary shadow-[0_0_12px_rgba(90,93,250,0.35)]' : 'bg-surface-variant'
-                            }`}
-                          >
-                            <span
-                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition-transform duration-300 ease-[cubic-bezier(0.25,0.8,0.25,1)] ${
-                                playerData.notifications[pref.id] ? 'translate-x-5' : 'translate-x-0'
-                              }`}
-                            />
-                          </button>
-                          </div>
-                        </div>
+                          <span className="material-symbols-outlined text-on-surface-variant group-hover:text-primary transition-colors text-sm shrink-0">
+                            arrow_forward
+                          </span>
+                        </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* ---- Account & Legal Settings ---- */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
-                      <span className="material-symbols-outlined text-primary text-xl">manage_accounts</span> Account &amp; Legal
-                    </h3>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => onNavigate && onNavigate('terms-service')}
-                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
-                      >
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Terms of Service</p>
-                          <p className="text-[10px] text-on-surface-variant">Usage terms &amp; agreements</p>
+                  {/* GROUP 5: SIGN OUT */}
+                  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] backdrop-blur-md shadow-sm">
+                    {!showSignOutConfirm ? (
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs sm:text-sm font-bold text-on-background">Sign out of your session</p>
+                          <p className="text-[11px] text-on-surface-variant">You will need to sign in again to access your teams, tournaments, and wallet.</p>
                         </div>
-                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onNavigate && onNavigate('privacy-policy')}
-                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
-                      >
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Privacy Policy</p>
-                          <p className="text-[10px] text-on-surface-variant">How your data is protected</p>
-                        </div>
-                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onNavigate && onNavigate('help-support')}
-                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
-                      >
-                        <div className="space-y-0.5">
-                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Help &amp; Support</p>
-                          <p className="text-[10px] text-on-surface-variant">Contact support team</p>
-                        </div>
-                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
-                      </button>
-                    </div>
-
-                    <div className="pt-3 border-t border-outline-variant/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold text-on-background">Sign out of your session</p>
-                        <p className="text-[10px] text-on-surface-variant">You will need to sign in again to access your teams, tournaments, and wallet.</p>
+                        <button
+                          type="button"
+                          onClick={() => setShowSignOutConfirm(true)}
+                          className="min-h-[40px] px-4 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                        >
+                          <span className="material-symbols-outlined text-sm">logout</span> Log Out
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleSignOut}
-                        className="min-h-[40px] px-4 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
-                      >
-                        <span className="material-symbols-outlined text-sm">logout</span> Log Out
-                      </button>
-                    </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-3 animate-in fade-in duration-150">
+                        <div className="flex items-center gap-2 text-rose-400">
+                          <span className="material-symbols-outlined text-base">warning</span>
+                          <span className="text-xs font-bold">Are you sure you want to sign out?</span>
+                        </div>
+                        <p className="text-[11px] text-on-surface-variant">
+                          Any unsaved session state will be cleared and you will be returned to the home screen.
+                        </p>
+                        <div className="flex items-center gap-2 justify-end pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setShowSignOutConfirm(false)}
+                            className="px-3 py-1.5 rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSignOut}
+                            className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                          >
+                            <span className="material-symbols-outlined text-sm">logout</span> Confirm Sign Out
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </motion.div>
               )}
@@ -4020,77 +3615,66 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                 <div className="space-y-1">
                   <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Name</label>
                   <AbuseFieldWrapper fieldId="profile-playerName" value={playerEditForm.name} onWarning={setPlayerNameAbuse}>
-                    <input type="text" value={playerEditForm.name} onChange={(e) => setPlayerEditForm({...playerEditForm, name: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm" required />
+                    <input 
+                      type="text" 
+                      value={playerEditForm.name} 
+                      onChange={(e) => setPlayerEditForm({...playerEditForm, name: e.target.value})} 
+                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm" 
+                      required 
+                    />
                   </AbuseFieldWrapper>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-2 border-b border-outline-variant/30">
-                  <div className="space-y-2 flex flex-col items-center">
-                    <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Avatar Profile Pic</label>
-                    <div className="relative w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shadow-[0_0_10px_rgba(90,93,250,0.2)] overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
-                      {uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar) ? (
-                        <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="avatar-img" />
-                      ) : (
-                        <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img" />
-                      )}
-                      {activeUploadField === 'avatar' && profileUploadProgress !== null && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 rounded-full">
-                          <CircularUploadProgress progress={profileUploadProgress} />
-                        </div>
-                      )}
-                      {!(activeUploadField === 'avatar' && profileUploadProgress !== null) && (
-                        <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200 rounded-full">
-                          <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
-                          <span className="text-[8px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
-                          <input 
-                            type="file" accept="image/*" className="hidden" disabled={isUploadingImage}
-                            onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleProfileImageSelect(file, 'avatar'); }} 
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 flex flex-col items-center">
-                    <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Banner Background</label>
-                    <div className="relative w-full aspect-[3/1] rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
-                      {uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner) ? (
-                        <img src={uploadPreviewUrls.banner || sanitizeImageUrl(playerEditForm.banner)} alt="Banner" className="w-full h-full object-cover" />
-                      ) : (
-                        <img src={DEFAULT_BANNER} alt="Default Banner" className="w-full h-full object-cover" />
-                      )}
-                      {activeUploadField === 'banner' && profileUploadProgress !== null && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75">
-                          <CircularUploadProgress progress={profileUploadProgress} />
-                        </div>
-                      )}
-                      {!(activeUploadField === 'banner' && profileUploadProgress !== null) && (
-                        <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200">
-                          <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
-                          <span className="text-[8px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
-                          <input 
-                            type="file" accept="image/*" className="hidden" disabled={isUploadingImage}
-                            onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleProfileImageSelect(file, 'banner'); }} 
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Short Bio</label>
-                  <AbuseFieldWrapper fieldId="profile-playerBio" value={playerEditForm.bio} onWarning={setPlayerBioAbuse}>
-                    <textarea 
-                      rows="3" value={playerEditForm.bio} onChange={(e) => setPlayerEditForm({...playerEditForm, bio: e.target.value})} maxLength={120}
-                      placeholder="Tell players what you compete in."
-                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm resize-none" 
+                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Gamer Tag</label>
+                  <AbuseFieldWrapper fieldId="profile-playerGamerTag" value={playerEditForm.gamerTag} onWarning={setPlayerTagAbuse}>
+                    <input 
+                      type="text" 
+                      value={playerEditForm.gamerTag || ''} 
+                      onChange={(e) => setPlayerEditForm({...playerEditForm, gamerTag: e.target.value})} 
+                      placeholder="e.g. ShadowSniper" 
+                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm" 
                     />
                   </AbuseFieldWrapper>
-                  <div className="text-right text-[10px] text-on-surface-variant mt-1">
-                    {playerEditForm.bio?.length || 0} / 120
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Phone Number</label>
+                  <input 
+                    type="tel" 
+                    value={playerEditForm.phone || ''} 
+                    onChange={(e) => setPlayerEditForm({...playerEditForm, phone: e.target.value})} 
+                    placeholder="e.g. +91 98765 43210" 
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm" 
+                  />
+                </div>
+
+                <div className="space-y-2 flex flex-col items-center py-2 border-y border-outline-variant/30">
+                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Profile Photo</label>
+                  <div className="relative w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shadow-[0_0_10px_rgba(90,93,250,0.2)] overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
+                    {uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar) ? (
+                      <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="avatar-img" />
+                    ) : (
+                      <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img" />
+                    )}
+                    {activeUploadField === 'avatar' && profileUploadProgress !== null && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 rounded-full">
+                        <CircularUploadProgress progress={profileUploadProgress} />
+                      </div>
+                    )}
+                    {!(activeUploadField === 'avatar' && profileUploadProgress !== null) && (
+                      <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200 rounded-full">
+                        <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
+                        <span className="text-[8px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
+                        <input 
+                          type="file" accept="image/*" className="hidden" disabled={isUploadingImage}
+                          onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleProfileImageSelect(file, 'avatar'); }} 
+                        />
+                      </label>
+                    )}
                   </div>
                 </div>
+
                 <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
                   <button type="button" onClick={() => setIsEditingProfile(false)} className="px-5 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold transition-all">Cancel</button>
                   <button type="submit" disabled={isUploadingImage} className="px-5 py-2 bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold shadow-sm flex items-center gap-1 disabled:opacity-60"><span className="material-symbols-outlined text-sm">check</span> Save</button>
@@ -4100,6 +3684,7 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
           </motion.div>
         )}
       </AnimatePresence>
+
 
       {/* Edit Organizer Modal */}
       <AnimatePresence>
