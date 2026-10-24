@@ -69,6 +69,22 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
           msg: 'Could not complete authentication with Discord. Token exchange failed.',
           ref: 'token_exchange_failed',
         },
+        invalid_grant: {
+          msg: 'Discord rejected the connection. The authorization code may have expired or already been used. Please try again.',
+          ref: 'invalid_grant',
+        },
+        invalid_client: {
+          msg: 'Discord server configuration error. Please contact support.',
+          ref: 'invalid_client',
+        },
+        timeout: {
+          msg: 'The connection to Discord timed out. Please check your network and try again.',
+          ref: 'timeout',
+        },
+        blocked: {
+          msg: 'Connection to Discord was temporarily blocked. Please try again in a few moments.',
+          ref: 'blocked',
+        },
         profile_fetch_failed: {
           msg: 'Failed to retrieve your Discord profile details. Please try again.',
           ref: 'profile_fetch_failed',

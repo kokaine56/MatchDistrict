@@ -282,6 +282,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       session_expired: 'Your sign-in session expired. Please try again.',
       discord_denied: 'Discord authorization was cancelled.',
       rate_limited: 'Too many Discord sign-in attempts. Wait a moment and try again.',
+      invalid_grant: 'Discord rejected the sign-in. The authorization code may have expired or already been used. Please try again.',
+      invalid_client: 'Discord sign-in configuration error. Please contact support.',
+      timeout: 'The connection to Discord timed out. Please try again.',
+      blocked: 'Connection to Discord was temporarily blocked. Please try again in a few moments.',
+      token_exchange_failed: 'Could not complete sign-in with Discord. Please try again.',
     }
     triggerToast(messages[errorCode] || 'Discord sign-in failed. Please try again.')
     params.delete('discord_error')

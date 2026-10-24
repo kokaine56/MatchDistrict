@@ -360,6 +360,30 @@ function getServerUrl(req) {
   return `${proto}://${host}`;
 }
 
+// Clean Discord environment variables: strip whitespace and surrounding double/single quotes
+function cleanDiscordEnv(val) {
+  if (typeof val !== 'string') return '';
+  return val.trim().replace(/^["']|["']$/g, '').trim();
+}
+
+// Custom User-Agent for all Discord API requests to avoid Cloudflare bot blocking (HTTP 403 / Error 1010)
+const DISCORD_API_USER_AGENT = 'MatchDistrict (https://matchdistrict.in, 1.0)';
+
+// In-memory cache to prevent duplicate token exchange attempts on single-use authorization codes
+const processedDiscordCodes = new Map();
+if (typeof setInterval === 'function') {
+  const codeCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [code, entry] of processedDiscordCodes.entries()) {
+      if (now - entry.timestamp > 5 * 60 * 1000) {
+        processedDiscordCodes.delete(code);
+      }
+    }
+  }, 60 * 1000);
+  if (codeCleanupTimer.unref) codeCleanupTimer.unref();
+}
+
+
 // Enforce and validate environment variables for production-grade security
 if (!process.env.DATABASE_URL) {
   console.error('\n❌ [CRITICAL ERROR] DATABASE_URL is not set in the environment or .env file.');
@@ -606,9 +630,9 @@ async function initDb() {
 
     // Startup check for Discord configuration & table presence (no secrets logged)
     loadEnv();
-    const hasDiscordClientId = Boolean((process.env.DISCORD_CLIENT_ID || '').trim());
-    const hasDiscordClientSecret = Boolean((process.env.DISCORD_CLIENT_SECRET || '').trim());
-    const hasDiscordRedirectUri = Boolean((process.env.DISCORD_REDIRECT_URI || '').trim());
+    const hasDiscordClientId = Boolean(cleanDiscordEnv(process.env.DISCORD_CLIENT_ID));
+    const hasDiscordClientSecret = Boolean(cleanDiscordEnv(process.env.DISCORD_CLIENT_SECRET));
+    const hasDiscordRedirectUri = Boolean(cleanDiscordEnv(process.env.DISCORD_REDIRECT_URI));
     const isDiscordConfigured = hasDiscordClientId && hasDiscordClientSecret && hasDiscordRedirectUri;
 
     const discordTableCheck = await client.query(
@@ -2111,9 +2135,9 @@ const server = http.createServer(async (req, res) => {
     loadEnv();
     const googleClientId = (process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '').trim();
     const discordEnabled = Boolean(
-      (process.env.DISCORD_CLIENT_ID || '').trim() &&
-      (process.env.DISCORD_CLIENT_SECRET || '').trim() &&
-      (process.env.DISCORD_REDIRECT_URI || '').trim()
+      cleanDiscordEnv(process.env.DISCORD_CLIENT_ID) &&
+      cleanDiscordEnv(process.env.DISCORD_CLIENT_SECRET) &&
+      cleanDiscordEnv(process.env.DISCORD_REDIRECT_URI)
     );
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
@@ -2890,9 +2914,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
 
     loadEnv();
-    const discordClientId = (process.env.DISCORD_CLIENT_ID || '').trim();
-    const discordClientSecret = (process.env.DISCORD_CLIENT_SECRET || '').trim();
-    const discordRedirectUri = (process.env.DISCORD_REDIRECT_URI || '').trim();
+    const discordClientId = cleanDiscordEnv(process.env.DISCORD_CLIENT_ID);
+    const discordClientSecret = cleanDiscordEnv(process.env.DISCORD_CLIENT_SECRET);
+    const discordRedirectUri = cleanDiscordEnv(process.env.DISCORD_REDIRECT_URI);
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
       const missing = [];
@@ -2928,7 +2952,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     const stateToken = encryptAuthPayload(JSON.stringify(statePayload));
     const isHttps = isHttpsRequest(req);
-    const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
+    // Isolated cookie name per flow to prevent login and link verifiers from colliding
+    const cookieName = isLoginFlow ? 'discord_oauth_state_login' : 'discord_oauth_state_link';
+    const stateCookie = `${cookieName}=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
 
     // Email is requested only for new-account eligibility; it is never used to
     // link to an existing account. Profile linking still requests identify only.
@@ -2954,7 +2980,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   if (urlPath === '/api/auth/discord/callback' && req.method === 'GET') {
     const clientIp = getClientIp(req);
     const isHttps = isHttpsRequest(req);
-    const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`;
+    const clearStateCookies = [
+      `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`,
+      `discord_oauth_state_link=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`,
+      `discord_oauth_state_login=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`
+    ];
+    const clearStateCookie = clearStateCookies;
     let statePayload = null;
     const callbackErrorLocation = (code) => statePayload?.flow === 'login'
       ? `/login?discord_error=${encodeURIComponent(code)}`
@@ -2962,47 +2993,60 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     if (!checkRateLimit('discord_callback_ip:' + clientIp, 20, 60000)) {
       console.error(`[DISCORD CONNECT ERROR] Step: callback_ip_rate_limit | Code: rate_limited | IP: ${clientIp}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('rate_limited') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited') });
       res.end();
       return;
     }
 
     loadEnv();
-    const discordClientId = (process.env.DISCORD_CLIENT_ID || '').trim();
-    const discordClientSecret = (process.env.DISCORD_CLIENT_SECRET || '').trim();
-    const discordRedirectUri = (process.env.DISCORD_REDIRECT_URI || '').trim();
+    const discordClientId = cleanDiscordEnv(process.env.DISCORD_CLIENT_ID);
+    const discordClientSecret = cleanDiscordEnv(process.env.DISCORD_CLIENT_SECRET);
+    const discordRedirectUri = cleanDiscordEnv(process.env.DISCORD_REDIRECT_URI);
 
     const parsedUrl = new URL(req.url, 'http://localhost');
     const queryCode = parsedUrl.searchParams.get('code');
     const queryState = parsedUrl.searchParams.get('state');
     const queryError = parsedUrl.searchParams.get('error');
 
-    // Extract encrypted state cookie
-    let stateCookieValue = null;
+    // Extract encrypted state cookie supporting isolated flows (link, login) and legacy cookie
+    const candidateCookieNames = ['discord_oauth_state_link', 'discord_oauth_state_login', 'discord_oauth_state'];
     if (req.headers.cookie) {
-      const match = req.headers.cookie.match(/(^|;)\s*discord_oauth_state\s*=\s*([^;]+)/);
-      if (match) {
-        try {
-          stateCookieValue = decodeURIComponent(match[2]);
-        } catch {
-          stateCookieValue = match[2];
+      // First pass: match cookie whose decrypted state matches queryState
+      for (const cName of candidateCookieNames) {
+        const regex = new RegExp(`(?:^|;)\\s*${cName}\\s*=\\s*([^;]+)`);
+        const match = req.headers.cookie.match(regex);
+        if (match) {
+          try {
+            const raw = decodeURIComponent(match[1]);
+            const decrypted = decryptAuthPayload(raw);
+            const parsed = JSON.parse(decrypted);
+            if (queryState && parsed.state === queryState) {
+              statePayload = parsed;
+              break;
+            }
+          } catch {}
+        }
+      }
+      // Second pass fallback if state didn't match directly
+      if (!statePayload) {
+        for (const cName of candidateCookieNames) {
+          const regex = new RegExp(`(?:^|;)\\s*${cName}\\s*=\\s*([^;]+)`);
+          const match = req.headers.cookie.match(regex);
+          if (match) {
+            try {
+              const raw = decodeURIComponent(match[1]);
+              const decrypted = decryptAuthPayload(raw);
+              statePayload = JSON.parse(decrypted);
+              break;
+            } catch {}
+          }
         }
       }
     }
 
-    if (!stateCookieValue) {
-      console.error('[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Reason: state cookie missing');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
-      res.end();
-      return;
-    }
-
-    try {
-      const decrypted = decryptAuthPayload(stateCookieValue);
-      statePayload = JSON.parse(decrypted);
-    } catch (decryptErr) {
-      console.error(`[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Exception: ${decryptErr.message}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+    if (!statePayload) {
+      console.error('[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Reason: state cookie missing or corrupted');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
@@ -3010,7 +3054,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     // Verify expiration (10 min)
     if (!statePayload.createdAt || Date.now() - statePayload.createdAt > 600000) {
       console.error('[DISCORD CONNECT ERROR] Step: state_expiry | Code: session_expired | Reason: state cookie older than 10m');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('session_expired') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('session_expired') });
       res.end();
       return;
     }
@@ -3020,14 +3064,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const queryBuf = Buffer.from(queryState || '');
     if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
       console.error('[DISCORD CONNECT ERROR] Step: state_verify | Code: state_mismatch | Reason: query state does not match cookie state');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
     if (!['login', 'link'].includes(statePayload.flow)) {
       console.error('[DISCORD AUTH] Callback rejected because encrypted state has no valid flow intent.');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
@@ -3038,20 +3082,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const isLoginFlow = statePayload.flow === 'login';
     if (!isLoginFlow && !authUser) {
       console.error('[DISCORD CONNECT ERROR] Step: session_check | Code: session_expired | Reason: no active session in callback');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('session_expired') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('session_expired') });
       res.end();
       return;
     }
     if (!isLoginFlow && statePayload.userId !== authUser.id && statePayload.userId !== authUser.uid) {
       console.error('[DISCORD CONNECT ERROR] Step: session_user_match | Code: state_mismatch | Reason: bound identity did not match session');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
     if (authUser && !checkRateLimit('discord_callback_user:' + authUser.id, 10, 60000)) {
       console.error('[DISCORD AUTH] Step: callback_user_rate_limit | Code: rate_limited');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('rate_limited') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited') });
       res.end();
       return;
     }
@@ -3059,17 +3103,27 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     if (queryError) {
       const safeDiscordErr = String(queryError).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'unknown_denied';
       console.error(`[DISCORD CONNECT ERROR] Step: discord_authorize | Code: discord_denied | Discord: ${safeDiscordErr}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('discord_denied') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('discord_denied') });
       res.end();
       return;
     }
 
     if (!queryCode) {
       console.error('[DISCORD CONNECT ERROR] Step: callback_params | Code: unknown | Reason: missing authorization code in query');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('unknown') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('unknown') });
       res.end();
       return;
     }
+
+    // Single-use code deduplication: prevent double token exchange replay
+    if (processedDiscordCodes.has(queryCode)) {
+      const prior = processedDiscordCodes.get(queryCode);
+      console.warn(`[DISCORD AUTH] Step: code_dedup | Replay detected for code: ${queryCode.slice(0, 6)}... (age: ${Math.round((Date.now() - prior.timestamp) / 1000)}s)`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('invalid_grant') });
+      res.end();
+      return;
+    }
+    processedDiscordCodes.set(queryCode, { timestamp: Date.now() });
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
       const missing = [];
@@ -3077,21 +3131,25 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
       if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
       console.error(`[DISCORD CONNECT ERROR] Step: callback_env | Code: not_configured | Missing env: ${missing.join(', ')}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('not_configured') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('not_configured') });
       res.end();
       return;
     }
 
     if (statePayload.redirectUri !== discordRedirectUri) {
       console.warn('[DISCORD AUTH] Callback rejected because the configured redirect URI changed during authorization.');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
     try {
       // Exchange code for token with request timeout (10s) using exact matched redirect_uri
+      const exchangeStartTime = Date.now();
       const effectiveRedirectUri = statePayload.redirectUri || discordRedirectUri;
+      const urisMatch = statePayload.redirectUri === effectiveRedirectUri;
+      const pkceUsed = Boolean(statePayload.codeVerifier);
+
       const tokenBody = new URLSearchParams({
         client_id: discordClientId,
         client_secret: discordClientSecret,
@@ -3109,28 +3167,61 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       try {
         tokenRes = await fetch('https://discord.com/api/oauth2/token', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': DISCORD_API_USER_AGENT
+          },
           body: tokenBody.toString(),
           signal: tokenAbort.signal
         });
       } catch (fetchErr) {
         clearTimeout(tokenTimer);
-        console.error(`[DISCORD CONNECT ERROR] Step: token_exchange_network | Code: token_exchange_failed | Exception: ${fetchErr.message}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('token_exchange_failed') });
+        const durationMs = Date.now() - exchangeStartTime;
+        const isTimeout = tokenAbort.signal.aborted || fetchErr.name === 'AbortError';
+        const stepName = isTimeout ? 'token_exchange_timeout' : 'token_exchange_network';
+        const errCode = isTimeout ? 'timeout' : 'token_exchange_failed';
+        console.error(`[DISCORD TOKEN EXCHANGE ERROR] step: ${stepName} | status: 0 | content_type: none | error: ${isTimeout ? 'timeout' : 'network_error'} | description: ${fetchErr.message} | pkce: ${pkceUsed} | redirect_uri_auth: ${statePayload.redirectUri || 'none'} | redirect_uri_token: ${effectiveRedirectUri} | uris_match: ${urisMatch} | duration_ms: ${durationMs}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(errCode) });
         res.end();
         return;
       }
       clearTimeout(tokenTimer);
 
+      const durationMs = Date.now() - exchangeStartTime;
+
       if (!tokenRes.ok) {
-        let discordErrCode = `http_${tokenRes.status}`;
+        const contentType = tokenRes.headers.get('content-type') || 'unknown';
+        const rawBody = await tokenRes.text().catch(() => '');
+        let discordError = '';
+        let discordErrorDesc = '';
+        let isJson = false;
+
         try {
-          const errJson = await tokenRes.json();
-          discordErrCode = errJson.error || errJson.message || `http_${tokenRes.status}`;
-        } catch {}
-        const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${tokenRes.status}`;
-        console.error(`[DISCORD CONNECT ERROR] Step: token_exchange | HTTP: ${tokenRes.status} | Discord: ${safeDiscordErr}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('token_exchange_failed') });
+          const errJson = JSON.parse(rawBody);
+          isJson = true;
+          discordError = errJson.error || errJson.message || `http_${tokenRes.status}`;
+          discordErrorDesc = errJson.error_description || '';
+        } catch {
+          isJson = false;
+        }
+
+        const bodySnippet = isJson
+          ? `error: ${discordError} | description: ${discordErrorDesc}`
+          : `body_preview: ${rawBody.slice(0, 200).replace(/[\r\n\t]+/g, ' ').trim() || 'empty'}`;
+
+        console.error(`[DISCORD TOKEN EXCHANGE ERROR] step: token_exchange | status: ${tokenRes.status} | content_type: ${contentType} | ${bodySnippet} | pkce: ${pkceUsed} | redirect_uri_auth: ${statePayload.redirectUri || 'none'} | redirect_uri_token: ${effectiveRedirectUri} | uris_match: ${urisMatch} | duration_ms: ${durationMs}`);
+
+        let clientRedirectCode = 'token_exchange_failed';
+        if (discordError === 'invalid_grant') {
+          clientRedirectCode = 'invalid_grant';
+        } else if (discordError === 'invalid_client') {
+          clientRedirectCode = 'invalid_client';
+        } else if (tokenRes.status === 403 || tokenRes.status === 429) {
+          clientRedirectCode = tokenRes.status === 429 ? 'rate_limited' : 'blocked';
+        }
+
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode) });
         res.end();
         return;
       }
@@ -3145,13 +3236,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       let userRes;
       try {
         userRes = await fetch('https://discord.com/api/users/@me', {
-          headers: { 'Authorization': `${tokenType} ${accessToken}` },
+          headers: {
+            'Authorization': `${tokenType} ${accessToken}`,
+            'Accept': 'application/json',
+            'User-Agent': DISCORD_API_USER_AGENT
+          },
           signal: userAbort.signal
         });
       } catch (userFetchErr) {
         clearTimeout(userTimer);
-        console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch_network | Code: profile_fetch_failed | Exception: ${userFetchErr.message}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('profile_fetch_failed') });
+        const isTimeout = userAbort.signal.aborted || userFetchErr.name === 'AbortError';
+        const errCode = isTimeout ? 'timeout' : 'profile_fetch_failed';
+        console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch_network | Code: ${errCode} | Exception: ${userFetchErr.message}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(errCode) });
         res.end();
         return;
       }
@@ -3167,20 +3264,25 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         });
         fetch('https://discord.com/api/oauth2/token/revoke', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': DISCORD_API_USER_AGENT
+          },
           body: revokeBody.toString()
         }).catch(() => {});
       } catch {}
 
       if (!userRes.ok) {
+        const rawUserBody = await userRes.text().catch(() => '');
         let discordErrCode = `http_${userRes.status}`;
         try {
-          const errJson = await userRes.json();
+          const errJson = JSON.parse(rawUserBody);
           discordErrCode = errJson.message || errJson.error || `http_${userRes.status}`;
         } catch {}
         const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${userRes.status}`;
         console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch | HTTP: ${userRes.status} | Discord: ${safeDiscordErr}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('profile_fetch_failed') });
+        const clientRedirectCode = userRes.status === 403 ? 'blocked' : 'profile_fetch_failed';
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode) });
         res.end();
         return;
       }
@@ -3239,7 +3341,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                 displayName: discordGlobalName, avatarUrl: discordAvatarUrl,
                 returnTo: statePayload.returnTo
               });
-              res.writeHead(302, { 'Set-Cookie': [clearStateCookie, pendingCookie], 'Location': '/auth/link' });
+              res.writeHead(302, { 'Set-Cookie': [...clearStateCookies, pendingCookie], 'Location': '/auth/link' });
               res.end();
               return;
             }
@@ -3352,7 +3454,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           id: targetUser.uid || targetUser.id
         });
         res.writeHead(302, {
-          'Set-Cookie': [clearStateCookie, buildSessionCookie(token, req)],
+          'Set-Cookie': [...clearStateCookies, buildSessionCookie(token, req)],
           'Location': `/auth/success?provider=discord&next=${encodeURIComponent(getSafeRelativeRedirect(statePayload.returnTo, '/'))}`
         });
         res.end();
