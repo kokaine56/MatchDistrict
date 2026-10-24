@@ -234,6 +234,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [gisLoaded, setGisLoaded] = useState(false)
   const [runtimeGoogleClientId, setRuntimeGoogleClientId] = useState('')
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || runtimeGoogleClientId
+  const gisInitializedClientIdRef = useRef('')
 
   // Register form state (without browser-side persistence as requested)
   const [regForm, setRegForm] = useState({
@@ -475,8 +476,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   // GIS Button rendering helper: circular icon-only button
   const renderGoogleButton = useCallback((element) => {
     if (!element || !window.google?.accounts?.id || !googleClientId) return false
+    // If element already has rendered GIS content, avoid re-rendering to prevent flicker and DOM churn
+    if (element.hasChildNodes()) return true
     try {
-      element.innerHTML = ''
       const btnTheme = theme === 'dark' ? 'filled_black' : 'outline'
       window.google.accounts.id.renderButton(element, {
         type: 'icon',
@@ -491,9 +493,10 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     }
   }, [googleClientId, theme])
 
-  // Initialize GIS and register callback
+  // Initialize GIS and register callback once per client_id
   const initializeGis = useCallback(() => {
     if (!gisLoaded || !window.google?.accounts?.id || !googleClientId) return
+    if (gisInitializedClientIdRef.current === googleClientId) return
     try {
       window.google.accounts.id.initialize({
         client_id: googleClientId,
@@ -501,6 +504,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         auto_select: false,
         cancel_on_tap_outside: true,
       })
+      gisInitializedClientIdRef.current = googleClientId
     } catch (err) {
       console.warn('Google Identity Services initialization warning:', err)
     }
@@ -528,14 +532,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   useEffect(() => {
     updateGoogleButtons()
-    const t1 = setTimeout(updateGoogleButtons, 60)
-    const t2 = setTimeout(updateGoogleButtons, 250)
-    const t3 = setTimeout(updateGoogleButtons, 600)
-    return () => {
-      clearTimeout(t1)
-      clearTimeout(t2)
-      clearTimeout(t3)
-    }
   }, [updateGoogleButtons, gisLoaded, googleClientId, authMode, loginPageState, theme])
 
   const setGoogleLoginRef = useCallback((node) => {

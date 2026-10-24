@@ -32,7 +32,12 @@ export default function SocialAuthButtons({
           onKeyDown={(e) => {
             if ((e.key === 'Enter' || e.key === ' ') && !isLoading) {
               e.preventDefault();
-              if (typeof onGoogleClick === 'function') onGoogleClick();
+              const innerBtn = e.currentTarget.querySelector('.nsm7Bb-HzV7m-LgbsSe, .S9gUrf-YoZ4jf, [role="button"]');
+              if (innerBtn && innerBtn !== e.currentTarget && typeof innerBtn.click === 'function') {
+                innerBtn.click();
+              } else if (typeof onGoogleClick === 'function') {
+                onGoogleClick();
+              }
             }
           }}
           aria-label="Continue with Google"
@@ -41,7 +46,7 @@ export default function SocialAuthButtons({
             isLoading ? 'opacity-50 pointer-events-none' : ''
           }`}
         >
-          {/* Static SVG Google Brand Icon (always centered) */}
+          {/* Static SVG Google Brand Icon (always visible on initial paint, centered, multicolor) */}
           <svg
             className="w-6 h-6 shrink-0"
             viewBox="0 0 24 24"
@@ -66,10 +71,12 @@ export default function SocialAuthButtons({
             />
           </svg>
 
-          {/* Overlaid GIS render container (scales 40px circle to match 56px) */}
+          {/* Overlaid GIS render container (transparent overlay, captures clicks directly to GIS SDK) */}
           <div
             ref={googleRef}
-            className="absolute inset-0 flex items-center justify-center scale-[1.38] rounded-full overflow-hidden pointer-events-auto"
+            aria-hidden="true"
+            tabIndex={-1}
+            className="absolute inset-0 flex items-center justify-center scale-[1.38] rounded-full overflow-hidden opacity-0 pointer-events-auto"
             style={{ transformOrigin: 'center' }}
           />
         </div>

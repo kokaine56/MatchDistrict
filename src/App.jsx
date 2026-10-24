@@ -2,6 +2,7 @@ import React, { useState, useEffect, lazy, Suspense, useCallback } from 'react'
 import { Routes, Route, useNavigate, useParams, useLocation, Navigate } from 'react-router-dom'
 import { setStoredUser, parseStoredUser } from './utils/userStorage.js'
 import Header from './components/Header.jsx'
+import MobileBottomNav from './components/MobileBottomNav.jsx'
 import LoadingScreen from './components/LoadingScreen.jsx'
 import RouteErrorBoundary from './components/RouteErrorBoundary.jsx'
 import BgmiCursor from './components/BgmiCursor.jsx'
@@ -149,6 +150,8 @@ function AppInner() {
   const navigate = useNavigate()
   const location = useLocation()
   const [creationTemplate, setCreationTemplate] = useState(null)
+  const showMobileNavigation = !location.pathname.startsWith('/admin') &&
+    !['/auth/link', '/auth/success'].includes(location.pathname)
 
   // Backwards-compat shim: all pages call onNavigate('page-key', param)
   const handleNavigate = useCallback((page, param = null) => {
@@ -244,7 +247,7 @@ function AppInner() {
     }
 
     if (!currentUser) {
-      return <Navigate to="/login" replace />
+      return <Navigate to="/login?redirect=/profile" replace />
     }
 
     return (
@@ -465,7 +468,7 @@ function AppInner() {
   )
 
   return (
-    <div className="min-h-screen bg-background text-on-background font-body-lg relative overflow-x-clip">
+    <div className={`min-h-screen bg-background text-on-background font-body-lg relative overflow-x-clip${showMobileNavigation ? ' app-shell--mobile-nav' : ''}`}>
       {/* Universal Background Grid */}
       <div className="absolute inset-0 bg-grid-pattern pointer-events-none z-0" />
 
@@ -666,6 +669,8 @@ function AppInner() {
           </Suspense>
         </RouteErrorBoundary>
       </div>
+
+      {showMobileNavigation && <MobileBottomNav />}
 
       <BgmiCursor />
     </div>

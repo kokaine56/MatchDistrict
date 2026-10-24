@@ -89,6 +89,7 @@ function Header({ activePage, onNavigate }) {
     { id: 'privacy-policy', label: 'Privacy' },
     { id: 'terms-service', label: 'Terms' },
   ]
+  const mobileSecondaryLinks = navLinks.filter(link => !['home', 'my-tournaments', 'help-support'].includes(link.id))
 
   return (
     <>
@@ -288,25 +289,6 @@ function Header({ activePage, onNavigate }) {
                 className="absolute top-full right-3 sm:right-sm md:right-lg mt-2 w-52 bg-white dark:bg-[#07080C]/95 backdrop-blur-2xl p-3 rounded-2xl border border-outline-variant/50 shadow-md dark:shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-50"
               >
                 <div className="flex flex-col gap-0.5">
-                  {currentUser && (
-                    <div 
-                      onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('profile'); }}
-                      className="px-2 py-1 mb-2 flex items-center gap-2.5 border-b border-outline-variant/30 pb-2.5 cursor-pointer hover:bg-primary/10 rounded-xl transition-all"
-                    >
-                      <div className="w-7 h-7 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-headline-md text-xs font-bold text-primary uppercase overflow-hidden shrink-0">
-                        <SafeImage 
-                          src={currentUser.avatar} 
-                          alt="avatar" 
-                          className="avatar-img" 
-                        />
-                      </div>
-                      <div className="overflow-hidden">
-                        <div className="font-headline-md text-xs font-bold text-black dark:text-white truncate">
-                          {currentUser.name || currentUser.gamerTag}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   {hasRole(getUserRoles(currentUser), 'admin') ? (
                     <button
                       onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate('admin'); }}
@@ -317,7 +299,7 @@ function Header({ activePage, onNavigate }) {
                     </button>
                   ) : null}
                   
-                  {navLinks.map((link) => (
+                  {mobileSecondaryLinks.map((link) => (
                     <button
                       key={link.id}
                       onClick={() => { setIsMenuOpen(false); onNavigate && onNavigate(link.id); }}
