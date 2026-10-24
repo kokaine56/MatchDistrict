@@ -1637,6 +1637,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // Account security: 2-step email change flow endpoints
+  if (urlPath.startsWith('/api/account/email-change')) {
+    return accountSecurity.handleEmailChangeRoute(req, res, urlPath);
+  }
+
   // --- SECURE IMAGEKIT MEDIA PROXY ---
   if (urlPath === '/api/media/upload' && req.method === 'POST') {
     const authUser = getAuthUser(req);
@@ -1917,6 +1922,9 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
+        const verifyFlow = parsed.purpose === 'gamertag_change' ? 'gamertag' : 'signup';
+        if (!(await accountSecurity.guardVerify(req, res, { email }))) return;
+
         const now = new Date();
         const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1', [email]);
         if (otpRes.rows.length === 0) {
@@ -2001,6 +2009,8 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'REGISTRATION_SESSION_EXPIRED', message: 'Registration session expired. Please submit your details again.' }));
           return;
         }
+
+        accountSecurity.clearFailures(req, { flow: verifyFlow, email });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -2495,11 +2505,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const account = accounts[0];
-      if (!checkRateLimit(`auth_link_account:${account.id}`, 3, 10 * 60 * 1000)) {
-        res.writeHead(429, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Please wait before requesting another code.' }));
-        return;
-      }
+      if (!(await accountSecurity.guardSend(req, res, { flow: 'auth_link', email: account.email, userId: account.id }))) return;
       const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
       await pool.query(
         `INSERT INTO auth_link_challenges (user_id, code_hash, attempts, expires_at, created_at)
@@ -2580,6 +2586,10 @@ const server = http.createServer(async (req, res) => {
         if (account.password_set === true && account.password) {
           proofValid = typeof proof.password === 'string' && verifyPassword(proof.password, account.password);
         } else if (typeof proof.code === 'string' && /^\d{6}$/.test(proof.code)) {
+          if (!(await accountSecurity.guardVerify(req, res, { email: account.email, userId: account.id }))) {
+            await db.query('ROLLBACK');
+            return;
+          }
           const challenge = await db.query('SELECT * FROM auth_link_challenges WHERE user_id = $1 FOR UPDATE', [account.id]);
           const stored = challenge.rows[0];
           const candidateHash = crypto.createHash('sha256').update(proof.code).digest();
@@ -2587,6 +2597,12 @@ const server = http.createServer(async (req, res) => {
           proofValid = Boolean(stored && new Date(stored.expires_at) > new Date() && Number(stored.attempts) < 5 && storedHash.length === candidateHash.length && crypto.timingSafeEqual(storedHash, candidateHash));
           if (stored && !proofValid) {
             await db.query('UPDATE auth_link_challenges SET attempts = attempts + 1 WHERE user_id = $1', [account.id]);
+            if (await accountSecurity.recordFailure(req, res, { flow: 'auth_link', email: account.email, userId: account.id })) {
+              await db.query('COMMIT');
+              return;
+            }
+          } else if (proofValid) {
+            accountSecurity.clearFailures(req, { flow: 'auth_link', email: account.email, userId: account.id });
           }
         }
         if (!proofValid) {
@@ -4091,10 +4107,18 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { email } = JSON.parse(body);
+        const cleanEmail = (email || '').trim().toLowerCase();
+        if (!cleanEmail || !cleanEmail.includes('@')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_EMAIL', message: 'A valid email address is required.' }));
+          return;
+        }
+
+        // Database-backed abuse guard (60s cooldown, 3 sends / 15m, timeouts)
+        if (!(await accountSecurity.guardSend(req, res, { flow: 'password_reset', email: cleanEmail }))) return;
 
         // Check if user exists in database (generic response to prevent user enumeration - AUTH-006)
-        const userRes = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+        const userRes = await pool.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
         if (userRes.rows.length === 0) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, message: 'If an account exists with this email, a password reset link has been sent.' }));
@@ -4153,6 +4177,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        if (!(await accountSecurity.guardVerify(req, res, { email: null }))) return;
+
         const now = new Date();
         const resetRes = await pool.query(
           'SELECT * FROM password_resets WHERE token = $1 AND expires_at > $2',
@@ -4160,12 +4186,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         );
 
         if (resetRes.rows.length === 0) {
+          if (await accountSecurity.recordFailure(req, res, { flow: 'password_reset', email: null })) return;
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'Invalid or expired reset token.' }));
           return;
         }
 
         const email = resetRes.rows[0].email;
+        accountSecurity.clearFailures(req, { flow: 'password_reset', email });
 
         const hashedPassword = hashPassword(password);
         // Update password in database
@@ -4276,6 +4304,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       const discordConn = await getDiscordConnectionForUser(pool, user.id, user.discord_id);
       const safeUser = publicUserRow(user);
+      await attachResolvedAvatars(pool, [safeUser]);
       delete safeUser.discord_id;
       safeUser.discord = discordConn;
 
@@ -5104,6 +5133,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         };
       });
 
+      await attachResolvedAvatars(pool, organisers);
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, users: organisers }));
     } catch (err) {
@@ -5167,8 +5198,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // 7b-1-3. Fetch user notifications/alerts
-  if (req.url === '/api/alerts' && req.method === 'GET') {
+  // 7b-1-3. Fetch user notifications/alerts (strictly <24 hours old)
+  if ((req.url === '/api/alerts' || urlPath === '/api/alerts' || req.url === '/api/notifications' || urlPath === '/api/notifications') && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
       if (!authUser) {
@@ -5177,9 +5208,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
 
-      const dbRes = await pool.query('SELECT * FROM alerts WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50', [authUser.id]);
+      const dbRes = await pool.query(
+        `SELECT id, user_id, COALESCE(type, 'info') AS type, title, message, tournament_id, COALESCE(is_read, false) AS is_read, created_at
+         FROM alerts
+         WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'
+         ORDER BY created_at DESC LIMIT 50`,
+        [authUser.id]
+      );
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, alerts: dbRes.rows }));
+      res.end(JSON.stringify({ success: true, alerts: dbRes.rows, notifications: dbRes.rows }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -5187,8 +5224,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // 7b-1-4. Mark all notifications/alerts as read
-  if (req.url === '/api/alerts/read' && req.method === 'POST') {
+  // 7b-1-4. Mark all notifications/alerts as read (only unexpired rows)
+  if ((req.url === '/api/alerts/read' || urlPath === '/api/alerts/read' || req.url === '/api/notifications/read' || urlPath === '/api/notifications/read') && req.method === 'POST') {
     try {
       const authUser = getAuthUser(req);
       if (!authUser) {
@@ -5197,7 +5234,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
 
-      await pool.query('UPDATE alerts SET is_read = true WHERE user_id = $1');
+      await pool.query(
+        `UPDATE alerts SET is_read = true WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
+        [authUser.id]
+      );
+      await pool.query(
+        `UPDATE notifications SET is_read = true WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
+        [authUser.id]
+      ).catch(() => {});
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'All alerts marked as read.' }));
     } catch (err) {
@@ -5255,6 +5299,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             experience: user.experience || '',
             socialLinks: user.socialLinks || null,
           };
+          await attachResolvedAvatars(pool, [publicUser]);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, user: publicUser }));
           return;
@@ -5270,11 +5315,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         delete safeUser.google_id;
         delete safeUser.discord_id;
         safeUser.display_name = formatUserDisplayName(safeUser);
-        safeUser.avatar = sanitizeImageUrlForDb(safeUser.avatar);
         safeUser.banner = sanitizeImageUrlForDb(safeUser.banner);
         safeUser.orgImage = sanitizeImageUrlForDb(safeUser.orgImage);
         safeUser.orgBanner = sanitizeImageUrlForDb(safeUser.orgBanner);
         safeUser.discord = discordConn;
+        await attachResolvedAvatars(pool, [safeUser]);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, user: safeUser }));
@@ -5402,35 +5447,38 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
         }
 
-        // OTP verification for email change
-        if (updateData.email !== undefined) {
-          const userCheckRes = await pool.query('SELECT email, "email_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
+        // Email changes must go through the dedicated two-step verification flow (/api/account/email-change)
+        if (!hasRole(authUserRecord, ROLES.ADMIN) && updateData.email !== undefined) {
+          const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1 OR uid = $1', [id]);
           const currentUserRecord = userCheckRes.rows[0];
           if (currentUserRecord && updateData.email.trim().toLowerCase() !== currentUserRecord.email.trim().toLowerCase()) {
-            // Check 15 days rule:
-            if (currentUserRecord.email_last_changed) {
-              const lastChanged = new Date(currentUserRecord.email_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 15) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your email address once every 15 days. Remaining: ${Math.ceil(15 - daysDiff)} days.` }));
-                return;
-              }
-            }
-            const otpCode = updateData.emailOtp;
-            if (!otpCode) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'USE_EMAIL_CHANGE_FLOW',
+              message: 'Email address cannot be changed directly. Please use the two-step verification flow in Settings.'
+            }));
+            return;
+          }
+        }
+
+        // WhatsApp / mobile number validation (must be 10-digit Indian mobile starting with 6-9)
+        let normalizedPhone = undefined;
+        if (updateData.phone !== undefined) {
+          if (updateData.phone === '' || updateData.phone === null) {
+            normalizedPhone = null;
+          } else {
+            const digits = normalizeIndianMobile(updateData.phone);
+            if (!digits) {
               res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Verification code is required to change your email address.' }));
+              res.end(JSON.stringify({
+                success: false,
+                error: 'INVALID_PHONE',
+                message: 'Enter a valid 10-digit Indian mobile number (e.g. 9876543210).'
+              }));
               return;
             }
-            const now = new Date();
-            const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3', [currentUserRecord.email, otpCode, now]);
-            if (otpRes.rows.length === 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is incorrect or has expired.' }));
-              return;
-            }
-            await pool.query('DELETE FROM otps WHERE email = $1', [currentUserRecord.email]);
+            normalizedPhone = `+91 ${digits}`;
           }
         }
 
@@ -5480,7 +5528,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         let emailLastChangedVal = undefined;
-        if (updateData.email !== undefined) {
+        if (updateData.email !== undefined && hasRole(authUserRecord, ROLES.ADMIN)) {
           const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1 OR uid = $1', [id]);
           if (userCheckRes.rows[0] && userCheckRes.rows[0].email.trim().toLowerCase() !== updateData.email.trim().toLowerCase()) {
             emailLastChangedVal = new Date();
@@ -5492,7 +5540,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             name = COALESCE($1, name),
             "gamerTag" = COALESCE($2, "gamerTag"),
             email = COALESCE($3, email),
-            phone = COALESCE($4, phone),
+            phone = CASE WHEN $21::boolean THEN $4 ELSE phone END,
             avatar = COALESCE($5, avatar),
             experience = COALESCE($6, experience),
             "socialLinks" = COALESCE($7, "socialLinks"),
@@ -5507,13 +5555,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             "email_last_changed" = COALESCE($16, "email_last_changed"),
             role = COALESCE($17, role),
             roles = COALESCE($18, roles),
-            "orgHandle" = COALESCE($20, "orgHandle"),
+            "orgHandle" = COALESCE($20, "orgHandle")
            WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
             updateData.gamerTag,
-            updateData.email,
-            updateData.phone,
+            hasRole(authUserRecord, ROLES.ADMIN) ? updateData.email : undefined,
+            normalizedPhone,
             avatarUrl,
             updateData.experience !== undefined ? updateData.experience : updateData.bio,
             updateData.socialLinks,
@@ -5534,7 +5582,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
             id,
-            updateData.gamerTag
+            updateData.gamerTag,
+            normalizedPhone !== undefined
           ]
         );
         if (dbRes.rows.length === 0) {
@@ -5543,8 +5592,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
         console.log(`\n📦 [MATCH DISTRICT DB] User "${id}" updated in Supabase PostgreSQL.\n`);
+        const updatedUser = publicUserRow(dbRes.rows[0]);
+        await attachResolvedAvatars(pool, [updatedUser]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, user: publicUserRow(dbRes.rows[0]) }));
+        res.end(JSON.stringify({ success: true, user: updatedUser }));
       } catch (err) {
         console.warn('⚠️ [MATCH DISTRICT DB] Supabase update user failed:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -9763,6 +9814,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             name: m.display_name || m.name || 'Player',
             display_name: m.display_name || m.name || 'Player',
           }));
+          await attachResolvedAvatars(pool, members, 'user_id');
         } catch (membersErr) {
           console.error('⚠️ [MY-TEAM] Failed to load team members:', membersErr.message);
           warnings.push('Team members could not be fully loaded.');
@@ -19374,6 +19426,8 @@ function startMonitoringWorker() {
   startSlotManagerWorker(pool);
   startAutomationProcessor();
   startMonitoringWorker();
+  accountSecurity.startNotificationCleanup();
+  accountSecurity.startAbuseCleanup();
   server.listen(PORT, '0.0.0.0', () => {    console.log(`\n🚀 [MATCH DISTRICT PRODUCTION SERVER] Running on http://localhost:${PORT}`);
     console.log(`🌐 Network: http://127.0.0.1:${PORT} (listening on all interfaces 0.0.0.0)`);
     console.log(`📦 Serving static frontend from ./dist`);

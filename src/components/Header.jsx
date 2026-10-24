@@ -1,9 +1,27 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import SafeImage from './SafeImage.jsx'
+import Avatar from './Avatar.jsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUser } from '../UserContext.jsx'
 import { supabase } from '../utils/supabaseClient'
 import { hasRole, getUserRoles } from '../utils/iamRoles.js'
+
+function formatAlertTimestamp(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const istTime = date.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  const diffMs = Date.now() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return `Just now • ${istTime}`;
+  if (diffMins < 60) return `${diffMins}m ago • ${istTime}`;
+  const diffHours = Math.floor(diffMins / 60);
+  return `${diffHours}h ago • ${istTime}`;
+}
 
 function Header({ activePage, onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -180,6 +198,10 @@ function Header({ activePage, onNavigate }) {
                           </span>
                         )}
                       </div>
+                      <div className="px-3 py-1.5 text-[10px] text-slate-400 dark:text-white/40 bg-slate-100/60 dark:bg-white/[0.02] border-b border-outline-variant/30 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[13px]">schedule</span>
+                        <span>Notifications are deleted automatically after 24 hours</span>
+                      </div>
                       <div className="max-h-60 overflow-y-auto no-scrollbar divide-y divide-outline-variant/30">
                         {alerts.length > 0 ? (
                           alerts.map(alert => (
@@ -200,8 +222,8 @@ function Header({ activePage, onNavigate }) {
                               <p className="text-[10px] text-slate-500 dark:text-white/50 leading-relaxed mt-0.5 line-clamp-2">
                                 {alert.message}
                               </p>
-                              <span className="text-[8px] text-slate-400 dark:text-white/30 block mt-1 font-mono">
-                                {new Date(alert.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                              <span className="text-[9px] text-slate-400 dark:text-white/40 block mt-1 font-mono">
+                                {formatAlertTimestamp(alert.created_at)}
                               </span>
                             </div>
                           ))
@@ -236,17 +258,12 @@ function Header({ activePage, onNavigate }) {
                     <span>Host Event</span>
                   </button>
                 ) : null}
-                <div 
+                <Avatar 
+                  user={currentUser} 
+                  size="sm"
                   onClick={() => onNavigate && onNavigate('profile')} 
-                  className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center font-headline-md text-[10px] md:text-xs font-bold text-primary uppercase overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all shadow-sm"
-                  title={`${currentUser.name || currentUser.gamerTag || 'User Profile'} (Click to view dashboard)`}
-                >
-                  <SafeImage 
-                    src={currentUser.avatar} 
-                    alt="avatar" 
-                    className="avatar-img" 
-                  />
-                </div>
+                  className="cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all shadow-sm"
+                />
                 <button 
                   onClick={handleSignOut} 
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-surface-container-highest hover:bg-surface-variant text-black dark:text-white font-headline-md text-xs font-bold tracking-wide border border-outline-variant transition-all shadow-sm"

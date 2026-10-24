@@ -25,6 +25,10 @@ import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 import LoginMethodsCard from '../components/LoginMethodsCard.jsx'
+import Avatar from '../components/Avatar.jsx'
+import EmailChangeModal from '../components/EmailChangeModal.jsx'
+import ProfileEditFieldModal from '../components/ProfileEditFieldModal.jsx'
+import ProfileCompletionBar from '../components/ProfileCompletionBar.jsx'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -404,6 +408,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [profileMode, setProfileMode] = useState('player') // 'player' | 'organiser'
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [isEditingOrg, setIsEditingOrg] = useState(false)
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
+  const [fieldModalState, setFieldModalState] = useState({ open: false, type: '', initial: '' })
 
   // Abuse tracking states
   const [playerNameAbuse, setPlayerNameAbuse] = useState(false)
@@ -1908,7 +1914,10 @@ function Profile({ onNavigate, selectedUserProfile }) {
     <>
       {/* Toast Notification */}
       {showToast && (
-        <div className="fixed bottom-4 right-4 left-4 sm:left-auto sm:bottom-6 sm:right-6 z-50 glass-card bg-surface-container-highest/90 backdrop-blur-2xl border border-primary/50 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl shadow-[0_10px_40px_rgba(192,193,255,0.3)] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <div 
+          style={{ bottom: 'calc(64px + env(safe-area-inset-bottom, 0px) + 12px)' }}
+          className="fixed left-4 right-4 sm:left-auto sm:right-6 z-50 glass-card bg-surface-container-highest/95 backdrop-blur-2xl border border-primary/50 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl shadow-[0_10px_40px_rgba(192,193,255,0.3)] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300"
+        >
           <span className="material-symbols-outlined text-primary text-2xl">check_circle</span>
           <span className="font-body-md font-medium">{toastMessage}</span>
         </div>
@@ -2449,26 +2458,19 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               <div className="space-y-4">
                 {/* Minimal Profile Header */}
                 <div className="flex flex-col items-center justify-center text-center pt-2 sm:pt-4 pb-1 max-w-sm mx-auto">
-                  {/* Round profile image (no edit button or pencil on it) */}
-                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border-2 border-outline-variant bg-surface-variant shrink-0 shadow-sm">
-                    {(uploadPreviewUrls.avatar || playerData.avatar) ? (
-                      <img
-                        src={(uploadPreviewUrls.avatar || playerData.avatar) + `?v=${profileImageVersion}`}
-                        alt={playerData.name}
-                        className="avatar-img w-full h-full object-cover"
-                        onError={(e) => { e.currentTarget.src = DEFAULT_AVATAR; }}
-                      />
-                    ) : (
-                      <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img w-full h-full object-cover" />
-                    )}
-                  </div>
+                  {/* Round profile image using shared Avatar component */}
+                  <Avatar
+                    user={playerData || currentUser}
+                    size="2xl"
+                    className="w-20 h-20 sm:w-24 sm:h-24 shadow-sm"
+                  />
 
                   {/* Display name under it */}
                   <h1 className="font-headline-md text-lg sm:text-xl font-black text-on-background tracking-tight mt-2.5 truncate max-w-full">
                     {playerData.name}
                   </h1>
 
-                  {/* District ID under that shown as a plain label "District ID" with the number (no "@" prefix) and small copy button */}
+                  {/* District ID under that: plain label "District ID" with number + copy button */}
                   <div className="flex items-center gap-1.5 mt-1 text-on-surface-variant font-body-sm text-xs">
                     <span className="font-medium text-on-surface-variant">District ID {ownDistrictId}</span>
                     <button
@@ -2494,46 +2496,47 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </span>
                     )}
                   </div>
+
+                  {/* Email address on next line (small, muted, single line with ellipsis if long) */}
+                  <p className="text-[11px] sm:text-xs text-on-surface-variant/70 truncate max-w-[280px] sm:max-w-xs mt-0.5">
+                    {playerData.email || (currentUser || currentUserFromContext)?.email || ''}
+                  </p>
                 </div>
 
-                {/* Directly under header: exactly three section buttons in one row */}
-                <div className="w-full max-w-md mx-auto p-1 rounded-xl sm:rounded-2xl border border-outline-variant/30 bg-surface-container-low/60 backdrop-blur-md shadow-sm mt-3">
-                  <div className="grid grid-cols-3 gap-1">
-                    {[
-                      { id: 'teams', label: 'Teams & Squads', icon: 'groups' },
-                      { id: 'payments', label: 'Payment History', icon: 'payments' },
-                      { id: 'settings', label: 'Settings', icon: 'settings' }
-                    ].map((tab) => {
-                      const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
-                      return (
-                        <button
-                          key={tab.id}
-                          data-tab={tab.id}
-                          type="button"
-                          onClick={() => setActiveTab(tab.id)}
-                          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 sm:py-2.5 px-1 sm:px-2 rounded-lg sm:rounded-xl font-headline-md text-[11px] sm:text-xs font-bold transition-all relative select-none min-h-[44px] ${
-                            isActive
-                              ? 'text-white'
-                              : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
-                          }`}
-                        >
-                          {isActive && (
-                            <motion.div
-                              layoutId="activeProfileSection"
-                              className="absolute inset-0 bg-primary rounded-lg sm:rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.35)] border border-primary/20 z-0"
-                              transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                            />
-                          )}
-                          <span className="material-symbols-outlined text-[18px] sm:text-[20px] relative z-10 shrink-0">
-                            {tab.icon}
-                          </span>
-                          <span className="relative z-10 text-center leading-tight line-clamp-2">
-                            {tab.label}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                {/* Underline tab row for "Teams & Squads", "Payment History", "Settings" */}
+                <div className="w-full max-w-md mx-auto border-b border-outline-variant/30 flex items-center justify-around mt-3 overflow-x-auto no-scrollbar">
+                  {[
+                    { id: 'teams', label: 'Teams & Squads', icon: 'groups' },
+                    { id: 'payments', label: 'Payment History', icon: 'payments' },
+                    { id: 'settings', label: 'Settings', icon: 'settings' }
+                  ].map((tab) => {
+                    const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
+                    return (
+                      <button
+                        key={tab.id}
+                        data-tab={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center justify-center gap-1.5 py-3 px-2 sm:px-3 font-headline-md text-xs sm:text-sm font-semibold transition-colors relative select-none min-h-[44px] whitespace-nowrap ${
+                          isActive
+                            ? 'text-primary'
+                            : 'text-on-surface-variant hover:text-on-background'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[17px] sm:text-[19px] shrink-0">
+                          {tab.icon}
+                        </span>
+                        <span>{tab.label}</span>
+                        {isActive && (
+                          <motion.div
+                            layoutId="activeProfileSectionUnderline"
+                            className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full z-10"
+                            transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </>
@@ -3053,176 +3056,85 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   exit="exit"
                   className="space-y-4 sm:space-y-5"
                 >
+                  {/* Row 1: Profile completion bar (% + missing chips opening bottom sheet) */}
+                  <ProfileCompletionBar
+                    user={playerData}
+                    onOpenField={(field) => {
+                      setFieldModalState({
+                        open: true,
+                        type: field,
+                        initial: playerData[field] || (field === 'whatsapp' ? playerData.phone : '')
+                      });
+                    }}
+                  />
+
                   {/* GROUP 1: ACCOUNT */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-                    <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-3 border-b border-outline-variant/30">
-                      <span className="material-symbols-outlined text-primary text-xl">manage_accounts</span> Account
+                  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
+                    <h3 className="font-headline-md text-xs sm:text-sm font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
+                      <span className="material-symbols-outlined text-primary text-lg">manage_accounts</span> Account
                     </h3>
 
-                    {/* Row 1: Edit Profile summary row */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="relative w-12 h-12 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shrink-0 overflow-hidden">
-                          <img 
-                            src={sanitizeImageUrl(playerData.avatar) || DEFAULT_AVATAR} 
-                            alt={playerData.name || 'User avatar'} 
-                            className="w-full h-full rounded-full object-cover bg-surface-container-high"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-on-background truncate">
-                            {playerData.name || 'Player'}
-                          </h4>
-                          <p className="text-xs text-on-surface-variant truncate">
-                            {playerData.gamerTag ? `@${playerData.gamerTag}` : 'No gamer tag'} {playerData.phone ? `• ${playerData.phone}` : ''}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPlayerEditForm({ ...playerData });
-                          setIsEditingProfile(true);
-                        }}
-                        className="px-3.5 py-1.5 min-h-[36px] self-start sm:self-auto rounded-lg bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
-                      >
-                        <span className="material-symbols-outlined text-sm">edit</span> Edit Profile
-                      </button>
-                    </div>
-
-                    {/* Row 2: Email row */}
-                    <div className="p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30 space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="material-symbols-outlined text-primary text-lg shrink-0">mail</span>
-                          <div className="min-w-0">
-                            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email Address</span>
-                            <p className="text-xs font-semibold text-on-background truncate">
-                              {playerData.email || orgData.email || (currentUser || currentUserFromContext)?.email || 'No email set'}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsChangingEmail(!isChangingEmail)}
-                          className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1 transition-colors shrink-0"
-                        >
-                          <span className="material-symbols-outlined text-sm">{isChangingEmail ? 'expand_less' : 'edit'}</span>
-                          <span>{isChangingEmail ? 'Cancel' : 'Change'}</span>
-                        </button>
-                      </div>
-
-                      {/* Expandable Email Change Form */}
-                      {isChangingEmail && (
-                        <div className="pt-3 border-t border-outline-variant/20 space-y-3">
-                          {emailCooldownDays > 0 ? (
-                            <div className="flex items-center gap-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl">
-                              <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">schedule</span>
-                              <p className="text-xs text-amber-300 leading-relaxed">
-                                Email was recently changed. You can change it again in <strong>{emailCooldownDays} days</strong>.
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-3">
-                              <div className="flex items-center gap-3 p-2.5 bg-surface-container rounded-xl border border-outline-variant/30">
-                                <span className="material-symbols-outlined text-on-surface-variant text-base shrink-0">info</span>
-                                <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                                  Current email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>. Changing requires a verification code sent to your old email.
-                                </p>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Email Address</label>
-                                <input
-                                  type="email"
-                                  value={settingsEmail}
-                                  onChange={(e) => setSettingsEmail(e.target.value)}
-                                  placeholder="e.g. newemail@domain.com"
-                                  className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm"
-                                />
-                              </div>
-                              {settingsEmail.trim() && settingsEmail.trim().toLowerCase() !== (playerData.email || orgData.email || '').toLowerCase() && (
-                                <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-3 animate-in fade-in duration-200">
-                                  <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Verification Required</p>
-                                  <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                                    A code will be sent to your old email: <strong className="text-on-background">{playerData.email || orgData.email}</strong>
-                                  </p>
-                                  <div className="flex gap-2">
-                                    <input
-                                      type="text"
-                                      placeholder="6-digit Code"
-                                      value={emailOtpCode}
-                                      onChange={(e) => setEmailOtpCode(e.target.value)}
-                                      maxLength={6}
-                                      className="flex-1 bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background text-xs outline-none focus:border-primary tracking-widest font-mono"
-                                    />
-                                    {emailOtpSent ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleVerifyAndSaveEmail}
-                                        className="px-4 min-h-[40px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                                      >
-                                        <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
-                                      </button>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={isEmailSendingOtp}
-                                        onClick={() => {
-                                          sendEmailOtp(playerData.email || orgData.email)
-                                        }}
-                                        className="px-4 min-h-[40px] bg-primary hover:bg-primary/90 disabled:opacity-50 rounded-lg text-white font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
-                                      >
-                                        {isEmailSendingOtp ? (
-                                          <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Sending…</>
-                                        ) : (
-                                          <><span className="material-symbols-outlined text-sm">send</span> Send Code</>
-                                        )}
-                                      </button>
-                                    )}
-                                  </div>
-                                  {emailOtpSent && emailOtpCountdown > 0 && (
-                                    <p className="text-[10px] text-on-surface-variant">Resend in <strong className="text-primary">{emailOtpCountdown}s</strong></p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Row 3: District ID row */}
+                    {/* Email Row with 2-step verification & lockout timer */}
                     <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="material-symbols-outlined text-primary text-lg shrink-0">badge</span>
+                        <span className="material-symbols-outlined text-primary text-lg shrink-0">mail</span>
                         <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">District ID</span>
-                          <p className="text-xs font-mono font-bold text-on-background tracking-wider truncate">
-                            {(currentUser || currentUserFromContext)?.district_id || 'Assigned when verified'}
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email Address</span>
+                          <p className="text-xs font-semibold text-on-background truncate">
+                            {playerData.email || (currentUser || currentUserFromContext)?.email || 'No email set'}
                           </p>
                         </div>
                       </div>
                       <button
                         type="button"
-                        disabled={!(currentUser || currentUserFromContext)?.district_id}
-                        onClick={async () => {
-                          const districtId = (currentUser || currentUserFromContext)?.district_id
-                          if (!districtId) return
-                          try {
-                            await navigator.clipboard.writeText(String(districtId))
-                            triggerToast('District ID copied.')
-                          } catch {
-                            triggerToast('Could not copy District ID.')
-                          }
-                        }}
-                        className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50 flex items-center gap-1 transition-colors shrink-0"
-                        aria-label="Copy District ID"
+                        onClick={() => setIsEmailModalOpen(true)}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
                       >
-                        <span className="material-symbols-outlined text-sm">content_copy</span> Copy
+                        <span className="material-symbols-outlined text-sm">edit</span> Change Email
                       </button>
                     </div>
 
-                    {/* Row 4: Password row */}
+                    {/* WhatsApp Mobile Number Row (+91 Indian 10-digit validation) */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-emerald-500 text-lg shrink-0">chat</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">WhatsApp Number</span>
+                          <p className="text-xs font-semibold text-on-background truncate">
+                            {playerData.phone || 'Not linked'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFieldModalState({ open: true, type: 'whatsapp', initial: playerData.phone })}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.phone ? 'Edit' : 'Add'}
+                      </button>
+                    </div>
+
+                    {/* Gamer Tag Row */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-primary text-lg shrink-0">sports_esports</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Gamer Tag / Handle</span>
+                          <p className="text-xs font-semibold text-on-background truncate">
+                            {playerData.gamerTag ? `@${playerData.gamerTag}` : 'Not set'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFieldModalState({ open: true, type: 'gamerTag', initial: playerData.gamerTag })}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.gamerTag ? 'Edit' : 'Add'}
+                      </button>
+                    </div>
+
+                    {/* Password Row */}
                     <div id="password-management" className="p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30 space-y-3">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -3239,7 +3151,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         <button
                           type="button"
                           onClick={() => setIsChangingPassword(!isChangingPassword)}
-                          className="px-3 py-1 min-h-[32px] rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1 transition-colors shrink-0"
+                          className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
                         >
                           <span className="material-symbols-outlined text-sm">{isChangingPassword ? 'expand_less' : 'key'}</span>
                           <span>
@@ -3310,7 +3222,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                   type="button"
                                   disabled={isPasswordSubmitting || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
                                   onClick={() => autoSavePassword('', newPassword, confirmPassword)}
-                                  className="px-4 min-h-[38px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                  className="px-5 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
                                 >
                                   <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'key'}</span>
                                   <span>{isPasswordSubmitting ? 'Saving...' : 'Save Password'}</span>
@@ -3404,7 +3316,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                   type="button"
                                   disabled={isPasswordSubmitting || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
                                   onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
-                                  className="px-4 min-h-[38px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                                  className="px-5 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
                                 >
                                   <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'lock_reset'}</span>
                                   <span>{isPasswordSubmitting ? 'Updating...' : 'Change Password'}</span>
@@ -3414,6 +3326,73 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           )}
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  {/* GROUP 2: GAME IDS */}
+                  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
+                    <h3 className="font-headline-md text-xs sm:text-sm font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
+                      <span className="material-symbols-outlined text-secondary text-lg">videogame_asset</span> Game IDs
+                    </h3>
+
+                    {/* BGMI Character ID */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-amber-400 text-lg shrink-0">shield</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">BGMI Character ID</span>
+                          <p className="text-xs font-mono font-semibold text-on-background truncate">
+                            {playerData.bgmiId || 'Not set'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFieldModalState({ open: true, type: 'bgmiId', initial: playerData.bgmiId })}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.bgmiId ? 'Edit' : 'Add'}
+                      </button>
+                    </div>
+
+                    {/* Riot ID */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-rose-400 text-lg shrink-0">swords</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Riot ID (Valorant)</span>
+                          <p className="text-xs font-semibold text-on-background truncate">
+                            {playerData.riotId || 'Not set'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFieldModalState({ open: true, type: 'riotId', initial: playerData.riotId })}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.riotId ? 'Edit' : 'Add'}
+                      </button>
+                    </div>
+
+                    {/* Steam ID */}
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="material-symbols-outlined text-sky-400 text-lg shrink-0">sports_esports</span>
+                        <div className="min-w-0">
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Steam ID</span>
+                          <p className="text-xs font-mono font-semibold text-on-background truncate">
+                            {playerData.steamId || 'Not set'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFieldModalState({ open: true, type: 'steamId', initial: playerData.steamId })}
+                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.steamId ? 'Edit' : 'Add'}
+                      </button>
                     </div>
                   </div>
 
@@ -3542,7 +3521,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         <button
                           type="button"
                           onClick={() => setShowSignOutConfirm(true)}
-                          className="min-h-[40px] px-4 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                          className="h-10 px-6 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
                         >
                           <span className="material-symbols-outlined text-sm">logout</span> Log Out
                         </button>
@@ -3560,14 +3539,14 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           <button
                             type="button"
                             onClick={() => setShowSignOutConfirm(false)}
-                            className="px-3 py-1.5 rounded-lg border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors"
+                            className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors whitespace-nowrap"
                           >
                             Cancel
                           </button>
                           <button
                             type="button"
                             onClick={handleSignOut}
-                            className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                            className="px-5 h-9 rounded-full bg-rose-600 hover:bg-rose-700 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
                           >
                             <span className="material-symbols-outlined text-sm">logout</span> Confirm Sign Out
                           </button>
@@ -3587,103 +3566,33 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
       </main>
     )}
 
-      {/* Edit Player Profile Modal */}
-      <AnimatePresence>
-        {isEditingProfile && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              transition={{ type: 'spring', duration: 0.3 }}
-              className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-lg space-y-4 relative max-h-[90vh] overflow-y-auto custom-scrollbar"
-            >
-              <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-lg font-bold text-on-background flex items-center gap-2 tracking-tight">
-                  <span className="material-symbols-outlined text-primary text-xl">edit_square</span> Edit Profile
-                </h3>
-                <button onClick={() => setIsEditingProfile(false)} className="w-7 h-7 rounded-lg bg-surface-container hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors">
-                  <span className="material-symbols-outlined text-lg">close</span>
-                </button>
-              </div>
-              <form onSubmit={handleSavePlayerModal} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Name</label>
-                  <AbuseFieldWrapper fieldId="profile-playerName" value={playerEditForm.name} onWarning={setPlayerNameAbuse}>
-                    <input 
-                      type="text" 
-                      value={playerEditForm.name} 
-                      onChange={(e) => setPlayerEditForm({...playerEditForm, name: e.target.value})} 
-                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm" 
-                      required 
-                    />
-                  </AbuseFieldWrapper>
-                </div>
+      {/* 2-Step Email Change Bottom Sheet / Modal */}
+      <EmailChangeModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        currentEmail={playerData.email || (currentUser || currentUserFromContext)?.email || ''}
+        onSuccess={(updatedEmail) => {
+          setPlayerData((prev) => ({ ...prev, email: updatedEmail }));
+          refreshProfileUser();
+        }}
+        triggerToast={triggerToast}
+      />
 
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Gamer Tag</label>
-                  <AbuseFieldWrapper fieldId="profile-playerGamerTag" value={playerEditForm.gamerTag} onWarning={setPlayerTagAbuse}>
-                    <input 
-                      type="text" 
-                      value={playerEditForm.gamerTag || ''} 
-                      onChange={(e) => setPlayerEditForm({...playerEditForm, gamerTag: e.target.value})} 
-                      placeholder="e.g. ShadowSniper" 
-                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm" 
-                    />
-                  </AbuseFieldWrapper>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Phone Number</label>
-                  <input 
-                    type="tel" 
-                    value={playerEditForm.phone || ''} 
-                    onChange={(e) => setPlayerEditForm({...playerEditForm, phone: e.target.value})} 
-                    placeholder="e.g. +91 98765 43210" 
-                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm" 
-                  />
-                </div>
-
-                <div className="space-y-2 flex flex-col items-center py-2 border-y border-outline-variant/30">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Profile Photo</label>
-                  <div className="relative w-20 h-20 rounded-full p-[2px] bg-gradient-to-tr from-primary to-secondary shadow-[0_0_10px_rgba(90,93,250,0.2)] overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
-                    {uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar) ? (
-                      <img src={uploadPreviewUrls.avatar || sanitizeImageUrl(playerEditForm.avatar)} alt="Avatar" className="avatar-img" />
-                    ) : (
-                      <img src={DEFAULT_AVATAR} alt="Default Avatar" className="avatar-img" />
-                    )}
-                    {activeUploadField === 'avatar' && profileUploadProgress !== null && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 rounded-full">
-                        <CircularUploadProgress progress={profileUploadProgress} />
-                      </div>
-                    )}
-                    {!(activeUploadField === 'avatar' && profileUploadProgress !== null) && (
-                      <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200 rounded-full">
-                        <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
-                        <span className="text-[8px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
-                        <input 
-                          type="file" accept="image/*" className="hidden" disabled={isUploadingImage}
-                          onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleProfileImageSelect(file, 'avatar'); }} 
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
-                  <button type="button" onClick={() => setIsEditingProfile(false)} className="px-5 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold transition-all">Cancel</button>
-                  <button type="submit" disabled={isUploadingImage} className="px-5 py-2 bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold shadow-sm flex items-center gap-1 disabled:opacity-60"><span className="material-symbols-outlined text-sm">check</span> Save</button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Individual Field Edit Bottom Sheet / Modal */}
+      <ProfileEditFieldModal
+        isOpen={fieldModalState.open}
+        onClose={() => setFieldModalState({ open: false, type: '', initial: '' })}
+        fieldType={fieldModalState.type}
+        initialValue={fieldModalState.initial}
+        userId={(currentUser || currentUserFromContext)?.id}
+        onSuccess={(updatedUser) => {
+          if (updatedUser) {
+            setPlayerData((prev) => ({ ...prev, ...updatedUser }));
+            refreshProfileUser();
+          }
+        }}
+        triggerToast={triggerToast}
+      />
 
 
       {/* Edit Organizer Modal */}
@@ -3719,79 +3628,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 </div>
 
                 <div className="space-y-1"><label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Verification Tier</label><input type="text" value={orgEditForm.tier} onChange={(e) => setOrgEditForm({...orgEditForm, tier: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm" required /></div>
-                
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-2 border-b border-outline-variant/30">
-                  <div className="space-y-2 flex flex-col items-center">
-                    <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Organization Logo</label>
-                    <div className="relative w-20 h-20 rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center bg-surface-container-highest">
-                      {uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo) ? (
-                            <img src={uploadPreviewUrls.orgLogo || sanitizeImageUrl(orgEditForm.logo)} alt="Logo Preview" className="avatar-img" />
-                      ) : (
-                        <img src={DEFAULT_AVATAR} alt="Default Logo" className="avatar-img" />
-                      )}
-                      {activeUploadField === 'orgLogo' && profileUploadProgress !== null && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75">
-                          <CircularUploadProgress progress={profileUploadProgress} />
-                        </div>
-                      )}
-                      {!(activeUploadField === 'orgLogo' && profileUploadProgress !== null) && (
-                        <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200">
-                          <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
-                          <span className="text-[9px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            className="hidden" 
-                            disabled={isUploadingImage}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              e.target.value = '';
-                              if (file) {
-                                handleProfileImageSelect(file, 'orgLogo');
-                              }
-                            }} 
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 flex flex-col items-center">
-                    <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block text-center">Org Banner Background</label>
-                    <div className="relative w-full aspect-[3/1] rounded-xl overflow-hidden border border-outline-variant bg-surface-container-low group flex items-center justify-center">
-                      {uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner) ? (
-                        <img src={uploadPreviewUrls.orgBanner || sanitizeImageUrl(orgEditForm.banner)} alt="Banner Preview" className="w-full h-full object-cover" />
-                      ) : (
-                        <img src={DEFAULT_BANNER} alt="Default Banner" className="w-full h-full object-cover" />
-                      )}
-                      {activeUploadField === 'orgBanner' && profileUploadProgress !== null && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/75 px-2 text-center">
-                          <CircularUploadProgress progress={profileUploadProgress} />
-                        </div>
-                      )}
-                      {!(activeUploadField === 'orgBanner' && profileUploadProgress !== null) && (
-                        <label className="absolute inset-0 z-20 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-200">
-                          <span className="material-symbols-outlined text-white text-lg">cloud_upload</span>
-                          <span className="text-[9px] text-white font-bold uppercase tracking-wider mt-0.5">Upload</span>
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            className="hidden" 
-                            disabled={isUploadingImage}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              e.target.value = '';
-                              if (file) {
-                                handleProfileImageSelect(file, 'orgBanner');
-                              }
-                            }} 
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
                 <div className="space-y-1">
                   <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Short Bio</label>
                   <AbuseFieldWrapper fieldId="profile-orgBio" value={orgEditForm.bio} onWarning={setOrgBioAbuse}>
@@ -3809,8 +3645,8 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   </div>
                 </div>
                 <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
-                  <button type="button" onClick={() => setIsEditingOrg(false)} className="px-5 py-2 border border-outline hover:bg-surface-variant transition-all text-on-background rounded-lg font-headline-md text-xs font-semibold">Cancel</button>
-                  <button type="submit" disabled={isUploadingImage} className="px-5 py-2 bg-secondary hover:bg-secondary/90 active:scale-95 transition-all text-background rounded-lg font-headline-md text-xs font-bold shadow-sm flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"><span className="material-symbols-outlined text-sm">check</span> Save Changes</button>
+                  <button type="button" onClick={() => setIsEditingOrg(false)} className="px-5 h-9 border border-outline hover:bg-surface-variant transition-all text-on-background rounded-full font-headline-md text-xs font-semibold whitespace-nowrap">Cancel</button>
+                  <button type="submit" disabled={isUploadingImage} className="px-6 h-9 bg-secondary hover:bg-secondary/90 active:scale-95 transition-all text-background rounded-full font-headline-md text-xs font-bold shadow-sm flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"><span className="material-symbols-outlined text-sm">check</span> Save Changes</button>
                 </div>
               </form>
             </motion.div>

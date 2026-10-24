@@ -5,6 +5,7 @@ import { getAuthToken } from "../utils/getAuthToken";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import QRCode from "qrcode";
 import ParticipantMatchCard from "./ParticipantMatchCard";
+import Avatar from "./Avatar.jsx";
 
 export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTeamSize = 4 }) {
   const [currentUser] = useCurrentUser();
@@ -523,17 +524,7 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
                     >
                       <div className="flex items-center gap-3.5 min-w-0">
                         {slot.linked ? (
-                          slot.member?.avatar ? (
-                            <img
-                              src={slot.member.avatar}
-                              alt={slot.member.name}
-                              className="w-10 h-10 rounded-full object-cover border border-white/10 shrink-0"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold shrink-0">
-                              {slot.member?.name ? slot.member.name.charAt(0).toUpperCase() : '?'}
-                            </div>
-                          )
+                          <Avatar user={slot.member} size="md" className="shrink-0" />
                         ) : (
                           <div className="w-10 h-10 rounded-full bg-white/5 border border-dashed border-white/20 flex items-center justify-center text-gray-500 shrink-0">
                             <Plus className="w-4 h-4" />

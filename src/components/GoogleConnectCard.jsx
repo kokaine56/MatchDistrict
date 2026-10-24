@@ -154,12 +154,12 @@ export default function GoogleConnectCard({ currentUser, providerIdentity, onUse
               />}
               {currentUser.password_set === false && <p className="text-xs text-on-surface-variant">Confirm within 10 minutes of signing in. Another login method must remain connected.</p>}
               <div className="flex gap-2">
-                <button type="button" onClick={() => { setIsUnlinkMode(false); setUnlinkPassword('') }} className="rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold text-on-background">Cancel</button>
-                <button type="button" disabled={(currentUser.password_set !== false && !unlinkPassword) || isUnlinking} onClick={handleUnlink} className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Confirm unlink</button>
+                <button type="button" onClick={() => { setIsUnlinkMode(false); setUnlinkPassword('') }} className="rounded-full border border-outline-variant px-4 h-9 text-xs font-semibold text-on-background whitespace-nowrap">Cancel</button>
+                <button type="button" disabled={(currentUser.password_set !== false && !unlinkPassword) || isUnlinking} onClick={handleUnlink} className="rounded-full bg-rose-500 px-4 h-9 text-xs font-bold text-white disabled:opacity-50 whitespace-nowrap">Confirm unlink</button>
               </div>
             </div>
           ) : (
-            <button type="button" onClick={() => setIsUnlinkMode(true)} className="rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold text-on-surface-variant hover:text-rose-500">Unlink Google</button>
+            <button type="button" onClick={() => setIsUnlinkMode(true)} className="rounded-full border border-outline-variant px-4 h-9 text-xs font-semibold text-on-surface-variant hover:text-rose-500 whitespace-nowrap">Unlink Google</button>
           )}
         </div>
       )}
