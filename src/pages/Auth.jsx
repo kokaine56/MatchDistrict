@@ -229,6 +229,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   // Google Identity Services (GIS) state & refs
   const googleLoginBtnRef = useRef(null)
   const googleRegBtnRef = useRef(null)
+  const googleAccountPickerBtnRef = useRef(null)
   const isGoogleAuthSubmitting = useRef(false)
   const [gisLoaded, setGisLoaded] = useState(false)
   const [runtimeGoogleClientId, setRuntimeGoogleClientId] = useState('')
@@ -412,7 +413,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
             setAuthTokenInMemory(data.token)
           }
         }
-        addRememberedAccount(data.user)
+        addRememberedAccount(data.user, 'google')
         setCurrentUser(data.user)
         triggerToast(data.message || 'Welcome to Match District!')
         setTimeout(() => {
@@ -443,10 +444,31 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     }
   }, [navigate, onNavigate, redirectTo, setCurrentUser])
 
-  // Initialize GIS and render official secure buttons for Login and Register views
-  useEffect(() => {
-    if (!gisLoaded || !window.google?.accounts?.id || !googleClientId) return
+  // GIS Button rendering helper
+  const renderGoogleButton = useCallback((element, textType = 'signin_with') => {
+    if (!element || !window.google?.accounts?.id || !googleClientId) return false
+    try {
+      element.innerHTML = ''
+      const btnTheme = theme === 'dark' ? 'filled_black' : 'outline'
+      window.google.accounts.id.renderButton(element, {
+        type: 'standard',
+        theme: btnTheme,
+        size: 'large',
+        text: textType,
+        shape: 'rectangular',
+        width: 320,
+        logo_alignment: 'left',
+      })
+      return true
+    } catch (err) {
+      console.warn('GIS renderButton error:', err)
+      return false
+    }
+  }, [googleClientId, theme])
 
+  // Initialize GIS and register callback
+  const initializeGis = useCallback(() => {
+    if (!gisLoaded || !window.google?.accounts?.id || !googleClientId) return
     try {
       window.google.accounts.id.initialize({
         client_id: googleClientId,
@@ -454,36 +476,66 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         auto_select: false,
         cancel_on_tap_outside: true,
       })
-
-      const btnTheme = theme === 'dark' ? 'filled_black' : 'outline'
-
-      if (authMode === 'login' && googleLoginBtnRef.current) {
-        googleLoginBtnRef.current.innerHTML = ''
-        window.google.accounts.id.renderButton(googleLoginBtnRef.current, {
-          type: 'standard',
-          theme: btnTheme,
-          size: 'large',
-          text: 'signin_with',
-          shape: 'rectangular',
-          width: 320,
-          logo_alignment: 'left',
-        })
-      } else if (authMode === 'register' && googleRegBtnRef.current) {
-        googleRegBtnRef.current.innerHTML = ''
-        window.google.accounts.id.renderButton(googleRegBtnRef.current, {
-          type: 'standard',
-          theme: btnTheme,
-          size: 'large',
-          text: 'signup_with',
-          shape: 'rectangular',
-          width: 320,
-          logo_alignment: 'left',
-        })
-      }
     } catch (err) {
       console.warn('Google Identity Services initialization warning:', err)
     }
-  }, [gisLoaded, googleClientId, authMode, theme, handleGoogleCredentialResponse])
+  }, [gisLoaded, googleClientId, handleGoogleCredentialResponse])
+
+  // Refresh GIS buttons across active view containers
+  const updateGoogleButtons = useCallback(() => {
+    initializeGis()
+    if (authMode === 'login' || loginPageState === 'password-screen') {
+      if (googleLoginBtnRef.current) {
+        renderGoogleButton(googleLoginBtnRef.current, 'signin_with')
+      }
+    }
+    if (authMode === 'register') {
+      if (googleRegBtnRef.current) {
+        renderGoogleButton(googleRegBtnRef.current, 'signup_with')
+      }
+    }
+    if (loginPageState === 'account-picker') {
+      if (googleAccountPickerBtnRef.current) {
+        renderGoogleButton(googleAccountPickerBtnRef.current, 'signin_with')
+      }
+    }
+  }, [initializeGis, renderGoogleButton, authMode, loginPageState])
+
+  useEffect(() => {
+    updateGoogleButtons()
+    const t1 = setTimeout(updateGoogleButtons, 60)
+    const t2 = setTimeout(updateGoogleButtons, 250)
+    const t3 = setTimeout(updateGoogleButtons, 600)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      clearTimeout(t3)
+    }
+  }, [updateGoogleButtons, gisLoaded, googleClientId, authMode, loginPageState, theme])
+
+  const setGoogleLoginRef = useCallback((node) => {
+    googleLoginBtnRef.current = node
+    if (node) {
+      initializeGis()
+      renderGoogleButton(node, 'signin_with')
+    }
+  }, [initializeGis, renderGoogleButton])
+
+  const setGoogleRegRef = useCallback((node) => {
+    googleRegBtnRef.current = node
+    if (node) {
+      initializeGis()
+      renderGoogleButton(node, 'signup_with')
+    }
+  }, [initializeGis, renderGoogleButton])
+
+  const setGoogleAccountPickerRef = useCallback((node) => {
+    googleAccountPickerBtnRef.current = node
+    if (node) {
+      initializeGis()
+      renderGoogleButton(node, 'signin_with')
+    }
+  }, [initializeGis, renderGoogleButton])
 
   // Fallback click handler if button iframe is not directly clicked
   const handleGoogleClick = async () => {
@@ -732,7 +784,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           console.warn('Client-side Supabase session login exception:', supErr)
         }
 
-        if (loginForm.rememberMe) addRememberedAccount(data.user)
+        if (loginForm.rememberMe) addRememberedAccount(data.user, 'email')
         setCurrentUser(data.user)
         triggerToast(data.message || 'Welcome back! Redirecting...')
         setTimeout(() => {
@@ -774,7 +826,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           return
         }
 
-        if (loginForm.rememberMe) addRememberedAccount(profile)
+        if (loginForm.rememberMe) addRememberedAccount(profile, 'email')
         setCurrentUser(profile)
         triggerToast('Welcome back! Redirecting...')
         setTimeout(() => {
@@ -1064,7 +1116,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     try { localStorage.setItem(REMEMBERED_KEY, JSON.stringify(accounts)) } catch {}
   }
 
-  const addRememberedAccount = (user) => {
+  const addRememberedAccount = (user, provider) => {
     const accounts = getRememberedAccounts().filter(a => a.id !== user.id)
     const avatarUrl = user.avatar || user.orgImage || user.avatar_url || user.profile_image || ''
     accounts.unshift({
@@ -1073,6 +1125,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       email: user.email || '',
       username: user.gamerTag || '',
       avatar: avatarUrl,
+      provider: provider || (user.google_id ? 'google' : 'email'),
       lastUsed: Date.now()
     })
     saveRememberedAccounts(accounts)
@@ -1645,6 +1698,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                           <div className="flex-1 min-w-0 pr-11 sm:pr-12">
                             <div className="flex items-center gap-2 min-w-0">
                               <p className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate min-w-0">{account.name}</p>
+                              {account.provider === 'google' && (
+                                <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded-full">
+                                  Google
+                                </span>
+                              )}
                               {isAccountActive(account.id) && (
                                 <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -1706,6 +1764,33 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       </div>
                       <span className="font-semibold text-xs sm:text-sm">Use Another Account</span>
                     </button>
+
+                    {/* Google Sign-In Option on Account Picker */}
+                    <div className="space-y-3 pt-2 w-full">
+                      <div className="relative flex items-center justify-center">
+                        <div className="border-t border-slate-200 dark:border-white/10 w-full" />
+                        <span className="absolute bg-white dark:bg-[#1B1B1F] px-3 font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider">or continue with</span>
+                      </div>
+                      <div className="w-full flex flex-col items-center justify-center gap-2">
+                        <div ref={setGoogleAccountPickerRef} className="w-full flex justify-center min-h-[44px]" />
+                        {(!gisLoaded || !googleClientId) && (
+                          <button
+                            type="button"
+                            onClick={handleGoogleClick}
+                            disabled={isLoading}
+                            className="w-full h-11 bg-slate-50 hover:bg-slate-100 dark:bg-white/5 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 hover:border-primary/30 rounded-xl font-headline-md text-xs font-bold text-slate-900 dark:text-white transition-all flex items-center justify-center gap-2.5 group cursor-pointer"
+                          >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.23-.67-.35-1.37-.35-2.09z" />
+                              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                            </svg>
+                            <span>Sign in with Google</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               ) : authMode === 'login' || loginPageState === 'password-screen' ? (
@@ -1721,14 +1806,24 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                   className="w-full text-slate-900 dark:text-white"
                 >
                   {loginPageState === 'password-screen' && (
-                    <button
-                      type="button"
-                      onClick={() => setLoginPageState('account-picker')}
-                      className="flex items-center gap-1.5 text-xs font-bold text-primary hover:text-black dark:hover:text-white transition-all mb-4 px-1"
-                    >
-                      <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-                      <span>All Accounts</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setLoginPageState('account-picker')}
+                        className="flex items-center gap-1.5 text-xs font-bold text-primary hover:text-black dark:hover:text-white transition-all mb-4 px-1"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                        <span>All Accounts</span>
+                      </button>
+                      {selectedAccount?.provider === 'google' && (
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-2.5 mb-4 text-left">
+                          <span className="material-symbols-outlined text-blue-400 text-lg shrink-0 mt-0.5">info</span>
+                          <p className="text-xs text-blue-300 leading-relaxed font-medium">
+                            This account was registered with Google. You can sign in using Google below, or enter your password if you created one.
+                          </p>
+                        </div>
+                      )}
+                    </>
                   )}
                   <form onSubmit={handleLoginSubmit} className="space-y-4 w-full">
                     <div className="space-y-3.5">
@@ -1841,7 +1936,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                     </div>
                     
                     <div className="w-full flex flex-col items-center justify-center gap-2.5">
-                      <div ref={googleLoginBtnRef} className="w-full flex justify-center min-h-[44px]" />
+                      <div ref={setGoogleLoginRef} className="w-full flex justify-center min-h-[44px]" />
                       {(!gisLoaded || !googleClientId) && (
                         <button
                           type="button"
@@ -2016,7 +2111,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                     </div>
                     
                     <div className="w-full flex flex-col items-center justify-center gap-2.5">
-                      <div ref={googleRegBtnRef} className="w-full flex justify-center min-h-[44px]" />
+                      <div ref={setGoogleRegRef} className="w-full flex justify-center min-h-[44px]" />
                       {(!gisLoaded || !googleClientId) && (
                         <button
                           type="button"

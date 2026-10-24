@@ -188,6 +188,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(32);
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN DEFAULT true;
+      UPDATE users SET password_set = false WHERE google_id IS NOT NULL AND password_set IS NULL;
+      UPDATE users SET password_set = true WHERE password_set IS NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(32);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS username_last_changed TIMESTAMP;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username)) WHERE username IS NOT NULL;

@@ -360,6 +360,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [isPasswordSubmitting, setIsPasswordSubmitting] = useState(false)
 
   // Refresh user data helper
   const refreshProfileUser = () => {
@@ -1595,7 +1596,18 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   const autoSavePassword = async (currPass, newPass, confirmPass) => {
     if (!currentUser) return
-    if (!currPass || !newPass || !confirmPass) return
+    if (isPasswordSubmitting) return
+
+    const hasPassword = currentUser.password_set !== false && (currentUser.password_set === true || !currentUser.google_id);
+
+    if (hasPassword && !currPass) {
+      triggerToast('Please enter your current password.')
+      return
+    }
+    if (!newPass || !confirmPass) {
+      triggerToast('Please fill in both new password fields.')
+      return
+    }
     if (newPass !== confirmPass) {
       triggerToast('New passwords do not match!')
       return
@@ -1605,28 +1617,46 @@ function Profile({ onNavigate, selectedUserProfile }) {
       return
     }
 
+    setIsPasswordSubmitting(true)
     try {
+      const token = await getAuthToken();
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        credentials: 'include',
         body: JSON.stringify({
           email: currentUser.email,
-          currentPassword: currPass,
-          newPassword: newPass
+          currentPassword: hasPassword ? currPass : undefined,
+          newPassword: newPass,
+          confirmPassword: confirmPass
         })
       })
       const data = await res.json()
-      if (data.success) {
-        triggerToast('Password changed successfully!')
+      if (res.ok && data.success) {
+        triggerToast(hasPassword ? 'Password changed successfully!' : 'Password created successfully! You can now log in with email and password.')
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
+        if (data.user) {
+          setCurrentUser(data.user)
+          if (typeof setCurrentUserFromContext === 'function') {
+            setCurrentUserFromContext(data.user)
+          }
+        } else {
+          setCurrentUser(prev => prev ? { ...prev, password_set: true } : prev)
+        }
+        refreshProfileUser()
       } else {
-        triggerToast(`Failed to update password: ${data.error || data.message}`)
+        triggerToast(`Failed: ${data.error || data.message || 'Could not update password.'}`)
       }
     } catch (err) {
       console.error(err)
       triggerToast('Error updating password.')
+    } finally {
+      setIsPasswordSubmitting(false)
     }
   }
 
@@ -3850,98 +3880,201 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       )}
                     </div>
 
-                    {/* Section 3: Change Password */}
+                    {/* Section 3: Password Management (Create Password for Google-only users / Change Password for users with credentials) */}
                     <div className="border-t border-outline-variant/20 pt-5 space-y-4">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-                        <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                          <span className="material-symbols-outlined text-primary text-lg">lock</span> Change Password
-                        </h4>
-                        <button
-                          type="button"
-                          onClick={handleForgotPassword}
-                          className="font-label-caps text-[10px] text-primary hover:text-primary uppercase transition-colors font-bold flex items-center gap-1"
-                        >
-                          <span className="material-symbols-outlined text-[14px]">help_outline</span> Forget Password?
-                        </button>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="space-y-1">
-                          <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Current Password</label>
-                          <div className="relative">
-                            <input
-                              type={showCurrentPassword ? "text" : "password"}
-                              value={currentPassword}
-                              onChange={(e) => setCurrentPassword(e.target.value)}
-                              placeholder="Enter current password"
-                              className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                            >
-                              <span className="material-symbols-outlined text-base select-none">
-                                {showCurrentPassword ? 'visibility_off' : 'visibility'}
-                              </span>
-                            </button>
+                      {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? (
+                        /* --- CREATE PASSWORD (Google Account without password) --- */
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                            <div>
+                              <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
+                                <span className="material-symbols-outlined text-primary text-lg">key</span> Create Password
+                              </h4>
+                              <p className="text-[11px] text-on-surface-variant mt-0.5">
+                                You registered with Google. Create a password to enable email and password sign-in alongside your Google account.
+                              </p>
+                            </div>
+                            <span className="text-[10px] font-bold text-blue-500 bg-blue-500/10 px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                              <span className="material-symbols-outlined text-[12px]">verified_user</span> Google Account
+                            </span>
                           </div>
-                        </div>
-                        
-                        <div className="space-y-1">
-                          <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
-                          <div className="relative">
-                            <input
-                              type={showNewPassword ? "text" : "password"}
-                              value={newPassword}
-                              onChange={(e) => setNewPassword(e.target.value)}
-                              placeholder="Min 6 characters"
-                              className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowNewPassword(!showNewPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
-                            >
-                              <span className="material-symbols-outlined text-base select-none">
-                                {showNewPassword ? 'visibility_off' : 'visibility'}
-                              </span>
-                            </button>
-                          </div>
-                        </div>
 
-                        <div className="space-y-1">
-                          <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
-                          <div className="relative">
-                            <input
-                              type={showConfirmPassword ? "text" : "password"}
-                              value={confirmPassword}
-                              onChange={(e) => setConfirmPassword(e.target.value)}
-                              placeholder="Re-type new password"
-                              className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                            />
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
+                              <div className="relative">
+                                <input
+                                  type={showNewPassword ? "text" : "password"}
+                                  value={newPassword}
+                                  onChange={(e) => setNewPassword(e.target.value)}
+                                  placeholder="Min 6 characters"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowNewPassword(!showNewPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                                >
+                                  <span className="material-symbols-outlined text-base select-none">
+                                    {showNewPassword ? 'visibility_off' : 'visibility'}
+                                  </span>
+                                </button>
+                              </div>
+                              {newPassword && newPassword.length < 6 && (
+                                <p className="text-red-500 text-[10px] font-bold pl-1">Password must be at least 6 characters.</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm New Password</label>
+                              <div className="relative">
+                                <input
+                                  type={showConfirmPassword ? "text" : "password"}
+                                  value={confirmPassword}
+                                  onChange={(e) => setConfirmPassword(e.target.value)}
+                                  placeholder="Re-type new password"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                                >
+                                  <span className="material-symbols-outlined text-base select-none">
+                                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                                  </span>
+                                </button>
+                              </div>
+                              {confirmPassword && newPassword !== confirmPassword && (
+                                <p className="text-red-500 text-[10px] font-bold pl-1">Passwords do not match.</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end items-center gap-2 pt-2">
+                            {(newPassword || confirmPassword) && (
+                              <button
+                                type="button"
+                                onClick={() => { setNewPassword(''); setConfirmPassword(''); }}
+                                className="px-3 min-h-[40px] text-on-surface-variant hover:text-on-background rounded-lg font-headline-md text-xs font-semibold transition-all"
+                              >
+                                Cancel
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                              disabled={isPasswordSubmitting || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
+                              onClick={() => autoSavePassword('', newPassword, confirmPassword)}
+                              className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
                             >
-                              <span className="material-symbols-outlined text-base select-none">
-                                {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                              </span>
+                              <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'key'}</span>
+                              <span>{isPasswordSubmitting ? 'Saving...' : 'Save Password'}</span>
                             </button>
                           </div>
                         </div>
-                      </div>
+                      ) : (
+                        /* --- CHANGE PASSWORD (Account with existing password) --- */
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                            <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
+                              <span className="material-symbols-outlined text-primary text-lg">lock</span> Change Password
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={handleForgotPassword}
+                              className="font-label-caps text-[10px] text-primary hover:text-primary uppercase transition-colors font-bold flex items-center gap-1"
+                            >
+                              <span className="material-symbols-outlined text-[14px]">help_outline</span> Forget Password?
+                            </button>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-1">
+                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Current Password</label>
+                              <div className="relative">
+                                <input
+                                  type={showCurrentPassword ? "text" : "password"}
+                                  value={currentPassword}
+                                  onChange={(e) => setCurrentPassword(e.target.value)}
+                                  placeholder="Enter current password"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                                >
+                                  <span className="material-symbols-outlined text-base select-none">
+                                    {showCurrentPassword ? 'visibility_off' : 'visibility'}
+                                  </span>
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <div className="space-y-1">
+                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
+                              <div className="relative">
+                                <input
+                                  type={showNewPassword ? "text" : "password"}
+                                  value={newPassword}
+                                  onChange={(e) => setNewPassword(e.target.value)}
+                                  placeholder="Min 6 characters"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowNewPassword(!showNewPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                                >
+                                  <span className="material-symbols-outlined text-base select-none">
+                                    {showNewPassword ? 'visibility_off' : 'visibility'}
+                                  </span>
+                                </button>
+                              </div>
+                              {newPassword && newPassword.length < 6 && (
+                                <p className="text-red-500 text-[10px] font-bold pl-1">Password must be at least 6 characters.</p>
+                              )}
+                            </div>
 
-                      <div className="flex justify-end pt-2">
-                        <button
-                          type="button"
-                          onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
-                          className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                        >
-                          <span className="material-symbols-outlined text-sm">lock_reset</span> Change Password
-                        </button>
-                      </div>
+                            <div className="space-y-1">
+                              <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
+                              <div className="relative">
+                                <input
+                                  type={showConfirmPassword ? "text" : "password"}
+                                  value={confirmPassword}
+                                  onChange={(e) => setConfirmPassword(e.target.value)}
+                                  placeholder="Re-type new password"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-10 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors focus:outline-none"
+                                >
+                                  <span className="material-symbols-outlined text-base select-none">
+                                    {showConfirmPassword ? 'visibility_off' : 'visibility'}
+                                  </span>
+                                </button>
+                              </div>
+                              {confirmPassword && newPassword !== confirmPassword && (
+                                <p className="text-red-500 text-[10px] font-bold pl-1">Passwords do not match.</p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end pt-2">
+                            <button
+                              type="button"
+                              disabled={isPasswordSubmitting || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
+                              onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
+                              className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                            >
+                              <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'lock_reset'}</span>
+                              <span>{isPasswordSubmitting ? 'Updating...' : 'Change Password'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Section 4: Contact Number */}

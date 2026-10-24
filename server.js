@@ -202,6 +202,7 @@ function publicUserRow(row) {
   delete user.admin_totp_secret;
   delete user.admin_totp_activated;
   delete user.kycDoc;
+  user.password_set = row.password_set === false ? false : (row.password_set === true ? true : !row.google_id);
   user.display_name = formatUserDisplayName(user);
   user.avatar = sanitizeImageUrlForDb(user.avatar);
   user.banner = sanitizeImageUrlForDb(user.banner);
@@ -3098,67 +3099,122 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // 3a-3. POST /api/auth/change-password Service
-  if (req.url === '/api/auth/change-password' && req.method === 'POST') {
+  // 3a-3. POST /api/auth/change-password & POST /api/auth/create-password Services
+  if ((req.url === '/api/auth/change-password' || req.url === '/api/auth/create-password') && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const { email, currentPassword, newPassword } = JSON.parse(body);
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required to update password.' }));
+          return;
+        }
 
-        // Fetch user from DB
-        const userRes = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        let parsedBody = {};
+        try {
+          parsedBody = JSON.parse(body || '{}');
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Invalid request JSON.' }));
+          return;
+        }
+
+        const { email, currentPassword, newPassword, confirmPassword } = parsedBody;
+
+        // Fetch user from DB strictly by authenticated session ID
+        const userRes = await pool.query('SELECT * FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
         if (userRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'User email not found.' }));
+          res.end(JSON.stringify({ success: false, error: 'User account not found.' }));
           return;
         }
 
         const dbUser = userRes.rows[0];
 
-        // Verify current password against local database first
-        let isPasswordCorrect = false;
-        if (dbUser.password && verifyPassword(currentPassword, dbUser.password)) {
-          isPasswordCorrect = true;
-        } else {
-          // Fallback: Verify current password via Supabase Auth
-          try {
-            const { error: signInError } = await supabase.auth.signInWithPassword({ email, password: currentPassword });
-            if (!signInError) {
-              isPasswordCorrect = true;
-            }
-          } catch (signInErr) {
-            // ignore
-          }
-        }
-
-        if (!isPasswordCorrect) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Incorrect current password.' }));
+        // Security check: if email is supplied, it must match authenticated account
+        if (email && email.toLowerCase() !== dbUser.email.toLowerCase()) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Cannot modify password credentials for another account.' }));
           return;
         }
 
+        // Validate new password format and length
+        if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Password must be at least 6 characters long.' }));
+          return;
+        }
+
+        if (confirmPassword !== undefined && newPassword !== confirmPassword) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'New passwords do not match.' }));
+          return;
+        }
+
+        // Determine whether user already has a valid password credential configured
+        const hasExistingPassword = dbUser.password_set === true || (dbUser.password_set !== false && !dbUser.google_id);
+
+        if (hasExistingPassword) {
+          // Existing password credential: current password verification is mandatory
+          if (!currentPassword || typeof currentPassword !== 'string') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Current password is required to change password.' }));
+            return;
+          }
+
+          let isPasswordCorrect = false;
+          if (dbUser.password && verifyPassword(currentPassword, dbUser.password)) {
+            isPasswordCorrect = true;
+          } else {
+            // Fallback: Verify current password via Supabase Auth
+            try {
+              const { error: signInError } = await supabase.auth.signInWithPassword({
+                email: dbUser.email,
+                password: currentPassword
+              });
+              if (!signInError) {
+                isPasswordCorrect = true;
+              }
+            } catch (signInErr) {
+              // ignore
+            }
+          }
+
+          if (!isPasswordCorrect) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Incorrect current password.' }));
+            return;
+          }
+        }
+
         const hashedNewPassword = hashPassword(newPassword);
-        // Update user's password in database
+
+        // Update password and record password_set = true
         const dbRes = await pool.query(
-          'UPDATE users SET password = $1 WHERE email = $2 RETURNING *',
-          [hashedNewPassword, email]
+          'UPDATE users SET password = $1, password_set = true WHERE id = $2 RETURNING *',
+          [hashedNewPassword, dbUser.id]
         );
 
         const updatedUser = dbRes.rows[0];
 
-        // Try to update in Supabase Auth if user has UUID
+        // Sync with Supabase Auth user if standard UUID present
         if (updatedUser.uid && !updatedUser.uid.startsWith('USR-')) {
           try {
             if (supabaseAdmin) await supabaseAdmin.auth.admin.updateUserById(updatedUser.uid, { password: newPassword });
           } catch (supErr) {
-            console.warn('⚠️ [CHANGE PASSWORD] Could not update Supabase Auth user password:', supErr.message);
+            console.warn('⚠️ [PASSWORD UPDATE] Could not update Supabase Auth user password:', supErr.message);
           }
         }
 
-        console.log(`🔑 [MATCH DISTRICT AUTH] Password changed successfully for user: ${email}`);
+        console.log(`🔑 [MATCH DISTRICT AUTH] Password ${hasExistingPassword ? 'changed' : 'created'} successfully for user: ${dbUser.email}`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Password updated successfully.' }));
+        res.end(JSON.stringify({
+          success: true,
+          message: hasExistingPassword ? 'Password updated successfully.' : 'Password created successfully.',
+          user: publicUserRow(updatedUser)
+        }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -3252,7 +3308,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const hashedPassword = hashPassword(password);
         // Update password in database
         const dbRes = await pool.query(
-          'UPDATE users SET password = $1 WHERE email = $2 RETURNING *',
+          'UPDATE users SET password = $1, password_set = true WHERE email = $2 RETURNING *',
           [hashedPassword, email]
         );
 
