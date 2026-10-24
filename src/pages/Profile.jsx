@@ -312,6 +312,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [currentUserFromContext, setCurrentUserFromContext] = useCurrentUser()
   const { signOut } = useUser()
 
+  // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
+  const currentUser = currentUserFromContext
+  const setCurrentUser = setCurrentUserFromContext
+  // viewedUser is the profile being displayed (may be another user or self)
+  const viewedUser = selectedUserProfile || currentUserFromContext
+
   // Guard ref: prevents the data-fetch useEffect from re-running when it updates
   // currentUserFromContext internally (which would cause presetsLoading to flip
   // back to true and create the Teams & Squads empty-state flicker).
@@ -1198,12 +1204,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   })
 
   const [orgEditForm, setOrgEditForm] = useState({ ...orgData })
-
-  // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
-  const currentUser = currentUserFromContext
-  const setCurrentUser = setCurrentUserFromContext
-  // viewedUser is the profile being displayed (may be another user or self)
-  const viewedUser = selectedUserProfile || currentUserFromContext
 
   const ownDistrictId = currentUser?.district_id || playerData.district_id || '—';
   const viewedDistrictId = (!isOwnProfile && viewedUser?.district_id) || ownDistrictId;
