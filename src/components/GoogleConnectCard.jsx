@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { formatDateIST12h } from '../utils/timeFormat.js'
 
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client'
 
-export default function GoogleConnectCard({ currentUser, onUserUpdated, triggerToast }) {
+export default function GoogleConnectCard({ currentUser, providerIdentity, onUserUpdated, triggerToast }) {
   const buttonRef = useRef(null)
   const callbackRef = useRef(null)
   const linkInFlightRef = useRef(false)
@@ -44,7 +45,7 @@ export default function GoogleConnectCard({ currentUser, onUserUpdated, triggerT
   }, [handleCredential])
 
   const handleUnlink = async () => {
-    if (!unlinkPassword || isUnlinking) return
+    if ((currentUser?.password_set !== false && !unlinkPassword) || isUnlinking) return
     setIsUnlinking(true)
     try {
       const res = await fetch('/api/auth/google/unlink', {
@@ -132,6 +133,8 @@ export default function GoogleConnectCard({ currentUser, onUserUpdated, triggerT
               ? 'A Google account is linked to this Match District account.'
               : 'Link Google after signing in to this Match District account.'}
           </p>
+          {providerIdentity?.provider_email && <p className="mt-1 text-xs text-on-surface-variant">Linked Google email: {providerIdentity.provider_email}</p>}
+          {providerIdentity?.linked_at && <p className="mt-1 text-[11px] text-on-surface-variant">Connected on {formatDateIST12h(providerIdentity.linked_at)} (IST)</p>}
         </div>
         {currentUser?.google_id ? (
           <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-500">Linked</span>
@@ -139,21 +142,20 @@ export default function GoogleConnectCard({ currentUser, onUserUpdated, triggerT
       </div>
       {currentUser?.google_id && (
         <div className="space-y-2">
-          {currentUser.password_set === false ? (
-            <p className="text-xs text-on-surface-variant">Create an email and password sign-in in Profile settings before unlinking Google.</p>
-          ) : isUnlinkMode ? (
+          {isUnlinkMode ? (
             <div className="space-y-2">
-              <input
+              {currentUser.password_set !== false && <input
                 type="password"
                 autoComplete="current-password"
                 value={unlinkPassword}
                 onChange={(event) => setUnlinkPassword(event.target.value)}
                 placeholder="Current password to confirm"
                 className="w-full rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 text-sm text-on-background outline-none focus:border-primary"
-              />
+              />}
+              {currentUser.password_set === false && <p className="text-xs text-on-surface-variant">Confirm within 10 minutes of signing in. Another login method must remain connected.</p>}
               <div className="flex gap-2">
                 <button type="button" onClick={() => { setIsUnlinkMode(false); setUnlinkPassword('') }} className="rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold text-on-background">Cancel</button>
-                <button type="button" disabled={!unlinkPassword || isUnlinking} onClick={handleUnlink} className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Confirm unlink</button>
+                <button type="button" disabled={(currentUser.password_set !== false && !unlinkPassword) || isUnlinking} onClick={handleUnlink} className="rounded-lg bg-rose-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Confirm unlink</button>
               </div>
             </div>
           ) : (

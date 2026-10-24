@@ -69,7 +69,6 @@ import {
 } from './server/tournamentPromotion.js';
 import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
-import { validateUsername, sanitizeToUsernameBase } from './server/usernameValidator.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -204,6 +203,10 @@ function publicUserRow(row) {
   delete user.admin_totp_secret;
   delete user.admin_totp_activated;
   delete user.kycDoc;
+  delete user.username;
+  delete user.username_last_changed;
+  delete user.google_id;
+  delete user.discord_id;
   user.password_set = row.password_set === false ? false : (row.password_set === true ? true : !row.google_id);
   user.display_name = formatUserDisplayName(user);
   user.avatar = sanitizeImageUrlForDb(user.avatar);
@@ -227,41 +230,19 @@ function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
   return defaultPath;
 }
 
-/**
- * Lazily assigns a unique valid username to an existing user if missing.
- * Does not overwrite existing usernames; generates from name/email and checks uniqueness.
- */
-async function ensureUserUsername(clientOrPool, user) {
-  if (!user || user.username) return user;
-  const baseRaw = user.name || user.gamerTag || (user.email ? user.email.split('@')[0] : 'player');
-  const base = sanitizeToUsernameBase(baseRaw);
-
-  let assigned = null;
-  let attempts = 0;
-  while (attempts < 5) {
-    const suffix = attempts === 0 ? Math.floor(1000 + Math.random() * 9000).toString() : Math.floor(10000 + Math.random() * 90000).toString();
-    const candidate = `${base.slice(0, 32 - suffix.length - 1)}_${suffix}`;
-    const checkRes = await clientOrPool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [candidate]);
-    if (checkRes.rows.length === 0) {
-      assigned = candidate;
-      break;
-    }
-    attempts++;
-  }
-
-  if (!assigned) {
-    assigned = `player_${crypto.randomBytes(3).toString('hex')}`.slice(0, 32);
-  }
-
-  try {
-    const userId = user.id || user.uid;
-    await clientOrPool.query('UPDATE users SET username = $1 WHERE id = $2 OR uid = $2', [assigned, userId]);
-    user.username = assigned;
-    await clientOrPool.query('UPDATE profiles SET username = $1 WHERE id = $2 OR uid = $2', [assigned, userId]).catch(() => {});
-  } catch (err) {
-    console.warn('⚠️ [USERNAME] Could not lazily assign username:', err.message);
-  }
-  return user;
+async function storeProviderIdentity(db, { userId, provider, providerUserId, providerEmail = null, emailVerified = null, displayName = null, avatarUrl = null, lastLogin = false }) {
+  await db.query(
+    `INSERT INTO auth_identities (id, user_id, provider, provider_user_id, provider_email, email_verified, display_name, avatar_url, linked_at, last_login_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), CASE WHEN $9 THEN NOW() ELSE NULL END)
+     ON CONFLICT (provider, provider_user_id) DO UPDATE SET
+       provider_email = COALESCE(EXCLUDED.provider_email, auth_identities.provider_email),
+       email_verified = COALESCE(EXCLUDED.email_verified, auth_identities.email_verified),
+       display_name = COALESCE(EXCLUDED.display_name, auth_identities.display_name),
+       avatar_url = COALESCE(EXCLUDED.avatar_url, auth_identities.avatar_url),
+       last_login_at = CASE WHEN $9 THEN NOW() ELSE auth_identities.last_login_at END
+     WHERE auth_identities.user_id = EXCLUDED.user_id`,
+    ['AID-' + crypto.randomBytes(16).toString('hex'), userId, provider, String(providerUserId), providerEmail, emailVerified, displayName, avatarUrl, lastLogin]
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -433,6 +414,59 @@ function decryptSessionData(text) {
   return decrypted.toString();
 }
 
+function encryptAuthPayload(text) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  return `${iv.toString('hex')}:${cipher.getAuthTag().toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+function decryptAuthPayload(value) {
+  const [ivHex, tagHex, encryptedHex] = String(value || '').split(':');
+  if (!ivHex || !tagHex || !encryptedHex) throw new Error('Invalid auth payload.');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, Buffer.from(ivHex, 'hex'));
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return Buffer.concat([decipher.update(Buffer.from(encryptedHex, 'hex')), decipher.final()]).toString('utf8');
+}
+
+function readCookie(req, name) {
+  const match = (req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
+function pendingProviderCookie(req, value, maxAge = 600) {
+  const secure = isHttpsRequest(req) ? '; Secure' : '';
+  return `md_pending_provider=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+function getPendingProvider(req) {
+  const value = readCookie(req, 'md_pending_provider');
+  if (!value) return null;
+  try {
+    const payload = JSON.parse(decryptAuthPayload(value));
+    return payload.exp > Date.now() ? payload : null;
+  } catch { return null; }
+}
+
+function makePendingProviderCookie(req, { provider, providerUserId, providerEmail, displayName, avatarUrl, returnTo = '/' }) {
+  return pendingProviderCookie(req, encryptAuthPayload(JSON.stringify({
+    provider, providerUserId: String(providerUserId), providerEmail, emailVerified: true,
+    displayName: displayName || null, avatarUrl: avatarUrl || null,
+    returnTo: getSafeRelativeRedirect(returnTo, '/'), exp: Date.now() + 10 * 60 * 1000
+  })));
+}
+
+async function findPendingLinkAccount(db, providerEmail) {
+  const result = await db.query(
+    `SELECT DISTINCT u.* FROM users u
+     LEFT JOIN auth_identities i ON i.user_id = u.id AND i.email_verified = true
+     WHERE lower(u.email) = $1 OR (i.provider_email IS NOT NULL AND lower(i.provider_email) = $1)
+     LIMIT 2`, [providerEmail]
+  );
+  return result.rows;
+}
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -511,9 +545,7 @@ const pool = createDatabasePool();
 
 async function ensureSupabaseProfile(client, user) {
   if (!user || !(user.uid || user.id) || !user.email) return;
-  const canonicalU = user.username || (typeof user.gamerTag === 'string' ? user.gamerTag.replace(/^@+/, '') : null);
   const profileValues = [user.uid || user.id, user.uid || null, user.name || null, user.email, user.gamerTag || user['gamerTag'] || null,
-    canonicalU,
     user.role || 'gamer', user.roles || ['user'], user.tier || 'Amateur', user.avatar || null, user.banner || null,
     user.phone || null, user.status || 'Active', user.riotId || user['riotId'] || null, user.bgmiId || user['bgmiId'] || null,
     user.steamId || user['steamId'] || null, user.discordTag || user['discordTag'] || null,
@@ -525,16 +557,15 @@ async function ensureSupabaseProfile(client, user) {
   // incoming identity over another profile that already owns this email.
   await client.query(
     `UPDATE profiles
-     SET username = COALESCE(profiles.username, $6),
-         "gamerTag" = COALESCE(profiles."gamerTag", $5)
+     SET "gamerTag" = COALESCE(profiles."gamerTag", $5)
      WHERE id = $1 AND email = $4`,
-    profileValues.slice(0, 6)
+    profileValues.slice(0, 5)
   );
 
   const insertResult = await client.query(
-    `INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
+    `INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
                           "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
      WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE email = $4 AND id <> $1)
      ON CONFLICT DO NOTHING
      RETURNING id`,
@@ -1477,7 +1508,7 @@ const server = http.createServer(async (req, res) => {
   const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
   const effectiveHost = ((trustProxy && req.headers['x-forwarded-host']) ? req.headers['x-forwarded-host'].split(',')[0] : (req.headers.host || '')).trim().toLowerCase();
 
-  const normalizedAllowedOrigins = new Set(['https://matchdistrict.com', 'https://www.matchdistrict.com']);
+  const normalizedAllowedOrigins = new Set(['https://matchdistrict.in', 'https://www.matchdistrict.in']);
   if (process.env.ALLOWED_ORIGINS) {
     process.env.ALLOWED_ORIGINS.split(',').forEach(entry => {
       const clean = entry.trim().toLowerCase().replace(/\/+$/, '');
@@ -1961,18 +1992,13 @@ const server = http.createServer(async (req, res) => {
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        let { email: emailOrUsername, password } = JSON.parse(body);
-        let email = emailOrUsername;
+        let { email: emailOrDistrictId, password } = JSON.parse(body);
+        let email = emailOrDistrictId;
 
-        // Resolve username to email if it does not contain '@'
-        if (emailOrUsername && !emailOrUsername.includes('@')) {
-          const userLookup = await pool.query(
-            'SELECT email FROM users WHERE LOWER(username) = LOWER($1) OR LOWER("gamerTag") = LOWER($1) OR LOWER("gamerTag") = LOWER($2) OR LOWER(name) = LOWER($1)',
-            [emailOrUsername.trim(), '@' + emailOrUsername.trim()]
-          );
-          if (userLookup.rows.length > 0) {
-            email = userLookup.rows[0].email;
-          }
+        // Login identifiers are the primary email or the public District ID.
+        if (emailOrDistrictId && !emailOrDistrictId.includes('@')) {
+          const userLookup = await pool.query('SELECT email FROM users WHERE district_id = $1', [emailOrDistrictId.trim()]);
+          if (userLookup.rows.length > 0) email = userLookup.rows[0].email;
         }
 
         // Look up the user by email in the Supabase Database (users table)
@@ -1981,9 +2007,6 @@ const server = http.createServer(async (req, res) => {
 
         // If found, verify password from the database
         if (foundUser && foundUser.password && verifyPassword(password, foundUser.password)) {
-          // Lazily assign username if missing
-          foundUser = await ensureUserUsername(pool, foundUser);
-
           // Establish Supabase Auth session if they have a real auth UUID
           if (foundUser.uid && !foundUser.uid.startsWith('USR-') && !foundUser.uid.startsWith('ADM-')) {
             try {
@@ -2066,7 +2089,6 @@ const server = http.createServer(async (req, res) => {
         }
 
         await ensureSupabaseProfile(pool, foundUser);
-        foundUser = await ensureUserUsername(pool, foundUser);
 
         const token = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
@@ -2207,25 +2229,33 @@ const server = http.createServer(async (req, res) => {
         // Only an existing Google subject is an authentication link. Email
         // equality is not proof that this Google identity owns a local account.
         let targetUser = null;
-        const byGoogleIdRes = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleSub]);
+        const byGoogleIdRes = await pool.query(
+          `SELECT u.* FROM auth_identities i JOIN users u ON u.id = i.user_id WHERE i.provider = 'google' AND i.provider_user_id = $1
+           UNION ALL SELECT u.* FROM users u WHERE u.google_id = $1 AND NOT EXISTS (SELECT 1 FROM auth_identities i WHERE i.provider = 'google' AND i.provider_user_id = $1)
+           LIMIT 1`, [googleSub]
+        );
         if (byGoogleIdRes.rows.length > 0) {
           targetUser = byGoogleIdRes.rows[0];
         } else {
           // Both account tables have an independent unique email constraint.
           // A legacy/orphan profile must block registration too, or the new
           // users row could be committed without a matching profile.
-          const byEmailRes = await pool.query(
-            `SELECT id FROM users WHERE LOWER(email) = $1
-             UNION ALL
-             SELECT id FROM profiles WHERE LOWER(email) = $1
-             LIMIT 1`,
-            [googleEmail]
-          );
-          if (byEmailRes.rows.length > 0) {
+          const byEmailRes = await findPendingLinkAccount(pool, googleEmail);
+          const legacyProfileConflict = await pool.query('SELECT id FROM profiles WHERE LOWER(email) = $1 LIMIT 1', [googleEmail]);
+          if (byEmailRes.length > 0 || legacyProfileConflict.rows.length > 0) {
+            if (byEmailRes.length === 1) {
+              const pendingCookie = makePendingProviderCookie(req, {
+                provider: 'google', providerUserId: googleSub, providerEmail: googleEmail,
+                displayName: googlePayload.name, avatarUrl: sanitizeImageUrlForDb(googlePayload.picture)
+              });
+              res.writeHead(409, { 'Content-Type': 'application/json', 'Set-Cookie': pendingCookie });
+              res.end(JSON.stringify({ success: false, error: 'PENDING_LINK_REQUIRED', redirect: '/auth/link', message: 'Confirm account ownership to connect Google.' }));
+              return;
+            }
             res.writeHead(409, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               success: false,
-              error: 'ACCOUNT_LINK_REQUIRED',
+              error: byEmailRes.length > 1 ? 'ACCOUNT_CONFLICT' : 'ACCOUNT_LINK_REQUIRED',
               message: 'A Match District account already uses this email. Sign in to that account first, then link Google from your profile.'
             }));
             return;
@@ -2234,8 +2264,13 @@ const server = http.createServer(async (req, res) => {
 
         // Check Admin MFA / Security
         if (targetUser) {
-          targetUser = await ensureUserUsername(pool, targetUser);
-          const isRootAdmin = targetUser.email.toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase();
+          const status = String(targetUser.status || 'active').toLowerCase();
+          if (['banned', 'suspended', 'disabled'].includes(status)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'ACCOUNT_UNAVAILABLE', message: 'This account is unavailable. Contact support.' }));
+            return;
+          }
+          const isRootAdmin = targetUser.email.toLowerCase() === (ROOT_ADMIN_EMAIL || '').toLowerCase();
           const isAdmin = isRootAdmin || hasRole(targetUser, ROLES.ADMIN);
           if (isAdmin && (targetUser.admin_totp_activated && targetUser.admin_totp_secret)) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -2250,26 +2285,7 @@ const server = http.createServer(async (req, res) => {
           // New User Registration with least-privileged participant defaults
           const userUUID = 'USR-' + crypto.randomBytes(12).toString('hex');
           const cleanName = (googlePayload.name || googleEmail.split('@')[0]).trim().slice(0, 50);
-          const baseTag = (cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
-          const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
-
-          // Generate unique username from Google name or email local part
-          const usernameBase = sanitizeToUsernameBase(googlePayload.name || googleEmail.split('@')[0]);
-          let assignedUsername = null;
-          let uAttempts = 0;
-          while (uAttempts < 5) {
-            const suffix = Math.floor(1000 + Math.random() * 9000).toString();
-            const candidate = `${usernameBase.slice(0, 32 - suffix.length - 1)}_${suffix}`;
-            const checkU = await pool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [candidate]);
-            if (checkU.rows.length === 0) {
-              assignedUsername = candidate;
-              break;
-            }
-            uAttempts++;
-          }
-          if (!assignedUsername) {
-            assignedUsername = `player_${crypto.randomBytes(3).toString('hex')}`.slice(0, 32);
-          }
+          const gamerTag = cleanName;
 
           const avatarUrl = sanitizeImageUrlForDb(googlePayload.picture) || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
 
@@ -2298,11 +2314,11 @@ const server = http.createServer(async (req, res) => {
             for (let attempt = 0; attempt < 8 && !targetUser; attempt += 1) {
               const districtId = generateDistrictId();
               const insertRes = await registrationClient.query(
-                `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set, district_id)
-                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, $14)
+                `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set, district_id)
+                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, false, $13)
                  ON CONFLICT DO NOTHING
                  RETURNING *`,
-                [userUUID, userUUID, cleanName, googleEmail, gamerTag, assignedUsername, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub, districtId]
+                [userUUID, userUUID, cleanName, googleEmail, gamerTag, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub, districtId]
               );
               targetUser = insertRes.rows[0] || null;
               if (targetUser) {
@@ -2347,6 +2363,12 @@ const server = http.createServer(async (req, res) => {
                 throw new Error('Google registration profile was not created for the new account.');
               }
             }
+            await storeProviderIdentity(registrationClient, {
+              userId: targetUser.id, provider: 'google', providerUserId: googleSub,
+              providerEmail: googleEmail, emailVerified: true,
+              displayName: (googlePayload.name || '').slice(0, 128),
+              avatarUrl: sanitizeImageUrlForDb(googlePayload.picture), lastLogin: true
+            });
             await registrationClient.query('COMMIT');
           } catch (registrationError) {
             await registrationClient.query('ROLLBACK').catch(() => {});
@@ -2355,6 +2377,23 @@ const server = http.createServer(async (req, res) => {
             registrationClient.release();
           }
         }
+
+        // Legacy mirror and normalized identity are kept in the same transaction.
+        const identityClient = await pool.connect();
+        try {
+          await identityClient.query('BEGIN');
+          await identityClient.query('UPDATE users SET google_id = COALESCE(google_id, $1) WHERE id = $2', [googleSub, targetUser.id]);
+          await storeProviderIdentity(identityClient, {
+            userId: targetUser.id, provider: 'google', providerUserId: googleSub,
+            providerEmail: googleEmail, emailVerified: true,
+            displayName: (googlePayload.name || '').slice(0, 128),
+            avatarUrl: sanitizeImageUrlForDb(googlePayload.picture), lastLogin: true
+          });
+          await identityClient.query('COMMIT');
+        } catch (identityError) {
+          await identityClient.query('ROLLBACK').catch(() => {});
+          throw identityError;
+        } finally { identityClient.release(); }
 
         // Generate native Match District JWT & HttpOnly Session Cookie
         const token = signJwt({
@@ -2371,7 +2410,7 @@ const server = http.createServer(async (req, res) => {
         const cookieHeader = buildSessionCookie(token, req);
 
         logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'google_signin', req).catch(() => {});
-        console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Google Identity Services.\n`);
+        console.log('[AUTH] Provider login succeeded: google.');
 
         res.writeHead(200, {
           'Content-Type': 'application/json',
@@ -2389,6 +2428,187 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Authentication processing failed.' }));
       }
+    });
+    return;
+  }
+
+  if (urlPath === '/api/auth/link/pending' && req.method === 'GET') {
+    const pending = getPendingProvider(req);
+    if (!pending) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'PENDING_LINK_EXPIRED' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, provider: pending.provider, maskedProviderEmail: maskUserEmail(pending.providerEmail) }));
+    return;
+  }
+
+  if (urlPath === '/api/auth/link/send-code' && req.method === 'POST') {
+    const pending = getPendingProvider(req);
+    if (!pending) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'PENDING_LINK_EXPIRED', message: 'Restart provider sign-in and try again.' }));
+      return;
+    }
+    const ip = getClientIp(req);
+    if (!checkRateLimit(`auth_link_ip:${ip}`, 4, 10 * 60 * 1000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Please wait before requesting another code.' }));
+      return;
+    }
+    try {
+      const accounts = await findPendingLinkAccount(pool, pending.providerEmail);
+      if (accounts.length !== 1) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'We could not safely identify one account for this provider.' }));
+        return;
+      }
+      const account = accounts[0];
+      if (!checkRateLimit(`auth_link_account:${account.id}`, 3, 10 * 60 * 1000)) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Please wait before requesting another code.' }));
+        return;
+      }
+      const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+      await pool.query(
+        `INSERT INTO auth_link_challenges (user_id, code_hash, attempts, expires_at, created_at)
+         VALUES ($1, $2, 0, NOW() + INTERVAL '10 minutes', NOW())
+         ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash, attempts = 0,
+           expires_at = EXCLUDED.expires_at, created_at = NOW()`,
+        [account.id, crypto.createHash('sha256').update(code).digest('hex')]
+      );
+      const emailResult = await sendEmail({
+        to: account.email, subject: 'Confirm your Match District account',
+        html: `<p>Your Match District account confirmation code is <strong>${code}</strong>.</p><p>It expires in 10 minutes. If you did not request this, ignore this message.</p>`
+      });
+      if (!emailResult.success) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'EMAIL_UNAVAILABLE', message: 'We could not send a code right now. Try password confirmation or try again later.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, maskedEmail: maskUserEmail(account.email), message: 'A confirmation code was sent to the account email.' }));
+    } catch (error) {
+      console.error('[AUTH LINK] Code request failed [code: ' + (error?.code || 'UNKNOWN') + '].');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Could not request a confirmation code.' }));
+    }
+    return;
+  }
+
+  if (urlPath === '/api/auth/link/complete' && req.method === 'POST') {
+    const pending = getPendingProvider(req);
+    if (!pending) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'PENDING_LINK_EXPIRED', message: 'Restart provider sign-in and try again.' }));
+      return;
+    }
+    const ip = getClientIp(req);
+    if (!checkRateLimit(`auth_link_complete_ip:${ip}`, 10, 10 * 60 * 1000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(); });
+    req.on('end', async () => {
+      let db;
+      try {
+        const proof = JSON.parse(body || '{}');
+        const accounts = await findPendingLinkAccount(pool, pending.providerEmail);
+        if (accounts.length !== 1) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'We could not safely identify one account for this provider.' }));
+          return;
+        }
+        db = await pool.connect();
+        await db.query('BEGIN');
+        const locked = await db.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [accounts[0].id]);
+        const account = locked.rows[0];
+        if (!checkRateLimit(`auth_link_complete_account:${account?.id || 'unknown'}`, 10, 10 * 60 * 1000)) {
+          await db.query('ROLLBACK');
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+          return;
+        }
+        if (!account || ['banned', 'suspended', 'disabled'].includes(String(account.status || '').toLowerCase())) {
+          await db.query('ROLLBACK');
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ACCOUNT_UNAVAILABLE', message: 'This account cannot complete provider linking.' }));
+          return;
+        }
+        const adminGuard = account.email?.toLowerCase() === (ROOT_ADMIN_EMAIL || '').toLowerCase() || hasRole(account, ROLES.ADMIN);
+        if (adminGuard && account.admin_totp_activated && account.admin_totp_secret) {
+          await db.query('ROLLBACK');
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ADMIN_MFA_REQUIRED', message: 'Use the administrator login portal to access this account.' }));
+          return;
+        }
+
+        let proofValid = false;
+        if (account.password_set === true && account.password) {
+          proofValid = typeof proof.password === 'string' && verifyPassword(proof.password, account.password);
+        } else if (typeof proof.code === 'string' && /^\d{6}$/.test(proof.code)) {
+          const challenge = await db.query('SELECT * FROM auth_link_challenges WHERE user_id = $1 FOR UPDATE', [account.id]);
+          const stored = challenge.rows[0];
+          const candidateHash = crypto.createHash('sha256').update(proof.code).digest();
+          const storedHash = stored ? Buffer.from(stored.code_hash, 'hex') : Buffer.alloc(0);
+          proofValid = Boolean(stored && new Date(stored.expires_at) > new Date() && Number(stored.attempts) < 5 && storedHash.length === candidateHash.length && crypto.timingSafeEqual(storedHash, candidateHash));
+          if (stored && !proofValid) {
+            await db.query('UPDATE auth_link_challenges SET attempts = attempts + 1 WHERE user_id = $1', [account.id]);
+          }
+        }
+        if (!proofValid) {
+          if (!(account.password_set === true && account.password) && typeof proof.code === 'string') await db.query('COMMIT');
+          else await db.query('ROLLBACK');
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'OWNERSHIP_PROOF_FAILED', message: 'Confirmation failed. Check your details and try again.' }));
+          return;
+        }
+
+        const existingIdentity = await db.query('SELECT user_id FROM auth_identities WHERE provider = $1 AND provider_user_id = $2 FOR UPDATE', [pending.provider, pending.providerUserId]);
+        if (existingIdentity.rows.length && existingIdentity.rows[0].user_id !== account.id) {
+          await db.query('ROLLBACK');
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PROVIDER_ALREADY_LINKED', message: 'This provider is already linked to another account. Sign in there and disconnect it first.' }));
+          return;
+        }
+        const providerOnAccount = await db.query('SELECT provider_user_id FROM auth_identities WHERE user_id = $1 AND provider = $2 FOR UPDATE', [account.id, pending.provider]);
+        if (providerOnAccount.rows.length && providerOnAccount.rows[0].provider_user_id !== pending.providerUserId) {
+          await db.query('ROLLBACK');
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PROVIDER_REPLACEMENT_REQUIRED', message: 'A different provider account is already linked. Use Reconnect from profile settings.' }));
+          return;
+        }
+        if (pending.provider === 'google') {
+          await db.query('UPDATE users SET google_id = COALESCE(google_id, $1) WHERE id = $2', [pending.providerUserId, account.id]);
+        } else {
+          await db.query('UPDATE users SET discord_id = COALESCE(discord_id, $1) WHERE id = $2', [pending.providerUserId, account.id]);
+          await db.query(
+            `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
+             VALUES ($1, $2, $3, $3, NULL, NOW(), NOW()) ON CONFLICT (user_id) DO NOTHING`,
+            [account.id, pending.providerUserId, pending.displayName || '']
+          );
+        }
+        await storeProviderIdentity(db, {
+          userId: account.id, provider: pending.provider, providerUserId: pending.providerUserId,
+          providerEmail: pending.providerEmail, emailVerified: true, displayName: pending.displayName,
+          avatarUrl: pending.avatarUrl, lastLogin: true
+        });
+        if (!(account.password_set === true && account.password)) await db.query('DELETE FROM auth_link_challenges WHERE user_id = $1', [account.id]);
+        await db.query('COMMIT');
+        const token = signJwt({ email: account.email, role: account.role, roles: account.roles || [account.role], id: account.uid || account.id });
+        const clearPending = pendingProviderCookie(req, '', 0);
+        const clearLoggedOut = 'md_logged_out=; Path=/; SameSite=Lax; Max-Age=0' + (isHttpsRequest(req) ? '; Secure' : '');
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': [clearPending, buildSessionCookie(token, req), clearLoggedOut] });
+        res.end(JSON.stringify({ success: true, provider: pending.provider, redirect: getSafeRelativeRedirect(pending.returnTo, '/'), message: `${pending.provider === 'discord' ? 'Discord' : 'Google'} connected and you are logged in.` }));
+      } catch (error) {
+        await db?.query('ROLLBACK').catch(() => {});
+        console.error('[AUTH LINK] Ownership confirmation failed [code: ' + (error?.code || 'UNKNOWN') + '].');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Could not complete provider linking.' }));
+      } finally { db?.release(); }
     });
     return;
   }
@@ -2475,7 +2695,11 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'A different Google account is already linked.' }));
             return;
           }
-          const owner = await dbClient.query('SELECT id FROM users WHERE google_id = $1 AND id <> $2 LIMIT 1', [googleId, account.id]);
+          const owner = await dbClient.query(
+            `SELECT id FROM users WHERE google_id = $1 AND id <> $2
+             UNION SELECT user_id AS id FROM auth_identities WHERE provider = 'google' AND provider_user_id = $1 AND user_id <> $2 LIMIT 1`,
+            [googleId, account.id]
+          );
           if (owner.rows.length > 0) {
             await dbClient.query('ROLLBACK');
             res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -2483,6 +2707,11 @@ const server = http.createServer(async (req, res) => {
             return;
           }
           await dbClient.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, account.id]);
+          await storeProviderIdentity(dbClient, {
+            userId: account.id, provider: 'google', providerUserId: googleId,
+            providerEmail: (claims.email || '').toLowerCase() || null, emailVerified: true,
+            displayName: claims.name || null, avatarUrl: sanitizeImageUrlForDb(claims.picture)
+          });
           await dbClient.query('COMMIT');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, linked: true, message: 'Google account linked successfully.' }));
@@ -2527,7 +2756,7 @@ const server = http.createServer(async (req, res) => {
         dbClient = await pool.connect();
         await dbClient.query('BEGIN');
         const result = await dbClient.query(
-          'SELECT id, google_id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          'SELECT id, google_id, discord_id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
           [authUser.id || authUser.uid]
         );
         const account = result.rows[0];
@@ -2537,19 +2766,30 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
           return;
         }
-        if (account.password_set !== true || !account.password) {
-          await dbClient.query('ROLLBACK');
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'PASSWORD_REQUIRED', message: 'Create a Match District password before unlinking Google. This confirms your identity and keeps another sign-in method available.' }));
-          return;
-        }
-        if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
+        const hasPassword = account.password_set === true && Boolean(account.password);
+        if (!hasPassword) {
+          const recentLogin = Number.isFinite(Number(authUser.iat)) && Date.now() - Number(authUser.iat) * 1000 <= 10 * 60 * 1000;
+          if (!recentLogin) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'RECENT_LOGIN_REQUIRED', message: 'Sign in again before disconnecting a provider.' }));
+            return;
+          }
+          const otherMethod = await dbClient.query("SELECT 1 FROM auth_identities WHERE user_id = $1 AND provider <> 'google' LIMIT 1", [account.id]);
+          if (!account.discord_id && otherMethod.rows.length === 0) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'LAST_LOGIN_METHOD_REQUIRED', message: 'Add another sign-in method before disconnecting Google.' }));
+            return;
+          }
+        } else if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
           await dbClient.query('ROLLBACK');
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
           return;
         }
         await dbClient.query('UPDATE users SET google_id = NULL WHERE id = $1', [account.id]);
+        await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'google'", [account.id]);
         await dbClient.query('COMMIT');
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, linked: false, message: 'Google account unlinked. Email and password sign-in remains available.' }));
@@ -2686,7 +2926,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       createdAt: Date.now()
     };
 
-    const stateToken = encryptSessionData(JSON.stringify(statePayload));
+    const stateToken = encryptAuthPayload(JSON.stringify(statePayload));
     const isHttps = isHttpsRequest(req);
     const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
 
@@ -2696,7 +2936,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     discordAuthUrl.searchParams.set('client_id', discordClientId);
     discordAuthUrl.searchParams.set('redirect_uri', discordRedirectUri);
     discordAuthUrl.searchParams.set('response_type', 'code');
-    discordAuthUrl.searchParams.set('scope', isLoginFlow ? 'identify email' : 'identify');
+    discordAuthUrl.searchParams.set('scope', 'identify email');
     discordAuthUrl.searchParams.set('state', stateRandom);
     discordAuthUrl.searchParams.set('code_challenge', codeChallenge);
     discordAuthUrl.searchParams.set('code_challenge_method', 'S256');
@@ -2758,7 +2998,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
 
     try {
-      const decrypted = decryptSessionData(stateCookieValue);
+      const decrypted = decryptAuthPayload(stateCookieValue);
       statePayload = JSON.parse(decrypted);
     } catch (decryptErr) {
       console.error(`[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Exception: ${decryptErr.message}`);
@@ -2780,6 +3020,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const queryBuf = Buffer.from(queryState || '');
     if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
       console.error('[DISCORD CONNECT ERROR] Step: state_verify | Code: state_mismatch | Reason: query state does not match cookie state');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
+      res.end();
+      return;
+    }
+
+    if (!['login', 'link'].includes(statePayload.flow)) {
+      console.error('[DISCORD AUTH] Callback rejected because encrypted state has no valid flow intent.');
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
@@ -2943,6 +3190,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const discordUsername = (discordUser.username || '').trim().slice(0, 64).replace(/[<>]/g, '');
       const discordGlobalName = (discordUser.global_name || discordUser.username || '').trim().slice(0, 128).replace(/[<>]/g, '');
       const discordAvatarHash = (discordUser.avatar || '').trim().slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '');
+      const discordEmail = typeof discordUser.email === 'string' ? discordUser.email.trim().toLowerCase() : '';
+      const discordEmailVerified = discordUser.verified === true && Boolean(discordEmail && discordEmail.includes('@'));
+      const discordAvatarUrl = discordAvatarHash ? `https://cdn.discordapp.com/avatars/${discordId}/${discordAvatarHash}.png` : null;
 
       if (!discordId) {
         console.error('[DISCORD CONNECT ERROR] Step: profile_parse | Code: profile_fetch_failed | Reason: missing discord id in @me response');
@@ -2954,10 +3204,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (isLoginFlow) {
         let targetUser = null;
         const connectedUser = await pool.query(
-          `SELECT users.* FROM users
+          `SELECT users.* FROM auth_identities identities JOIN users ON users.id = identities.user_id
+           WHERE identities.provider = 'discord' AND identities.provider_user_id = $1
+           UNION ALL
+           SELECT users.* FROM users
            LEFT JOIN user_discord_connections connections
              ON connections.user_id = users.id AND connections.discord_id = $1
-           WHERE users.discord_id = $1 OR connections.discord_id = $1
+           WHERE (users.discord_id = $1 OR connections.discord_id = $1)
+             AND NOT EXISTS (SELECT 1 FROM auth_identities identities WHERE identities.provider = 'discord' AND identities.provider_user_id = $1)
            LIMIT 2`,
           [discordId]
         );
@@ -2970,30 +3224,33 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         targetUser = connectedUser.rows[0] || null;
 
         if (!targetUser) {
-          const discordEmail = typeof discordUser.email === 'string' ? discordUser.email.trim().toLowerCase() : '';
-          if (!discordEmail || !discordEmail.includes('@') || discordUser.verified !== true) {
+          if (!discordEmailVerified) {
             res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=verified_email_required' });
             res.end();
             return;
           }
 
-          const existingAccount = await pool.query(
-            `SELECT id FROM users WHERE LOWER(email) = $1
-             UNION ALL
-             SELECT id FROM profiles WHERE LOWER(email) = $1
-             LIMIT 1`,
-            [discordEmail]
-          );
-          if (existingAccount.rows.length > 0) {
-            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_link_required' });
+          const existingAccounts = await findPendingLinkAccount(pool, discordEmail);
+          const orphanProfile = await pool.query('SELECT id FROM profiles WHERE LOWER(email) = $1 LIMIT 1', [discordEmail]);
+          if (existingAccounts.length > 0 || orphanProfile.rows.length > 0) {
+            if (existingAccounts.length === 1) {
+              const pendingCookie = makePendingProviderCookie(req, {
+                provider: 'discord', providerUserId: discordId, providerEmail: discordEmail,
+                displayName: discordGlobalName, avatarUrl: discordAvatarUrl,
+                returnTo: statePayload.returnTo
+              });
+              res.writeHead(302, { 'Set-Cookie': [clearStateCookie, pendingCookie], 'Location': '/auth/link' });
+              res.end();
+              return;
+            }
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_conflict' });
             res.end();
             return;
           }
 
           const userId = 'USR-' + crypto.randomBytes(12).toString('hex');
           const cleanName = (discordGlobalName || discordUsername || 'Player').trim().slice(0, 50);
-          const baseTag = (cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
-          const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
+          const gamerTag = cleanName;
           const dbClient = await pool.connect();
           try {
             await dbClient.query('BEGIN');
@@ -3013,6 +3270,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
               [userId, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
             );
+            await storeProviderIdentity(dbClient, {
+              userId, provider: 'discord', providerUserId: discordId, providerEmail: discordEmail,
+              emailVerified: discordEmailVerified, displayName: discordGlobalName, avatarUrl: discordAvatarUrl
+            });
             await dbClient.query('COMMIT');
           } catch (createErr) {
             await dbClient.query('ROLLBACK').catch(() => {});
@@ -3043,8 +3304,47 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             dbClient.release();
           }
         }
-
-        targetUser = await ensureUserUsername(pool, targetUser);
+        const accountStatus = String(targetUser.status || 'active').toLowerCase();
+        if (['banned', 'suspended', 'disabled'].includes(accountStatus)) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_unavailable' });
+          res.end();
+          return;
+        }
+        const isProtectedAdmin = targetUser.email?.toLowerCase() === (ROOT_ADMIN_EMAIL || '').toLowerCase() || hasRole(targetUser, ROLES.ADMIN);
+        if (isProtectedAdmin && targetUser.admin_totp_activated && targetUser.admin_totp_secret) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=admin_mfa_required' });
+          res.end();
+          return;
+        }
+        const loginClient = await pool.connect();
+        try {
+          await loginClient.query('BEGIN');
+          const legacyMapping = await loginClient.query('SELECT discord_id FROM users WHERE id = $1 FOR UPDATE', [targetUser.id]);
+          if (legacyMapping.rows[0]?.discord_id && legacyMapping.rows[0].discord_id !== discordId) {
+            throw Object.assign(new Error('Discord identity mapping conflict.'), { code: 'PROVIDER_MAPPING_CONFLICT' });
+          }
+          const connectionMapping = await loginClient.query('SELECT discord_id FROM user_discord_connections WHERE user_id = $1 FOR UPDATE', [targetUser.id]);
+          if (connectionMapping.rows[0]?.discord_id && connectionMapping.rows[0].discord_id !== discordId) {
+            throw Object.assign(new Error('Discord connection mapping conflict.'), { code: 'PROVIDER_MAPPING_CONFLICT' });
+          }
+          await loginClient.query('UPDATE users SET discord_id = COALESCE(discord_id, $1) WHERE id = $2', [discordId, targetUser.id]);
+          await loginClient.query(
+            `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW(), NOW()) ON CONFLICT (user_id) DO UPDATE SET
+             discord_id = EXCLUDED.discord_id, username = EXCLUDED.username, global_name = EXCLUDED.global_name,
+             avatar_hash = EXCLUDED.avatar_hash, updated_at = NOW()`,
+            [targetUser.id, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
+          );
+          await storeProviderIdentity(loginClient, {
+            userId: targetUser.id, provider: 'discord', providerUserId: discordId,
+            providerEmail: discordEmailVerified ? discordEmail : null, emailVerified: discordEmailVerified,
+            displayName: discordGlobalName, avatarUrl: discordAvatarUrl, lastLogin: true
+          });
+          await loginClient.query('COMMIT');
+        } catch (identityError) {
+          await loginClient.query('ROLLBACK').catch(() => {});
+          throw identityError;
+        } finally { loginClient.release(); }
         const token = signJwt({
           email: targetUser.email,
           role: targetUser.role,
@@ -3053,7 +3353,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         });
         res.writeHead(302, {
           'Set-Cookie': [clearStateCookie, buildSessionCookie(token, req)],
-          'Location': getSafeRelativeRedirect(statePayload.returnTo, '/')
+          'Location': `/auth/success?provider=discord&next=${encodeURIComponent(getSafeRelativeRedirect(statePayload.returnTo, '/'))}`
         });
         res.end();
         return;
@@ -3078,6 +3378,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         `SELECT id FROM users WHERE discord_id = $1 AND id != $2
          UNION
          SELECT user_id AS id FROM user_discord_connections WHERE discord_id = $1 AND user_id != $2
+         UNION
+         SELECT user_id AS id FROM auth_identities WHERE provider = 'discord' AND provider_user_id = $1 AND user_id != $2
          LIMIT 1`,
         [discordId, actualUserId]
       );
@@ -3100,6 +3402,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const dbClient = await pool.connect();
       try {
         await dbClient.query('BEGIN');
+        const currentIdentity = await dbClient.query("SELECT provider_user_id FROM auth_identities WHERE user_id = $1 AND provider = 'discord' FOR UPDATE", [actualUserId]);
+        if (currentIdentity.rows.length && currentIdentity.rows[0].provider_user_id !== discordId) {
+          if (!statePayload.reconnect) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('already_linked') });
+            res.end();
+            return;
+          }
+          await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'discord'", [actualUserId]);
+        }
         await dbClient.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, actualUserId]);
         await dbClient.query(
           `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
@@ -3112,6 +3424,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                          updated_at = NOW()`,
           [actualUserId, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
         );
+        await storeProviderIdentity(dbClient, {
+          userId: actualUserId, provider: 'discord', providerUserId: discordId,
+          providerEmail: discordEmailVerified ? discordEmail : null, emailVerified: discordEmailVerified,
+          displayName: discordGlobalName, avatarUrl: discordAvatarUrl
+        });
         await dbClient.query('COMMIT');
       } catch (txErr) {
         await dbClient.query('ROLLBACK').catch(() => {});
@@ -3124,7 +3441,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         dbClient.release();
       }
 
-      console.log(`\n🛡️ [MATCH DISTRICT CONNECT] User "${actualUserId}" connected Discord (${discordUsername || discordId}).\n`);
+      console.log('[AUTH] Provider link succeeded: discord.');
 
       res.writeHead(302, {
         'Set-Cookie': clearStateCookie,
@@ -3169,7 +3486,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         dbClient = await pool.connect();
         await dbClient.query('BEGIN');
         const accountResult = await dbClient.query(
-          'SELECT id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          'SELECT id, password, password_set, google_id FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
           [authUser.id || authUser.uid]
         );
         const account = accountResult.rows[0];
@@ -3179,13 +3496,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
           return;
         }
-        if (account.password_set !== true || !account.password) {
-          await dbClient.query('ROLLBACK');
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'PASSWORD_REQUIRED', message: 'Create a Match District password before disconnecting Discord. This confirms your identity and keeps another sign-in method available.' }));
-          return;
-        }
-        if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
+        const hasPassword = account.password_set === true && Boolean(account.password);
+        if (!hasPassword) {
+          const recentLogin = Number.isFinite(Number(authUser.iat)) && Date.now() - Number(authUser.iat) * 1000 <= 10 * 60 * 1000;
+          if (!recentLogin) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'RECENT_LOGIN_REQUIRED', message: 'Sign in again before disconnecting a provider.' }));
+            return;
+          }
+          const otherMethod = await dbClient.query("SELECT 1 FROM auth_identities WHERE user_id = $1 AND provider <> 'discord' LIMIT 1", [account.id]);
+          if (!account.google_id && otherMethod.rows.length === 0) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'LAST_LOGIN_METHOD_REQUIRED', message: 'Add another sign-in method before disconnecting Discord.' }));
+            return;
+          }
+        } else if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
           await dbClient.query('ROLLBACK');
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
@@ -3193,6 +3520,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
         await dbClient.query('UPDATE users SET discord_id = NULL WHERE id = $1', [account.id]);
         await dbClient.query('DELETE FROM user_discord_connections WHERE user_id = $1', [account.id]);
+        await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'discord'", [account.id]);
         await dbClient.query('COMMIT');
 
         console.log('[DISCORD AUTH] Discord provider disconnected after password reauthentication.');
@@ -3417,7 +3745,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80',
               defaultStatus, districtId]
           ));
-          newUser = await ensureUserUsername(registrationClient, newUser);
           await ensureSupabaseProfile(registrationClient, newUser);
           const profileCheck = await registrationClient.query(
             'SELECT 1 FROM profiles WHERE id = $1 AND email = $2',
@@ -3818,7 +4145,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
       let user = dbRes.rows[0];
-      user = await ensureUserUsername(pool, user);
       let token = null;
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -4773,58 +5099,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // Username Uniqueness & Format Verification Service
+  // Deprecated username availability endpoint. District ID is the only public handle.
   if ((urlPath === '/api/users/check-username' || req.url.startsWith('/api/users/check-username')) && req.method === 'GET') {
-    const clientIp = getClientIp(req);
-    if (!checkRateLimit('check_username:' + clientIp, 30, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many username checks. Please wait a moment.' }));
-      return;
-    }
-
-    try {
-      const parsedUrl = new URL(req.url, 'http://localhost');
-      const candidate = (parsedUrl.searchParams.get('username') || '').trim();
-
-      if (!candidate) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, valid: false, available: false, error: 'MISSING_PARAM', message: 'Username parameter is required.' }));
-        return;
-      }
-
-      const val = validateUsername(candidate);
-      if (!val.valid) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, valid: false, available: false, error: val.error, message: val.message }));
-        return;
-      }
-
-      const authUser = getAuthUser(req);
-      const excludeId = authUser ? (authUser.id || authUser.uid) : null;
-      let query = 'SELECT id FROM users WHERE LOWER(username) = LOWER($1)';
-      let params = [val.username];
-      if (excludeId) {
-        query += ' AND id != $2 AND uid != $2';
-        params.push(excludeId);
-      }
-      const checkRes = await pool.query(query, params);
-      const isAvailable = checkRes.rows.length === 0;
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: true,
-        valid: true,
-        available: isAvailable,
-        username: val.username,
-        message: isAvailable ? 'Username is available.' : 'This username is already taken.'
-      }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
-    }
+    res.writeHead(410, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'GONE', message: 'Username handles are no longer supported. Use your District ID.' }));
     return;
   }
-
   if ((urlPath.startsWith('/api/users/') || urlPath === '/api/users/me') && req.method === 'GET') {
     const parts = urlPath.split('/');
     if (parts.length === 4 || urlPath === '/api/users/me') {
@@ -4844,7 +5124,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
         let user = dbRes.rows[0];
-        user = await ensureUserUsername(pool, user);
         const isOwner = authUser.id === user.id || authUser.id === user.uid;
         const isAdmin = hasRole(authUser, ROLES.ADMIN);
 
@@ -4853,7 +5132,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           const publicUser = {
             id: user.id,
             display_name: formatUserDisplayName(user),
-            username: user.username || '',
+            district_id: user.district_id,
             gamerTag: user.gamerTag || '',
             avatar: sanitizeImageUrlForDb(user.avatar),
             banner: sanitizeImageUrlForDb(user.banner),
@@ -4880,6 +5159,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         delete safeUser.admin_totp_secret;
         delete safeUser.admin_totp_activated;
         delete safeUser.kycDoc;
+        delete safeUser.google_id;
         delete safeUser.discord_id;
         safeUser.display_name = formatUserDisplayName(safeUser);
         safeUser.avatar = sanitizeImageUrlForDb(safeUser.avatar);
@@ -5080,62 +5360,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
         }
 
-        // Verification & Cooldown for username change (7 days cooldown)
-        let usernameLastChangedVal = undefined;
-        let validatedNewUsername = undefined;
-        if (updateData.username !== undefined) {
-          const userCheckRes = await pool.query('SELECT username, "username_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          const candidateUsername = (updateData.username || '').trim().toLowerCase();
-          const currentUsername = (currentUserRecord?.username || '').trim().toLowerCase();
-
-          if (candidateUsername && candidateUsername !== currentUsername) {
-            // Check 7-day cooldown:
-            if (currentUserRecord && currentUserRecord.username_last_changed) {
-              const lastChanged = new Date(currentUserRecord.username_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 7) {
-                const remainingDays = Math.ceil(7 - daysDiff);
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                  success: false,
-                  error: 'COOLDOWN_ACTIVE',
-                  message: `You can only change your username once every 7 days. Remaining: ${remainingDays} day${remainingDays === 1 ? '' : 's'}.`
-                }));
-                return;
-              }
-            }
-
-            const val = validateUsername(candidateUsername);
-            if (!val.valid) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({
-                success: false,
-                error: val.error || 'INVALID_USERNAME',
-                message: val.message || 'Invalid username.'
-              }));
-              return;
-            }
-
-            const checkTaken = await pool.query(
-              'SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND id != $2 AND uid != $2',
-              [val.username, id]
-            );
-            if (checkTaken.rows.length > 0) {
-              res.writeHead(409, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({
-                success: false,
-                error: 'USERNAME_TAKEN',
-                message: 'This username is already taken. Please choose another.'
-              }));
-              return;
-            }
-
-            validatedNewUsername = val.username;
-            usernameLastChangedVal = new Date();
-          }
-        }
-
         const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
         const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
 
@@ -5176,8 +5400,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             role = COALESCE($17, role),
             roles = COALESCE($18, roles),
             "orgHandle" = COALESCE($20, "orgHandle"),
-            username = COALESCE($21, username),
-            username_last_changed = COALESCE($22, username_last_changed)
            WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
@@ -5204,18 +5426,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
             id,
-            updateData.gamerTag,
-            validatedNewUsername,
-            usernameLastChangedVal
+            updateData.gamerTag
           ]
         );
         if (dbRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile to update not found.' }));
           return;
-        }
-        if (validatedNewUsername) {
-          await pool.query('UPDATE profiles SET username = $1 WHERE id = $2 OR uid = $2', [validatedNewUsername, id]).catch(() => {});
         }
         console.log(`\n📦 [MATCH DISTRICT DB] User "${id}" updated in Supabase PostgreSQL.\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -9427,7 +9644,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         try {
           const membersRes = await pool.query(`
             SELECT m.id, m.user_id, m.role, m.roster_slot, m.joined_at AS created_at,
-                   u.name, u."gamerTag", ${userDisplayNameSql('u')}, u.avatar
+                   u.name, u."gamerTag", u.district_id, ${userDisplayNameSql('u')}, u.avatar
             FROM tournament_team_members m
             JOIN users u ON m.user_id = u.id
             WHERE m.tournament_team_id = $1
@@ -9980,7 +10197,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return res.end(JSON.stringify({ success: false, status: 'full', message: 'Team is full.' }));
       }
 
-      const leaderRes = await pool.query(`SELECT name, "gamerTag", ${userDisplayNameSql('')} FROM users WHERE id = $1`, [team.leader_user_id]);
+      const leaderRes = await pool.query(`SELECT name, "gamerTag", district_id, ${userDisplayNameSql('')} FROM users WHERE id = $1`, [team.leader_user_id]);
       const leaderDisplayName = leaderRes.rows[0]?.display_name || formatUserDisplayName(leaderRes.rows[0]) || 'Team Leader';
 
       // Parse roster slots and list unlinked slots by IGN display name only (A8: no UIDs, emails, or phone numbers)
@@ -10000,6 +10217,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           tournamentTitle: tournament.title,
           teamName: team.team_name,
           leaderDisplayName,
+          leaderDistrictId: leaderRes.rows[0]?.district_id || null,
           capacity,
           joined: memberCount,
           capacityRatio: `${memberCount}/${capacity}`,
@@ -19039,8 +19257,10 @@ function startMonitoringWorker() {
 (async () => {
   try {
     await initDb();
-  } catch {
-    console.error('❌ [STARTUP] Database schema initialization failed. Server startup aborted.');
+  } catch (startupError) {
+    const code = startupError?.code || 'UNKNOWN';
+    const constraint = startupError?.constraint ? ` constraint=${startupError.constraint}` : '';
+    console.error(`❌ [STARTUP] Database schema initialization failed [code=${code}${constraint}]. Server startup aborted.`);
     process.exit(1);
   }
   startSlotManagerWorker(pool);

@@ -27,6 +27,8 @@ const AdminPayments   = lazy(() => import('./pages/AdminPayments.jsx'))
 const AdminSponsorships = lazy(() => import('./pages/AdminSponsorships.jsx'))
 const AdminSystemHealth = lazy(() => import('./pages/AdminSystemHealth.jsx'))
 const Auth            = lazy(() => import('./pages/Auth.jsx'))
+const AuthLink        = lazy(() => import('./pages/AuthLink.jsx'))
+const AuthSuccess     = lazy(() => import('./pages/AuthSuccess.jsx'))
 const BecomeOrganizer = lazy(() => import('./pages/BecomeOrganizer.jsx'))
 const ExploreOrganisers = lazy(() => import('./pages/ExploreOrganisers.jsx'))
 const OrganizationManagement = lazy(() => import('./pages/OrganizationManagement.jsx'))
@@ -558,6 +560,8 @@ function AppInner() {
                     <Auth onNavigate={handleNavigate} initialMode="reset-password" />
                   </PageTransition>
                 } />
+                <Route path="/auth/link" element={<AuthLink />} />
+                <Route path="/auth/success" element={<AuthSuccess />} />
 
                 <Route path="/profile" element={<ProfileRoute />} />
 

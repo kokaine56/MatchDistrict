@@ -237,11 +237,6 @@ export function UserProvider({ children }) {
             .select('*')
             .eq('id', session.user.id)
             .single();
-          if (profile) {
-            if (!profile.username && profile.gamerTag) {
-              profile.username = profile.gamerTag.replace(/^@+/, '');
-            }
-          }
           setUserState(profile ?? null);
         } else {
           // Only clear user state if the session is explicitly signed out or no custom session was set

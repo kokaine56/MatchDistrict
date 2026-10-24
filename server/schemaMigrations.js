@@ -5,6 +5,8 @@
 export const SCHEMA_TABLES = Object.freeze([
   'users',
   'user_discord_connections',
+  'auth_identities',
+  'auth_link_challenges',
   'otps',
   'password_resets',
   'temp_users',
@@ -209,6 +211,48 @@ export async function runSchemaMigrations(clientOrPool) {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_user_discord_connections_discord_id ON user_discord_connections(discord_id);
+
+      CREATE TABLE IF NOT EXISTS auth_identities (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(20) NOT NULL CHECK (provider IN ('google', 'discord')),
+        provider_user_id VARCHAR(64) NOT NULL,
+        provider_email VARCHAR(255),
+        email_verified BOOLEAN,
+        display_name VARCHAR(128),
+        avatar_url TEXT,
+        linked_at TIMESTAMPTZ DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ,
+        UNIQUE (provider, provider_user_id),
+        UNIQUE (user_id, provider)
+      );
+      CREATE INDEX IF NOT EXISTS idx_auth_identities_provider_email_lower
+        ON auth_identities (lower(provider_email)) WHERE provider_email IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS auth_link_challenges (
+        user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        code_hash VARCHAR(64) NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      -- Compatibility backfills are additive and safe to repeat. Conflicting mappings
+      -- are left untouched for manual review; no account is reassigned or merged.
+      INSERT INTO auth_identities (id, user_id, provider, provider_user_id, provider_email, email_verified, linked_at)
+      SELECT 'AID-' || md5('google:' || u.id), u.id, 'google', u.google_id, u.email, true, COALESCE(u.created_at, NOW())
+      FROM users u WHERE u.google_id IS NOT NULL AND btrim(u.google_id) <> ''
+      ON CONFLICT DO NOTHING;
+      INSERT INTO auth_identities (id, user_id, provider, provider_user_id, display_name, linked_at)
+      SELECT 'AID-' || md5('discord:' || u.id), u.id, 'discord', u.discord_id,
+             COALESCE(NULLIF(d.global_name, ''), NULLIF(d.username, '')), COALESCE(d.connected_at, NOW())
+      FROM users u LEFT JOIN user_discord_connections d ON d.user_id = u.id AND d.discord_id = u.discord_id
+      WHERE u.discord_id IS NOT NULL AND btrim(u.discord_id) <> ''
+      ON CONFLICT DO NOTHING;
+      INSERT INTO auth_identities (id, user_id, provider, provider_user_id, display_name, linked_at)
+      SELECT 'AID-' || md5('discord:' || d.user_id), d.user_id, 'discord', d.discord_id,
+             COALESCE(NULLIF(d.global_name, ''), NULLIF(d.username, '')), COALESCE(d.connected_at, NOW())
+      FROM user_discord_connections d
+      ON CONFLICT DO NOTHING;
 
       CREATE TABLE IF NOT EXISTS otps (
         email VARCHAR(255) PRIMARY KEY,
@@ -1334,13 +1378,6 @@ export async function runSchemaMigrations(clientOrPool) {
 
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username VARCHAR(32);
 
-      -- Safe idempotent synchronization of profiles.username from users.username
-      UPDATE profiles
-      SET username = users.username
-      FROM users
-      WHERE (profiles.id = users.id OR profiles.id = users.uid OR profiles.uid = users.uid)
-        AND profiles.username IS NULL
-        AND users.username IS NOT NULL;
     `);
 
     await runMigrationBatch(client, `

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { formatDateIST12h } from '../utils/timeFormat.js';
 
-export default function DiscordConnectCard({ currentUser, onUserUpdated, triggerToast }) {
+export default function DiscordConnectCard({ currentUser, providerIdentity, onUserUpdated, triggerToast }) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -229,6 +229,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
                       {discord.global_name}
                     </p>
                   )}
+              {providerIdentity?.provider_email && <p className="text-xs text-on-surface-variant">{providerIdentity.provider_email}</p>}
                   {discord.connected_at ? (
                     <p className="font-body-sm text-[11px] text-on-surface-variant/80">
                       Connected on {formatDateIST12h(discord.connected_at)} (IST)
@@ -241,7 +242,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
                 </div>
               ) : (
                 <p className="font-body-sm text-[11px] text-on-surface-variant leading-relaxed max-w-xl">
-                  Connect your Discord account to verify your identity across tournaments. We only store your Discord username, display name, and avatar. This information is private and never shared publicly.
+                  Connect Discord for login and account linking. Its stable ID, verified email, display name, and avatar are private to your account.
                 </p>
               )}
             </div>
@@ -306,11 +307,11 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
             </div>
 
             <p className="font-body-sm text-xs text-on-surface-variant leading-relaxed bg-surface-container-low p-3 rounded-lg border border-outline-variant/20">
-              Disconnecting will permanently remove your stored Discord ID, username, and avatar from MatchDistrict. You can reconnect anytime.
+              Disconnecting removes the Discord identity record and compatibility link from Match District. You can reconnect anytime.
             </p>
 
             {currentUser?.password_set === false ? (
-              <p className="text-xs text-amber-500">Create a Match District password in Profile settings before disconnecting Discord. This keeps another sign-in method available.</p>
+              <p className="text-xs text-amber-500">Confirm within 10 minutes of signing in. Another login method must remain connected.</p>
             ) : (
               <label className="block space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Current password to confirm</span>
@@ -327,7 +328,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
             <div className="flex justify-end gap-2.5 pt-2 border-t border-outline-variant/20">
               <button
                 type="button"
-                disabled={isDisconnecting || currentUser?.password_set === false || !currentPassword}
+                disabled={isDisconnecting}
                 onClick={() => setShowConfirmModal(false)}
                 className="px-4 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold cursor-pointer transition-all"
               >

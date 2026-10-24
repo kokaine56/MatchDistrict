@@ -7,7 +7,7 @@ export async function syncMissingProfiles(client) {
   try {
     const result = await client.query(`
       WITH candidates AS MATERIALIZED (
-        SELECT uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
+        SELECT uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
                "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio"
         FROM users
         WHERE uid IS NOT NULL AND uid NOT LIKE 'ADM-%'
@@ -16,16 +16,26 @@ export async function syncMissingProfiles(client) {
         SELECT candidates.uid
         FROM candidates
         JOIN profiles existing ON existing.email = candidates.email AND existing.id <> candidates.uid
+        UNION
+        SELECT candidate.uid
+        FROM candidates candidate
+        JOIN (
+          SELECT email FROM candidates GROUP BY email HAVING COUNT(*) > 1
+        ) duplicate_source_emails ON duplicate_source_emails.email = candidate.email
       ),
       inserted AS (
-        INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
+        INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
                               "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-        SELECT candidates.uid, candidates.uid, candidates.name, candidates.email, candidates."gamerTag", candidates.username,
+        SELECT candidates.uid, candidates.uid, candidates.name, candidates.email, candidates."gamerTag",
                candidates.role, candidates.roles, candidates.tier, candidates.avatar, candidates.banner, candidates.phone,
                candidates.status, candidates."riotId", candidates."bgmiId", candidates."steamId", candidates."discordTag",
                candidates."socialLinks", candidates."orgName", candidates."orgMotto", candidates."orgHandle", candidates."orgImage", candidates."orgBio"
         FROM candidates
         WHERE NOT EXISTS (SELECT 1 FROM email_conflicts WHERE email_conflicts.uid = candidates.uid)
+          AND NOT EXISTS (
+            SELECT 1 FROM profiles existing
+            WHERE existing.id = candidates.uid OR existing.email = candidates.email
+          )
         ON CONFLICT DO NOTHING
         RETURNING 1
       )
@@ -43,7 +53,7 @@ export async function syncMissingProfiles(client) {
   } catch (error) {
     const code = error?.code || 'UNKNOWN';
     const constraint = error?.constraint ? `, constraint: ${error.constraint}` : '';
-    console.error(`[STARTUP] Profile sync failed [code: ${code}${constraint}].`);
+    console.error(`[STARTUP] Profile sync operation=insert_missing_profiles failed [code: ${code}${constraint}].`);
     throw error;
   }
 }

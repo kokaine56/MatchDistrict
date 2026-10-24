@@ -6,9 +6,8 @@
 /**
  * Returns the raw SQL expression that computes a user's display name from real database columns.
  * Fallback order:
- *  1. Non-empty users.username
+ *  1. Non-empty users."gamerTag"
  *  2. Non-empty users.name
- *  3. Non-empty users."gamerTag"
  *  4. Default string 'Player'
  *
  * @param {string} [alias='u'] - Table alias or empty string if unqualified
@@ -16,7 +15,7 @@
  */
 export function userDisplayNameRawSql(alias = 'u') {
   const p = alias && alias.trim() ? `${alias.trim()}.` : '';
-  return `COALESCE(NULLIF(${p}username, ''), NULLIF(${p}name, ''), NULLIF(${p}"gamerTag", ''), 'Player')`;
+  return `COALESCE(NULLIF(CASE WHEN ${p}"gamerTag" LIKE '@%' THEN '' ELSE ${p}"gamerTag" END, ''), NULLIF(${p}name, ''), 'Player')`;
 }
 
 /**
@@ -39,19 +38,11 @@ export function userDisplayNameSql(alias = 'u', colAlias = 'display_name') {
  */
 export function formatUserDisplayName(user) {
   if (!user || typeof user !== 'object') return 'Player';
-  if (user.display_name && typeof user.display_name === 'string' && user.display_name.trim()) {
-    return user.display_name.trim();
-  }
-  if (user.username && typeof user.username === 'string' && user.username.trim()) {
-    return user.username.trim();
-  }
-  if (user.name && typeof user.name === 'string' && user.name.trim()) {
-    return user.name.trim();
-  }
-  if (user.gamerTag && typeof user.gamerTag === 'string' && user.gamerTag.trim()) {
+  if (user.gamerTag && typeof user.gamerTag === 'string' && user.gamerTag.trim() && !user.gamerTag.trim().startsWith('@')) {
     return user.gamerTag.trim();
   }
-  if (user['gamerTag'] && typeof user['gamerTag'] === 'string' && user['gamerTag'].trim()) {
+  if (user.name && typeof user.name === 'string' && user.name.trim()) return user.name.trim();
+  if (user['gamerTag'] && typeof user['gamerTag'] === 'string' && user['gamerTag'].trim() && !user['gamerTag'].trim().startsWith('@')) {
     return user['gamerTag'].trim();
   }
   return 'Player';
@@ -89,6 +80,8 @@ export function sanitizeUserForPublic(user) {
   delete safe.kycDoc;
   delete safe.discord_id;
   delete safe.google_id;
+  delete safe.username;
+  delete safe.username_last_changed;
 
   safe.display_name = formatUserDisplayName(user);
   if (safe.email) {

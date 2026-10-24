@@ -12,7 +12,6 @@ import LoadingScreen from '../components/LoadingScreen.jsx'
 import AbuseFieldWrapper from '../components/AbuseFieldWrapper.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
-import { generateUniqueUsername } from '../utils/helpers.js'
 import { SignOutModal } from '../components/SignOutModal.jsx'
 import { ConfirmIdentityOTP } from '../components/ConfirmIdentityOTP.jsx'
 
@@ -139,7 +138,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // Login form state
   const [loginForm, setLoginForm] = useState({ 
-    email: '', // email or username
+    email: '', // email or District ID
     password: '', 
     rememberMe: true 
   })
@@ -425,6 +424,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       })
       const data = await res.json()
       if (res.ok && data.success) {
+        try { sessionStorage.removeItem('md_logged_out') } catch {}
         if (data.encryptedSession) {
           try {
             localStorage.setItem('md_persistent_session', data.encryptedSession)
@@ -446,7 +446,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         }, 1500)
       } else {
         setIsLoading(false)
-        if (data.error === 'ADMIN_MFA_REQUIRED') {
+        if (data.error === 'PENDING_LINK_REQUIRED' && data.redirect) {
+          navigate(data.redirect, { replace: true })
+        } else if (data.error === 'ADMIN_MFA_REQUIRED') {
           triggerToast('Admin accounts require TOTP login. Please use the Admin login above.')
         } else if (data.error === 'ACCOUNT_CONFLICT') {
           triggerToast('This account is already linked to a different Google identity.')
@@ -822,7 +824,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         }, 2000)
       } else {
         setIsLoading(false)
-        triggerToast(data.error || 'Incorrect email/username or password.')
+        triggerToast(data.error || 'Incorrect email/District ID or password.')
       }
     } catch (err) {
       // Fallback directly to client-side Supabase authentication if server is offline
@@ -834,7 +836,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
         if (authError) {
           setIsLoading(false)
-          triggerToast(authError.message || 'Incorrect email/username or password.')
+          triggerToast(authError.message || 'Incorrect email/District ID or password.')
           return
         }
 
@@ -897,12 +899,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setLoadingMessage('Processing...')
     setIsLoading(true)
     try {
-      const autoGamerTag = '@' + generateUniqueUsername(regForm.name)
       const tempUser = {
         name: regForm.name,
         email: regForm.email,
         password: regForm.password,
-        gamerTag: autoGamerTag,
+        gamerTag: regForm.name,
         role: 'player',
         agreeTerms: regForm.agreeTerms
       }
@@ -1148,7 +1149,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       id: user.id,
       name: user.name || user.gamerTag || 'Player',
       email: user.email || '',
-      username: user.username || (user.gamerTag ? user.gamerTag.replace(/^@+/, '') : ''),
       avatar: avatarUrl,
       provider: provider || (user.google_id ? 'google' : 'email'),
       lastUsed: Date.now()
@@ -1232,7 +1232,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   const handleAccountSelect = (account) => {
     setSelectedAccount(account)
-    setLoginForm({ ...loginForm, email: account.email || account.username, password: '', rememberMe: true })
+    setLoginForm({ ...loginForm, email: account.email || '', password: '', rememberMe: true })
     setLoginPageState('password-screen')
   }
 
@@ -1862,7 +1862,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                   <form onSubmit={handleLoginSubmit} className="space-y-4 w-full">
                     <div className="space-y-3.5">
                       <div className="space-y-1">
-                        <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Email or Username</label>
+                        <label className="text-[10px] text-on-surface-variant/80 font-bold uppercase tracking-wider font-label-caps">Email or District ID</label>
                         <div className="relative group">
                           <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant/50 text-[18px] group-focus-within:text-primary transition-colors">person</span>
                           <input 
