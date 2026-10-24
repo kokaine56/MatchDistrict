@@ -509,12 +509,16 @@ const pool = createDatabasePool();
 
 async function ensureSupabaseProfile(client, user) {
   if (!user || !(user.uid || user.id) || !user.email) return;
+  const canonicalU = user.username || (typeof user.gamerTag === 'string' ? user.gamerTag.replace(/^@+/, '') : null);
   await client.query(
-    `INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+    `INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
                           "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-     ON CONFLICT (id) DO NOTHING`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+     ON CONFLICT (id) DO UPDATE SET
+       username = COALESCE(profiles.username, EXCLUDED.username),
+       "gamerTag" = COALESCE(profiles."gamerTag", EXCLUDED."gamerTag")`,
     [user.uid || user.id, user.uid || null, user.name || null, user.email, user.gamerTag || user['gamerTag'] || null,
+      canonicalU,
       user.role || 'gamer', user.roles || ['user'], user.tier || 'Amateur', user.avatar || null, user.banner || null,
       user.phone || null, user.status || 'Active', user.riotId || user['riotId'] || null, user.bgmiId || user['bgmiId'] || null,
       user.steamId || user['steamId'] || null, user.discordTag || user['discordTag'] || null,
@@ -562,12 +566,13 @@ async function initDb() {
       `Table "user_discord_connections": ${discordTableExists ? 'EXISTS' : 'MISSING'}`
     );
     await client.query(`
-      INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+      INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
                            "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-      SELECT uid, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
+      SELECT uid, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
              "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio"
       FROM users WHERE uid IS NOT NULL AND uid NOT LIKE 'ADM-%'
-      ON CONFLICT (id) DO NOTHING
+      ON CONFLICT (id) DO UPDATE SET
+        username = COALESCE(profiles.username, EXCLUDED.username)
     `);
 
     // ── ROADMAP & LIVE SCHEMA COLUMN MIGRATIONS (TASK 2 & 3) ───────────────
@@ -3016,6 +3021,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        newUser = await ensureUserUsername(pool, newUser);
         await ensureSupabaseProfile(pool, newUser);
 
         const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
@@ -4416,7 +4422,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'User not found.' }));
           return;
         }
-        const user = dbRes.rows[0];
+        let user = dbRes.rows[0];
+        user = await ensureUserUsername(pool, user);
         const isOwner = authUser.id === user.id || authUser.id === user.uid;
         const isAdmin = hasRole(authUser, ROLES.ADMIN);
 

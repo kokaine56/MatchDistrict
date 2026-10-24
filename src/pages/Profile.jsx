@@ -23,7 +23,7 @@ import { formatDate } from '../utils/timeFormat'
 import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
-import { validateUsername } from '../utils/usernameValidator.js'
+import { validateUsername, getCanonicalUsername } from '../utils/usernameValidator.js'
 import DiscordConnectCard from '../components/DiscordConnectCard.jsx'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
@@ -377,6 +377,11 @@ function Profile({ onNavigate, selectedUserProfile }) {
               setCurrentUser(data.user);
               if (typeof setCurrentUserFromContext === 'function') {
                 setCurrentUserFromContext(data.user);
+              }
+              const canonicalU = getCanonicalUsername(data.user);
+              if (canonicalU) {
+                setPlayerData(prev => ({ ...prev, username: canonicalU, gamerTag: '@' + canonicalU }));
+                setPlayerEditForm(prev => ({ ...prev, username: canonicalU, gamerTag: '@' + canonicalU }));
               }
             }
           })
@@ -818,7 +823,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
         triggerToast('Username updated successfully!');
         if (data.user) {
           setCurrentUser(data.user);
-          setCurrentUserFromContext(data.user);
+          if (typeof setCurrentUserFromContext === 'function') {
+            setCurrentUserFromContext(data.user);
+          }
+          const canonicalU = getCanonicalUsername(data.user) || val.username;
+          setPlayerData(prev => ({ ...prev, username: canonicalU, gamerTag: '@' + canonicalU }));
+          setPlayerEditForm(prev => ({ ...prev, username: canonicalU, gamerTag: '@' + canonicalU }));
         }
       } else {
         triggerToast(data.message || data.error || 'Failed to update username.');
@@ -1131,24 +1141,28 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }
 
   // --- PLAYER STATE ---
-  const [playerData, setPlayerData] = useState(() => ({
-    name: currentUserFromContext?.name || 'Gamer',
-    gamerTag: currentUserFromContext?.gamerTag || '@gamer',
-    email: currentUserFromContext?.email || '',
-    phone: currentUserFromContext?.phone || '+91 ',
-    riotId: currentUserFromContext?.riotId || '',
-    bgmiId: currentUserFromContext?.bgmiId || '',
-    steamId: currentUserFromContext?.steamId || '',
-    discordTag: currentUserFromContext?.discordTag || '',
-    avatar: currentUserFromContext?.avatar || '',
-    banner: currentUserFromContext?.banner || '',
-    bio: currentUserFromContext?.experience || currentUserFromContext?.bio || '',
-    notifications: {
-      matchReminders: true,
-      prizePayouts: true,
-      promotions: false
-    }
-  }))
+  const [playerData, setPlayerData] = useState(() => {
+    const initialCanonicalU = getCanonicalUsername(currentUserFromContext);
+    return {
+      name: currentUserFromContext?.name || 'Gamer',
+      username: initialCanonicalU || '',
+      gamerTag: currentUserFromContext?.gamerTag || (initialCanonicalU ? '@' + initialCanonicalU : '@gamer'),
+      email: currentUserFromContext?.email || '',
+      phone: currentUserFromContext?.phone || '+91 ',
+      riotId: currentUserFromContext?.riotId || '',
+      bgmiId: currentUserFromContext?.bgmiId || '',
+      steamId: currentUserFromContext?.steamId || '',
+      discordTag: currentUserFromContext?.discordTag || '',
+      avatar: currentUserFromContext?.avatar || '',
+      banner: currentUserFromContext?.banner || '',
+      bio: currentUserFromContext?.experience || currentUserFromContext?.bio || '',
+      notifications: {
+        matchReminders: true,
+        prizePayouts: true,
+        promotions: false
+      }
+    };
+  })
 
   const [localMediaLoaded, setLocalMediaLoaded] = useState({ avatar: !playerData.avatar, banner: !playerData.banner })
 
@@ -1181,14 +1195,35 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   const [orgEditForm, setOrgEditForm] = useState({ ...orgData })
 
+  // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
+  const currentUser = currentUserFromContext
+  const setCurrentUser = setCurrentUserFromContext
+  // viewedUser is the profile being displayed (may be another user or self)
+  const viewedUser = selectedUserProfile || currentUserFromContext
+
+  const ownCanonicalUsername = useMemo(() => {
+    return getCanonicalUsername(currentUser) || getCanonicalUsername(playerData) || 'gamer';
+  }, [currentUser, playerData.username, playerData.gamerTag]);
+
+  const viewedCanonicalUsername = useMemo(() => {
+    if (!isOwnProfile && viewedUser) {
+      return getCanonicalUsername(viewedUser) || 'gamer';
+    }
+    return ownCanonicalUsername;
+  }, [isOwnProfile, viewedUser, ownCanonicalUsername]);
+
   // Initialise Settings-tab inputs when data loads
-  useEffect(() => { setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '') }, [playerData.username, playerData.gamerTag])
+  useEffect(() => {
+    if (!isEditingUsername) {
+      setSettingsGamerTag(ownCanonicalUsername)
+    }
+  }, [ownCanonicalUsername, isEditingUsername])
   useEffect(() => { setSettingsEmail(playerData.email || orgData.email || '') }, [playerData.email, orgData.email])
 
   // Live debounced check for username availability
   useEffect(() => {
     const raw = settingsGamerTag.trim().toLowerCase().replace(/^@/, '')
-    const current = (playerData.username || currentUserFromContext?.username || playerData.gamerTag?.replace(/^@/, '') || '').trim().toLowerCase()
+    const current = ownCanonicalUsername.toLowerCase()
     if (!raw || raw === current) {
       setUsernameAvailability(null)
       return
@@ -1215,13 +1250,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
       }
     }, 350)
     return () => clearTimeout(timer)
-  }, [settingsGamerTag, playerData.username, currentUserFromContext?.username, playerData.gamerTag])
-
-  // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
-  const currentUser = currentUserFromContext
-  const setCurrentUser = setCurrentUserFromContext
-  // viewedUser is the profile being displayed (may be another user or self)
-  const viewedUser = selectedUserProfile || currentUserFromContext
+  }, [settingsGamerTag, ownCanonicalUsername])
 
   const gamertagCooldownDays = useMemo(() => {
     if (!currentUserFromContext) return 0
@@ -1284,7 +1313,28 @@ function Profile({ onNavigate, selectedUserProfile }) {
             .then(data => {
               if (data.success && data.user) {
                 setCurrentUser(data.user)
-                setCurrentUserFromContext(data.user)
+                if (typeof setCurrentUserFromContext === 'function') {
+                  setCurrentUserFromContext(data.user)
+                }
+                const canonicalU = getCanonicalUsername(data.user);
+                setPlayerData(prev => ({
+                  ...prev,
+                  username: canonicalU || prev.username,
+                  name: data.user.name || prev.name,
+                  gamerTag: data.user.gamerTag || prev.gamerTag,
+                  avatar: data.user.avatar || prev.avatar,
+                  banner: data.user.banner || prev.banner,
+                  bio: data.user.experience || data.user.bio || prev.bio,
+                }))
+                setPlayerEditForm(prev => ({
+                  ...prev,
+                  username: canonicalU || prev.username,
+                  name: data.user.name || prev.name,
+                  gamerTag: data.user.gamerTag || prev.gamerTag,
+                  avatar: data.user.avatar || prev.avatar,
+                  banner: data.user.banner || prev.banner,
+                  bio: data.user.experience || data.user.bio || prev.bio,
+                }))
               }
             })
             .catch(e => console.error("Error fetching latest user profile:", e));
@@ -1297,10 +1347,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
           promotions: false
         };
 
+        const initialCanonicalU = getCanonicalUsername(targetUser);
         setPlayerData(prev => ({
           ...prev,
           name: targetUser.name || 'Gamer',
-          gamerTag: targetUser.gamerTag || '@' + (targetUser.name || 'gamer').toLowerCase().replace(/\s+/g, '_'),
+          username: initialCanonicalU || prev.username || '',
+          gamerTag: targetUser.gamerTag || (initialCanonicalU ? '@' + initialCanonicalU : '@' + (targetUser.name || 'gamer').toLowerCase().replace(/\s+/g, '_')),
           email: targetUser.email,
           phone: targetUser.phone || prev.phone,
           riotId: targetUser.riotId || prev.riotId || '',
@@ -1316,7 +1368,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
           setPlayerEditForm(prev => ({
             ...prev,
             name: targetUser.name || 'Gamer',
-            gamerTag: targetUser.gamerTag || '@' + (targetUser.name || 'gamer').toLowerCase().replace(/\s+/g, '_'),
+            username: initialCanonicalU || prev.username || '',
+            gamerTag: targetUser.gamerTag || (initialCanonicalU ? '@' + initialCanonicalU : '@' + (targetUser.name || 'gamer').toLowerCase().replace(/\s+/g, '_')),
             email: targetUser.email,
             phone: targetUser.phone || prev.phone,
             riotId: targetUser.riotId || prev.riotId || '',
@@ -1466,8 +1519,10 @@ function Profile({ onNavigate, selectedUserProfile }) {
       if (data.success) {
         const savedAvatar = sanitizeImageUrl(playerEditForm.avatar)
         const savedBanner = sanitizeImageUrl(playerEditForm.banner)
+        const canonicalU = getCanonicalUsername(data.user) || playerEditForm.username || playerData.username;
         const nextPlayer = {
           ...playerEditForm,
+          username: canonicalU,
           bio: data.user.experience ?? playerEditForm.bio ?? '',
           avatar: savedAvatar || playerData.avatar,
           banner: savedBanner || playerData.banner,
@@ -1475,7 +1530,9 @@ function Profile({ onNavigate, selectedUserProfile }) {
         setPlayerData(nextPlayer)
         setPlayerEditForm(nextPlayer)
         setCurrentUser(data.user)
-        setCurrentUserFromContext(data.user)
+        if (typeof setCurrentUserFromContext === 'function') {
+          setCurrentUserFromContext(data.user)
+        }
         setIsEditingProfile(false)
         triggerToast('Player profile updated successfully in Supabase!')
       } else {
@@ -2436,7 +2493,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </h1>
 
                       {/* Handle / GamerTag */}
-                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">@{viewedUser.username || viewedUser.gamerTag?.replace(/^@/, '') || viewedUser.orgHandle?.replace(/^@/, '')}</p>
+                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">@{viewedCanonicalUsername}</p>
 
                       {/* Bio */}
                       {(viewedUser.orgBio || viewedUser.experience || viewedUser.bio) && (
@@ -2561,7 +2618,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
                               <span className="inline-flex items-center gap-0.5 text-primary font-bold">
                                 <span className="material-symbols-outlined text-xs">alternate_email</span>
-                                {playerData.username || playerData.gamerTag?.replace(/^@/, '')}
+                                {ownCanonicalUsername}
                               </span>
                               <span className="inline-flex items-center gap-1">
                                 <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
@@ -3712,7 +3769,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         <div className="min-w-0">
                           <span className="text-[10px] text-on-surface-variant font-bold uppercase tracking-wider block">Current Username</span>
                           <strong className="text-on-background text-sm font-mono">
-                            @{playerData.username || currentUser?.username || playerData.gamerTag?.replace(/^@/, '') || 'gamer'}
+                            @{ownCanonicalUsername}
                           </strong>
                         </div>
                         {gamertagCooldownDays > 0 ? (
@@ -3726,7 +3783,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               type="button"
                               onClick={() => {
                                 setIsEditingUsername(true);
-                                setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '');
+                                setSettingsGamerTag(ownCanonicalUsername);
                               }}
                               className="px-3.5 min-h-[44px] bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
                             >
@@ -3776,7 +3833,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               type="button"
                               onClick={() => {
                                 setIsEditingUsername(false);
-                                setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '');
+                                setSettingsGamerTag(ownCanonicalUsername);
                                 setUsernameAvailability(null);
                               }}
                               className="px-4 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold"
@@ -3787,7 +3844,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               type="button"
                               disabled={
                                 !settingsGamerTag.trim() ||
-                                settingsGamerTag.trim().toLowerCase() === (playerData.username || playerData.gamerTag?.replace(/^@/, '') || '').toLowerCase() ||
+                                settingsGamerTag.trim().toLowerCase() === ownCanonicalUsername.toLowerCase() ||
                                 (usernameAvailability && !usernameAvailability.available) ||
                                 usernameAvailability?.checking
                               }

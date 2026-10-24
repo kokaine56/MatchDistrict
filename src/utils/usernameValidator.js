@@ -6,4 +6,6 @@ export {
   RESERVED_USERNAMES,
   validateUsername,
   sanitizeToUsernameBase,
+  getCanonicalUsername,
 } from '../../server/usernameValidator.js';
+

@@ -1123,7 +1123,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       id: user.id,
       name: user.name || user.gamerTag || 'Player',
       email: user.email || '',
-      username: user.gamerTag || '',
+      username: user.username || (user.gamerTag ? user.gamerTag.replace(/^@+/, '') : ''),
       avatar: avatarUrl,
       provider: provider || (user.google_id ? 'google' : 'email'),
       lastUsed: Date.now()

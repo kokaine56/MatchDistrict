@@ -151,3 +151,18 @@ export function sanitizeToUsernameBase(raw, fallback = 'player') {
 
   return cleaned;
 }
+
+/**
+ * Extracts the canonical username for display or identity comparison.
+ * Prefers user.username, then user.gamerTag (without @), then user.orgHandle (without @).
+ * Always returns string without leading @.
+ *
+ * @param {object} user
+ * @returns {string}
+ */
+export function getCanonicalUsername(user) {
+  if (!user || typeof user !== 'object') return '';
+  const raw = user.username || user.gamerTag || user.orgHandle || '';
+  return typeof raw === 'string' ? raw.trim().replace(/^@+/, '') : '';
+}
+

@@ -1328,6 +1328,14 @@ export async function runSchemaMigrations(clientOrPool) {
       );
 
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username VARCHAR(32);
+
+      -- Safe idempotent synchronization of profiles.username from users.username
+      UPDATE profiles
+      SET username = users.username
+      FROM users
+      WHERE (profiles.id = users.id OR profiles.id = users.uid OR profiles.uid = users.uid)
+        AND profiles.username IS NULL
+        AND users.username IS NOT NULL;
     `);
 
     await runMigrationBatch(client, `
