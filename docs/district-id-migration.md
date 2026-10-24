@@ -9,7 +9,7 @@ District IDs are permanent public identifiers. `users.id` remains the canonical 
 3. After all old application instances have drained, run `npm run migrate:district-ids` with the production `DATABASE_URL`. It reruns verification/backfill and then applies `NOT NULL`.
 4. Confirm the command reports `invalid=0` and `duplicates=0`, then verify the deployed service health endpoint and a test account’s profile display/copy behavior.
 
-The migration uses a transaction, a PostgreSQL advisory lock, and a write-blocking table lock while it scans and updates users. Schedule the backfill in a low-traffic window. The migration audit table records only internal user IDs, prior/assigned District IDs, and a reason code; it does not record email or provider credentials.
+The migration uses a transaction, a PostgreSQL advisory lock, and a write-blocking table lock while it scans and updates users. Schedule the backfill in a low-traffic window. If a value is duplicated, the account with the lexicographically first `users.id` retains it; other rows receive a new ID. Invalid and missing values are also replaced. Every changed value is recorded in `district_id_migration_audit`, which contains only internal user IDs, prior/assigned District IDs, and a reason code; it does not record email or provider credentials.
 
 ## Rollback
 
