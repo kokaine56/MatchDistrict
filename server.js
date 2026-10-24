@@ -52,6 +52,7 @@ import {
 } from './server/roundProgressionService.js';
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { runSchemaMigrations, runMigrationBatch, SCHEMA_TABLES } from './server/schemaMigrations.js';
+import { syncMissingProfiles } from './server/profileSync.js';
 import { createDatabasePool } from './server/db.js';
 import { updateTeamQualificationStatus } from './server/teamDisqualificationService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
@@ -510,22 +511,43 @@ const pool = createDatabasePool();
 async function ensureSupabaseProfile(client, user) {
   if (!user || !(user.uid || user.id) || !user.email) return;
   const canonicalU = user.username || (typeof user.gamerTag === 'string' ? user.gamerTag.replace(/^@+/, '') : null);
+  const profileValues = [user.uid || user.id, user.uid || null, user.name || null, user.email, user.gamerTag || user['gamerTag'] || null,
+    canonicalU,
+    user.role || 'gamer', user.roles || ['user'], user.tier || 'Amateur', user.avatar || null, user.banner || null,
+    user.phone || null, user.status || 'Active', user.riotId || user['riotId'] || null, user.bgmiId || user['bgmiId'] || null,
+    user.steamId || user['steamId'] || null, user.discordTag || user['discordTag'] || null,
+    user.socialLinks || user['socialLinks'] || null, user.orgName || user['orgName'] || null,
+    user.orgMotto || user['orgMotto'] || null, user.orgHandle || user['orgHandle'] || null,
+    user.orgImage || user['orgImage'] || null, user.orgBio || user['orgBio'] || null];
+
+  // Only enrich the same profile when its email still matches. Never copy the
+  // incoming identity over another profile that already owns this email.
   await client.query(
+    `UPDATE profiles
+     SET username = COALESCE(profiles.username, $6),
+         "gamerTag" = COALESCE(profiles."gamerTag", $5)
+     WHERE id = $1 AND email = $4`,
+    profileValues.slice(0, 6)
+  );
+
+  const insertResult = await client.query(
     `INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
                           "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
-     ON CONFLICT (id) DO UPDATE SET
-       username = COALESCE(profiles.username, EXCLUDED.username),
-       "gamerTag" = COALESCE(profiles."gamerTag", EXCLUDED."gamerTag")`,
-    [user.uid || user.id, user.uid || null, user.name || null, user.email, user.gamerTag || user['gamerTag'] || null,
-      canonicalU,
-      user.role || 'gamer', user.roles || ['user'], user.tier || 'Amateur', user.avatar || null, user.banner || null,
-      user.phone || null, user.status || 'Active', user.riotId || user['riotId'] || null, user.bgmiId || user['bgmiId'] || null,
-      user.steamId || user['steamId'] || null, user.discordTag || user['discordTag'] || null,
-      user.socialLinks || user['socialLinks'] || null, user.orgName || user['orgName'] || null,
-      user.orgMotto || user['orgMotto'] || null, user.orgHandle || user['orgHandle'] || null,
-      user.orgImage || user['orgImage'] || null, user.orgBio || user['orgBio'] || null]
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+     WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE email = $4 AND id <> $1)
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+    profileValues
   );
+  if (insertResult.rowCount === 0) {
+    const conflict = await client.query(
+      'SELECT EXISTS (SELECT 1 FROM profiles WHERE email = $1 AND id <> $2) AS email_conflict',
+      [user.email, user.uid || user.id]
+    );
+    if (conflict.rows[0]?.email_conflict) {
+      console.warn('[PROFILE] Profile creation skipped because the email is already assigned to a different profile ID. Existing accounts were left unchanged.');
+    }
+  }
 }
 
 // Initialize Supabase Tables & Verify Connection
@@ -565,15 +587,7 @@ async function initDb() {
       `(client_id=${hasDiscordClientId}, client_secret=${hasDiscordClientSecret}, redirect_uri=${hasDiscordRedirectUri}) | ` +
       `Table "user_discord_connections": ${discordTableExists ? 'EXISTS' : 'MISSING'}`
     );
-    await client.query(`
-      INSERT INTO profiles (id, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
-                           "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
-      SELECT uid, uid, name, email, "gamerTag", username, role, roles, tier, avatar, banner, phone, status,
-             "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio"
-      FROM users WHERE uid IS NOT NULL AND uid NOT LIKE 'ADM-%'
-      ON CONFLICT (id) DO UPDATE SET
-        username = COALESCE(profiles.username, EXCLUDED.username)
-    `);
+    await syncMissingProfiles(client);
 
     // ── ROADMAP & LIVE SCHEMA COLUMN MIGRATIONS (TASK 2 & 3) ───────────────
     // Idempotent migrations for tournament_matches, tournament_rounds, etc.
