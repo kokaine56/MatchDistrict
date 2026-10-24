@@ -69,6 +69,9 @@ import {
 } from './server/tournamentPromotion.js';
 import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
+import { createAccountSecurity } from './server/accountSecurity.js';
+import { attachResolvedAvatars } from './server/avatarResolver.js';
+import { normalizeIndianMobile } from './server/accountRules.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1495,6 +1498,22 @@ const UNIQUE_AMOUNT_SUFFIX_RANGE = 99;         // max paisa suffix (0.01–0.99)
 // ── Existing in-memory rate limiter used by upload and invitation routes ──
 const rateLimitMap = new Map();
 
+// Account safety: verification abuse guard, email-change flow, notification/abuse cleanup jobs.
+const accountSecurity = createAccountSecurity({
+  pool,
+  secret: JWT_SECRET,
+  sendEmail,
+  getAuthUser,
+  hasRole,
+  ROLES,
+  rootAdminEmail: ROOT_ADMIN_EMAIL,
+  signJwt,
+  buildSessionCookie,
+  publicUserRow,
+  maskUserEmail,
+  checkRateLimit,
+});
+
 function checkRateLimit(key, maxRequests, windowMs) {
   const isMultiParam = maxRequests !== undefined;
   const limit = maxRequests !== undefined ? maxRequests : 60;
@@ -1819,24 +1838,9 @@ const server = http.createServer(async (req, res) => {
         const otp = crypto.randomInt(100000, 1000000).toString();
         const expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
 
-        // Rate limiting: Check if OTP was sent in the last 3 minutes
-        const lastOtpRes = await pool.query('SELECT created_at FROM otps WHERE email = $1', [email]);
-        if (lastOtpRes.rows.length > 0) {
-          const lastCreatedAt = new Date(lastOtpRes.rows[0].created_at).getTime();
-          const waitTimeLimit = 3 * 60 * 1000; // 3 minutes
-          const timeElapsed = Date.now() - lastCreatedAt;
-          if (timeElapsed < waitTimeLimit) {
-            const secondsLeft = Math.ceil((waitTimeLimit - timeElapsed) / 1000);
-            res.writeHead(429, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              success: false,
-              error: 'TOO_MANY_REQUESTS',
-              message: `Please wait ${secondsLeft} seconds before requesting another verification code.`,
-              secondsLeft: secondsLeft
-            }));
-            return;
-          }
-        }
+        // Database-backed abuse guard: 60 s resend cooldown, 3 sends / 15 min per email and IP, timeouts.
+        const otpFlow = parsed.purpose === 'gamertag_change' ? 'gamertag' : 'signup';
+        if (!(await accountSecurity.guardSend(req, res, { flow: otpFlow, email }))) return;
 
         console.log(`🔑 [MATCH DISTRICT OTP SERVICE] Verification Code Generated for email: ${email}`);
 
@@ -1950,6 +1954,8 @@ const server = http.createServer(async (req, res) => {
         const isMatch = otpBuf.length === storedBuf.length && crypto.timingSafeEqual(otpBuf, storedBuf);
 
         if (!isMatch) {
+          // Count wrong codes in the database-backed guard (5 wrong / 15 min => timeout).
+          if (await accountSecurity.recordFailure(req, res, { flow: verifyFlow, email })) return;
           const attemptRes = await pool.query(
             `UPDATE otps SET attempts = COALESCE(attempts, 0) + 1
              WHERE email = $1 AND expires_at > NOW() AND COALESCE(attempts, 0) < 5

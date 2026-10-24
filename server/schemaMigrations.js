@@ -8,6 +8,8 @@ export const SCHEMA_TABLES = Object.freeze([
   'auth_identities',
   'auth_link_challenges',
   'otps',
+  'verification_abuse',
+  'email_change_requests',
   'password_resets',
   'temp_users',
   'registration_cooldowns',
@@ -355,6 +357,46 @@ export async function runSchemaMigrations(clientOrPool) {
       );
       ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS organiser_id VARCHAR(50);
       ALTER TABLE organiser_followers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+      -- Bell notifications: columns that existing INSERT/SELECT statements already rely on
+      ALTER TABLE alerts ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT false;
+      ALTER TABLE alerts ADD COLUMN IF NOT EXISTS tournament_id VARCHAR(50);
+      -- 24-hour notification lifetime: cleanup + read filters use created_at
+      CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts (created_at);
+      CREATE INDEX IF NOT EXISTS idx_alerts_user_created ON alerts (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications (created_at);
+
+      -- Verification abuse guard (HMAC-hashed subjects only; no raw emails or IPs)
+      CREATE TABLE IF NOT EXISTS verification_abuse (
+        id BIGSERIAL PRIMARY KEY,
+        subject_type VARCHAR(10) NOT NULL CHECK (subject_type IN ('user', 'email', 'ip')),
+        subject_key CHAR(64) NOT NULL,
+        action VARCHAR(40) NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        request_count INTEGER NOT NULL DEFAULT 0,
+        window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_sent_at TIMESTAMPTZ,
+        lock_level INTEGER NOT NULL DEFAULT 0,
+        locked_until TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (subject_type, subject_key, action)
+      );
+      CREATE INDEX IF NOT EXISTS idx_verification_abuse_updated_at ON verification_abuse (updated_at);
+
+      -- Two-step email change state (codes stored as SHA-256 digests only)
+      CREATE TABLE IF NOT EXISTS email_change_requests (
+        user_id VARCHAR(50) PRIMARY KEY,
+        old_code_hash VARCHAR(64),
+        old_code_expires_at TIMESTAMPTZ,
+        old_attempts INTEGER NOT NULL DEFAULT 0,
+        old_verified_at TIMESTAMPTZ,
+        new_email VARCHAR(255),
+        new_code_hash VARCHAR(64),
+        new_code_expires_at TIMESTAMPTZ,
+        new_attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
 
     // 2. Organizer apps, plans, and subscriptions
