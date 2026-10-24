@@ -542,6 +542,24 @@ async function initDb() {
     for (const table of SCHEMA_TABLES) {
       console.log(`[SCHEMA] ${table}: ${existingTables.has(table) ? 'already present; checked' : 'created'}`);
     }
+
+    // Startup check for Discord configuration & table presence (no secrets logged)
+    loadEnv();
+    const hasDiscordClientId = Boolean((process.env.DISCORD_CLIENT_ID || '').trim());
+    const hasDiscordClientSecret = Boolean((process.env.DISCORD_CLIENT_SECRET || '').trim());
+    const hasDiscordRedirectUri = Boolean((process.env.DISCORD_REDIRECT_URI || '').trim());
+    const isDiscordConfigured = hasDiscordClientId && hasDiscordClientSecret && hasDiscordRedirectUri;
+
+    const discordTableCheck = await client.query(
+      `SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_discord_connections'`
+    );
+    const discordTableExists = discordTableCheck.rows.length > 0;
+
+    console.log(
+      `🎮 [DISCORD STARTUP] Feature configured: ${isDiscordConfigured} ` +
+      `(client_id=${hasDiscordClientId}, client_secret=${hasDiscordClientSecret}, redirect_uri=${hasDiscordRedirectUri}) | ` +
+      `Table "user_discord_connections": ${discordTableExists ? 'EXISTS' : 'MISSING'}`
+    );
     await client.query(`
       INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, avatar, banner, phone, status,
                            "riotId", "bgmiId", "steamId", "discordTag", "socialLinks", "orgName", "orgMotto", "orgHandle", "orgImage", "orgBio")
@@ -2347,19 +2365,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord') && req.method === 'GET') {
     const authUser = getAuthUser(req);
     if (!authUser) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        success: false,
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required. Please sign in first to connect Discord.'
-      }));
+      res.writeHead(302, { Location: '/profile?discord=error&code=session_expired' });
+      res.end();
       return;
     }
 
     const clientIp = getClientIp(req);
     if (!checkRateLimit('discord_connect_ip:' + clientIp, 20, 60000) || !checkRateLimit('discord_connect_user:' + authUser.id, 10, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a minute.' }));
+      console.error(`[DISCORD CONNECT ERROR] Step: connect_rate_limit | Code: rate_limited | IP: ${clientIp} | User: ${authUser.id}`);
+      res.writeHead(302, { Location: '/profile?discord=error&code=rate_limited' });
+      res.end();
       return;
     }
 
@@ -2369,7 +2384,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const discordRedirectUri = (process.env.DISCORD_REDIRECT_URI || '').trim();
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
-      res.writeHead(302, { Location: '/profile?discord=error&code=server_error' });
+      const missing = [];
+      if (!discordClientId) missing.push('DISCORD_CLIENT_ID');
+      if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
+      if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
+      console.error(`[DISCORD CONNECT ERROR] Step: connect_start | Code: not_configured | Missing env: ${missing.join(', ')}`);
+      res.writeHead(302, { Location: '/profile?discord=error&code=not_configured' });
       res.end();
       return;
     }
@@ -2382,12 +2402,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
 
-    // BIND state to the logged-in user id
+    // BIND state to the logged-in user id and store redirect_uri for byte-for-byte matching
     const statePayload = {
       state: stateRandom,
       userId: authUser.id || authUser.uid,
       reconnect: isReconnect,
       codeVerifier,
+      redirectUri: discordRedirectUri,
       createdAt: Date.now()
     };
 
@@ -2421,7 +2442,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`;
 
     if (!checkRateLimit('discord_callback_ip:' + clientIp, 20, 60000)) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+      console.error(`[DISCORD CONNECT ERROR] Step: callback_ip_rate_limit | Code: rate_limited | IP: ${clientIp}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=rate_limited' });
       res.end();
       return;
     }
@@ -2450,6 +2472,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
 
     if (!stateCookieValue) {
+      console.error('[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Reason: state cookie missing');
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
       res.end();
       return;
@@ -2459,7 +2482,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const decrypted = decryptSessionData(stateCookieValue);
       statePayload = JSON.parse(decrypted);
-    } catch {
+    } catch (decryptErr) {
+      console.error(`[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Exception: ${decryptErr.message}`);
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
       res.end();
       return;
@@ -2467,6 +2491,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     // Verify expiration (10 min)
     if (!statePayload.createdAt || Date.now() - statePayload.createdAt > 600000) {
+      console.error('[DISCORD CONNECT ERROR] Step: state_expiry | Code: session_expired | Reason: state cookie older than 10m');
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
       res.end();
       return;
@@ -2476,6 +2501,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const stateBuf = Buffer.from(statePayload.state || '');
     const queryBuf = Buffer.from(queryState || '');
     if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
+      console.error('[DISCORD CONNECT ERROR] Step: state_verify | Code: state_mismatch | Reason: query state does not match cookie state');
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
       res.end();
       return;
@@ -2484,49 +2510,60 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     // Session validation: caller must have a valid session matching the bound user ID
     const authUser = getAuthUser(req);
     if (!authUser) {
+      console.error('[DISCORD CONNECT ERROR] Step: session_check | Code: session_expired | Reason: no active session in callback');
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
       res.end();
       return;
     }
     if (statePayload.userId !== authUser.id && statePayload.userId !== authUser.uid) {
+      console.error(`[DISCORD CONNECT ERROR] Step: session_user_match | Code: state_mismatch | Reason: bound userId (${statePayload.userId}) does not match session user (${authUser.id || authUser.uid})`);
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
       res.end();
       return;
     }
 
     if (!checkRateLimit('discord_callback_user:' + authUser.id, 10, 60000)) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+      console.error(`[DISCORD CONNECT ERROR] Step: callback_user_rate_limit | Code: rate_limited | User: ${authUser.id}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=rate_limited' });
       res.end();
       return;
     }
 
     if (queryError) {
-      const errCode = queryError === 'access_denied' ? 'access_denied' : 'server_error';
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `/profile?discord=error&code=${errCode}` });
+      const safeDiscordErr = String(queryError).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'unknown_denied';
+      console.error(`[DISCORD CONNECT ERROR] Step: discord_authorize | Code: discord_denied | Discord: ${safeDiscordErr}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=discord_denied' });
       res.end();
       return;
     }
 
     if (!queryCode) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+      console.error('[DISCORD CONNECT ERROR] Step: callback_params | Code: unknown | Reason: missing authorization code in query');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=unknown' });
       res.end();
       return;
     }
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+      const missing = [];
+      if (!discordClientId) missing.push('DISCORD_CLIENT_ID');
+      if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
+      if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
+      console.error(`[DISCORD CONNECT ERROR] Step: callback_env | Code: not_configured | Missing env: ${missing.join(', ')}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=not_configured' });
       res.end();
       return;
     }
 
     try {
-      // Exchange code for token with request timeout (10s)
+      // Exchange code for token with request timeout (10s) using exact matched redirect_uri
+      const effectiveRedirectUri = statePayload.redirectUri || discordRedirectUri;
       const tokenBody = new URLSearchParams({
         client_id: discordClientId,
         client_secret: discordClientSecret,
         grant_type: 'authorization_code',
         code: queryCode,
-        redirect_uri: discordRedirectUri
+        redirect_uri: effectiveRedirectUri
       });
       if (statePayload.codeVerifier) {
         tokenBody.append('code_verifier', statePayload.codeVerifier);
@@ -2534,17 +2571,32 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       const tokenAbort = new AbortController();
       const tokenTimer = setTimeout(() => tokenAbort.abort(), 10000);
-      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: tokenBody.toString(),
-        signal: tokenAbort.signal
-      });
+      let tokenRes;
+      try {
+        tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: tokenBody.toString(),
+          signal: tokenAbort.signal
+        });
+      } catch (fetchErr) {
+        clearTimeout(tokenTimer);
+        console.error(`[DISCORD CONNECT ERROR] Step: token_exchange_network | Code: token_exchange_failed | Exception: ${fetchErr.message}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=token_exchange_failed' });
+        res.end();
+        return;
+      }
       clearTimeout(tokenTimer);
 
       if (!tokenRes.ok) {
-        console.error('⚠️ [DISCORD CONNECT] Token exchange failed with status', tokenRes.status);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+        let discordErrCode = `http_${tokenRes.status}`;
+        try {
+          const errJson = await tokenRes.json();
+          discordErrCode = errJson.error || errJson.message || `http_${tokenRes.status}`;
+        } catch {}
+        const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${tokenRes.status}`;
+        console.error(`[DISCORD CONNECT ERROR] Step: token_exchange | HTTP: ${tokenRes.status} | Discord: ${safeDiscordErr}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=token_exchange_failed' });
         res.end();
         return;
       }
@@ -2556,10 +2608,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       // Fetch user profile from Discord (id, username, global_name, avatar)
       const userAbort = new AbortController();
       const userTimer = setTimeout(() => userAbort.abort(), 10000);
-      const userRes = await fetch('https://discord.com/api/users/@me', {
-        headers: { 'Authorization': `${tokenType} ${accessToken}` },
-        signal: userAbort.signal
-      });
+      let userRes;
+      try {
+        userRes = await fetch('https://discord.com/api/users/@me', {
+          headers: { 'Authorization': `${tokenType} ${accessToken}` },
+          signal: userAbort.signal
+        });
+      } catch (userFetchErr) {
+        clearTimeout(userTimer);
+        console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch_network | Code: profile_fetch_failed | Exception: ${userFetchErr.message}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
+        res.end();
+        return;
+      }
       clearTimeout(userTimer);
 
       // Best-effort immediate token revocation — access/refresh tokens are NEVER stored
@@ -2578,8 +2639,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       } catch {}
 
       if (!userRes.ok) {
-        console.error('⚠️ [DISCORD CONNECT] Profile fetch failed with status', userRes.status);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+        let discordErrCode = `http_${userRes.status}`;
+        try {
+          const errJson = await userRes.json();
+          discordErrCode = errJson.message || errJson.error || `http_${userRes.status}`;
+        } catch {}
+        const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${userRes.status}`;
+        console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch | HTTP: ${userRes.status} | Discord: ${safeDiscordErr}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
         res.end();
         return;
       }
@@ -2591,33 +2658,45 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const discordAvatarHash = (discordUser.avatar || '').trim().slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '');
 
       if (!discordId) {
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+        console.error('[DISCORD CONNECT ERROR] Step: profile_parse | Code: profile_fetch_failed | Reason: missing discord id in @me response');
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
         res.end();
         return;
       }
 
+      // Resolve primary user account row to ensure correct users.id
+      const userLookupRes = await pool.query(
+        'SELECT id, discord_id FROM users WHERE id = $1 OR uid = $1 LIMIT 1',
+        [authUser.id || authUser.uid]
+      );
+      if (userLookupRes.rows.length === 0) {
+        console.error('[DISCORD CONNECT ERROR] Step: user_lookup | Code: session_expired | Reason: user row not found in users table');
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
+        res.end();
+        return;
+      }
+      const actualUserId = userLookupRes.rows[0].id;
+      const existingDiscordId = userLookupRes.rows[0].discord_id;
+
       // Check collision 1: Is this discord_id already connected to a DIFFERENT MatchDistrict user?
       const conflictCheck = await pool.query(
-        `SELECT id FROM users WHERE discord_id = $1 AND id != $2 AND uid != $2
+        `SELECT id FROM users WHERE discord_id = $1 AND id != $2
          UNION
          SELECT user_id AS id FROM user_discord_connections WHERE discord_id = $1 AND user_id != $2
          LIMIT 1`,
-        [discordId, authUser.id]
+        [discordId, actualUserId]
       );
       if (conflictCheck.rows.length > 0) {
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=discord_already_linked' });
+        console.warn(`[DISCORD CONNECT] Step: collision_check | Code: already_linked | Reason: discord_id claimed by other user`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=already_linked' });
         res.end();
         return;
       }
 
       // Check collision 2: Does current user already have a different Discord connected? Only replace if reconnect requested.
-      const userCheck = await pool.query(
-        'SELECT discord_id FROM users WHERE id = $1 OR uid = $1',
-        [authUser.id]
-      );
-      const existingDiscordId = userCheck.rows[0]?.discord_id;
       if (existingDiscordId && existingDiscordId !== discordId && !statePayload.reconnect) {
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=discord_already_linked' });
+        console.warn(`[DISCORD CONNECT] Step: user_collision_check | Code: already_linked | Reason: user already connected to different discord`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=already_linked' });
         res.end();
         return;
       }
@@ -2626,7 +2705,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const dbClient = await pool.connect();
       try {
         await dbClient.query('BEGIN');
-        await dbClient.query('UPDATE users SET discord_id = $1 WHERE id = $2 OR uid = $2', [discordId, authUser.id]);
+        await dbClient.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, actualUserId]);
         await dbClient.query(
           `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -2636,17 +2715,21 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                          global_name = EXCLUDED.global_name,
                          avatar_hash = EXCLUDED.avatar_hash,
                          updated_at = NOW()`,
-          [authUser.id, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
+          [actualUserId, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
         );
         await dbClient.query('COMMIT');
       } catch (txErr) {
         await dbClient.query('ROLLBACK').catch(() => {});
-        throw txErr;
+        const pgCode = txErr.code || 'UNKNOWN';
+        console.error(`[DISCORD CONNECT ERROR] Step: db_transaction | PostgresCode: ${pgCode} | Exception: ${txErr.message}`);
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=db_error' });
+        res.end();
+        return;
       } finally {
         dbClient.release();
       }
 
-      console.log(`\n🛡️ [MATCH DISTRICT CONNECT] User "${authUser.id}" connected Discord (${discordUsername || discordId}).\n`);
+      console.log(`\n🛡️ [MATCH DISTRICT CONNECT] User "${actualUserId}" connected Discord (${discordUsername || discordId}).\n`);
 
       res.writeHead(302, {
         'Set-Cookie': clearStateCookie,
@@ -2655,8 +2738,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.end();
       return;
     } catch (err) {
-      console.error('❌ [MATCH DISTRICT DISCORD CONNECT EXCEPTION]:', err.message);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=server_error' });
+      const pgCode = err.code || null;
+      const isDb = Boolean(pgCode || /postgres|relation|column|database|syntax error/i.test(err.message));
+      const stepCode = isDb ? 'db_error' : 'unknown';
+      console.error(`[DISCORD CONNECT ERROR] Step: callback_handler | Code: ${stepCode} | PostgresCode: ${pgCode || 'N/A'} | Exception: ${err.message}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `/profile?discord=error&code=${stepCode}` });
       res.end();
       return;
     }

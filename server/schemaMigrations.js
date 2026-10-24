@@ -124,8 +124,8 @@ export async function runMigrationBatch(client, sql) {
     try {
       await client.query(statement);
     } catch (error) {
-      console.error(`[SCHEMA] Statement failed for ${target}: ${error.message}`);
-      throw new Error(`Schema statement failed for ${target}: ${error.message}`, { cause: error });
+      console.error(`[SCHEMA] Migration statement failed for table/target "${target}" [code: ${error.code || 'UNKNOWN'}]: ${error.message}`);
+      throw new Error(`Schema migration failed for table/target "${target}" [code: ${error.code || 'UNKNOWN'}]: ${error.message}`, { cause: error });
     }
   }
 }

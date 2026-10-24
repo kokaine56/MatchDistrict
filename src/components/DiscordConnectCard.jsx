@@ -6,6 +6,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [avatarLoadError, setAvatarLoadError] = useState(false);
+  const [cardError, setCardError] = useState(null);
 
   // Read discord connection object from currentUser
   const discord = currentUser?.discord || (currentUser?.discord_id ? {
@@ -33,6 +34,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
     const errCode = params.get('code') || params.get('error') || params.get('discord_error');
 
     if (discordStatus === 'connected' || discordStatus === 'linked') {
+      setCardError(null);
       if (typeof triggerToast === 'function') {
         triggerToast('Discord connected successfully!');
       }
@@ -43,17 +45,68 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
       window.history.replaceState({}, document.title, newUrl);
     } else if (discordStatus === 'error' || errCode) {
       const errorMap = {
-        access_denied: 'Discord authorization was cancelled.',
-        state_mismatch: 'Security verification failed. Please try connecting again.',
-        discord_already_linked: 'This Discord account is already connected to another MatchDistrict account.',
-        session_expired: 'Your session expired. Please sign in again and reconnect Discord.',
-        server_error: 'Failed to connect Discord due to a server error. Please try again.',
-        rate_limited: 'Too many requests. Please wait a moment before trying again.',
-        disabled: 'Discord integration is currently unavailable.',
+        not_configured: {
+          msg: 'Discord integration is not configured on the server. Please check environment settings.',
+          ref: 'not_configured',
+        },
+        state_mismatch: {
+          msg: 'Security verification failed or state mismatch. Please try connecting again.',
+          ref: 'state_mismatch',
+        },
+        session_expired: {
+          msg: 'Your session expired while connecting. Please sign in again and reconnect Discord.',
+          ref: 'session_expired',
+        },
+        discord_denied: {
+          msg: 'Discord authorization was cancelled or denied.',
+          ref: 'discord_denied',
+        },
+        access_denied: {
+          msg: 'Discord authorization was cancelled or denied.',
+          ref: 'discord_denied',
+        },
+        token_exchange_failed: {
+          msg: 'Could not complete authentication with Discord. Token exchange failed.',
+          ref: 'token_exchange_failed',
+        },
+        profile_fetch_failed: {
+          msg: 'Failed to retrieve your Discord profile details. Please try again.',
+          ref: 'profile_fetch_failed',
+        },
+        already_linked: {
+          msg: 'This Discord account is already connected to another MatchDistrict account.',
+          ref: 'already_linked',
+        },
+        discord_already_linked: {
+          msg: 'This Discord account is already connected to another MatchDistrict account.',
+          ref: 'already_linked',
+        },
+        db_error: {
+          msg: 'Database error occurred while saving your Discord connection.',
+          ref: 'db_error',
+        },
+        rate_limited: {
+          msg: 'Too many requests. Please wait a moment before trying again.',
+          ref: 'rate_limited',
+        },
+        unknown: {
+          msg: 'An unexpected error occurred while connecting Discord. Please try again.',
+          ref: 'unknown',
+        },
+        server_error: {
+          msg: 'Failed to connect Discord due to a server error. Please try again.',
+          ref: 'server_error',
+        },
       };
-      const msg = errorMap[errCode] || 'Discord connection failed. Please try again.';
+
+      const errInfo = errorMap[errCode] || {
+        msg: 'Discord connection failed. Please try again.',
+        ref: errCode || 'unknown',
+      };
+
+      setCardError(errInfo);
       if (typeof triggerToast === 'function') {
-        triggerToast(msg);
+        triggerToast(`${errInfo.msg} (Code: ${errInfo.ref})`);
       }
       const newUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, document.title, newUrl);
@@ -120,6 +173,26 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
             </span>
           )}
         </div>
+
+        {cardError && (
+          <div className="p-3.5 bg-rose-500/10 border border-rose-500/25 rounded-xl flex items-start justify-between gap-3 text-rose-300 text-xs animate-in fade-in duration-200">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <span className="material-symbols-outlined text-rose-400 text-lg shrink-0 mt-0.5">error</span>
+              <div>
+                <p className="font-medium text-rose-200">{cardError.msg}</p>
+                <p className="text-[11px] text-rose-400 font-mono mt-0.5 font-semibold">Reference Code: {cardError.ref}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCardError(null)}
+              className="text-rose-400 hover:text-rose-200 transition-colors shrink-0 p-0.5"
+              title="Dismiss"
+            >
+              <span className="material-symbols-outlined text-base">close</span>
+            </button>
+          </div>
+        )}
 
         <div className="p-4 bg-surface-container rounded-xl border border-outline-variant/30 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all">
           <div className="flex items-start sm:items-center gap-3.5 min-w-0">
