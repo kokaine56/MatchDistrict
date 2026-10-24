@@ -1448,37 +1448,41 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
             {/* Sliding Switch for Login/Register */}
             {!showOtpModal && authMode !== 'forgot' && authMode !== 'reset-password' && loginPageState !== 'loading' && loginPageState !== 'authenticated' && loginPageState !== 'password-screen' && (
-              <div className="relative flex p-1 bg-slate-100 dark:bg-white/10 rounded-xl border border-slate-200 dark:border-white/5 w-full mb-6 shrink-0">
-                <motion.button 
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
+              <div 
+                role="tablist"
+                aria-label="Authentication mode"
+                className="relative grid grid-cols-2 p-1 bg-slate-100 dark:bg-white/10 rounded-xl border border-slate-200 dark:border-white/5 w-full mb-6 shrink-0 select-none"
+              >
+                {/* Smooth sliding active selection indicator */}
+                <div 
+                  aria-hidden="true"
+                  className={`absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] bg-primary rounded-[10px] shadow-md shadow-primary/25 pointer-events-none auth-segmented-pill ${
+                    authMode === 'register' ? 'is-register' : 'is-login'
+                  }`}
+                />
+
+                <button 
+                  type="button"
+                  role="tab"
+                  aria-selected={authMode === 'login'}
                   onClick={() => { setDirection(-1); setAuthMode('login'); onNavigate && onNavigate('login'); }}
-                  className={`relative z-10 flex-1 py-2.5 font-headline-md text-[11px] font-black tracking-[0.08em] transition-colors duration-200 ${authMode === 'login' ? 'text-white' : 'text-slate-600 dark:text-on-surface-variant/70 hover:text-slate-900 dark:hover:text-white'}`}
+                  className={`relative z-10 py-2.5 font-headline-md text-[11px] font-black tracking-[0.08em] transition-colors duration-200 rounded-[10px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                    authMode === 'login' ? 'text-white' : 'text-slate-600 dark:text-on-surface-variant/70 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
                   LOG IN
-                  {authMode === 'login' && (
-                    <motion.div 
-                      layoutId="activeTab"
-                      className="absolute inset-0 bg-primary rounded-lg -z-10 shadow-md shadow-primary/25"
-                      transition={{ type: 'tween', ease: 'easeOut', duration: 0.25 }}
-                    />
-                  )}
-                </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.97 }}
+                </button>
+                <button 
+                  type="button"
+                  role="tab"
+                  aria-selected={authMode === 'register'}
                   onClick={() => { setDirection(1); setAuthMode('register'); onNavigate && onNavigate('register'); }}
-                  className={`relative z-10 flex-1 py-2.5 font-headline-md text-[11px] font-black tracking-[0.08em] transition-colors duration-200 ${authMode === 'register' ? 'text-white' : 'text-slate-600 dark:text-on-surface-variant/70 hover:text-slate-900 dark:hover:text-white'}`}
+                  className={`relative z-10 py-2.5 font-headline-md text-[11px] font-black tracking-[0.08em] transition-colors duration-200 rounded-[10px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
+                    authMode === 'register' ? 'text-white' : 'text-slate-600 dark:text-on-surface-variant/70 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
                   REGISTER
-                  {authMode === 'register' && (
-                    <motion.div 
-                      layoutId="activeTab"
-                      className="absolute inset-0 bg-primary rounded-lg -z-10 shadow-md shadow-primary/25"
-                      transition={{ type: 'tween', ease: 'easeOut', duration: 0.25 }}
-                    />
-                  )}
-                </motion.button>
+                </button>
               </div>
             )}
 

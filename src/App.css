@@ -227,3 +227,25 @@ html::-webkit-scrollbar, body::-webkit-scrollbar {
   }
 }
 
+/* Auth Segmented Control Smooth Sliding Indicator */
+.auth-segmented-pill {
+  transform: translateX(0%);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.auth-segmented-pill.is-register {
+  transform: translateX(100%);
+}
+
+.auth-segmented-pill.is-login {
+  transform: translateX(0%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-segmented-pill {
+    transition: none !important;
+  }
+}
+
+
