@@ -2598,7 +2598,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       // Check collision 1: Is this discord_id already connected to a DIFFERENT MatchDistrict user?
       const conflictCheck = await pool.query(
-        'SELECT id FROM users WHERE discord_id = $1 AND id != $2 AND uid != $2',
+        `SELECT id FROM users WHERE discord_id = $1 AND id != $2 AND uid != $2
+         UNION
+         SELECT user_id AS id FROM user_discord_connections WHERE discord_id = $1 AND user_id != $2
+         LIMIT 1`,
         [discordId, authUser.id]
       );
       if (conflictCheck.rows.length > 0) {
