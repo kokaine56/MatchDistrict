@@ -6,9 +6,9 @@
 /**
  * Returns the raw SQL expression that computes a user's display name from real database columns.
  * Fallback order:
- *  1. Non-empty users.name
- *  2. Non-empty users."gamerTag"
- *  3. Local part of users.email (split before '@')
+ *  1. Non-empty users.username
+ *  2. Non-empty users.name
+ *  3. Non-empty users."gamerTag"
  *  4. Default string 'Player'
  *
  * @param {string} [alias='u'] - Table alias or empty string if unqualified
@@ -16,7 +16,7 @@
  */
 export function userDisplayNameRawSql(alias = 'u') {
   const p = alias && alias.trim() ? `${alias.trim()}.` : '';
-  return `COALESCE(NULLIF(${p}name, ''), NULLIF(${p}"gamerTag", ''), NULLIF(split_part(${p}email, '@', 1), ''), 'Player')`;
+  return `COALESCE(NULLIF(${p}username, ''), NULLIF(${p}name, ''), NULLIF(${p}"gamerTag", ''), 'Player')`;
 }
 
 /**
@@ -42,6 +42,9 @@ export function formatUserDisplayName(user) {
   if (user.display_name && typeof user.display_name === 'string' && user.display_name.trim()) {
     return user.display_name.trim();
   }
+  if (user.username && typeof user.username === 'string' && user.username.trim()) {
+    return user.username.trim();
+  }
   if (user.name && typeof user.name === 'string' && user.name.trim()) {
     return user.name.trim();
   }
@@ -50,10 +53,6 @@ export function formatUserDisplayName(user) {
   }
   if (user['gamerTag'] && typeof user['gamerTag'] === 'string' && user['gamerTag'].trim()) {
     return user['gamerTag'].trim();
-  }
-  if (user.email && typeof user.email === 'string' && user.email.includes('@')) {
-    const local = user.email.split('@')[0].trim();
-    if (local) return local;
   }
   return 'Player';
 }
@@ -76,7 +75,7 @@ export function maskUserEmail(email) {
 
 /**
  * Sanitizes a user database row for public consumption, stripping private credentials,
- * TOTP secrets, tokens, and redacting full email/phone.
+ * TOTP secrets, tokens, discord_id, and redacting full email/phone.
  *
  * @param {object|null|undefined} user
  * @returns {object|null}
@@ -88,6 +87,8 @@ export function sanitizeUserForPublic(user) {
   delete safe.admin_totp_secret;
   delete safe.admin_totp_activated;
   delete safe.kycDoc;
+  delete safe.discord_id;
+  delete safe.google_id;
 
   safe.display_name = formatUserDisplayName(user);
   if (safe.email) {

@@ -23,6 +23,7 @@ import { formatDate } from '../utils/timeFormat'
 import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
+import { validateUsername } from '../utils/usernameValidator.js'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -351,6 +352,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [emailOtpCountdown, setEmailOtpCountdown] = useState(0)
   const [isEmailSendingOtp, setIsEmailSendingOtp] = useState(false)
   const [isEditingUsername, setIsEditingUsername] = useState(false)
+  const [usernameAvailability, setUsernameAvailability] = useState(null)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -391,13 +393,20 @@ function Profile({ onNavigate, selectedUserProfile }) {
       window.history.replaceState({}, document.title, newUrl)
     } else if (err) {
       const errorMap = {
+        access_denied: 'Discord connection was cancelled.',
         discord_cancelled: 'Discord connection was cancelled.',
+        state_mismatch: 'Authentication security check failed (state mismatch). Please try again.',
+        invalid_state: 'Authentication security check failed (invalid or expired session). Please try again.',
+        email_unverified: 'Your Discord email is not verified. Please verify it in Discord first.',
         unverified_email: 'Your Discord email is not verified. Please verify it in Discord first.',
-        admin_mfa_required: 'Administrator accounts require dedicated two-factor authentication.',
+        no_email: 'No email address was provided by your Discord account.',
+        link_conflict: 'This Discord account is already connected to another user.',
         account_conflict: 'This account is already linked to a different Discord identity.',
         discord_already_linked: 'This Discord account is already connected to another user.',
+        admin_mfa_required: 'Administrator accounts require dedicated two-factor authentication.',
+        disabled: 'Discord integration is disabled or not configured on this server.',
         discord_not_configured: 'Discord integration is not configured on this server.',
-        invalid_state: 'Authentication security check failed (invalid or expired session). Please try again.',
+        server_error: 'Discord operation failed due to a server error. Please try again.',
         rate_limited: 'Too many authentication attempts. Please wait a moment.',
         discord_token_failed: 'Discord token exchange failed. Please try again.',
         discord_profile_failed: 'Unable to retrieve Discord profile. Please try again.',
@@ -839,20 +848,24 @@ function Profile({ onNavigate, selectedUserProfile }) {
   };
 
   const handleVerifyAndSaveUsername = async () => {
-    const otpCode = playerOtpCode;
-    const newTag = settingsGamerTag.trim();
-    if (!otpCode || otpCode.length < 6) {
-      triggerToast('Please enter a valid 6-digit OTP code.');
+    const rawTag = settingsGamerTag.trim().toLowerCase().replace(/^@/, '');
+    if (!rawTag) {
+      triggerToast('Please enter a username.');
       return;
     }
-    if (!newTag) {
-      triggerToast('Please enter a new username.');
+    const val = validateUsername(rawTag);
+    if (!val.valid) {
+      triggerToast(val.message || 'Invalid username format.');
       return;
     }
 
     const token = await getAuthToken();
     const endpoint = `/api/users/${currentUser.id}`;
-    const payload = { ...buildPlayerProfilePayload({ ...playerData, gamerTag: newTag }), otp: otpCode };
+    const payload = {
+      ...buildPlayerProfilePayload({ ...playerData, username: val.username, gamerTag: '@' + val.username }),
+      username: val.username,
+      gamerTag: '@' + val.username
+    };
 
     try {
       const res = await fetch(endpoint, {
@@ -862,19 +875,21 @@ function Profile({ onNavigate, selectedUserProfile }) {
       });
       const data = await res.json();
       if (data.success) {
-        setPlayerData(prev => ({ ...prev, gamerTag: newTag }));
-        setPlayerEditForm(prev => ({ ...prev, gamerTag: newTag }));
-        setPlayerOtpSent(false);
-        setPlayerOtpCode('');
-        triggerToast('Gamer Tag updated successfully!');
-        setCurrentUser(data.user);
-        setCurrentUserFromContext(data.user);
+        setPlayerData(prev => ({ ...prev, username: val.username, gamerTag: '@' + val.username }));
+        setPlayerEditForm(prev => ({ ...prev, username: val.username, gamerTag: '@' + val.username }));
+        setIsEditingUsername(false);
+        setUsernameAvailability(null);
+        triggerToast('Username updated successfully!');
+        if (data.user) {
+          setCurrentUser(data.user);
+          setCurrentUserFromContext(data.user);
+        }
       } else {
-        triggerToast(data.error || 'Verification failed. Please check your OTP code.');
+        triggerToast(data.message || data.error || 'Failed to update username.');
       }
     } catch (err) {
       console.error(err);
-      triggerToast('Error verifying code and saving username.');
+      triggerToast('Error saving username.');
     }
   };
 
@@ -1231,8 +1246,41 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [orgEditForm, setOrgEditForm] = useState({ ...orgData })
 
   // Initialise Settings-tab inputs when data loads
-  useEffect(() => { setSettingsGamerTag(playerData.gamerTag || '') }, [playerData.gamerTag])
+  useEffect(() => { setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '') }, [playerData.username, playerData.gamerTag])
   useEffect(() => { setSettingsEmail(playerData.email || orgData.email || '') }, [playerData.email, orgData.email])
+
+  // Live debounced check for username availability
+  useEffect(() => {
+    const raw = settingsGamerTag.trim().toLowerCase().replace(/^@/, '')
+    const current = (playerData.username || currentUserFromContext?.username || playerData.gamerTag?.replace(/^@/, '') || '').trim().toLowerCase()
+    if (!raw || raw === current) {
+      setUsernameAvailability(null)
+      return
+    }
+    const val = validateUsername(raw)
+    if (!val.valid) {
+      setUsernameAvailability({ checking: false, available: false, message: val.message })
+      return
+    }
+    setUsernameAvailability({ checking: true, available: false, message: 'Checking availability...' })
+    const timer = setTimeout(async () => {
+      try {
+        const token = await getAuthToken()
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
+        const res = await fetch(`/api/users/check-username?username=${encodeURIComponent(val.username)}`, { headers })
+        const data = await res.json()
+        if (data.success) {
+          setUsernameAvailability({ checking: false, available: data.available, message: data.message })
+        } else {
+          setUsernameAvailability({ checking: false, available: false, message: data.message || 'Unable to verify availability.' })
+        }
+      } catch {
+        setUsernameAvailability({ checking: false, available: false, message: 'Network error checking username.' })
+      }
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [settingsGamerTag, playerData.username, currentUserFromContext?.username, playerData.gamerTag])
+
   // currentUser is always the LOGGED-IN user. Never override with selectedUserProfile.
   const currentUser = currentUserFromContext
   const setCurrentUser = setCurrentUserFromContext
@@ -1240,10 +1288,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const viewedUser = selectedUserProfile || currentUserFromContext
 
   const gamertagCooldownDays = useMemo(() => {
-    if (!currentUserFromContext || !currentUserFromContext.gamertag_last_changed) return 0
-    const lastChanged = new Date(currentUserFromContext.gamertag_last_changed)
+    if (!currentUserFromContext) return 0
+    const lastChangedRaw = currentUserFromContext.username_last_changed || currentUserFromContext.gamertag_last_changed
+    if (!lastChangedRaw) return 0
+    const lastChanged = new Date(lastChangedRaw)
     const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24)
-    return daysDiff < 15 ? Math.ceil(15 - daysDiff) : 0
+    return daysDiff < 7 ? Math.ceil(7 - daysDiff) : 0
   }, [currentUserFromContext])
 
   const emailCooldownDays = useMemo(() => {
@@ -2421,7 +2471,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </h1>
 
                       {/* Handle / GamerTag */}
-                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">{viewedUser.gamerTag || viewedUser.orgHandle}</p>
+                      <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">@{viewedUser.username || viewedUser.gamerTag?.replace(/^@/, '') || viewedUser.orgHandle?.replace(/^@/, '')}</p>
 
                       {/* Bio */}
                       {(viewedUser.orgBio || viewedUser.experience || viewedUser.bio) && (
@@ -2546,7 +2596,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             <div className="flex flex-wrap items-center justify-center md:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
                               <span className="inline-flex items-center gap-0.5 text-primary font-bold">
                                 <span className="material-symbols-outlined text-xs">alternate_email</span>
-                                {playerData.gamerTag?.replace(/^@/, '')}
+                                {playerData.username || playerData.gamerTag?.replace(/^@/, '')}
                               </span>
                               <span className="inline-flex items-center gap-1">
                                 <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
@@ -3688,26 +3738,31 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       <span className="material-symbols-outlined text-primary text-xl">settings</span> Profile Settings
                     </h3>
 
-                    {/* Section 1: Gamer Tag / Username */}
+                    {/* Section 1: Username */}
                     <div className="space-y-4">
                       <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                        <span className="material-symbols-outlined text-primary text-lg">alternate_email</span> Gamer Tag
+                        <span className="material-symbols-outlined text-primary text-lg">alternate_email</span> Username
                       </h4>
                       <div className="flex items-center justify-between gap-4 p-3 bg-surface-container rounded-xl border border-outline-variant/30">
                         <div className="min-w-0">
                           <span className="text-[10px] text-on-surface-variant font-bold uppercase tracking-wider block">Current Username</span>
-                          <strong className="text-on-background text-sm">{playerData.gamerTag}</strong>
+                          <strong className="text-on-background text-sm font-mono">
+                            @{playerData.username || currentUser?.username || playerData.gamerTag?.replace(/^@/, '') || 'gamer'}
+                          </strong>
                         </div>
                         {gamertagCooldownDays > 0 ? (
                           <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold shrink-0">
                             <span className="material-symbols-outlined text-base animate-pulse">schedule</span>
-                            <span>{gamertagCooldownDays}d</span>
+                            <span>{gamertagCooldownDays}d cooldown</span>
                           </div>
                         ) : (
                           !isEditingUsername && (
                             <button
                               type="button"
-                              onClick={() => setIsEditingUsername(true)}
+                              onClick={() => {
+                                setIsEditingUsername(true);
+                                setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '');
+                              }}
                               className="px-3.5 min-h-[44px] bg-primary hover:bg-primary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
                             >
                               <span className="material-symbols-outlined text-sm">edit</span> Edit
@@ -3721,65 +3776,60 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           <div className="space-y-1">
                             <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Username</label>
                             <AbuseFieldWrapper fieldId="settings-playerTag" value={settingsGamerTag} onWarning={setPlayerTagAbuse}>
-                              <input
-                                type="text"
-                                value={settingsGamerTag}
-                                onChange={(e) => setSettingsGamerTag(e.target.value)}
-                                placeholder="e.g. @new_tag"
-                                className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm"
-                              />
-                            </AbuseFieldWrapper>
-                          </div>
-                          {settingsGamerTag.trim() && settingsGamerTag.trim() !== playerData.gamerTag && (
-                            <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-3 animate-in fade-in duration-200">
-                              <p className="text-[10px] font-bold text-primary uppercase tracking-wider">Verification Required</p>
-                              <p className="text-[11px] text-on-surface-variant leading-relaxed">
-                                A one-time code will be sent to <strong className="text-on-background">{playerData.email}</strong>.
-                              </p>
-                              <div className="flex gap-2">
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant font-mono text-xs">@</span>
                                 <input
                                   type="text"
-                                  placeholder="Enter 6-digit Code"
-                                  value={playerOtpCode}
-                                  onChange={(e) => setPlayerOtpCode(e.target.value)}
-                                  maxLength={6}
-                                  className="flex-1 bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background text-xs outline-none focus:border-primary tracking-widest font-mono"
+                                  value={settingsGamerTag}
+                                  onChange={(e) => setSettingsGamerTag(e.target.value.toLowerCase().replace(/^@/, ''))}
+                                  placeholder="e.g. shadow_ninja"
+                                  className="w-full bg-surface-container border border-outline-variant rounded-lg pl-7 pr-3 py-2 text-on-background font-mono text-xs focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all shadow-sm"
                                 />
-                                {playerOtpSent ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleVerifyAndSaveUsername()}
-className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                                    >
-                                      <span className="material-symbols-outlined text-sm">verified</span> Verify & Save
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    disabled={isPlayerSendingOtp}
-                                    onClick={() => sendProfileOtp(playerData.email)}
-                                    className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 rounded-lg text-on-primary font-headline-md text-xs font-bold transition-all flex items-center gap-1.5"
-                                  >
-                                    {isPlayerSendingOtp ? (
-                                      <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Sending…</>
-                                    ) : (
-                                      <><span className="material-symbols-outlined text-sm">send</span> Send Code</>
-                                    )}
-                                  </button>
-                                )}
                               </div>
-                              {playerOtpSent && playerOtpCountdown > 0 && (
-                                <p className="text-[10px] text-on-surface-variant">Resend in <strong className="text-primary">{playerOtpCountdown}s</strong></p>
-                              )}
-                            </div>
-                          )}
+                            </AbuseFieldWrapper>
+                            {usernameAvailability && (
+                              <p className={`text-[11px] font-medium mt-1 flex items-center gap-1 ${
+                                usernameAvailability.checking
+                                  ? 'text-on-surface-variant'
+                                  : usernameAvailability.available
+                                  ? 'text-emerald-400'
+                                  : 'text-rose-400'
+                              }`}>
+                                <span className="material-symbols-outlined text-xs">
+                                  {usernameAvailability.checking ? 'sync' : usernameAvailability.available ? 'check_circle' : 'error'}
+                                </span>
+                                {usernameAvailability.message}
+                              </p>
+                            )}
+                            <p className="text-[10px] text-on-surface-variant/80">
+                              3–32 characters, lowercase letters, numbers, underscores, and dots. Changing your username has a 7-day cooldown.
+                            </p>
+                          </div>
+
                           <div className="flex justify-end gap-2">
                             <button
                               type="button"
-                              onClick={() => { setIsEditingUsername(false); setSettingsGamerTag(''); }}
+                              onClick={() => {
+                                setIsEditingUsername(false);
+                                setSettingsGamerTag(playerData.username || playerData.gamerTag?.replace(/^@/, '') || '');
+                                setUsernameAvailability(null);
+                              }}
                               className="px-4 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold"
                             >
                               Cancel
+                            </button>
+                            <button
+                              type="button"
+                              disabled={
+                                !settingsGamerTag.trim() ||
+                                settingsGamerTag.trim().toLowerCase() === (playerData.username || playerData.gamerTag?.replace(/^@/, '') || '').toLowerCase() ||
+                                (usernameAvailability && !usernameAvailability.available) ||
+                                usernameAvailability?.checking
+                              }
+                              onClick={() => handleVerifyAndSaveUsername()}
+                              className="px-4 min-h-[44px] bg-primary hover:bg-primary/90 disabled:opacity-50 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                            >
+                              <span className="material-symbols-outlined text-sm">save</span> Save Username
                             </button>
                           </div>
                         </div>

@@ -164,7 +164,30 @@ export function UserProvider({ children }) {
     let supabaseSub = null;
 
     async function initializeAuth() {
-      // If the user explicitly logged out in this browser session, block automatic session restoration
+      // 1. Check for active cookie-backed session via /api/auth/me (e.g. from Discord or Google auth redirects)
+      try {
+        const meRes = await fetch('/api/auth/me', { credentials: 'include' });
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          if (active && meData.success && meData.user) {
+            try {
+              sessionStorage.removeItem(LOGGED_OUT_KEY);
+            } catch {}
+            setUserState(meData.user);
+            if (meData.encryptedSession) {
+              try {
+                localStorage.setItem('md_persistent_session', meData.encryptedSession);
+              } catch {}
+            }
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        // silent fallback
+      }
+
+      // 2. If no active server cookie session and user explicitly logged out, block localStorage restoration
       try {
         if (sessionStorage.getItem(LOGGED_OUT_KEY) === 'true') {
           setLoading(false);
@@ -172,6 +195,7 @@ export function UserProvider({ children }) {
         }
       } catch {}
 
+      // 3. Fallback: Restore encrypted persistent session from localStorage
       const persistentSession = localStorage.getItem('md_persistent_session');
       if (persistentSession) {
         try {
@@ -194,26 +218,6 @@ export function UserProvider({ children }) {
           console.warn('Failed to restore encrypted persistent session, falling back to Supabase auth:', err);
           localStorage.removeItem('md_persistent_session');
         }
-      }
-
-      // Check for active cookie-backed session via /api/auth/me (e.g. from Discord or Google auth redirects)
-      try {
-        const meRes = await fetch('/api/auth/me', { credentials: 'include' });
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          if (active && meData.success && meData.user) {
-            setUserState(meData.user);
-            if (meData.encryptedSession) {
-              try {
-                localStorage.setItem('md_persistent_session', meData.encryptedSession);
-              } catch {}
-            }
-            setLoading(false);
-            return;
-          }
-        }
-      } catch (err) {
-        // silent fallback to Supabase
       }
 
       // Fallback: Supabase's built-in session engine

@@ -67,6 +67,7 @@ import {
 } from './server/tournamentPromotion.js';
 import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
+import { validateUsername, sanitizeToUsernameBase } from './server/usernameValidator.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -213,10 +214,51 @@ function publicUserRow(row) {
 function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
   if (!redirectUrl || typeof redirectUrl !== 'string') return defaultPath;
   const trimmed = redirectUrl.trim();
+  // Prevent landing back on authentication pages after successful login
+  if (trimmed === '/auth' || trimmed.startsWith('/auth?') || trimmed === '/login' || trimmed.startsWith('/login?')) {
+    return defaultPath;
+  }
   if ((/^\/[^/\\]/.test(trimmed) || trimmed === '/') && !trimmed.includes(':') && !trimmed.startsWith('//')) {
     return trimmed;
   }
   return defaultPath;
+}
+
+/**
+ * Lazily assigns a unique valid username to an existing user if missing.
+ * Does not overwrite existing usernames; generates from name/email and checks uniqueness.
+ */
+async function ensureUserUsername(clientOrPool, user) {
+  if (!user || user.username) return user;
+  const baseRaw = user.name || user.gamerTag || (user.email ? user.email.split('@')[0] : 'player');
+  const base = sanitizeToUsernameBase(baseRaw);
+
+  let assigned = null;
+  let attempts = 0;
+  while (attempts < 5) {
+    const suffix = attempts === 0 ? Math.floor(1000 + Math.random() * 9000).toString() : Math.floor(10000 + Math.random() * 90000).toString();
+    const candidate = `${base.slice(0, 32 - suffix.length - 1)}_${suffix}`;
+    const checkRes = await clientOrPool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [candidate]);
+    if (checkRes.rows.length === 0) {
+      assigned = candidate;
+      break;
+    }
+    attempts++;
+  }
+
+  if (!assigned) {
+    assigned = `player_${crypto.randomBytes(3).toString('hex')}`.slice(0, 32);
+  }
+
+  try {
+    const userId = user.id || user.uid;
+    await clientOrPool.query('UPDATE users SET username = $1 WHERE id = $2 OR uid = $2', [assigned, userId]);
+    user.username = assigned;
+    await clientOrPool.query('UPDATE profiles SET username = $1 WHERE id = $2 OR uid = $2', [assigned, userId]).catch(() => {});
+  } catch (err) {
+    console.warn('⚠️ [USERNAME] Could not lazily assign username:', err.message);
+  }
+  return user;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -224,11 +266,25 @@ function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
 // Ensures set and clear operations use identical attributes so cookies never drift.
 // ─────────────────────────────────────────────────────────────
 function isHttpsRequest(req) {
-  if (process.env.NODE_ENV === 'production') return true;
   if (!req) return false;
+  if (req.socket && req.socket.encrypted) return true;
+  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
   const proto = req.headers && req.headers['x-forwarded-proto'];
-  if (proto === 'https') return true;
-  return Boolean(req.socket && req.socket.encrypted);
+  const host = (req.headers && (req.headers.host || req.headers['x-forwarded-host'])) || '';
+  const isLocalhost = /^localhost(:\d+)?$/i.test(host) || /^127\.0\.0\.1(:\d+)?$/i.test(host);
+
+  // If localhost on plain HTTP, never set Secure cookie (browser would silently drop it)
+  if (isLocalhost && proto !== 'https') {
+    return false;
+  }
+
+  if (trustProxy && proto === 'https') return true;
+  if (process.env.NODE_ENV === 'production' && !isLocalhost) {
+    if (proto === 'https' || (!proto && !host.includes('localhost') && !host.includes('127.0.0.1'))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildSessionCookie(token, req, options = {}) {
@@ -1372,14 +1428,43 @@ const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || '').split('?')[0];
   // Hardened CORS & Origin Validation
   const requestOrigin = req.headers.origin;
+  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+  const effectiveHost = ((trustProxy && req.headers['x-forwarded-host']) ? req.headers['x-forwarded-host'].split(',')[0] : (req.headers.host || '')).trim().toLowerCase();
+
+  const normalizedAllowedOrigins = new Set(['https://matchdistrict.com', 'https://www.matchdistrict.com']);
+  if (process.env.ALLOWED_ORIGINS) {
+    process.env.ALLOWED_ORIGINS.split(',').forEach(entry => {
+      const clean = entry.trim().toLowerCase().replace(/\/+$/, '');
+      if (clean) normalizedAllowedOrigins.add(clean);
+    });
+  }
+
   const isAllowedOrigin = (origin) => {
     if (!origin) return false;
-    if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-    if (['https://matchdistrict.com', 'https://www.matchdistrict.com'].includes(origin)) return true;
-    if (process.env.ALLOWED_ORIGINS) {
-      const allowed = process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim());
-      if (allowed.includes(origin)) return true;
+    const trimmedOrigin = origin.trim().toLowerCase().replace(/\/+$/, '');
+    if (normalizedAllowedOrigins.has(trimmedOrigin)) return true;
+
+    let parsedOrigin;
+    try {
+      parsedOrigin = new URL(trimmedOrigin);
+    } catch {
+      return false;
     }
+
+    const originHost = parsedOrigin.host.toLowerCase();
+
+    // 1. Same-origin check: Origin host equals request Host (use X-Forwarded-Host only when TRUST_PROXY is enabled)
+    if (effectiveHost && originHost === effectiveHost) {
+      return true;
+    }
+
+    // 2. In development (non-production) also accept http://localhost:* and http://127.0.0.1:*
+    if (process.env.NODE_ENV !== 'production') {
+      if (/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(originHost)) {
+        return true;
+      }
+    }
+
     return false;
   };
 
@@ -1410,14 +1495,24 @@ const server = http.createServer(async (req, res) => {
   const isStateChangingRequest = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method);
   const fetchSite = req.headers['sec-fetch-site'];
   const hasSessionCookie = /(?:^|;\s*)token=/.test(req.headers.cookie || '');
-  if (isStateChangingRequest && (
-    (requestOrigin && !originAllowed) ||
-    (!requestOrigin && hasSessionCookie && fetchSite === 'cross-site')
-  )) {
+
+  let blockRule = null;
+  if (isStateChangingRequest) {
+    if (requestOrigin && !originAllowed) {
+      blockRule = 'ORIGIN_DISALLOWED';
+    } else if (!requestOrigin && hasSessionCookie && fetchSite === 'cross-site') {
+      blockRule = 'CROSS_SITE_FETCH_METADATA_NO_ORIGIN';
+    }
+  }
+
+  if (blockRule) {
+    // Log server side (not to client), without cookies or tokens, for deployment diagnostics
+    console.warn(`[SECURITY] CSRF blocked: rule=${blockRule}, path=${urlPath}, method=${req.method}, origin=${requestOrigin || 'none'}, host=${effectiveHost || req.headers.host || 'none'}, sec-fetch-site=${fetchSite || 'none'}`);
+
     // Exclude logout endpoints so logout cannot be blocked by CSRF check
     if (urlPath !== '/api/auth/logout' && urlPath !== '/api/admin/logout') {
       res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'CSRF_BLOCKED', message: 'Cross-site request blocked.' }));
+      res.end(JSON.stringify({ success: false, error: 'CSRF_BLOCKED', message: 'Request blocked. Please reload the page and try again.' }));
       return;
     }
   }
@@ -1826,7 +1921,7 @@ const server = http.createServer(async (req, res) => {
         // Resolve username to email if it does not contain '@'
         if (emailOrUsername && !emailOrUsername.includes('@')) {
           const userLookup = await pool.query(
-            'SELECT email FROM users WHERE LOWER("gamerTag") = LOWER($1) OR LOWER("gamerTag") = LOWER($2) OR LOWER(name) = LOWER($1)',
+            'SELECT email FROM users WHERE LOWER(username) = LOWER($1) OR LOWER("gamerTag") = LOWER($1) OR LOWER("gamerTag") = LOWER($2) OR LOWER(name) = LOWER($1)',
             [emailOrUsername.trim(), '@' + emailOrUsername.trim()]
           );
           if (userLookup.rows.length > 0) {
@@ -1840,6 +1935,9 @@ const server = http.createServer(async (req, res) => {
 
         // If found, verify password from the database
         if (foundUser && foundUser.password && verifyPassword(password, foundUser.password)) {
+          // Lazily assign username if missing
+          foundUser = await ensureUserUsername(pool, foundUser);
+
           // Establish Supabase Auth session if they have a real auth UUID
           if (foundUser.uid && !foundUser.uid.startsWith('USR-') && !foundUser.uid.startsWith('ADM-')) {
             try {
@@ -1914,6 +2012,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         await ensureSupabaseProfile(pool, foundUser);
+        foundUser = await ensureUserUsername(pool, foundUser);
 
         const token = signJwt({ email: foundUser.email, role: foundUser.role, roles: foundUser.roles || [foundUser.role], id: foundUser.uid || foundUser.id });
         const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: foundUser.uid || foundUser.id, email: foundUser.email }));
@@ -2072,6 +2171,7 @@ const server = http.createServer(async (req, res) => {
 
         // Check Admin MFA / Security
         if (targetUser) {
+          targetUser = await ensureUserUsername(pool, targetUser);
           const isRootAdmin = targetUser.email.toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase();
           const isAdmin = isRootAdmin || hasRole(targetUser, ROLES.ADMIN);
           if (isAdmin && (targetUser.admin_totp_activated && targetUser.admin_totp_secret)) {
@@ -2089,14 +2189,34 @@ const server = http.createServer(async (req, res) => {
           const cleanName = (googlePayload.name || googleEmail.split('@')[0]).trim().slice(0, 50);
           const baseTag = (cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
           const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
+
+          // Generate unique username from Google name or email local part
+          const usernameBase = sanitizeToUsernameBase(googlePayload.name || googleEmail.split('@')[0]);
+          let assignedUsername = null;
+          let uAttempts = 0;
+          while (uAttempts < 5) {
+            const suffix = Math.floor(1000 + Math.random() * 9000).toString();
+            const candidate = `${usernameBase.slice(0, 32 - suffix.length - 1)}_${suffix}`;
+            const checkU = await pool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [candidate]);
+            if (checkU.rows.length === 0) {
+              assignedUsername = candidate;
+              break;
+            }
+            uAttempts++;
+          }
+          if (!assignedUsername) {
+            assignedUsername = `player_${crypto.randomBytes(3).toString('hex')}`.slice(0, 32);
+          }
+
           const randomPassHash = hashPassword('GOOGLE_OAUTH_' + crypto.randomBytes(16).toString('hex'));
           const avatarUrl = sanitizeImageUrlForDb(googlePayload.picture) || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
 
           const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (email)
-             DO UPDATE SET google_id = COALESCE(users.google_id, EXCLUDED.google_id)
+             DO UPDATE SET google_id = COALESCE(users.google_id, EXCLUDED.google_id),
+                           username = COALESCE(users.username, EXCLUDED.username)
              RETURNING *`,
             [
               userUUID,
@@ -2105,6 +2225,7 @@ const server = http.createServer(async (req, res) => {
               googleEmail,
               randomPassHash,
               gamerTag,
+              assignedUsername,
               'player',
               ['user'],
               'Amateur',
@@ -2188,7 +2309,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
-      const target = intent === 'link' ? '/profile?error=discord_not_configured' : '/auth?error=discord_not_configured';
+      const target = intent === 'link' ? '/profile?error=disabled' : '/auth?error=disabled';
       res.writeHead(302, { Location: target });
       res.end();
       return;
@@ -2208,8 +2329,8 @@ const server = http.createServer(async (req, res) => {
     };
 
     const stateToken = encryptSessionData(JSON.stringify(statePayload));
-    const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
-    const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isProdOrHttps ? '; Secure' : ''}`;
+    const isHttps = isHttpsRequest(req);
+    const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
 
     const discordAuthUrl = new URL('https://discord.com/oauth2/authorize');
     discordAuthUrl.searchParams.set('client_id', discordClientId);
@@ -2232,8 +2353,8 @@ const server = http.createServer(async (req, res) => {
   // 2d. Discord OAuth2 Flow: Callback Handler (/api/auth/discord/callback)
   if ((req.url.startsWith('/api/auth/discord/callback') || urlPath === '/api/auth/discord/callback') && req.method === 'GET') {
     const clientIp = getClientIp(req);
-    const isProdOrHttps = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
-    const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isProdOrHttps ? '; Secure' : ''}`;
+    const isHttps = isHttpsRequest(req);
+    const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`;
 
     if (!checkRateLimit('discord_auth:' + clientIp, 20, 60000)) {
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=rate_limited' });
@@ -2265,7 +2386,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!stateCookieValue) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=invalid_state' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=state_mismatch' });
       res.end();
       return;
     }
@@ -2275,7 +2396,7 @@ const server = http.createServer(async (req, res) => {
       const decrypted = decryptSessionData(stateCookieValue);
       statePayload = JSON.parse(decrypted);
     } catch {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=invalid_state' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=state_mismatch' });
       res.end();
       return;
     }
@@ -2284,7 +2405,7 @@ const server = http.createServer(async (req, res) => {
 
     // Verify expiration (10 min)
     if (!statePayload.createdAt || Date.now() - statePayload.createdAt > 600000) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_state` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=state_mismatch` });
       res.end();
       return;
     }
@@ -2293,26 +2414,26 @@ const server = http.createServer(async (req, res) => {
     const stateBuf = Buffer.from(statePayload.state || '');
     const queryBuf = Buffer.from(queryState || '');
     if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_state` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=state_mismatch` });
       res.end();
       return;
     }
 
     if (queryError) {
-      const errCode = queryError === 'access_denied' ? 'discord_cancelled' : 'discord_failed';
+      const errCode = queryError === 'access_denied' ? 'access_denied' : 'server_error';
       res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=${errCode}` });
       res.end();
       return;
     }
 
     if (!queryCode) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=missing_code` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=server_error` });
       res.end();
       return;
     }
 
     if (!discordClientId || !discordClientSecret || !discordRedirectUri) {
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_not_configured` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=disabled` });
       res.end();
       return;
     }
@@ -2342,7 +2463,7 @@ const server = http.createServer(async (req, res) => {
 
       if (!tokenRes.ok) {
         console.error('⚠️ [DISCORD AUTH] Token exchange failed with status', tokenRes.status);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_token_failed` });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=server_error` });
         res.end();
         return;
       }
@@ -2362,7 +2483,7 @@ const server = http.createServer(async (req, res) => {
 
       if (!userRes.ok) {
         console.error('⚠️ [DISCORD AUTH] Profile fetch failed with status', userRes.status);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_profile_failed` });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=server_error` });
         res.end();
         return;
       }
@@ -2375,7 +2496,7 @@ const server = http.createServer(async (req, res) => {
       const discordGlobalName = (discordUser.global_name || discordUser.username || '').trim();
 
       if (!discordId) {
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=invalid_payload` });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=server_error` });
         res.end();
         return;
       }
@@ -2384,14 +2505,14 @@ const server = http.createServer(async (req, res) => {
       if (statePayload.intent === 'link') {
         const linkUserId = statePayload.userId;
         if (!linkUserId) {
-          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=auth_required' });
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=server_error' });
           res.end();
           return;
         }
 
         const conflictCheck = await pool.query('SELECT id FROM users WHERE discord_id = $1 AND id != $2', [discordId, linkUserId]);
         if (conflictCheck.rows.length > 0) {
-          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=discord_already_linked' });
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?error=link_conflict' });
           res.end();
           return;
         }
@@ -2405,12 +2526,22 @@ const server = http.createServer(async (req, res) => {
 
       // Handle intent === 'login' (or signup)
       let targetUser = null;
+      let usernameWasAdjusted = false;
+      let finalUsername = null;
+
       const byDiscordRes = await pool.query('SELECT * FROM users WHERE discord_id = $1', [discordId]);
       if (byDiscordRes.rows.length > 0) {
         targetUser = byDiscordRes.rows[0];
+        targetUser = await ensureUserUsername(pool, targetUser);
       } else {
-        if (!discordEmail || !isEmailVerified || !discordEmail.includes('@')) {
-          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=unverified_email' });
+        if (!discordEmail || !discordEmail.includes('@')) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=no_email' });
+          res.end();
+          return;
+        }
+
+        if (!isEmailVerified) {
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=email_unverified' });
           res.end();
           return;
         }
@@ -2419,14 +2550,15 @@ const server = http.createServer(async (req, res) => {
         if (byEmailRes.rows.length > 0) {
           targetUser = byEmailRes.rows[0];
           if (targetUser.discord_id && targetUser.discord_id !== discordId) {
-            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=account_conflict' });
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/auth?error=link_conflict' });
             res.end();
             return;
           }
           await pool.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, targetUser.id]);
           targetUser.discord_id = discordId;
+          targetUser = await ensureUserUsername(pool, targetUser);
         } else {
-          // New User Registration with least-privileged participant defaults
+          // New User Registration with Discord
           const userUUID = 'USR-' + crypto.randomBytes(12).toString('hex');
           const cleanName = (discordGlobalName || discordUsername || discordEmail.split('@')[0]).trim().slice(0, 50).replace(/[<>]/g, '');
           const baseTag = (discordUsername.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
@@ -2436,11 +2568,31 @@ const server = http.createServer(async (req, res) => {
             ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.png`
             : 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
 
+          // Assign username based on normalized Discord handle
+          const candidateUsername = sanitizeToUsernameBase(discordUsername, 'gamer');
+          finalUsername = candidateUsername;
+
+          // Check if candidate username is already taken
+          const checkU = await pool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [candidateUsername]);
+          if (checkU.rows.length > 0) {
+            usernameWasAdjusted = true;
+            for (let attempt = 0; attempt < 8; attempt++) {
+              const suffix = Math.floor(100 + Math.random() * 900).toString();
+              const alt = `${candidateUsername.slice(0, 32 - suffix.length - 1)}_${suffix}`;
+              const checkAlt = await pool.query('SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)', [alt]);
+              if (checkAlt.rows.length === 0) {
+                finalUsername = alt;
+                break;
+              }
+            }
+          }
+
           const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
              ON CONFLICT (email)
-             DO UPDATE SET discord_id = COALESCE(users.discord_id, EXCLUDED.discord_id)
+             DO UPDATE SET discord_id = COALESCE(users.discord_id, EXCLUDED.discord_id),
+                           username = COALESCE(users.username, EXCLUDED.username)
              RETURNING *`,
             [
               userUUID,
@@ -2449,6 +2601,7 @@ const server = http.createServer(async (req, res) => {
               discordEmail,
               randomPassHash,
               gamerTag,
+              finalUsername,
               'player',
               ['user'],
               'Amateur',
@@ -2485,7 +2638,13 @@ const server = http.createServer(async (req, res) => {
       logTermsAcceptance(pool, targetUser.email, targetUser.id || targetUser.uid, 'discord_signin', req).catch(() => {});
       console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${targetUser.name || targetUser.email}" authenticated via Discord.\n`);
 
-      const destination = getSafeRelativeRedirect(statePayload.redirect, '/');
+      const baseDestination = getSafeRelativeRedirect(statePayload.redirect, '/');
+      let destination = baseDestination;
+      if (usernameWasAdjusted && finalUsername) {
+        const joinChar = destination.includes('?') ? '&' : '?';
+        destination = `${destination}${joinChar}notice=username_adjusted&assigned=${encodeURIComponent(finalUsername)}`;
+      }
+
       res.writeHead(302, {
         'Set-Cookie': [cookieHeader, clearStateCookie],
         'Location': destination
@@ -2494,7 +2653,7 @@ const server = http.createServer(async (req, res) => {
       return;
     } catch (err) {
       console.error('❌ [MATCH DISTRICT DISCORD AUTH EXCEPTION]:', err.message);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=discord_failed` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `${fallbackRedirect}?error=server_error` });
       res.end();
       return;
     }
@@ -3090,7 +3249,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 3b. GET /api/auth/me Service
-  if (req.url === '/api/auth/me' && req.method === 'GET') {
+  if ((req.url === '/api/auth/me' || urlPath === '/api/auth/me') && req.method === 'GET') {
     try {
       const authUser = getAuthUser(req);
       if (!authUser) {
@@ -3104,7 +3263,8 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }));
         return;
       }
-      const user = dbRes.rows[0];
+      let user = dbRes.rows[0];
+      user = await ensureUserUsername(pool, user);
       let token = null;
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -4054,6 +4214,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Username Uniqueness & Format Verification Service
+  if ((urlPath === '/api/users/check-username' || req.url.startsWith('/api/users/check-username')) && req.method === 'GET') {
+    const clientIp = getClientIp(req);
+    if (!checkRateLimit('check_username:' + clientIp, 30, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many username checks. Please wait a moment.' }));
+      return;
+    }
+
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const candidate = (parsedUrl.searchParams.get('username') || '').trim();
+
+      if (!candidate) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, valid: false, available: false, error: 'MISSING_PARAM', message: 'Username parameter is required.' }));
+        return;
+      }
+
+      const val = validateUsername(candidate);
+      if (!val.valid) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, valid: false, available: false, error: val.error, message: val.message }));
+        return;
+      }
+
+      const authUser = getAuthUser(req);
+      const excludeId = authUser ? (authUser.id || authUser.uid) : null;
+      let query = 'SELECT id FROM users WHERE LOWER(username) = LOWER($1)';
+      let params = [val.username];
+      if (excludeId) {
+        query += ' AND id != $2 AND uid != $2';
+        params.push(excludeId);
+      }
+      const checkRes = await pool.query(query, params);
+      const isAvailable = checkRes.rows.length === 0;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        valid: true,
+        available: isAvailable,
+        username: val.username,
+        message: isAvailable ? 'Username is available.' : 'This username is already taken.'
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
   if (urlPath.startsWith('/api/users/') && req.method === 'GET') {
     const parts = urlPath.split('/');
     if (parts.length === 4) {
@@ -4081,6 +4293,7 @@ const server = http.createServer(async (req, res) => {
           const publicUser = {
             id: user.id,
             display_name: formatUserDisplayName(user),
+            username: user.username || '',
             gamerTag: user.gamerTag || '',
             avatar: sanitizeImageUrlForDb(user.avatar),
             banner: sanitizeImageUrlForDb(user.banner),
@@ -4304,6 +4517,62 @@ const server = http.createServer(async (req, res) => {
           }
         }
 
+        // Verification & Cooldown for username change (7 days cooldown)
+        let usernameLastChangedVal = undefined;
+        let validatedNewUsername = undefined;
+        if (updateData.username !== undefined) {
+          const userCheckRes = await pool.query('SELECT username, "username_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
+          const currentUserRecord = userCheckRes.rows[0];
+          const candidateUsername = (updateData.username || '').trim().toLowerCase();
+          const currentUsername = (currentUserRecord?.username || '').trim().toLowerCase();
+
+          if (candidateUsername && candidateUsername !== currentUsername) {
+            // Check 7-day cooldown:
+            if (currentUserRecord && currentUserRecord.username_last_changed) {
+              const lastChanged = new Date(currentUserRecord.username_last_changed);
+              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
+              if (daysDiff < 7) {
+                const remainingDays = Math.ceil(7 - daysDiff);
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  success: false,
+                  error: 'COOLDOWN_ACTIVE',
+                  message: `You can only change your username once every 7 days. Remaining: ${remainingDays} day${remainingDays === 1 ? '' : 's'}.`
+                }));
+                return;
+              }
+            }
+
+            const val = validateUsername(candidateUsername);
+            if (!val.valid) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: false,
+                error: val.error || 'INVALID_USERNAME',
+                message: val.message || 'Invalid username.'
+              }));
+              return;
+            }
+
+            const checkTaken = await pool.query(
+              'SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND id != $2 AND uid != $2',
+              [val.username, id]
+            );
+            if (checkTaken.rows.length > 0) {
+              res.writeHead(409, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: false,
+                error: 'USERNAME_TAKEN',
+                message: 'This username is already taken. Please choose another.'
+              }));
+              return;
+            }
+
+            validatedNewUsername = val.username;
+            usernameLastChangedVal = new Date();
+          }
+        }
+
         const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
         const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
 
@@ -4343,7 +4612,9 @@ const server = http.createServer(async (req, res) => {
             "email_last_changed" = COALESCE($16, "email_last_changed"),
             role = COALESCE($17, role),
             roles = COALESCE($18, roles),
-            "orgHandle" = COALESCE($20, "orgHandle")
+            "orgHandle" = COALESCE($20, "orgHandle"),
+            username = COALESCE($21, username),
+            username_last_changed = COALESCE($22, username_last_changed)
            WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
@@ -4370,13 +4641,18 @@ const server = http.createServer(async (req, res) => {
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
             id,
-            updateData.gamerTag
+            updateData.gamerTag,
+            validatedNewUsername,
+            usernameLastChangedVal
           ]
         );
         if (dbRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile to update not found.' }));
           return;
+        }
+        if (validatedNewUsername) {
+          await pool.query('UPDATE profiles SET username = $1 WHERE id = $2 OR uid = $2', [validatedNewUsername, id]).catch(() => {});
         }
         console.log(`\n📦 [MATCH DISTRICT DB] User "${id}" updated in Supabase PostgreSQL.\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });

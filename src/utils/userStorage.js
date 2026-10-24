@@ -57,6 +57,7 @@ export function setStoredUser(user) {
 export function buildPlayerProfilePayload(form) {
   return {
     name: form.name,
+    username: form.username,
     gamerTag: form.gamerTag,
     email: form.email,
     phone: form.phone,

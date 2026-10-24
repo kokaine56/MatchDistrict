@@ -525,22 +525,38 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     window.location.href = target
   }
 
-  // Handle Discord OAuth URL errors
+  // Handle Discord OAuth URL errors and notices
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const err = params.get('error') || params.get('discord_error')
+    const notice = params.get('notice')
+    const assignedUsername = params.get('assigned')
+
+    if (notice === 'username_adjusted') {
+      triggerToast(`Welcome! Your Discord handle was taken, so we assigned @${assignedUsername || 'a unique username'}. Customize it in Profile.`)
+    }
+
     if (err) {
       const errorMap = {
+        access_denied: 'Discord sign-in was cancelled.',
         discord_cancelled: 'Discord sign-in was cancelled.',
-        unverified_email: 'Your Discord email is not verified. Please verify it in Discord or use another sign-in method.',
-        admin_mfa_required: 'Administrator accounts require dedicated two-factor authentication via Admin Login.',
-        account_conflict: 'This account is already linked to a different Discord identity.',
-        discord_already_linked: 'This Discord account is already connected to another user.',
-        discord_not_configured: 'Discord Sign-In is not configured on this server.',
+        state_mismatch: 'Authentication security check failed (state mismatch). Please try again.',
         invalid_state: 'Authentication security check failed (invalid or expired session). Please try again.',
-        rate_limited: 'Too many authentication attempts. Please wait a minute and try again.',
+        email_unverified: 'Your Discord email is not verified. Please verify it in Discord or use another sign-in method.',
+        unverified_email: 'Your Discord email is not verified. Please verify it in Discord or use another sign-in method.',
+        no_email: 'No email address was provided by your Discord account. Please ensure an email is verified on Discord.',
+        link_conflict: 'This account or Discord profile is already connected to another user.',
+        account_conflict: 'This account is already linked to a different identity.',
+        discord_already_linked: 'This Discord account is already connected to another user.',
+        admin_mfa_required: 'Administrator accounts require dedicated two-factor authentication via Admin Login.',
+        disabled: 'Discord Sign-In is disabled or not configured on this server.',
+        discord_not_configured: 'Discord Sign-In is not configured on this server.',
+        server_error: 'Discord authentication failed due to a server error. Please try again.',
         discord_token_failed: 'Discord authentication exchange failed. Please try again.',
         discord_profile_failed: 'Unable to retrieve Discord profile. Please try again.',
+        discord_failed: 'Discord authentication failed. Please try again.',
+        missing_code: 'Discord authorization code was missing. Please try again.',
+        rate_limited: 'Too many authentication attempts. Please wait a minute and try again.',
         auth_required: 'Please sign in first to link your Discord account.'
       }
       triggerToast(errorMap[err] || 'Discord authentication failed. Please try again.')
