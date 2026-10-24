@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
+import { useSearchParams, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import CountUp from '../components/CountUp'
 import Header from '../components/Header.jsx'
@@ -320,7 +321,42 @@ function Profile({ onNavigate, selectedUserProfile }) {
     return loggedIn.id === profileUserId
   }, [currentUserFromContext, selectedUserProfile])
 
-  const [activeTab, setActiveTab] = useState('overview')
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const resolveTab = (tab) => {
+    if (!tab) return 'teams';
+    const lower = String(tab).toLowerCase();
+    if (lower === 'overview') return 'teams';
+    if (lower === 'wallet' || lower === 'prize-payments' || lower === 'payment-history' || lower === 'payments') return 'payments';
+    if (lower === 'teams' || lower === 'tournaments' || lower === 'settings' || lower === 'verifier') return lower;
+    return 'teams';
+  };
+
+  const [activeTab, setActiveTabState] = useState(() => {
+    const requestedTab = searchParams.get('tab') || location.state?.activeTab;
+    return resolveTab(requestedTab);
+  });
+
+  const setActiveTab = (tab) => {
+    const resolved = resolveTab(tab);
+    setActiveTabState(resolved);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', resolved);
+      return next;
+    }, { replace: true });
+  };
+
+  useEffect(() => {
+    const tabFromUrl = searchParams.get('tab');
+    if (tabFromUrl) {
+      const resolved = resolveTab(tabFromUrl);
+      if (resolved !== activeTab) {
+        setActiveTabState(resolved);
+      }
+    }
+  }, [searchParams]);
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const [profileMode, setProfileMode] = useState('player') // 'player' | 'organiser'
@@ -1028,7 +1064,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
   // --- SWITCH PROFILE MODE ---
   const handleToggleProfileMode = (mode) => {
     setProfileMode(mode)
-    setActiveTab('overview')
+    setActiveTab('teams')
     triggerToast(`Switched to ${mode === 'player' ? 'Player Mode' : 'Organizer Mode'}`)
   }
 
@@ -1820,16 +1856,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     onNavigate && onNavigate('home');
   }
 
-  // --- DERIVED VALUES (overview + teams) ---
-  const overviewMatchesCount = useMemo(() => {
-    const successfulIds = new Set(
-      userRegistrations
-        .filter(r => r && SUCCESSFUL_REG_STATUSES.includes(r.status))
-        .map(r => r.tournament_id)
-        .filter(Boolean)
-    )
-    return successfulIds.size
-  }, [userRegistrations])
+  // --- DERIVED VALUES (teams) ---
   const filteredPresets = useMemo(() => {
     const all = presets.map(p => consolidatePreset(p))
     return presetGameFilter === 'All' ? all : all.filter(p => (p.game || 'BGMI') === presetGameFilter)
@@ -2545,73 +2572,73 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                     <div className="hidden md:block glass-card p-1 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm mt-6">
                       <div className="flex gap-1">
                         {[
-                          { id: 'overview', label: 'Overview', icon: 'dashboard' },
                           { id: 'teams', label: 'Teams & Squads', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
-                          { id: 'wallet', label: 'Wallet & Payouts', icon: 'account_balance_wallet' },
-                          { id: 'prize-payments', label: 'Prize Payments', icon: 'payments' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' },
-                          ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
-                            ? [{ id: 'verifier', label: 'Verifier Panel', icon: 'verified' }]
-                            : [])
-                        ].map((tab) => (
-                          <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 font-headline-md text-xs font-bold rounded-xl transition-all duration-200 relative ${
-                              activeTab === tab.id
-                                ? 'text-white'
-                                : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
-                            }`}
-                          >
-                            {activeTab === tab.id && (
-                              <motion.div
-                                layoutId="activePlayerTab"
-                                className="absolute inset-0 bg-primary rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.4)] border border-primary/20 z-0"
-                                transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                              />
-                            )}
-                            <span className="material-symbols-outlined text-base relative z-10">{tab.icon}</span>
-                            <span className="relative z-10">{tab.label}</span>
-                          </button>
-                        ))}
+                          { id: 'payments', label: 'Payment History', icon: 'payments' },
+                          { id: 'settings', label: 'Settings', icon: 'settings' }
+                        ].map((tab) => {
+                          const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
+                          return (
+                            <button
+                              key={tab.id}
+                              data-tab={tab.id}
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 font-headline-md text-xs font-bold rounded-xl transition-all duration-200 relative ${
+                                isActive
+                                  ? 'text-white'
+                                  : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
+                              }`}
+                            >
+                              {isActive && (
+                                <motion.div
+                                  layoutId="activePlayerTab"
+                                  className="absolute inset-0 bg-primary rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.4)] border border-primary/20 z-0"
+                                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                                />
+                              )}
+                              <span className="material-symbols-outlined text-base relative z-10">{tab.icon}</span>
+                              <span className="relative z-10">{tab.label}</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
 
-                    {/* Horizontal Scroll Navigation for Mobile (Sticky bottom is also loaded) */}
-                    <div className="md:hidden glass-card p-1 rounded-xl border border-outline-variant/30 bg-surface/40 overflow-x-auto no-scrollbar">
-                      <div className="flex gap-1 min-w-max">
+                    {/* Navigation for Mobile */}
+                    <div className="md:hidden glass-card p-1 rounded-xl border border-outline-variant/30 bg-surface/40 w-full overflow-hidden mt-4">
+                      <div className="grid grid-cols-4 gap-1 w-full">
                         {[
-                          { id: 'overview', label: 'Overview', icon: 'dashboard' },
                           { id: 'teams', label: 'Teams', icon: 'group' },
                           { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
-                          { id: 'wallet', label: 'Wallet', icon: 'account_balance_wallet' },
-                          { id: 'prize-payments', label: 'Prize Payments', icon: 'payments' },
-                          { id: 'settings', label: 'Settings', icon: 'settings' },
-                          ...(hasCapability(getUserRoles(currentUser), 'VERIFY_PAYMENTS')
-                            ? [{ id: 'verifier', label: 'Verifier', icon: 'verified' }]
-                            : [])
-                        ].map((tab) => (
-                          <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-1.5 py-2 px-3.5 font-headline-md text-xs font-bold rounded-lg transition-all relative ${
-                              activeTab === tab.id
-                                ? 'text-white'
-                                : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
-                            }`}
-                          >
-                            {activeTab === tab.id && (
-                              <motion.div
-                                layoutId="activePlayerTabMobile"
-                                className="absolute inset-0 bg-primary rounded-lg shadow-md z-0"
-                                transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                              />
-                            )}
-                            <span className="material-symbols-outlined text-base relative z-10">{tab.icon}</span>
-                            <span className="relative z-10">{tab.label}</span>
-                          </button>
-                        ))}
+                          { id: 'payments', label: 'Payment History', icon: 'payments' },
+                          { id: 'settings', label: 'Settings', icon: 'settings' }
+                        ].map((tab) => {
+                          const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
+                          return (
+                            <button
+                              key={tab.id}
+                              data-tab={tab.id}
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg transition-all relative min-h-[48px] select-none ${
+                                isActive
+                                  ? 'text-white'
+                                  : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
+                              }`}
+                            >
+                              {isActive && (
+                                <motion.div
+                                  layoutId="activePlayerTabMobile"
+                                  className="absolute inset-0 bg-primary rounded-lg shadow-md z-0"
+                                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                                />
+                              )}
+                              <span className="material-symbols-outlined text-lg leading-none relative z-10">{tab.icon}</span>
+                              <span className="text-[10px] font-bold tracking-tight text-center relative z-10 leading-tight line-clamp-2 mt-1 px-0.5">
+                                {tab.label}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -2623,105 +2650,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
           {isOwnProfile && (
             <div className="pb-4 md:pb-0 pt-4 sm:pt-6">
               <AnimatePresence mode="wait">
-                {/* ===== TAB 1: OVERVIEW ===== */}
-                {activeTab === 'overview' && (
-                  <motion.div
-                    key="overview"
-                    variants={tabContentVariants}
-                    initial="initial"
-                    animate="animate"
-                    exit="exit"
-                    className="space-y-5"
-                  >
-                    {/* Section header */}
-                    <div>
-                      <h3 className="font-headline-md text-sm font-bold text-on-background">Overview</h3>
-                      <p className="font-body-sm text-[11px] text-on-surface-variant mt-0.5">Your registration activity on Match District.</p>
-                    </div>
 
-                    <div className="glass-card p-4 rounded-2xl border border-outline-variant/30 bg-surface-container-low/50 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <span className="font-label-caps text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">District ID</span>
-                        <p className="mt-1 font-mono text-lg font-bold tracking-[0.18em] text-on-background">
-                          {(currentUser || currentUserFromContext)?.district_id || 'Assigning ID…'}
-                        </p>
-                        <p className="mt-0.5 text-[10px] text-on-surface-variant">Permanent public account identifier</p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={!(currentUser || currentUserFromContext)?.district_id}
-                        onClick={async () => {
-                          const districtId = (currentUser || currentUserFromContext)?.district_id
-                          if (!districtId) return
-                          try {
-                            await navigator.clipboard.writeText(String(districtId))
-                            triggerToast('District ID copied.')
-                          } catch {
-                            triggerToast('Could not copy the District ID. Select and copy it manually.')
-                          }
-                        }}
-                        className="shrink-0 min-h-[40px] rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50"
-                        aria-label="Copy District ID"
-                      >
-                        <span className="material-symbols-outlined mr-1 align-middle text-sm">content_copy</span>Copy
-                      </button>
-                    </div>
-
-                    {/* Stat card */}
-                    <motion.div
-                      variants={statsContainerVariants}
-                      initial="hidden"
-                      animate="show"
-                      className="w-full"
-                    >
-                      {/* Registered Matches */}
-                      <motion.div
-                        variants={statsCardVariants}
-                        className="glass-card p-5 rounded-2xl border border-outline-variant/35 bg-surface-container-low/50 shadow-sm space-y-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-label-caps text-[9px] font-bold text-on-surface-variant uppercase tracking-widest">Registered Matches</span>
-                          <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
-                            <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-                          </div>
-                        </div>
-                        <div className="font-black text-3xl sm:text-4xl text-on-background leading-none">
-                          {overviewMatchesCount}
-                        </div>
-                        <p className="font-body-sm text-[10px] text-on-surface-variant leading-relaxed">
-                          Total tournament entries registered.
-                        </p>
-                      </motion.div>
-                    </motion.div>
-
-                    {/* Divider info note */}
-                    {overviewMatchesCount === 0 && (
-                      <div className="glass-card p-5 rounded-2xl border border-outline-variant/25 bg-surface/30 flex items-center gap-3">
-                        <span className="material-symbols-outlined text-2xl text-on-surface-variant/40">info</span>
-                        <div>
-                          <p className="font-body-sm text-xs text-on-surface-variant">You haven't registered for any tournaments yet.</p>
-                          <button onClick={() => onNavigate && onNavigate('tournaments')} className="font-headline-md text-[11px] font-bold text-primary hover:underline mt-0.5">Browse tournaments &rarr;</button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Quick link to registrations list */}
-                    {overviewMatchesCount > 0 && (
-                      <div className="glass-card p-4 rounded-2xl border border-outline-variant/25 bg-surface/30 flex items-center gap-3">
-                        <span className="material-symbols-outlined text-xl text-on-surface-variant/60">list_alt</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-body-sm text-[11px] text-on-surface-variant">View all your tournament registrations and their statuses.</p>
-                        </div>
-                        <button
-                          onClick={() => setActiveTab('tournaments')}
-                          className="px-3 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg font-headline-md text-[10px] font-bold transition-all shrink-0"
-                        >
-                          View
-                        </button>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
 
               {/* Tab 2: My Tournaments — Redesigned */}
               {activeTab === 'tournaments' && (
@@ -3501,10 +3430,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               )}
 
 
-              {/* Tab 4: Wallet & Payouts */}
-              {activeTab === 'wallet' && (
+              {/* Tab 3: Payment History */}
+              {(activeTab === 'payments' || activeTab === 'wallet' || activeTab === 'prize-payments') && (
                 <motion.div
-                  key="wallet"
+                  key="payments"
                   variants={tabContentVariants}
                   initial="initial"
                   animate="animate"
@@ -3545,6 +3474,9 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       <span className="font-body-sm text-[10px] sm:text-xs text-on-surface-variant/60 leading-tight">Your KYC documents are verified — all withdrawal caps and fast-payout features are active.</span>
                     </div>
                   </div>
+
+                  {/* Prize Payout Details & History */}
+                  <PrizePaymentHistory />
 
                   {/* Wallet History */}
                   <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
@@ -3587,17 +3519,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   </div>
                 </motion.div>
               )}
-              {activeTab === 'prize-payments' && (
-                <motion.div
-                  key="prize-payments"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                >
-                  <PrizePaymentHistory />
-                </motion.div>
-              )}
               {/* Tab 5: Settings */}
               {activeTab === 'settings' && (
                 <motion.div
@@ -3616,8 +3537,33 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
 
                     {/* District ID is the public account handle. */}
                     <div className="space-y-2">
-                      <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">District ID</h4>
-                      <p className="rounded-xl border border-outline-variant/30 bg-surface-container p-3 font-mono text-sm text-on-background">{currentUser?.district_id || 'Assigned when the account is verified'}</p>
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
+                          <span className="material-symbols-outlined text-primary text-lg">badge</span> District ID
+                        </h4>
+                        <button
+                          type="button"
+                          disabled={!(currentUser || currentUserFromContext)?.district_id}
+                          onClick={async () => {
+                            const districtId = (currentUser || currentUserFromContext)?.district_id
+                            if (!districtId) return
+                            try {
+                              await navigator.clipboard.writeText(String(districtId))
+                              triggerToast('District ID copied.')
+                            } catch {
+                              triggerToast('Could not copy the District ID. Select and copy it manually.')
+                            }
+                          }}
+                          className="shrink-0 min-h-[32px] rounded-lg border border-outline-variant/60 px-2.5 py-1 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50 flex items-center gap-1 transition-colors"
+                          aria-label="Copy District ID"
+                        >
+                          <span className="material-symbols-outlined text-sm">content_copy</span> Copy
+                        </button>
+                      </div>
+                      <p className="rounded-xl border border-outline-variant/30 bg-surface-container p-3 font-mono text-sm text-on-background tracking-wider">
+                        {(currentUser || currentUserFromContext)?.district_id || 'Assigned when the account is verified'}
+                      </p>
+                      <p className="text-[11px] text-on-surface-variant">Permanent public account identifier on Match District.</p>
                     </div>
                     {/* Section 2: Change Email Address */}
                     <div className="border-t border-outline-variant/20 pt-5 space-y-4">
@@ -3975,6 +3921,65 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                       ))}
                     </div>
                   </div>
+
+                  {/* ---- Account & Legal Settings ---- */}
+                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
+                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
+                      <span className="material-symbols-outlined text-primary text-xl">manage_accounts</span> Account &amp; Legal
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => onNavigate && onNavigate('terms-service')}
+                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
+                      >
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Terms of Service</p>
+                          <p className="text-[10px] text-on-surface-variant">Usage terms &amp; agreements</p>
+                        </div>
+                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => onNavigate && onNavigate('privacy-policy')}
+                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
+                      >
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Privacy Policy</p>
+                          <p className="text-[10px] text-on-surface-variant">How your data is protected</p>
+                        </div>
+                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => onNavigate && onNavigate('help-support')}
+                        className="p-3 rounded-xl border border-outline-variant/30 bg-surface-container hover:bg-surface-variant/50 text-left transition-colors flex items-center justify-between group"
+                      >
+                        <div className="space-y-0.5">
+                          <p className="text-xs font-bold text-on-background group-hover:text-primary transition-colors">Help &amp; Support</p>
+                          <p className="text-[10px] text-on-surface-variant">Contact support team</p>
+                        </div>
+                        <span className="material-symbols-outlined text-base text-on-surface-variant group-hover:text-primary transition-colors">arrow_forward</span>
+                      </button>
+                    </div>
+
+                    <div className="pt-3 border-t border-outline-variant/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-bold text-on-background">Sign out of your session</p>
+                        <p className="text-[10px] text-on-surface-variant">You will need to sign in again to access your teams, tournaments, and wallet.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        className="min-h-[40px] px-4 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                      >
+                        <span className="material-symbols-outlined text-sm">logout</span> Log Out
+                      </button>
+                    </div>
+                  </div>
                 </motion.div>
               )}
               {/* Tab 6: Verifier Panel (conditional) */}
@@ -3986,37 +3991,6 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
         )}
       </main>
     )}
-
-      {/* Mobile Sticky Bottom Tab Navigation — hidden now that the horizontal bar shows on all screens */}
-      {false && currentUser && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-surface-container-low/95 backdrop-blur-2xl border-t border-outline-variant/30 shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
-          <div className="flex">
-            {[
-              { id: 'overview', icon: 'dashboard' },
-              { id: 'tournaments', icon: 'trophy' },
-              { id: 'teams', icon: 'group' },
-              { id: 'wallet', icon: 'account_balance_wallet' },
-              { id: 'settings', icon: 'settings' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 flex flex-col items-center gap-0.5 py-2 relative transition-all ${
-                  activeTab === tab.id ? 'text-primary' : 'text-on-surface-variant'
-                }`}
-              >
-                {activeTab === tab.id && (
-                  <span className="absolute -top-px left-1/4 right-1/4 h-0.5 bg-primary rounded-full"></span>
-                )}
-                <span className={`material-symbols-outlined text-xl ${activeTab === tab.id ? 'font-variation-filled' : ''}`}
-                  style={activeTab === tab.id ? { fontVariationSettings: "'FILL' 1" } : {}}
-                >{tab.icon}</span>
-                <span className="text-[9px] font-bold uppercase tracking-wider">{tab.id === 'tournaments' ? 'Events' : tab.id === 'settings' ? 'Settings' : tab.id}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Edit Player Profile Modal */}
       <AnimatePresence>
