@@ -4,6 +4,7 @@
 
 export const SCHEMA_TABLES = Object.freeze([
   'users',
+  'user_discord_connections',
   'otps',
   'password_resets',
   'temp_users',
@@ -190,6 +191,17 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(32);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS username_last_changed TIMESTAMP;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (lower(username)) WHERE username IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS user_discord_connections (
+        user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        discord_id VARCHAR(32) NOT NULL UNIQUE,
+        username VARCHAR(64),
+        global_name VARCHAR(128),
+        avatar_hash VARCHAR(64),
+        connected_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_discord_connections_discord_id ON user_discord_connections(discord_id);
 
       CREATE TABLE IF NOT EXISTS otps (
         email VARCHAR(255) PRIMARY KEY,

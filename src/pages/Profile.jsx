@@ -24,6 +24,7 @@ import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 import { validateUsername } from '../utils/usernameValidator.js'
+import DiscordConnectCard from '../components/DiscordConnectCard.jsx'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -360,94 +361,28 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
-  // Discord Connection States
-  const [showDiscordUnlinkModal, setShowDiscordUnlinkModal] = useState(false)
-  const [isUnlinkingDiscord, setIsUnlinkingDiscord] = useState(false)
-
-  // Handle Discord OAuth URL params (linking callback / error feedback)
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const discordStatus = params.get('discord')
-    const err = params.get('error') || params.get('discord_error')
-
-    if (discordStatus === 'linked') {
-      triggerToast('Discord account connected successfully!')
-      const targetUser = currentUserFromContext
-      if (targetUser) {
-        getAuthToken().then(token => {
-          fetch(`/api/users/${targetUser.id}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          })
-            .then(res => res.json())
-            .then(data => {
-              if (data.success && data.user) {
-                setCurrentUser(data.user)
-                setCurrentUserFromContext(data.user)
-              }
-            })
-            .catch(() => {})
+  // Refresh user data helper
+  const refreshProfileUser = () => {
+    const targetUser = currentUser || currentUserFromContext;
+    if (targetUser) {
+      getAuthToken().then(token => {
+        fetch(`/api/users/${targetUser.id}`, {
+          headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+          credentials: 'include'
         })
-      }
-      const newUrl = window.location.pathname + window.location.hash
-      window.history.replaceState({}, document.title, newUrl)
-    } else if (err) {
-      const errorMap = {
-        access_denied: 'Discord connection was cancelled.',
-        discord_cancelled: 'Discord connection was cancelled.',
-        state_mismatch: 'Authentication security check failed (state mismatch). Please try again.',
-        invalid_state: 'Authentication security check failed (invalid or expired session). Please try again.',
-        email_unverified: 'Your Discord email is not verified. Please verify it in Discord first.',
-        unverified_email: 'Your Discord email is not verified. Please verify it in Discord first.',
-        no_email: 'No email address was provided by your Discord account.',
-        link_conflict: 'This Discord account is already connected to another user.',
-        account_conflict: 'This account is already linked to a different Discord identity.',
-        discord_already_linked: 'This Discord account is already connected to another user.',
-        admin_mfa_required: 'Administrator accounts require dedicated two-factor authentication.',
-        disabled: 'Discord integration is disabled or not configured on this server.',
-        discord_not_configured: 'Discord integration is not configured on this server.',
-        server_error: 'Discord operation failed due to a server error. Please try again.',
-        rate_limited: 'Too many authentication attempts. Please wait a moment.',
-        discord_token_failed: 'Discord token exchange failed. Please try again.',
-        discord_profile_failed: 'Unable to retrieve Discord profile. Please try again.',
-        auth_required: 'Please sign in first to link your Discord account.'
-      }
-      triggerToast(errorMap[err] || 'Discord operation failed. Please try again.')
-      const newUrl = window.location.pathname + window.location.hash
-      window.history.replaceState({}, document.title, newUrl)
+          .then(res => res.json())
+          .then(data => {
+            if (data.success && data.user) {
+              setCurrentUser(data.user);
+              if (typeof setCurrentUserFromContext === 'function') {
+                setCurrentUserFromContext(data.user);
+              }
+            }
+          })
+          .catch(() => {});
+      });
     }
-  }, [currentUserFromContext])
-
-  const handleUnlinkDiscord = async () => {
-    try {
-      setIsUnlinkingDiscord(true)
-      const token = await getAuthToken()
-      const res = await fetch('/api/auth/discord/unlink', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include'
-      })
-      const data = await res.json()
-      if (data.success) {
-        triggerToast('Discord disconnected successfully.')
-        if (currentUser) {
-          const updated = { ...currentUser, discord_id: null }
-          setCurrentUser(updated)
-          setCurrentUserFromContext(updated)
-        }
-        setShowDiscordUnlinkModal(false)
-      } else {
-        triggerToast(data.message || data.error || 'Failed to disconnect Discord.')
-      }
-    } catch (err) {
-      triggerToast('Network error while disconnecting Discord.')
-    } finally {
-      setIsUnlinkingDiscord(false)
-    }
-  }
+  };
 
   useEffect(() => {
     let interval = null;
@@ -4036,57 +3971,11 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                     </div>
 
                     {/* Section 5: Connected Accounts */}
-                    <div className="border-t border-outline-variant/20 pt-5 space-y-4">
-                      <h4 className="font-headline-md text-sm font-bold uppercase flex items-center gap-1.5 text-on-background tracking-tight">
-                        <span className="material-symbols-outlined text-primary text-lg">link</span> Connected Accounts
-                      </h4>
-                      <div className="p-3.5 bg-surface-container rounded-xl border border-outline-variant/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-[#5865F2]/10 border border-[#5865F2]/20 flex items-center justify-center shrink-0">
-                            <svg className="w-5 h-5 fill-[#5865F2]" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
-                            </svg>
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-headline-md text-xs sm:text-sm font-bold text-on-background">Discord</span>
-                              {(currentUser?.discord_id || currentUserFromContext?.discord_id) ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-label-caps">
-                                  Connected
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-surface-variant text-on-surface-variant border border-outline-variant/40 font-label-caps">
-                                  Not Connected
-                                </span>
-                              )}
-                            </div>
-                            <p className="font-body-sm text-[11px] text-on-surface-variant">
-                              {(currentUser?.discord_id || currentUserFromContext?.discord_id)
-                                ? `Linked account (ID: ••••${String(currentUser?.discord_id || currentUserFromContext?.discord_id).slice(-4)})`
-                                : 'Connect your Discord account for quick sign-in.'}
-                            </p>
-                          </div>
-                        </div>
-
-                        {(currentUser?.discord_id || currentUserFromContext?.discord_id) ? (
-                          <button
-                            type="button"
-                            onClick={() => setShowDiscordUnlinkModal(true)}
-                            className="w-full sm:w-auto px-4 min-h-[40px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-lg font-headline-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-sm">link_off</span> Disconnect
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => { window.location.href = '/api/auth/discord?intent=link&redirect=/profile'; }}
-                            className="w-full sm:w-auto px-4 min-h-[40px] bg-[#5865F2] hover:bg-[#4752C4] text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-sm">link</span> Connect Discord
-                          </button>
-                        )}
-                      </div>
-                    </div>
+                    <DiscordConnectCard
+                      currentUser={currentUser || currentUserFromContext}
+                      onUserUpdated={refreshProfileUser}
+                      triggerToast={triggerToast}
+                    />
 
                   </div>
 
@@ -4698,60 +4587,7 @@ function VerifierPanelTab({ triggerToast }) {
           </div>
         </div>
       )}
-      {/* Discord Disconnect Confirmation Modal */}
-      {showDiscordUnlinkModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => !isUnlinkingDiscord && setShowDiscordUnlinkModal(false)}>
-          <div className="relative max-w-md w-full bg-surface-container border border-outline-variant rounded-2xl p-6 shadow-2xl space-y-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-xl">link_off</span>
-              </div>
-              <div>
-                <h3 className="font-headline-md text-base font-bold text-on-background">Disconnect Discord</h3>
-                <p className="font-body-sm text-xs text-on-surface-variant">Are you sure you want to disconnect Discord?</p>
-              </div>
-            </div>
 
-            {(!currentUser?.google_id && currentUser?.password_set === false) && (
-              <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1 text-amber-500">
-                <p className="text-[11px] font-bold flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm">warning</span> Warning: Possible Account Lockout
-                </p>
-                <p className="text-[11px] text-amber-400/90 leading-relaxed">
-                  Discord is your primary sign-in method. You must set a password or connect a Google account before disconnecting Discord.
-                </p>
-              </div>
-            )}
-
-            <p className="font-body-sm text-xs text-on-surface-variant leading-relaxed">
-              You will no longer be able to log in with this Discord account unless you reconnect it later.
-            </p>
-
-            <div className="flex justify-end gap-2.5 pt-2">
-              <button
-                type="button"
-                disabled={isUnlinkingDiscord}
-                onClick={() => setShowDiscordUnlinkModal(false)}
-                className="px-4 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isUnlinkingDiscord || (!currentUser?.google_id && currentUser?.password_set === false)}
-                onClick={handleUnlinkDiscord}
-                className="px-4 py-2 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-              >
-                {isUnlinkingDiscord ? (
-                  <><span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> Disconnecting...</>
-                ) : (
-                  <>Disconnect Discord</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </motion.div>
   );
 }

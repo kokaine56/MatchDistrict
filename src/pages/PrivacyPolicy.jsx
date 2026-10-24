@@ -193,6 +193,12 @@ function PrivacyPolicy({ onNavigate }) {
                         </svg>
                         <span className="text-sm text-slate-700">UPI number (strictly for secure prize pool distribution)</span>
                       </div>
+                      <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-100 sm:col-span-2">
+                        <svg className="w-4 h-4 shrink-0 text-blue-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 8.5 6.5 12 13 4.5" />
+                        </svg>
+                        <span className="text-sm text-slate-700">Discord Profile Data (User ID, username, display name, and avatar when connected from your profile; strictly private to your account and permanently deleted when disconnected)</span>
+                      </div>
                     </div>
                   </div>
 

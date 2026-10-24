@@ -59,6 +59,32 @@ export function formatDateIST(dateStr) {
 }
 
 /**
+ * Format a date string to DD/MM/YYYY hh:mm A (IST 12-hour)
+ * @param {string} dateStr - ISO date string
+ * @returns {string} e.g. "24/10/2026 11:30 AM"
+ */
+export function formatDateIST12h(dateStr) {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return dateStr
+    const datePart = d.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    })
+    const timePart = d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).toUpperCase()
+    return `${datePart} ${timePart}`
+  } catch { return dateStr }
+}
+
+/**
  * Format date + time parts to DD/MM/YYYY HH:MM
  * @param {string} dateStr - e.g. "2026-08-03"
  * @param {string} timeStr - e.g. "14:30"
