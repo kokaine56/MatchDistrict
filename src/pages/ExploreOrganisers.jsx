@@ -67,7 +67,7 @@ export default function ExploreOrganisers({ onNavigate }) {
           dbOrgs = data.users.map(u => ({
             id: u.id,
             name: u.orgName || u.name || 'Organiser',
-            handle: u.orgHandle || u.gamerTag || '@org',
+            handle: u.orgHandle || '@org',
             avatar: u.orgImage || u.avatar,
             rating: u.rating || '4.5',
             followers: parseInt(u.followers) || 0,
@@ -189,7 +189,6 @@ export default function ExploreOrganisers({ onNavigate }) {
       role: 'organiser',
       orgName: org.name,
       name: org.name,
-      gamerTag: org.handle,
       email: org.email || `${org.name.toLowerCase().replace(/\s+/g, '')}@matchdistrict.in`,
       phone: org.phone || '+91 99999 99999',
       experience: org.bio,

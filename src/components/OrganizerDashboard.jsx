@@ -1845,7 +1845,7 @@ function OrganizerDashboard({
             </div>
           </div>
 
-          {/* Org Handle — tied to gamerTag */}
+          {/* Org Handle */}
           <div className="glass-card p-4 sm:p-6 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
             <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight">
               <span className="material-symbols-outlined text-secondary text-xl">alternate_email</span> Org Handle
@@ -1853,7 +1853,7 @@ function OrganizerDashboard({
             <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-xl">
               <span className="material-symbols-outlined text-primary text-base shrink-0">info</span>
               <p className="text-[11px] text-on-surface-variant leading-relaxed font-semibold">
-                Your organization handle is tied to your personal gamerTag: <strong className="text-on-background">{orgData.handle}</strong>. To change it, update your gamerTag in your <strong className="text-secondary">Profile Settings</strong>.
+                Your organization handle: <strong className="text-on-background">{orgData.handle}</strong>.
               </p>
             </div>
           </div>

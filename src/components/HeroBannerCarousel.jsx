@@ -169,7 +169,7 @@ function HeroBannerCarousel({ onNavigate }) {
         {/* Top static greeting area */}
         <div className="text-left sm:text-center pb-3 md:pb-5 pt-3 sm:pt-4">
           <h1 className="font-display-lg text-xl sm:text-2xl md:text-3xl lg:text-4xl font-semibold text-white tracking-wide leading-tight">
-            Welcome to the District{currentUser ? `, ${(currentUser.name || currentUser.gamerTag || '').split(' ')[0]}` : '.'}
+            Welcome to the District{currentUser ? `, ${(currentUser.name || '').split(' ')[0]}` : '.'}
           </h1>
         </div>
 

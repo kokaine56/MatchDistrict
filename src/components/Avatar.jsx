@@ -22,8 +22,8 @@ function getPalette(seed) {
   return PALETTES[Math.abs(hash) % PALETTES.length];
 }
 
-function getInitial(name, email, gamerTag) {
-  const candidate = (name || '').trim() || (gamerTag || '').trim().replace(/^@/, '') || (email || '').split('@')[0] || '?';
+function getInitial(name, email) {
+  const candidate = (name || '').trim() || (email || '').split('@')[0] || '?';
   const char = candidate.charAt(0) || '?';
   return char.toUpperCase();
 }
@@ -49,7 +49,6 @@ export default function Avatar({
   name,
   email,
   districtId,
-  gamerTag,
   size = 'md',
   className = '',
   alt,
@@ -58,7 +57,6 @@ export default function Avatar({
   const avatarUrl = src || user?.avatar || user?.avatarUrl;
   const displayName = name || user?.name || user?.display_name || '';
   const userEmail = email || user?.email || '';
-  const userGamerTag = gamerTag || user?.gamerTag || '';
   const seed = districtId ?? user?.district_id ?? user?.districtId ?? user?.id ?? displayName;
 
   const [hasError, setHasError] = useState(false);
@@ -69,7 +67,7 @@ export default function Avatar({
   }, [avatarUrl]);
 
   const palette = getPalette(seed);
-  const initial = getInitial(displayName, userEmail, userGamerTag);
+  const initial = getInitial(displayName, userEmail);
   const sizeClasses = SIZE_MAP[size] || size || 'w-10 h-10 text-sm font-semibold';
 
   const showImage = Boolean(avatarUrl) && !hasError;

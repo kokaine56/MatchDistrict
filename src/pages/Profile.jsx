@@ -410,10 +410,40 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [isEditingOrg, setIsEditingOrg] = useState(false)
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
   const [fieldModalState, setFieldModalState] = useState({ open: false, type: '', initial: '' })
+  const [upiId, setUpiId] = useState('')
+
+  useEffect(() => {
+    let active = true
+    getAuthToken().then((token) => {
+      fetch('/api/users/me/payout-profile', {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        credentials: 'include',
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (active && data.success && data.payout_profile?.upi_id) {
+            setUpiId(data.payout_profile.upi_id)
+          }
+        })
+        .catch(() => {})
+    })
+    return () => {
+      active = false
+    }
+  }, [currentUser?.id])
+
+  const formatWhatsAppDisplay = (phone) => {
+    if (!phone) return 'Not added'
+    const digits = String(phone).replace(/\D/g, '')
+    if (!digits || digits === '91') return 'Not added'
+    let core = digits
+    if (core.startsWith('91') && core.length === 12) core = core.slice(2)
+    if (core.length === 10) return `+91 ${core.slice(0, 5)} ${core.slice(5)}`
+    return phone.startsWith('+91') ? phone : `+91 ${phone}`
+  }
 
   // Abuse tracking states
   const [playerNameAbuse, setPlayerNameAbuse] = useState(false)
-  const [playerTagAbuse, setPlayerTagAbuse] = useState(false)
   const [playerBioAbuse, setPlayerBioAbuse] = useState(false)
   
   const [orgNameAbuse, setOrgNameAbuse] = useState(false)
@@ -1121,7 +1151,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
     const initialDistrictId = currentUserFromContext?.district_id || '';
     return {
       name: currentUserFromContext?.name || 'Gamer',
-      gamerTag: currentUserFromContext?.gamerTag || '@gamer',
       email: currentUserFromContext?.email || '',
       phone: currentUserFromContext?.phone || '+91 ',
       riotId: currentUserFromContext?.riotId || '',
@@ -1238,7 +1267,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
                 setPlayerData(prev => ({
                   ...prev,
                   name: data.user.name || prev.name,
-                  gamerTag: data.user.gamerTag || prev.gamerTag,
                   avatar: data.user.avatar || prev.avatar,
                   banner: data.user.banner || prev.banner,
                   bio: data.user.experience || data.user.bio || prev.bio,
@@ -1246,7 +1274,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
                 setPlayerEditForm(prev => ({
                   ...prev,
                   name: data.user.name || prev.name,
-                  gamerTag: data.user.gamerTag || prev.gamerTag,
                   avatar: data.user.avatar || prev.avatar,
                   banner: data.user.banner || prev.banner,
                   bio: data.user.experience || data.user.bio || prev.bio,
@@ -1265,7 +1292,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
         setPlayerData(prev => ({
           ...prev,
           name: targetUser.name || 'Gamer',
-          gamerTag: targetUser.gamerTag || targetUser.name || 'Player',
           email: targetUser.email,
           phone: targetUser.phone || prev.phone,
           riotId: targetUser.riotId || prev.riotId || '',
@@ -1281,7 +1307,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
           setPlayerEditForm(prev => ({
             ...prev,
             name: targetUser.name || 'Gamer',
-            gamerTag: targetUser.gamerTag || targetUser.name || 'Player',
             email: targetUser.email,
             phone: targetUser.phone || prev.phone,
             riotId: targetUser.riotId || prev.riotId || '',
@@ -1312,7 +1337,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
           setOrgData(prev => ({
             ...prev,
             name: targetUser.orgName || 'Organizer',
-            handle: targetUser.orgHandle || targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
+            handle: targetUser.orgHandle || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
             email: targetUser.email,
             phone: targetUser.phone || prev.phone,
             bio: targetUser.orgBio || targetUser.experience || targetUser.bio || prev.bio,
@@ -1331,7 +1356,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
             setOrgEditForm(prev => ({
               ...prev,
               name: targetUser.orgName || 'Organizer',
-              handle: targetUser.orgHandle || targetUser.gamerTag || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
+              handle: targetUser.orgHandle || '@' + (targetUser.orgName || 'organizer').toLowerCase().replace(/\s+/g, '_'),
               email: targetUser.email,
               tier: targetUser.tier || 'Free',
               logo: targetUser.orgImage || prev.logo,
@@ -1422,7 +1447,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
         },
         body: JSON.stringify({
           name: playerEditForm.name,
-          gamerTag: playerEditForm.gamerTag,
           phone: playerEditForm.phone,
           avatar: sanitizeImageUrl(playerEditForm.avatar),
         })
@@ -1433,7 +1457,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
         const nextPlayer = {
           ...playerData,
           name: playerEditForm.name,
-          gamerTag: playerEditForm.gamerTag,
           phone: playerEditForm.phone,
           avatar: savedAvatar || playerData.avatar,
         }
@@ -1925,7 +1948,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
       {/* Edit Tournament Command Drawer */}
       {showEditDrawer && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/75 backdrop-blur-sm animate-in fade-in duration-300">
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex justify-end bg-black/75 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="glass-card bg-surface-container-highest/95 backdrop-blur-2xl border-l border-outline-variant/50 w-full max-w-xl h-full shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col animate-in slide-in-from-right duration-300">
             
             {/* Drawer Header */}
@@ -2396,7 +2419,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         <VerificationBadge tier={viewedUser.tier} size="sm" />
                       </h1>
 
-                      {/* Handle / GamerTag */}
+                      {/* District ID */}
                       <p className="text-on-surface-variant text-xs sm:text-sm font-mono opacity-60 mt-0.5">District ID {viewedDistrictId}</p>
 
                       {/* Bio */}
@@ -2506,9 +2529,9 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                 {/* Underline tab row for "Teams & Squads", "Payment History", "Settings" */}
                 <div className="w-full max-w-md mx-auto border-b border-outline-variant/30 flex items-center justify-around mt-3 overflow-x-auto no-scrollbar">
                   {[
-                    { id: 'teams', label: 'Teams & Squads', icon: 'groups' },
-                    { id: 'payments', label: 'Payment History', icon: 'payments' },
-                    { id: 'settings', label: 'Settings', icon: 'settings' }
+                    { id: 'teams', label: 'Teams & Squads' },
+                    { id: 'payments', label: 'Payment History' },
+                    { id: 'settings', label: 'Settings' }
                   ].map((tab) => {
                     const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
                     return (
@@ -2517,15 +2540,12 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         data-tab={tab.id}
                         type="button"
                         onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center justify-center gap-1.5 py-3 px-2 sm:px-3 font-headline-md text-xs sm:text-sm font-semibold transition-colors relative select-none min-h-[44px] whitespace-nowrap ${
+                        className={`flex items-center justify-center py-3 px-2 sm:px-3 font-headline-md text-xs sm:text-sm font-semibold transition-colors relative select-none min-h-[44px] whitespace-nowrap ${
                           isActive
                             ? 'text-primary'
                             : 'text-on-surface-variant hover:text-on-background'
                         }`}
                       >
-                        <span className="material-symbols-outlined text-[17px] sm:text-[19px] shrink-0">
-                          {tab.icon}
-                        </span>
                         <span>{tab.label}</span>
                         {isActive && (
                           <motion.div
@@ -3059,12 +3079,21 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   {/* Row 1: Profile completion bar (% + missing chips opening bottom sheet) */}
                   <ProfileCompletionBar
                     user={playerData}
+                    upiId={upiId}
                     onOpenField={(field) => {
-                      setFieldModalState({
-                        open: true,
-                        type: field,
-                        initial: playerData[field] || (field === 'whatsapp' ? playerData.phone : '')
-                      });
+                      if (field === 'whatsapp') {
+                        setFieldModalState({
+                          open: true,
+                          type: 'whatsapp',
+                          initial: playerData.phone
+                        });
+                      } else if (field === 'upi') {
+                        setFieldModalState({
+                          open: true,
+                          type: 'upi',
+                          initial: upiId
+                        });
+                      }
                     }}
                   />
 
@@ -3101,7 +3130,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         <div className="min-w-0">
                           <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">WhatsApp Number</span>
                           <p className="text-xs font-semibold text-on-background truncate">
-                            {playerData.phone || 'Not linked'}
+                            {formatWhatsAppDisplay(playerData.phone)}
                           </p>
                         </div>
                       </div>
@@ -3110,27 +3139,27 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         onClick={() => setFieldModalState({ open: true, type: 'whatsapp', initial: playerData.phone })}
                         className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
                       >
-                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.phone ? 'Edit' : 'Add'}
+                        <span className="material-symbols-outlined text-sm">edit</span> {formatWhatsAppDisplay(playerData.phone) !== 'Not added' ? 'Edit' : 'Add'}
                       </button>
                     </div>
 
-                    {/* Gamer Tag Row */}
+                    {/* UPI ID Row */}
                     <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="material-symbols-outlined text-primary text-lg shrink-0">sports_esports</span>
+                        <span className="material-symbols-outlined text-primary text-lg shrink-0">account_balance_wallet</span>
                         <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Gamer Tag / Handle</span>
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">UPI ID</span>
                           <p className="text-xs font-semibold text-on-background truncate">
-                            {playerData.gamerTag ? `@${playerData.gamerTag}` : 'Not set'}
+                            {upiId || 'Not added'}
                           </p>
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setFieldModalState({ open: true, type: 'gamerTag', initial: playerData.gamerTag })}
+                        onClick={() => setFieldModalState({ open: true, type: 'upi', initial: upiId })}
                         className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
                       >
-                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.gamerTag ? 'Edit' : 'Add'}
+                        <span className="material-symbols-outlined text-sm">edit</span> {upiId ? 'Edit' : 'Add'}
                       </button>
                     </div>
 
@@ -3329,73 +3358,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                     </div>
                   </div>
 
-                  {/* GROUP 2: GAME IDS */}
-                  <div className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
-                    <h3 className="font-headline-md text-xs sm:text-sm font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
-                      <span className="material-symbols-outlined text-secondary text-lg">videogame_asset</span> Game IDs
-                    </h3>
-
-                    {/* BGMI Character ID */}
-                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="material-symbols-outlined text-amber-400 text-lg shrink-0">shield</span>
-                        <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">BGMI Character ID</span>
-                          <p className="text-xs font-mono font-semibold text-on-background truncate">
-                            {playerData.bgmiId || 'Not set'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setFieldModalState({ open: true, type: 'bgmiId', initial: playerData.bgmiId })}
-                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.bgmiId ? 'Edit' : 'Add'}
-                      </button>
-                    </div>
-
-                    {/* Riot ID */}
-                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="material-symbols-outlined text-rose-400 text-lg shrink-0">swords</span>
-                        <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Riot ID (Valorant)</span>
-                          <p className="text-xs font-semibold text-on-background truncate">
-                            {playerData.riotId || 'Not set'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setFieldModalState({ open: true, type: 'riotId', initial: playerData.riotId })}
-                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.riotId ? 'Edit' : 'Add'}
-                      </button>
-                    </div>
-
-                    {/* Steam ID */}
-                    <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="material-symbols-outlined text-sky-400 text-lg shrink-0">sports_esports</span>
-                        <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Steam ID</span>
-                          <p className="text-xs font-mono font-semibold text-on-background truncate">
-                            {playerData.steamId || 'Not set'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setFieldModalState({ open: true, type: 'steamId', initial: playerData.steamId })}
-                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-sm">edit</span> {playerData.steamId ? 'Edit' : 'Add'}
-                      </button>
-                    </div>
-                  </div>
-
                   {/* GROUP 2: LOGIN METHODS */}
                   <div id="login-methods-section">
                     <LoginMethodsCard
@@ -3585,9 +3547,17 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
         fieldType={fieldModalState.type}
         initialValue={fieldModalState.initial}
         userId={(currentUser || currentUserFromContext)?.id}
+        onSaveSuccess={(newVal) => {
+          if (fieldModalState.type === 'upi') {
+            setUpiId(newVal);
+          }
+        }}
         onSuccess={(updatedUser) => {
           if (updatedUser) {
             setPlayerData((prev) => ({ ...prev, ...updatedUser }));
+            if (updatedUser.upi_id !== undefined) {
+              setUpiId(updatedUser.upi_id);
+            }
             refreshProfileUser();
           }
         }}
@@ -3602,7 +3572,9 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4"
           >
             <motion.div
               initial={{ scale: 0.95 }}
@@ -3923,7 +3895,7 @@ function VerifierPanelTab({ triggerToast }) {
 
       {/* Screenshot Modal */}
       {screenshotModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setScreenshotModal(null)}>
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4" onClick={() => setScreenshotModal(null)}>
           <div className="relative max-w-lg w-full max-h-[80vh]" onClick={e => e.stopPropagation()}>
             <button onClick={() => setScreenshotModal(null)}
               className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-surface border border-outline-variant/30 flex items-center justify-center shadow-lg z-10 hover:bg-surface-variant transition-colors">

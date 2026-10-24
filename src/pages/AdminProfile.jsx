@@ -22,7 +22,6 @@ export default function AdminProfile() {
     bio: '',
     avatar: '',
     banner: '',
-    gamerTag: '',
   })
   const [avatarPreview, setAvatarPreview] = useState(null)
   const [bannerPreview, setBannerPreview] = useState(null)
@@ -52,7 +51,6 @@ export default function AdminProfile() {
             bio: u.bio || '',
             avatar: u.avatar || '',
             banner: u.banner || '',
-            gamerTag: u.gamerTag || '',
           }
           setForm(profile)
           setOriginalForm(profile)
@@ -114,7 +112,6 @@ export default function AdminProfile() {
           bio: form.bio.trim(),
           avatar: form.avatar,
           banner: form.banner,
-          gamerTag: form.gamerTag.trim(),
         })
       })
       const data = await res.json()
@@ -281,18 +278,6 @@ export default function AdminProfile() {
               onChange={(e) => updateField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))}
               className="w-full bg-surface border border-outline-variant/30 rounded-xl px-4 py-3 text-sm text-on-background placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/10 transition-all"
               placeholder="9876543210"
-            />
-          </div>
-
-          {/* Gamer Tag */}
-          <div>
-            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5">Gamer Tag</label>
-            <input
-              type="text"
-              value={form.gamerTag}
-              onChange={(e) => updateField('gamerTag', e.target.value)}
-              className="w-full bg-surface border border-outline-variant/30 rounded-xl px-4 py-3 text-sm text-on-background placeholder:text-on-surface-variant/40 focus:outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/10 transition-all"
-              placeholder="Your gaming handle"
             />
           </div>
 

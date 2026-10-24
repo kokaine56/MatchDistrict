@@ -169,7 +169,7 @@ function RegistrationPage({ onNavigate }) {
     setForm(prev => ({
       ...prev,
       email: prev.email || currentUser.email || '',
-      captainIgn: prev.captainIgn || currentUser.gamerTag || currentUser.name || '',
+      captainIgn: prev.captainIgn || currentUser.name || '',
     }))
   }, [currentUser, tourney])
 

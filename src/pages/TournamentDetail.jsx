@@ -193,7 +193,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     if (!showSponsorForm || !currentUser) return;
     setSponsorForm(prev => ({
       ...prev,
-      name: currentUser.name || currentUser.gamerTag || '',
+      name: currentUser.name || '',
       email: currentUser.email || ''
     }));
   }, [showSponsorForm, currentUser]);
@@ -509,9 +509,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const matchUserId = r.user_id === currentUser.id;
       const matchEmail = currentUser.email && r.email && r.email.toLowerCase() === currentUser.email.toLowerCase();
       const captainLower = (r.captain || '').toLowerCase();
-      const gt = (currentUser.gamerTag || '').toLowerCase();
       const nm = (currentUser.name || '').toLowerCase();
-      const matchCaptain = captainLower === gt || captainLower === `@${gt}` || captainLower === nm;
+      const matchCaptain = captainLower === nm;
       
       if (matchUserId || matchEmail || matchCaptain) {
         return r;

@@ -62,9 +62,9 @@ export const UserGovernance = ({
                       )}
                       <div className="flex flex-col">
                         <span className="font-bold text-slate-900 text-sm">
-                          {user.gamerTag && user.gamerTag.startsWith('@') ? user.gamerTag : `@${user.gamerTag || (user.name || 'Anonymous').toLowerCase().replace(/\s+/g, '_')}`}
+                          {user.name || 'Anonymous'}
                         </span>
-                        <span className="text-xs text-slate-500">{user.name}</span>
+                        {user.district_id && <span className="text-xs text-slate-500">District ID: {user.district_id}</span>}
                       </div>
                     </div>
                   </td>

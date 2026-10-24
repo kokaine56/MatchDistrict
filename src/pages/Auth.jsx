@@ -908,7 +908,6 @@ function Auth({ onNavigate, initialMode = 'login' }) {
         name: regForm.name,
         email: regForm.email,
         password: regForm.password,
-        gamerTag: regForm.name,
         role: 'player',
         agreeTerms: regForm.agreeTerms
       }
@@ -1152,7 +1151,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     const avatarUrl = user.avatar || user.orgImage || user.avatar_url || user.profile_image || ''
     accounts.unshift({
       id: user.id,
-      name: user.name || user.gamerTag || 'Player',
+      name: user.name || 'Player',
       email: user.email || '',
       avatar: avatarUrl,
       provider: provider || (user.google_id ? 'google' : 'email'),
@@ -1176,7 +1175,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     const updated = accounts.map(a => {
       if (a.id === currentUser.id && (currentUser.avatar || currentUser.orgImage) && a.avatar !== (currentUser.avatar || currentUser.orgImage)) {
         changed = true
-        return { ...a, avatar: currentUser.avatar || currentUser.orgImage || a.avatar, name: currentUser.name || currentUser.gamerTag || a.name, email: currentUser.email || a.email }
+        return { ...a, avatar: currentUser.avatar || currentUser.orgImage || a.avatar, name: currentUser.name || a.name, email: currentUser.email || a.email }
       }
       return a
     })
@@ -1747,7 +1746,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{currentUser?.name || currentUser?.gamerTag || 'Player'}</p>
+                          <p className="font-bold text-sm text-slate-900 dark:text-white truncate">{currentUser?.name || 'Player'}</p>
                           <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                             Active
@@ -1763,7 +1762,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       onClick={handleContinueAsUser}
                       className="w-full h-12 bg-primary hover:bg-primary/95 active:scale-[0.98] text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_12px_rgba(90,93,250,0.2)] flex items-center justify-center gap-1.5"
                     >
-                      <span>Continue as {currentUser?.name || currentUser?.gamerTag || 'User'}</span>
+                      <span>Continue as {currentUser?.name || 'User'}</span>
                       <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                     </button>
 

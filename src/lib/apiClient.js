@@ -88,7 +88,12 @@ async function request(url, options = {}) {
       const res = await fetch(url, config)
       lastStatus = res.status
       const text = await res.text()
-      lastData = text ? JSON.parse(text) : {}
+      try {
+        lastData = text ? JSON.parse(text) : {}
+      } catch {
+        lastData = null
+        throw new Error('Something went wrong. Please try again.')
+      }
 
       if (res.ok) {
         return { ok: true, data: lastData, status: res.status }

@@ -58,6 +58,12 @@
     box-shadow: 0 -8px 24px rgb(0 0 0 / 0.12);
   }
 
+  body:has([role="dialog"]) .mobile-bottom-nav,
+  body:has([aria-modal="true"]) .mobile-bottom-nav,
+  body.has-open-sheet .mobile-bottom-nav {
+    display: none !important;
+  }
+
   .mobile-bottom-nav__item {
     display: flex;
     min-width: 0;

@@ -452,7 +452,7 @@ export default function AdminDashboard({ onNavigate }) {
     return usersList.filter(u => 
       (u.name && u.name.toLowerCase().includes(q)) || 
       (u.email && u.email.toLowerCase().includes(q)) || 
-      (u.gamerTag && u.gamerTag.toLowerCase().includes(q)) ||
+      (u.district_id && u.district_id.toLowerCase().includes(q)) ||
       (u.role && u.role.toLowerCase().includes(q)) ||
       (u.id && u.id.toLowerCase().includes(q))
     )

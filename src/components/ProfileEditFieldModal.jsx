@@ -2,10 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAuthToken } from '../utils/getAuthToken.js';
 
+function cleanWhatsAppInput(input) {
+  if (!input) return '';
+  let digits = String(input).replace(/\D/g, '');
+  if (digits.startsWith('91') && digits.length > 10) {
+    digits = digits.slice(2);
+  } else if (digits === '91') {
+    digits = '';
+  } else if (digits.startsWith('0')) {
+    digits = digits.replace(/^0+/, '');
+  }
+  return digits.slice(0, 10);
+}
+
 export default function ProfileEditFieldModal({
   isOpen,
   onClose,
-  fieldType, // 'whatsapp' | 'gamerTag' | 'bgmiId' | 'riotId' | 'steamId' | 'socialLinks'
+  fieldType, // 'whatsapp' | 'upi'
   initialValue,
   userId,
   onSuccess,
@@ -17,19 +30,15 @@ export default function ProfileEditFieldModal({
 
   const titles = {
     whatsapp: 'WhatsApp Mobile Number',
-    gamerTag: 'Gamer Tag',
-    bgmiId: 'BGMI Character ID',
-    riotId: 'Riot ID',
-    steamId: 'Steam ID',
-    socialLinks: 'Social Link / Handle',
+    upi: 'Prize Payout UPI ID',
   };
 
   useEffect(() => {
     if (isOpen) {
       if (fieldType === 'whatsapp') {
-        const raw = String(initialValue || '').replace(/\D/g, '');
-        const ten = raw.length === 12 && raw.startsWith('91') ? raw.slice(2) : (raw.length === 11 && raw.startsWith('0') ? raw.slice(1) : raw);
-        setValue(ten);
+        setValue(cleanWhatsAppInput(initialValue));
+      } else if (fieldType === 'upi') {
+        setValue(String(initialValue || '').trim().toLowerCase());
       } else {
         setValue(initialValue || '');
       }
@@ -43,73 +52,93 @@ export default function ProfileEditFieldModal({
     if (e) e.preventDefault();
     setError('');
 
-    let payload = {};
     if (fieldType === 'whatsapp') {
-      const digits = value.replace(/\D/g, '');
+      const digits = cleanWhatsAppInput(value);
       if (!digits) {
-        payload.phone = null;
-      } else if (!/^[6-9]\d{9}$/.test(digits)) {
-        setError('Please enter a valid 10-digit Indian mobile number starting with 6-9.');
-        return;
-      } else {
-        payload.phone = `+91 ${digits}`;
-      }
-    } else if (fieldType === 'gamerTag') {
-      const tag = value.trim();
-      if (!tag) {
-        setError('Gamer tag cannot be blank.');
+        setError('Please enter a 10-digit mobile number.');
         return;
       }
-      payload.gamerTag = tag;
-    } else if (fieldType === 'bgmiId') {
-      payload.bgmiId = value.trim() || null;
-    } else if (fieldType === 'riotId') {
-      payload.riotId = value.trim() || null;
-    } else if (fieldType === 'steamId') {
-      payload.steamId = value.trim() || null;
-    } else if (fieldType === 'socialLinks') {
-      payload.socialLinks = value.trim() || null;
-    }
+      if (!/^[6-9]\d{9}$/.test(digits)) {
+        setError('Please enter a valid 10-digit Indian mobile number starting with 6, 7, 8, or 9.');
+        return;
+      }
 
-    setLoading(true);
-    try {
-      const token = await getAuthToken();
-      const res = await fetch(`/api/users/${userId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setError(data.message || 'Failed to update profile field.');
+      setLoading(true);
+      try {
+        const token = await getAuthToken();
+        const res = await fetch(`/api/users/${userId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ phone: `+91 ${digits}` }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          setError(data.message || 'Failed to update WhatsApp number.');
+          return;
+        }
+        triggerToast('WhatsApp number updated.');
+        if (onSuccess) onSuccess(data.user);
+        onClose();
+      } catch {
+        setError('Network error updating profile.');
+      } finally {
+        setLoading(false);
+      }
+    } else if (fieldType === 'upi') {
+      const trimmed = value.trim().toLowerCase();
+      if (!trimmed) {
+        setError('Please enter your UPI ID.');
         return;
       }
-      triggerToast(`${titles[fieldType] || 'Field'} updated.`);
-      if (onSuccess) onSuccess(data.user);
-      onClose();
-    } catch {
-      setError('Network error updating profile.');
-    } finally {
-      setLoading(false);
+      if (!/^[a-zA-Z0-9._-]+@[a-zA-Z]+$/.test(trimmed)) {
+        setError('Invalid format. Enter a valid UPI ID (e.g. name@bank).');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        const token = await getAuthToken();
+        const res = await fetch('/api/users/me/payout-profile', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ upi_id: trimmed }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          setError(data.message || 'Failed to save UPI ID.');
+          return;
+        }
+        triggerToast('UPI ID saved for prize payouts.');
+        if (onSuccess) onSuccess(data.payout_profile?.upi_id || trimmed);
+        onClose();
+      } catch {
+        setError('Network error saving payout profile.');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 30 }}
           transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-          className="w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative"
+          className="w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl shadow-2xl relative max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden"
         >
           {/* Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-outline-variant/30">
+          <div className="flex items-center justify-between p-5 pb-3 border-b border-outline-variant/30 shrink-0">
             <h3 className="font-headline-md text-base sm:text-lg font-bold text-on-background">
               {titles[fieldType] || 'Edit Field'}
             </h3>
             <button
+              type="button"
               onClick={onClose}
               className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
             >
@@ -117,121 +146,75 @@ export default function ProfileEditFieldModal({
             </button>
           </div>
 
-          <form onSubmit={handleSave} className="py-4 space-y-4">
-            {error && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium flex items-center gap-2">
-                <span className="material-symbols-outlined text-base">error</span>
-                <span>{error}</span>
-              </div>
-            )}
-
-            {fieldType === 'whatsapp' ? (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  10-Digit Mobile Number
-                </label>
-                <div className="flex items-center gap-2">
-                  <span className="h-10 px-3 flex items-center justify-center rounded-xl bg-surface-container border border-outline-variant text-xs font-bold text-on-surface-variant select-none">
-                    🇮🇳 +91
-                  </span>
-                  <input
-                    type="tel"
-                    maxLength={10}
-                    value={value}
-                    onChange={(e) => setValue(e.target.value.replace(/\D/g, ''))}
-                    placeholder="9876543210"
-                    autoFocus
-                    className="flex-1 h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary tracking-wide"
-                  />
+          <form onSubmit={handleSave} className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto p-5 py-4 space-y-4">
+              {error && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium flex items-center gap-2">
+                  <span className="material-symbols-outlined text-base shrink-0">error</span>
+                  <span>{error}</span>
                 </div>
-                <p className="text-[10px] text-on-surface-variant/70 leading-relaxed">
-                  Used for urgent tournament updates and match calls. Starts with digits 6, 7, 8, or 9.
-                </p>
-              </div>
-            ) : fieldType === 'gamerTag' ? (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Gamer Tag / In-Game Handle
-                </label>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="e.g. Phoenix"
-                  autoFocus
-                  className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary"
-                />
-              </div>
-            ) : fieldType === 'bgmiId' ? (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  BGMI Character ID
-                </label>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="e.g. 5123456789"
-                  autoFocus
-                  className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary font-mono"
-                />
-              </div>
-            ) : fieldType === 'riotId' ? (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Riot ID (Valorant)
-                </label>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="e.g. Player#IND"
-                  autoFocus
-                  className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary"
-                />
-              </div>
-            ) : fieldType === 'steamId' ? (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Steam ID
-                </label>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="e.g. 76561198000000000"
-                  autoFocus
-                  className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary font-mono"
-                />
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
-                  Social Link (Twitter, Instagram, YouTube)
-                </label>
-                <input
-                  type="text"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  placeholder="e.g. @player or https://instagram.com/..."
-                  autoFocus
-                  className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary"
-                />
-              </div>
-            )}
+              )}
 
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
+              {fieldType === 'whatsapp' ? (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    10-Digit Mobile Number
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="h-10 px-3 flex items-center justify-center rounded-xl bg-surface-container border border-outline-variant text-xs font-bold text-on-surface-variant select-none shrink-0">
+                      🇮🇳 +91
+                    </span>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={10}
+                      value={value}
+                      onChange={(e) => setValue(cleanWhatsAppInput(e.target.value))}
+                      placeholder="9876543210"
+                      autoFocus
+                      className="flex-1 h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary tracking-wide"
+                    />
+                  </div>
+                  <p className="text-[10px] text-on-surface-variant/70 leading-relaxed">
+                    Used for urgent tournament updates and match calls. Must be 10 digits starting with 6, 7, 8, or 9.
+                  </p>
+                </div>
+              ) : fieldType === 'upi' ? (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                    UPI ID (name@bank)
+                  </label>
+                  <input
+                    type="text"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                    placeholder="yourname@okaxis"
+                    autoFocus
+                    autoCapitalize="none"
+                    autoComplete="off"
+                    spellCheck="false"
+                    className="w-full h-10 px-3.5 rounded-xl bg-surface-container border border-outline-variant text-xs font-semibold text-on-background outline-none focus:border-primary font-mono lowercase"
+                  />
+                  <p className="text-[10px] text-on-surface-variant/70 leading-relaxed">
+                    Used to send your tournament prize payouts.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Bottom buttons pinned with safe area padding */}
+            <div className="p-5 pt-3 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] border-t border-outline-variant/20 flex items-center justify-end gap-2.5 shrink-0 bg-inherit">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors"
+                className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors whitespace-nowrap"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={loading}
-                className="px-6 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
+                className="px-6 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 whitespace-nowrap"
               >
                 {loading ? <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span> : <span className="material-symbols-outlined text-sm">check</span>}
                 Save

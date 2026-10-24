@@ -57,7 +57,6 @@ export function setStoredUser(user) {
 export function buildPlayerProfilePayload(form) {
   return {
     name: form.name,
-    gamerTag: form.gamerTag,
     email: form.email,
     phone: form.phone,
     experience: form.bio,
@@ -73,7 +72,6 @@ export function buildPlayerProfilePayload(form) {
 export function buildOrgProfilePayload(form) {
   return {
     name: form.name,
-    gamerTag: form.handle,
     tier: form.tier,
     avatar: sanitizeImageUrl(form.logo),
     banner: sanitizeImageUrl(form.banner),

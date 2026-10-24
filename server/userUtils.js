@@ -15,7 +15,7 @@
  */
 export function userDisplayNameRawSql(alias = 'u') {
   const p = alias && alias.trim() ? `${alias.trim()}.` : '';
-  return `COALESCE(NULLIF(CASE WHEN ${p}"gamerTag" LIKE '@%' THEN '' ELSE ${p}"gamerTag" END, ''), NULLIF(${p}name, ''), 'Player')`;
+  return `COALESCE(NULLIF(${p}name, ''), 'Player')`;
 }
 
 /**
@@ -38,13 +38,7 @@ export function userDisplayNameSql(alias = 'u', colAlias = 'display_name') {
  */
 export function formatUserDisplayName(user) {
   if (!user || typeof user !== 'object') return 'Player';
-  if (user.gamerTag && typeof user.gamerTag === 'string' && user.gamerTag.trim() && !user.gamerTag.trim().startsWith('@')) {
-    return user.gamerTag.trim();
-  }
   if (user.name && typeof user.name === 'string' && user.name.trim()) return user.name.trim();
-  if (user['gamerTag'] && typeof user['gamerTag'] === 'string' && user['gamerTag'].trim() && !user['gamerTag'].trim().startsWith('@')) {
-    return user['gamerTag'].trim();
-  }
   return 'Player';
 }
 
@@ -66,7 +60,7 @@ export function maskUserEmail(email) {
 
 /**
  * Sanitizes a user database row for public consumption, stripping private credentials,
- * TOTP secrets, tokens, discord_id, and redacting full email/phone.
+ * TOTP secrets, tokens, discord_id, gamerTag, and redacting full email/phone.
  *
  * @param {object|null|undefined} user
  * @returns {object|null}
@@ -82,6 +76,8 @@ export function sanitizeUserForPublic(user) {
   delete safe.google_id;
   delete safe.username;
   delete safe.username_last_changed;
+  delete safe.gamerTag;
+  delete safe.gamertag_last_changed;
 
   safe.display_name = formatUserDisplayName(user);
   if (safe.email) {

@@ -2916,6 +2916,71 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   };
 }
 
+  // 2b_methods. Query authenticated user's available login methods (email, Google, Discord)
+  if (urlPath === '/api/auth/login-methods' && req.method === 'GET') {
+    res.setHeader('Cache-Control', 'private, no-store');
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+    }
+    try {
+      const userRes = await pool.query(
+        'SELECT id, email, password, password_set, google_id, discord_id FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1',
+        [authUser.id || authUser.uid]
+      );
+      const user = userRes.rows[0];
+      if (!user) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND' }));
+      }
+
+      // Check auth_identities
+      const identitiesRes = await pool.query(
+        'SELECT provider, provider_user_id, provider_email, display_name, avatar_url, linked_at FROM auth_identities WHERE user_id = $1',
+        [user.id]
+      );
+      const googleIdentity = identitiesRes.rows.find(i => i.provider === 'google') || null;
+      const discordIdentity = identitiesRes.rows.find(i => i.provider === 'discord') || null;
+
+      // Check user_discord_connections
+      const discordConn = await getDiscordConnectionForUser(pool, user.id, user.discord_id);
+
+      const isPasswordSet = Boolean(user.password_set === true && user.password);
+      const isGoogleConnected = Boolean(googleIdentity || user.google_id);
+      const googleEmail = googleIdentity?.provider_email || (user.google_id ? user.email : null);
+
+      const isDiscordConnected = Boolean(discordIdentity || user.discord_id || discordConn?.connected);
+      const discordName = discordIdentity?.display_name || discordConn?.global_name || discordConn?.username || (user.discord_id ? 'Connected' : null);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        methods: {
+          email: {
+            address: user.email || '',
+            passwordSet: isPasswordSet,
+          },
+          google: isGoogleConnected ? {
+            email: googleEmail || user.email || '',
+            linked_at: googleIdentity?.linked_at || null,
+          } : null,
+          discord: isDiscordConnected ? {
+            name: discordName || 'Connected',
+            username: discordConn?.username || '',
+            display_name: discordConn?.global_name || discordName || '',
+            avatar_url: discordConn?.avatar_url || discordIdentity?.avatar_url || null,
+            linked_at: discordIdentity?.linked_at || discordConn?.connected_at || null,
+          } : null,
+        }
+      }));
+    } catch (err) {
+      console.error('[LOGIN-METHODS] Failed to fetch sign-in methods:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Could not load sign-in methods.' }));
+    }
+  }
+
   // 2c. Discord OAuth2 Flow: Start authentication or authenticated account linking.
   if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord' || urlPath === '/api/auth/discord/login') && req.method === 'GET') {
     const isLoginFlow = urlPath === '/api/auth/discord/login';
@@ -5086,7 +5151,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const dbRes = await pool.query(`
         SELECT 
-          u.id, u.name, u.email, u.avatar, u.banner, u.tier, u.experience, u."socialLinks", u.status, u.phone, u."gamerTag", u."orgApplicationStatus",
+          u.id, u.name, u.email, u.avatar, u.banner, u.tier, u.experience, u."socialLinks", u.status, u.phone, u."orgApplicationStatus",
           u."orgName", u."orgHandle", u."orgImage", u."orgMotto",
           (SELECT COUNT(*) FROM tournaments t WHERE t."orgId" = u.id AND t."isDraft" = false) AS "tournamentsHosted"
         FROM users u
@@ -5110,9 +5175,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return {
           id: row.id,
           name: row.name || 'Organiser',
-          gamerTag: row.gamerTag || `@${(row.name || 'org').toLowerCase().replace(/\s+/g, '')}`,
           orgName: row.orgName || row.name || 'Organiser',
-          orgHandle: row.orgHandle || row.gamerTag || `@${(row.name || 'org').toLowerCase().replace(/\s+/g, '')}`,
+          orgHandle: row.orgHandle || `@${(row.name || 'org').toLowerCase().replace(/\s+/g, '')}`,
           orgImage: row.orgImage || row.avatar,
           orgMotto: row.orgMotto || '',
           email: maskUserEmail(row.email),
@@ -5285,7 +5349,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             id: user.id,
             display_name: formatUserDisplayName(user),
             district_id: user.district_id,
-            gamerTag: user.gamerTag || '',
             avatar: sanitizeImageUrlForDb(user.avatar),
             banner: sanitizeImageUrlForDb(user.banner),
             tier: user.tier || 'Amateur',
@@ -5440,9 +5503,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Prevent modifying email or username (gamerTag) for organisers (admins exempt)
         if (!hasRole(authUserRecord, ROLES.ADMIN) && hasRole(authUserRecord, ROLES.ORGANISER)) {
-          if (updateData.email !== undefined || updateData.gamerTag !== undefined) {
+          if (updateData.email !== undefined) {
             res.writeHead(403, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizers are not permitted to modify their account credentials (email/username).' }));
+            res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizers are not permitted to modify their account email directly.' }));
             return;
           }
         }
@@ -5482,50 +5545,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
         }
 
-        // OTP verification for username (gamerTag) change
-        if (updateData.gamerTag !== undefined) {
-          const userCheckRes = await pool.query('SELECT "gamerTag", email, "gamertag_last_changed" FROM users WHERE id = $1 OR uid = $1', [id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          if (currentUserRecord && updateData.gamerTag !== currentUserRecord.gamerTag) {
-            // Check 15 days rule:
-            if (currentUserRecord.gamertag_last_changed) {
-              const lastChanged = new Date(currentUserRecord.gamertag_last_changed);
-              const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24);
-              if (daysDiff < 15) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'COOLDOWN_ACTIVE', message: `You can only change your username once every 15 days. Remaining: ${Math.ceil(15 - daysDiff)} days.` }));
-                return;
-              }
-            }
-
-            const otpCode = updateData.otp;
-            if (!otpCode) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'OTP_REQUIRED', message: 'Verification code is required to change your username/handle.' }));
-              return;
-            }
-            const now = new Date();
-            const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1 AND otp = $2 AND expires_at > $3', [currentUserRecord.email, otpCode, now]);
-            if (otpRes.rows.length === 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is incorrect or has expired.' }));
-              return;
-            }
-            // Consume the OTP
-            await pool.query('DELETE FROM otps WHERE email = $1', [currentUserRecord.email]);
-          }
-        }
-
         const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
         const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
-
-        let gamertagLastChangedVal = undefined;
-        if (updateData.gamerTag !== undefined) {
-          const userCheckRes = await pool.query('SELECT "gamerTag" FROM users WHERE id = $1 OR uid = $1', [id]);
-          if (userCheckRes.rows[0] && userCheckRes.rows[0].gamerTag !== updateData.gamerTag) {
-            gamertagLastChangedVal = new Date();
-          }
-        }
 
         let emailLastChangedVal = undefined;
         if (updateData.email !== undefined && hasRole(authUserRecord, ROLES.ADMIN)) {
@@ -5538,7 +5559,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const dbRes = await pool.query(
           `UPDATE users SET 
             name = COALESCE($1, name),
-            "gamerTag" = COALESCE($2, "gamerTag"),
             email = COALESCE($3, email),
             phone = CASE WHEN $21::boolean THEN $4 ELSE phone END,
             avatar = COALESCE($5, avatar),
@@ -5551,7 +5571,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             "steamId" = COALESCE($12, "steamId"),
             "discordTag" = COALESCE($13, "discordTag"),
             banner = COALESCE($14, banner),
-            "gamertag_last_changed" = COALESCE($15, "gamertag_last_changed"),
             "email_last_changed" = COALESCE($16, "email_last_changed"),
             role = COALESCE($17, role),
             roles = COALESCE($18, roles),
@@ -5559,7 +5578,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
            WHERE (id = $19 OR uid = $19) RETURNING *`,
           [
             updateData.name,
-            updateData.gamerTag,
+            undefined,
             hasRole(authUserRecord, ROLES.ADMIN) ? updateData.email : undefined,
             normalizedPhone,
             avatarUrl,
@@ -5572,7 +5591,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             updateData.steamId !== undefined ? updateData.steamId : null,
             updateData.discordTag !== undefined ? updateData.discordTag : null,
             bannerUrl,
-            gamertagLastChangedVal,
+            undefined,
             emailLastChangedVal,
             hasRole(authUserRecord, ROLES.ADMIN) ? updateData.role : undefined,
             hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? (
@@ -5582,7 +5601,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
             id,
-            updateData.gamerTag,
+            updateData.orgHandle,
             normalizedPhone !== undefined
           ]
         );
@@ -9803,7 +9822,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         try {
           const membersRes = await pool.query(`
             SELECT m.id, m.user_id, m.role, m.roster_slot, m.joined_at AS created_at,
-                   u.name, u."gamerTag", u.district_id, ${userDisplayNameSql('u')}, u.avatar
+                   u.name, u.district_id, ${userDisplayNameSql('u')}, u.avatar
             FROM tournament_team_members m
             JOIN users u ON m.user_id = u.id
             WHERE m.tournament_team_id = $1
@@ -10357,7 +10376,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return res.end(JSON.stringify({ success: false, status: 'full', message: 'Team is full.' }));
       }
 
-      const leaderRes = await pool.query(`SELECT name, "gamerTag", district_id, ${userDisplayNameSql('')} FROM users WHERE id = $1`, [team.leader_user_id]);
+      const leaderRes = await pool.query(`SELECT name, district_id, ${userDisplayNameSql('')} FROM users WHERE id = $1`, [team.leader_user_id]);
       const leaderDisplayName = leaderRes.rows[0]?.display_name || formatUserDisplayName(leaderRes.rows[0]) || 'Team Leader';
 
       // Parse roster slots and list unlinked slots by IGN display name only (A8: no UIDs, emails, or phone numbers)
@@ -13455,7 +13474,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         const msgId = 'MSG-' + Date.now().toString().slice(-6);
-        const senderName = data.sender_name || authUser.gamerTag || authUser.name || 'Anonymous';
+        const senderName = data.sender_name || authUser.name || 'Anonymous';
         const senderRole = data.sender_role || authUser.role || 'gamer';
         const isSystem = data.is_system || false;
 
@@ -19152,6 +19171,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   if (urlPath === '/api/pair' || urlPath.startsWith('/api/pair/') || urlPath === '/api/v1' || urlPath.startsWith('/api/v1/')) {
     res.writeHead(410, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: false, error: 'GONE', message: 'This device integration has been removed.' }));
+    return;
+  }
+
+  // All other unhandled /api/* paths must return JSON 404 (never the SPA HTML page).
+  if (urlPath === '/api' || urlPath.startsWith('/api/')) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'API endpoint not found.' }));
     return;
   }
 
