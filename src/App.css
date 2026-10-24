@@ -41,6 +41,26 @@
     padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
   }
 
+  /* Mobile-only integrated authentication layout (removes floating-card appearance) */
+  @media (max-width: 639px) {
+    .auth-card--mobile-flat {
+      background-color: transparent !important;
+      background-image: none !important;
+      border: none !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      border-radius: 0 !important;
+      padding: 0 !important;
+      outline: none !important;
+    }
+    .auth-card--mobile-flat:hover {
+      background-color: transparent !important;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+  }
+
   .mobile-bottom-nav {
     position: fixed;
     z-index: 60;

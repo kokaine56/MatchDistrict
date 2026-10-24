@@ -222,6 +222,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const [showSignOutModal, setShowSignOutModal] = useState(false)
   const [activeMenuId, setActiveMenuId] = useState(null)
   const [rememberedAccounts, setRememberedAccounts] = useState([])
+  const [isSavedAccountsExpanded, setIsSavedAccountsExpanded] = useState(false)
   const menuRef = useRef(null)
   const { signOut } = useUser()
   const REMEMBERED_KEY = 'md_remembered_accounts'
@@ -1281,6 +1282,81 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     return currentUser && String(currentUser.id) === String(accountId)
   }
 
+  const renderAccountCards = (accounts) => (
+    accounts.map((account) => (
+      <div key={account.id} className="relative">
+        <button
+          type="button"
+          onClick={() => handleAccountSelect(account)}
+          className="w-full flex items-center gap-3.5 p-3.5 sm:p-4 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 hover:bg-slate-50 dark:hover:bg-white/[0.08] active:scale-[0.99] transition-all text-left relative min-h-[64px] shadow-sm hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none duration-200"
+        >
+          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-transparent group-hover:ring-primary/20 transition-all">
+            {account.avatar ? (
+              <img src={account.avatar} alt="" className="avatar-img" />
+            ) : (
+              <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0 pr-11 sm:pr-12">
+            <div className="flex items-center gap-2 min-w-0">
+              <p className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate min-w-0">{account.name}</p>
+              {account.provider === 'google' && (
+                <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded-full">
+                  Google
+                </span>
+              )}
+              {isAccountActive(account.id) && (
+                <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Active
+                </span>
+              )}
+            </div>
+            <p className="text-[13px] leading-snug text-on-surface-variant truncate mt-0.5 min-w-0">{account.email}</p>
+            {account.lastUsed && (
+              <p className="text-[11px] leading-snug text-on-surface-variant/50 mt-0.5 min-w-0">Last used {formatLastUsed(account.lastUsed)}</p>
+            )}
+          </div>
+        </button>
+
+        {/* 3-dot menu button */}
+        <button
+          type="button"
+          onClick={(e) => handleMenuClick(account.id, e)}
+          className="absolute top-3 right-3 sm:top-3.5 sm:right-3.5 w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 text-on-surface-variant/50 hover:text-on-surface-variant transition-all active:scale-95"
+          style={{ minWidth: '44px', minHeight: '44px' }}
+        >
+          <span className="material-symbols-outlined text-xl">more_vert</span>
+        </button>
+
+        {/* Dropdown menu */}
+        {activeMenuId === account.id && (
+          <div
+            ref={menuRef}
+            className="absolute right-3 top-[52px] z-50 w-52 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121212] shadow-xl overflow-hidden"
+          >
+            <button
+              type="button"
+              onClick={() => handleContinueFromMenu(account)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-slate-900 dark:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-all text-left"
+            >
+              <span className="material-symbols-outlined text-[18px] text-primary">login</span>
+              Continue
+            </button>
+            <button
+              type="button"
+              onClick={(e) => handleRemoveAccount(account.id, e)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/5 transition-all text-left"
+            >
+              <span className="material-symbols-outlined text-[18px]">delete</span>
+              Remove From Device
+            </button>
+          </div>
+        )}
+      </div>
+    ))
+  )
+
   return (
     <div className="min-h-screen bg-background text-on-background font-body-md overflow-x-hidden selection:bg-primary/30 selection:text-primary transition-colors duration-300 flex flex-col justify-between">
       <style dangerouslySetInnerHTML={{ __html: otpShakeKeyframes }} />
@@ -1305,7 +1381,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       </AnimatePresence>
 
       {/* Main Content Area */}
-      <main className="relative flex-1 flex items-center justify-center px-4 pt-24 pb-12 sm:px-6 lg:px-8">
+      <main className="relative flex-1 flex items-center justify-center px-4 pt-16 sm:pt-24 pb-28 sm:pb-12 sm:px-6 lg:px-8">
         {/* Background Ambient Blobs - Sleek Matte/Neon Glow */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/8 blur-[130px] rounded-full pointer-events-none -z-10" />
 
@@ -1319,7 +1395,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
           <motion.div 
             layout
             transition={cardLayoutTransition}
-            className="glass-card bg-[#07080C]/65 border border-white/10 backdrop-blur-xl rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] dark:shadow-[0_0_40px_rgba(99,102,241,0.1)] relative overflow-hidden p-4"
+            className="glass-card auth-card--mobile-flat bg-transparent sm:bg-[#07080C]/65 border-0 sm:border sm:border-white/10 backdrop-blur-none sm:backdrop-blur-xl rounded-none sm:rounded-3xl shadow-none sm:shadow-[0_20px_50px_rgba(0,0,0,0.5)] sm:dark:shadow-[0_0_40px_rgba(99,102,241,0.1)] relative overflow-visible sm:overflow-hidden p-0 sm:p-4"
           >
             {/* Loading Arena Overlay */}
             <AnimatePresence>
@@ -1709,79 +1785,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                   transition={contentTransition}
                   className="w-full"
                 >
-                  <div className="space-y-2.5">
-                    {rememberedAccounts.map((account) => (
-                      <div key={account.id} className="relative">
-                        <button
-                          type="button"
-                          onClick={() => handleAccountSelect(account)}
-                          className="w-full flex items-center gap-3.5 p-3.5 sm:p-4 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 hover:bg-slate-50 dark:hover:bg-white/[0.08] active:scale-[0.99] transition-all text-left relative min-h-[64px] shadow-sm hover:shadow-md focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none duration-200"
-                        >
-                          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden shrink-0 ring-2 ring-transparent group-hover:ring-primary/20 transition-all">
-                            {account.avatar ? (
-                              <img src={account.avatar} alt="" className="avatar-img" />
-                            ) : (
-                              <img src={DEFAULT_AVATAR} alt="" className="avatar-img" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0 pr-11 sm:pr-12">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <p className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate min-w-0">{account.name}</p>
-                              {account.provider === 'google' && (
-                                <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded-full">
-                                  Google
-                                </span>
-                              )}
-                              {isAccountActive(account.id) && (
-                                <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                  Active
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[13px] leading-snug text-on-surface-variant truncate mt-0.5 min-w-0">{account.email}</p>
-                            {account.lastUsed && (
-                              <p className="text-[11px] leading-snug text-on-surface-variant/50 mt-0.5 min-w-0">Last used {formatLastUsed(account.lastUsed)}</p>
-                            )}
-                          </div>
-                        </button>
-
-                        {/* 3-dot menu button */}
-                        <button
-                          type="button"
-                          onClick={(e) => handleMenuClick(account.id, e)}
-                          className="absolute top-3 right-3 sm:top-3.5 sm:right-3.5 w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 text-on-surface-variant/50 hover:text-on-surface-variant transition-all active:scale-95"
-                          style={{ minWidth: '44px', minHeight: '44px' }}
-                        >
-                          <span className="material-symbols-outlined text-xl">more_vert</span>
-                        </button>
-
-                        {/* Dropdown menu */}
-                        {activeMenuId === account.id && (
-                          <div
-                            ref={menuRef}
-                            className="absolute right-3 top-[52px] z-50 w-52 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#121212] shadow-xl overflow-hidden"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => handleContinueFromMenu(account)}
-                              className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-slate-900 dark:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-all text-left"
-                            >
-                              <span className="material-symbols-outlined text-[18px] text-primary">login</span>
-                              Continue
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => handleRemoveAccount(account.id, e)}
-                              className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/5 transition-all text-left"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">delete</span>
-                              Remove From Device
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                  {/* Desktop view: standard direct list */}
+                  <div className="hidden sm:block space-y-2.5">
+                    {renderAccountCards(rememberedAccounts)}
 
                     <button
                       type="button"
@@ -1792,6 +1798,61 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         <span className="material-symbols-outlined text-xl text-on-surface-variant/60">add</span>
                       </div>
                       <span className="font-semibold text-xs sm:text-sm">Use Another Account</span>
+                    </button>
+
+                    {/* Social Auth Option on Account Picker */}
+                    <SocialAuthButtons
+                      dividerText="or continue with"
+                      googleRef={setGoogleAccountPickerRef}
+                      onGoogleClick={handleGoogleClick}
+                      onDiscordClick={handleDiscordLogin}
+                      isLoading={isLoading}
+                    />
+                  </div>
+
+                  {/* Mobile view: compact collapsible saved accounts section */}
+                  <div className="block sm:hidden space-y-3">
+                    {/* Collapsible Section Header */}
+                    <button
+                      type="button"
+                      onClick={() => setIsSavedAccountsExpanded(prev => !prev)}
+                      aria-expanded={isSavedAccountsExpanded}
+                      aria-controls="mobile-saved-accounts-list"
+                      aria-label={isSavedAccountsExpanded ? "Collapse saved accounts" : "Expand saved accounts"}
+                      className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-white/5 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-primary/40 active:scale-[0.99] transition-all text-left"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                          <span className="material-symbols-outlined text-lg">manage_accounts</span>
+                        </div>
+                        <div>
+                          <span className="font-bold text-sm text-slate-900 dark:text-white">Saved Accounts</span>
+                          <span className="ml-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                            {rememberedAccounts.length}
+                          </span>
+                        </div>
+                      </div>
+                      <span className={`material-symbols-outlined text-on-surface-variant/70 text-xl transition-transform duration-200 ${isSavedAccountsExpanded ? 'rotate-180' : ''}`}>
+                        expand_more
+                      </span>
+                    </button>
+
+                    {/* Collapsible Content */}
+                    {isSavedAccountsExpanded && (
+                      <div id="mobile-saved-accounts-list" className="space-y-2.5 pt-0.5">
+                        {renderAccountCards(rememberedAccounts)}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleUseAnotherAccount}
+                      className="w-full flex items-center gap-3 p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-white/10 hover:border-primary/40 hover:bg-slate-50 dark:hover:bg-white/[0.08] active:scale-[0.99] transition-all text-on-surface-variant hover:text-slate-900 dark:hover:text-white min-h-[52px]"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-white/5 dark:bg-white/5 border border-dashed border-slate-300 dark:border-white/10 flex items-center justify-center shrink-0">
+                        <span className="material-symbols-outlined text-lg text-on-surface-variant/60">add</span>
+                      </div>
+                      <span className="font-semibold text-xs">Use Another Account</span>
                     </button>
 
                     {/* Social Auth Option on Account Picker */}
@@ -1835,6 +1896,16 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         </div>
                       )}
                     </>
+                  )}
+                  {loginPageState === 'login' && rememberedAccounts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setLoginPageState('account-picker')}
+                      className="flex items-center gap-1.5 text-xs font-bold text-primary hover:text-black dark:hover:text-white transition-all mb-4 px-1"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+                      <span>Saved Accounts ({rememberedAccounts.length})</span>
+                    </button>
                   )}
                   <form onSubmit={handleLoginSubmit} className="space-y-4 w-full">
                     <div className="space-y-3.5">
