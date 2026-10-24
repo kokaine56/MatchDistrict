@@ -13,7 +13,7 @@ The migration uses a transaction, a PostgreSQL advisory lock, and a write-blocki
 
 ## Rollback
 
-If the new application release must be rolled back, keep the new column, unique index, check constraint, and assigned District IDs in place. The prior application can ignore the additive column, but it must be rolled back only after the new release is stopped. Do not drop the column or reuse assigned IDs. If a migration fails, its transaction rolls back; inspect the error and audit state before retrying. Restore from backup only for a separately approved recovery event.
+If the new application release must be rolled back before the final `NOT NULL` step, keep the new column, unique index, check constraint, and assigned District IDs in place; the prior release can ignore the nullable column. After `NOT NULL` is applied, an older release that omits `district_id` cannot safely create accounts. Roll back only to a compatibility release that still generates District IDs, or first relax `NOT NULL` in a reviewed rollback migration. Do not drop the column or reuse assigned IDs. If a migration fails, its transaction rolls back; inspect the error and audit state before retrying. Restore from backup only for a separately approved recovery event.
 
 ## Verification queries
 
