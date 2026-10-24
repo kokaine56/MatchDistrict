@@ -164,6 +164,9 @@ export async function runSchemaMigrations(clientOrPool) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- OAuth-only users have no password credential until they explicitly create one.
+      ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
+
       ALTER TABLE users ADD COLUMN IF NOT EXISTS uid VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "riotId" VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "bgmiId" VARCHAR(255);

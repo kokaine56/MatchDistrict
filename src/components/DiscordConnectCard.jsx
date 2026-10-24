@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { getAuthToken } from '../utils/getAuthToken.js';
+import { useState, useEffect } from 'react';
 import { formatDateIST12h } from '../utils/timeFormat.js';
 
 export default function DiscordConnectCard({ currentUser, onUserUpdated, triggerToast }) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const [cardError, setCardError] = useState(null);
 
@@ -121,14 +121,13 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
   const handleDisconnectConfirm = async () => {
     try {
       setIsDisconnecting(true);
-      const token = await getAuthToken();
       const res = await fetch('/api/auth/discord/disconnect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
+        body: JSON.stringify({ currentPassword }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -137,6 +136,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
           triggerToast('Discord disconnected successfully.');
         }
         setShowConfirmModal(false);
+        setCurrentPassword('');
         if (typeof onUserUpdated === 'function') {
           onUserUpdated();
         }
@@ -146,7 +146,7 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
           triggerToast(msg);
         }
       }
-    } catch (err) {
+    } catch {
       if (typeof triggerToast === 'function') {
         triggerToast('Network error while disconnecting Discord.');
       }
@@ -309,10 +309,25 @@ export default function DiscordConnectCard({ currentUser, onUserUpdated, trigger
               Disconnecting will permanently remove your stored Discord ID, username, and avatar from MatchDistrict. You can reconnect anytime.
             </p>
 
+            {currentUser?.password_set === false ? (
+              <p className="text-xs text-amber-500">Create a Match District password in Profile settings before disconnecting Discord. This keeps another sign-in method available.</p>
+            ) : (
+              <label className="block space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Current password to confirm</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  className="w-full rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 text-sm text-on-background outline-none focus:border-primary"
+                />
+              </label>
+            )}
+
             <div className="flex justify-end gap-2.5 pt-2 border-t border-outline-variant/20">
               <button
                 type="button"
-                disabled={isDisconnecting}
+                disabled={isDisconnecting || currentUser?.password_set === false || !currentPassword}
                 onClick={() => setShowConfirmModal(false)}
                 className="px-4 py-2 border border-outline hover:bg-surface-variant text-on-background rounded-lg font-headline-md text-xs font-semibold cursor-pointer transition-all"
               >

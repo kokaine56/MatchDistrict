@@ -2190,22 +2190,31 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Account Resolution & Linking
+        // Only an existing Google subject is an authentication link. Email
+        // equality is not proof that this Google identity owns a local account.
         let targetUser = null;
         const byGoogleIdRes = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleSub]);
         if (byGoogleIdRes.rows.length > 0) {
           targetUser = byGoogleIdRes.rows[0];
         } else {
-          const byEmailRes = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [googleEmail]);
+          // Both account tables have an independent unique email constraint.
+          // A legacy/orphan profile must block registration too, or the new
+          // users row could be committed without a matching profile.
+          const byEmailRes = await pool.query(
+            `SELECT id FROM users WHERE LOWER(email) = $1
+             UNION ALL
+             SELECT id FROM profiles WHERE LOWER(email) = $1
+             LIMIT 1`,
+            [googleEmail]
+          );
           if (byEmailRes.rows.length > 0) {
-            targetUser = byEmailRes.rows[0];
-            if (targetUser.google_id && targetUser.google_id !== googleSub) {
-              res.writeHead(409, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'This account is already linked to a different Google identity.' }));
-              return;
-            }
-            await pool.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleSub, targetUser.id]);
-            targetUser.google_id = googleSub;
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'ACCOUNT_LINK_REQUIRED',
+              message: 'A Match District account already uses this email. Sign in to that account first, then link Google from your profile.'
+            }));
+            return;
           }
         }
 
@@ -2248,36 +2257,70 @@ const server = http.createServer(async (req, res) => {
             assignedUsername = `player_${crypto.randomBytes(3).toString('hex')}`.slice(0, 32);
           }
 
-          const randomPassHash = hashPassword('GOOGLE_OAUTH_' + crypto.randomBytes(16).toString('hex'));
           const avatarUrl = sanitizeImageUrlForDb(googlePayload.picture) || 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80';
 
-          const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-             ON CONFLICT (email)
-             DO UPDATE SET google_id = COALESCE(users.google_id, EXCLUDED.google_id),
-                           username = COALESCE(users.username, EXCLUDED.username)
-             RETURNING *`,
-            [
-              userUUID,
-              userUUID,
-              cleanName,
-              googleEmail,
-              randomPassHash,
-              gamerTag,
-              assignedUsername,
-              'player',
-              ['user'],
-              'Amateur',
-              'none',
-              avatarUrl,
-              'Active',
-              googleSub,
-              false
-            ]
-          );
-          targetUser = insertRes.rows[0];
-          await ensureSupabaseProfile(pool, targetUser);
+          const registrationClient = await pool.connect();
+          try {
+            await registrationClient.query('BEGIN');
+            const emailOwner = await registrationClient.query(
+              `SELECT id FROM users WHERE LOWER(email) = $1
+               UNION ALL
+               SELECT id FROM profiles WHERE LOWER(email) = $1
+               LIMIT 1`,
+              [googleEmail]
+            );
+            if (emailOwner.rows.length > 0) {
+              await registrationClient.query('ROLLBACK');
+              res.writeHead(409, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                success: false,
+                error: 'ACCOUNT_LINK_REQUIRED',
+                message: 'A Match District account already uses this email. Sign in to that account first, then link Google from your profile.'
+              }));
+              return;
+            }
+
+            const insertRes = await registrationClient.query(
+              `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
+               VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, $13, false)
+               ON CONFLICT DO NOTHING
+               RETURNING *`,
+              [userUUID, userUUID, cleanName, googleEmail, gamerTag, assignedUsername, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub]
+            );
+            targetUser = insertRes.rows[0];
+            if (!targetUser) {
+              // A concurrent provider registration may have won. Reuse only
+              // the same Google subject; matching email alone is never proof.
+              const racedGoogleIdentity = await registrationClient.query('SELECT * FROM users WHERE google_id = $1', [googleSub]);
+              if (racedGoogleIdentity.rows.length > 0) {
+                targetUser = racedGoogleIdentity.rows[0];
+              } else {
+                await registrationClient.query('ROLLBACK');
+                res.writeHead(409, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  success: false,
+                  error: 'ACCOUNT_LINK_REQUIRED',
+                  message: 'An account already uses this email. Sign in to that account first, then link Google from your profile.'
+                }));
+                return;
+              }
+            } else {
+              await ensureSupabaseProfile(registrationClient, targetUser);
+              const profileCheck = await registrationClient.query(
+                'SELECT 1 FROM profiles WHERE id = $1 AND email = $2',
+                [targetUser.uid || targetUser.id, targetUser.email]
+              );
+              if (profileCheck.rows.length === 0) {
+                throw new Error('Google registration profile was not created for the new account.');
+              }
+            }
+            await registrationClient.query('COMMIT');
+          } catch (registrationError) {
+            await registrationClient.query('ROLLBACK').catch(() => {});
+            throw registrationError;
+          } finally {
+            registrationClient.release();
+          }
         }
 
         // Generate native Match District JWT & HttpOnly Session Cookie
@@ -2312,6 +2355,178 @@ const server = http.createServer(async (req, res) => {
         console.error('❌ [MATCH DISTRICT GOOGLE AUTH EXCEPTION]:', err.message);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Authentication processing failed.' }));
+      }
+    });
+    return;
+  }
+
+  // Authenticated Google account linking. Email matching is intentionally not
+  // used here: both the existing app session and Google credential prove control.
+  if (urlPath === '/api/auth/google/link' && req.method === 'POST') {
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Sign in before linking Google.' }));
+      return;
+    }
+    if (!checkRateLimit(`google_link:${authUser.id}`, 10, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+      return;
+    }
+
+    let body = '';
+    let bodySize = 0;
+    req.on('data', chunk => {
+      bodySize += chunk.length;
+      if (bodySize > 8192) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE' }));
+        req.destroy();
+        return;
+      }
+      body += chunk;
+    });
+    req.on('end', async () => {
+      if (bodySize > 8192) return;
+      try {
+        const idToken = JSON.parse(body).idToken;
+        if (typeof idToken !== 'string' || idToken.length > 4096 || idToken.split('.').length !== 3) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_TOKEN', message: 'A valid Google credential is required.' }));
+          return;
+        }
+        loadEnv();
+        const configuredClientId = (process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+        if (!configuredClientId) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'CONFIG_ERROR', message: 'Google authentication is not configured.' }));
+          return;
+        }
+        const verifyResponse = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!verifyResponse.ok) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_CREDENTIALS', message: 'Google credential verification failed.' }));
+          return;
+        }
+        const claims = await verifyResponse.json();
+        const googleId = typeof claims.sub === 'string' ? claims.sub.trim() : '';
+        if (!['https://accounts.google.com', 'accounts.google.com'].includes(claims.iss) ||
+            claims.aud !== configuredClientId || claims.email_verified !== 'true' && claims.email_verified !== true ||
+            !googleId || claims.exp && Number(claims.exp) < Math.floor(Date.now() / 1000)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_CREDENTIALS', message: 'Google credential is invalid or unverified.' }));
+          return;
+        }
+
+        const dbClient = await pool.connect();
+        try {
+          await dbClient.query('BEGIN');
+          const accountResult = await dbClient.query(
+            'SELECT * FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+            [authUser.id || authUser.uid]
+          );
+          const account = accountResult.rows[0];
+          if (!account) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
+            return;
+          }
+          if (account.google_id && account.google_id !== googleId) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'ACCOUNT_CONFLICT', message: 'A different Google account is already linked.' }));
+            return;
+          }
+          const owner = await dbClient.query('SELECT id FROM users WHERE google_id = $1 AND id <> $2 LIMIT 1', [googleId, account.id]);
+          if (owner.rows.length > 0) {
+            await dbClient.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'PROVIDER_ALREADY_LINKED', message: 'This Google account is already linked to another Match District account.' }));
+            return;
+          }
+          await dbClient.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, account.id]);
+          await dbClient.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, linked: true, message: 'Google account linked successfully.' }));
+        } catch (dbErr) {
+          await dbClient.query('ROLLBACK').catch(() => {});
+          if (dbErr.code === '23505') {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'PROVIDER_ALREADY_LINKED', message: 'This Google account is already linked to another Match District account.' }));
+            return;
+          }
+          throw dbErr;
+        } finally {
+          dbClient.release();
+        }
+      } catch (err) {
+        console.error('[GOOGLE LINK] Provider linking failed [code: ' + (err?.code || 'UNKNOWN') + '].');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Could not link Google. Please try again.' }));
+      }
+    });
+    return;
+  }
+
+  if (urlPath === '/api/auth/google/unlink' && req.method === 'POST') {
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Sign in before unlinking Google.' }));
+      return;
+    }
+    if (!checkRateLimit(`google_unlink:${authUser.id}`, 5, 60000)) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let dbClient;
+      try {
+        const { currentPassword } = JSON.parse(body || '{}');
+        dbClient = await pool.connect();
+        await dbClient.query('BEGIN');
+        const result = await dbClient.query(
+          'SELECT id, google_id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          [authUser.id || authUser.uid]
+        );
+        const account = result.rows[0];
+        if (!account) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
+          return;
+        }
+        if (account.password_set !== true || !account.password) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PASSWORD_REQUIRED', message: 'Create a Match District password before unlinking Google. This confirms your identity and keeps another sign-in method available.' }));
+          return;
+        }
+        if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
+          return;
+        }
+        await dbClient.query('UPDATE users SET google_id = NULL WHERE id = $1', [account.id]);
+        await dbClient.query('COMMIT');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, linked: false, message: 'Google account unlinked. Email and password sign-in remains available.' }));
+      } catch (err) {
+        await dbClient?.query('ROLLBACK').catch(() => {});
+        console.error('[GOOGLE UNLINK] Provider unlink failed [code: ' + (err?.code || 'UNKNOWN') + '].');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Could not unlink Google. Please try again.' }));
+      } finally {
+        dbClient?.release();
       }
     });
     return;
@@ -2382,20 +2597,21 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   };
 }
 
-  // 2c. Discord OAuth2 Flow: Start Connect Authorization (GET /api/auth/discord/connect or GET /api/auth/discord)
-  // Authenticated user only — Discord login/signup is permanently disabled.
-  if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord') && req.method === 'GET') {
+  // 2c. Discord OAuth2 Flow: Start authentication or authenticated account linking.
+  if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord' || urlPath === '/api/auth/discord/login') && req.method === 'GET') {
+    const isLoginFlow = urlPath === '/api/auth/discord/login';
     const authUser = getAuthUser(req);
-    if (!authUser) {
+    if (!isLoginFlow && !authUser) {
       res.writeHead(302, { Location: '/profile?discord=error&code=session_expired' });
       res.end();
       return;
     }
 
     const clientIp = getClientIp(req);
-    if (!checkRateLimit('discord_connect_ip:' + clientIp, 20, 60000) || !checkRateLimit('discord_connect_user:' + authUser.id, 10, 60000)) {
-      console.error(`[DISCORD CONNECT ERROR] Step: connect_rate_limit | Code: rate_limited | IP: ${clientIp} | User: ${authUser.id}`);
-      res.writeHead(302, { Location: '/profile?discord=error&code=rate_limited' });
+    if (!checkRateLimit('discord_connect_ip:' + clientIp, 20, 60000) ||
+        (authUser && !checkRateLimit('discord_connect_user:' + authUser.id, 10, 60000))) {
+      console.error(`[DISCORD AUTH] Step: connect_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | IP: ${clientIp}`);
+      res.writeHead(302, { Location: isLoginFlow ? '/login?discord_error=rate_limited' : '/profile?discord=error&code=rate_limited' });
       res.end();
       return;
     }
@@ -2411,13 +2627,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
       if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
       console.error(`[DISCORD CONNECT ERROR] Step: connect_start | Code: not_configured | Missing env: ${missing.join(', ')}`);
-      res.writeHead(302, { Location: '/profile?discord=error&code=not_configured' });
+      res.writeHead(302, { Location: isLoginFlow ? '/login?discord_error=not_configured' : '/profile?discord=error&code=not_configured' });
       res.end();
       return;
     }
 
     const parsedUrl = new URL(req.url, 'http://localhost');
     const isReconnect = parsedUrl.searchParams.get('reconnect') === 'true';
+    const returnTo = getSafeRelativeRedirect(parsedUrl.searchParams.get('redirect'), '/');
 
     // Generate 32-byte CSPRNG state and PKCE verifier/challenge
     const stateRandom = crypto.randomBytes(32).toString('hex');
@@ -2427,10 +2644,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     // BIND state to the logged-in user id and store redirect_uri for byte-for-byte matching
     const statePayload = {
       state: stateRandom,
-      userId: authUser.id || authUser.uid,
+      flow: isLoginFlow ? 'login' : 'link',
+      userId: authUser ? (authUser.id || authUser.uid) : null,
       reconnect: isReconnect,
       codeVerifier,
       redirectUri: discordRedirectUri,
+      returnTo,
       createdAt: Date.now()
     };
 
@@ -2438,12 +2657,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const isHttps = isHttpsRequest(req);
     const stateCookie = `discord_oauth_state=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
 
-    // Discord authorize URL with scope=identify ONLY (email and server access forbidden)
+    // Email is requested only for new-account eligibility; it is never used to
+    // link to an existing account. Profile linking still requests identify only.
     const discordAuthUrl = new URL('https://discord.com/oauth2/authorize');
     discordAuthUrl.searchParams.set('client_id', discordClientId);
     discordAuthUrl.searchParams.set('redirect_uri', discordRedirectUri);
     discordAuthUrl.searchParams.set('response_type', 'code');
-    discordAuthUrl.searchParams.set('scope', 'identify');
+    discordAuthUrl.searchParams.set('scope', isLoginFlow ? 'identify email' : 'identify');
     discordAuthUrl.searchParams.set('state', stateRandom);
     discordAuthUrl.searchParams.set('code_challenge', codeChallenge);
     discordAuthUrl.searchParams.set('code_challenge_method', 'S256');
@@ -2462,10 +2682,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const clientIp = getClientIp(req);
     const isHttps = isHttpsRequest(req);
     const clearStateCookie = `discord_oauth_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${isHttps ? '; Secure' : ''}`;
+    let statePayload = null;
+    const callbackErrorLocation = (code) => statePayload?.flow === 'login'
+      ? `/login?discord_error=${encodeURIComponent(code)}`
+      : `/profile?discord=error&code=${encodeURIComponent(code)}`;
 
     if (!checkRateLimit('discord_callback_ip:' + clientIp, 20, 60000)) {
       console.error(`[DISCORD CONNECT ERROR] Step: callback_ip_rate_limit | Code: rate_limited | IP: ${clientIp}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=rate_limited' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('rate_limited') });
       res.end();
       return;
     }
@@ -2495,18 +2719,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     if (!stateCookieValue) {
       console.error('[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Reason: state cookie missing');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
-    let statePayload = null;
     try {
       const decrypted = decryptSessionData(stateCookieValue);
       statePayload = JSON.parse(decrypted);
     } catch (decryptErr) {
       console.error(`[DISCORD CONNECT ERROR] Step: state_cookie_decrypt | Code: state_mismatch | Exception: ${decryptErr.message}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
@@ -2514,7 +2737,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     // Verify expiration (10 min)
     if (!statePayload.createdAt || Date.now() - statePayload.createdAt > 600000) {
       console.error('[DISCORD CONNECT ERROR] Step: state_expiry | Code: session_expired | Reason: state cookie older than 10m');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('session_expired') });
       res.end();
       return;
     }
@@ -2524,29 +2747,31 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const queryBuf = Buffer.from(queryState || '');
     if (stateBuf.length === 0 || stateBuf.length !== queryBuf.length || !crypto.timingSafeEqual(stateBuf, queryBuf)) {
       console.error('[DISCORD CONNECT ERROR] Step: state_verify | Code: state_mismatch | Reason: query state does not match cookie state');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
-    // Session validation: caller must have a valid session matching the bound user ID
+    // Linking requires the session that initiated the flow. Login is allowed
+    // without an app session, but any state-bound user ID must still match.
     const authUser = getAuthUser(req);
-    if (!authUser) {
+    const isLoginFlow = statePayload.flow === 'login';
+    if (!isLoginFlow && !authUser) {
       console.error('[DISCORD CONNECT ERROR] Step: session_check | Code: session_expired | Reason: no active session in callback');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('session_expired') });
       res.end();
       return;
     }
-    if (statePayload.userId !== authUser.id && statePayload.userId !== authUser.uid) {
-      console.error(`[DISCORD CONNECT ERROR] Step: session_user_match | Code: state_mismatch | Reason: bound userId (${statePayload.userId}) does not match session user (${authUser.id || authUser.uid})`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=state_mismatch' });
+    if (!isLoginFlow && statePayload.userId !== authUser.id && statePayload.userId !== authUser.uid) {
+      console.error('[DISCORD CONNECT ERROR] Step: session_user_match | Code: state_mismatch | Reason: bound identity did not match session');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
 
-    if (!checkRateLimit('discord_callback_user:' + authUser.id, 10, 60000)) {
-      console.error(`[DISCORD CONNECT ERROR] Step: callback_user_rate_limit | Code: rate_limited | User: ${authUser.id}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=rate_limited' });
+    if (authUser && !checkRateLimit('discord_callback_user:' + authUser.id, 10, 60000)) {
+      console.error('[DISCORD AUTH] Step: callback_user_rate_limit | Code: rate_limited');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('rate_limited') });
       res.end();
       return;
     }
@@ -2554,14 +2779,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     if (queryError) {
       const safeDiscordErr = String(queryError).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'unknown_denied';
       console.error(`[DISCORD CONNECT ERROR] Step: discord_authorize | Code: discord_denied | Discord: ${safeDiscordErr}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=discord_denied' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('discord_denied') });
       res.end();
       return;
     }
 
     if (!queryCode) {
       console.error('[DISCORD CONNECT ERROR] Step: callback_params | Code: unknown | Reason: missing authorization code in query');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=unknown' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('unknown') });
       res.end();
       return;
     }
@@ -2572,7 +2797,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
       if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
       console.error(`[DISCORD CONNECT ERROR] Step: callback_env | Code: not_configured | Missing env: ${missing.join(', ')}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=not_configured' });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('not_configured') });
+      res.end();
+      return;
+    }
+
+    if (statePayload.redirectUri !== discordRedirectUri) {
+      console.warn('[DISCORD AUTH] Callback rejected because the configured redirect URI changed during authorization.');
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('state_mismatch') });
       res.end();
       return;
     }
@@ -2604,7 +2836,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       } catch (fetchErr) {
         clearTimeout(tokenTimer);
         console.error(`[DISCORD CONNECT ERROR] Step: token_exchange_network | Code: token_exchange_failed | Exception: ${fetchErr.message}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=token_exchange_failed' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('token_exchange_failed') });
         res.end();
         return;
       }
@@ -2618,7 +2850,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         } catch {}
         const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${tokenRes.status}`;
         console.error(`[DISCORD CONNECT ERROR] Step: token_exchange | HTTP: ${tokenRes.status} | Discord: ${safeDiscordErr}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=token_exchange_failed' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('token_exchange_failed') });
         res.end();
         return;
       }
@@ -2639,7 +2871,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       } catch (userFetchErr) {
         clearTimeout(userTimer);
         console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch_network | Code: profile_fetch_failed | Exception: ${userFetchErr.message}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('profile_fetch_failed') });
         res.end();
         return;
       }
@@ -2668,7 +2900,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         } catch {}
         const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${userRes.status}`;
         console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch | HTTP: ${userRes.status} | Discord: ${safeDiscordErr}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('profile_fetch_failed') });
         res.end();
         return;
       }
@@ -2681,7 +2913,116 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       if (!discordId) {
         console.error('[DISCORD CONNECT ERROR] Step: profile_parse | Code: profile_fetch_failed | Reason: missing discord id in @me response');
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=profile_fetch_failed' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('profile_fetch_failed') });
+        res.end();
+        return;
+      }
+
+      if (isLoginFlow) {
+        let targetUser = null;
+        const connectedUser = await pool.query(
+          `SELECT users.* FROM users
+           LEFT JOIN user_discord_connections connections
+             ON connections.user_id = users.id AND connections.discord_id = $1
+           WHERE users.discord_id = $1 OR connections.discord_id = $1
+           LIMIT 2`,
+          [discordId]
+        );
+        if (new Set(connectedUser.rows.map(row => row.id)).size > 1) {
+          console.error('[DISCORD AUTH] Refusing an ambiguous provider mapping.');
+          res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_conflict' });
+          res.end();
+          return;
+        }
+        targetUser = connectedUser.rows[0] || null;
+
+        if (!targetUser) {
+          const discordEmail = typeof discordUser.email === 'string' ? discordUser.email.trim().toLowerCase() : '';
+          if (!discordEmail || !discordEmail.includes('@') || discordUser.verified !== true) {
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=verified_email_required' });
+            res.end();
+            return;
+          }
+
+          const existingAccount = await pool.query(
+            `SELECT id FROM users WHERE LOWER(email) = $1
+             UNION ALL
+             SELECT id FROM profiles WHERE LOWER(email) = $1
+             LIMIT 1`,
+            [discordEmail]
+          );
+          if (existingAccount.rows.length > 0) {
+            res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_link_required' });
+            res.end();
+            return;
+          }
+
+          const userId = 'USR-' + crypto.randomBytes(12).toString('hex');
+          const cleanName = (discordGlobalName || discordUsername || 'Player').trim().slice(0, 50);
+          const baseTag = (cleanName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'gamer').slice(0, 10);
+          const gamerTag = '@' + baseTag + crypto.randomBytes(2).toString('hex');
+          const dbClient = await pool.connect();
+          try {
+            await dbClient.query('BEGIN');
+            const inserted = await dbClient.query(
+              `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set)
+               VALUES ($1, $1, $2, $3, NULL, $4, 'player', ARRAY['user'], 'Amateur', 'none', NULL, 'Active', $5, false)
+               RETURNING *`,
+              [userId, cleanName, discordEmail, gamerTag, discordId]
+            );
+            targetUser = inserted.rows[0];
+            await dbClient.query(
+              `INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, status, "discordTag")
+               VALUES ($1, $1, $2, $3, $4, 'player', ARRAY['user'], 'Amateur', 'Active', $5)`,
+              [userId, cleanName, discordEmail, gamerTag, discordUsername]
+            );
+            await dbClient.query(
+              `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
+              [userId, discordId, discordUsername, discordGlobalName, discordAvatarHash || null]
+            );
+            await dbClient.query('COMMIT');
+          } catch (createErr) {
+            await dbClient.query('ROLLBACK').catch(() => {});
+            if (createErr.code === '23505') {
+              const racedMapping = await pool.query(
+                `SELECT users.* FROM users
+                 LEFT JOIN user_discord_connections connections
+                   ON connections.user_id = users.id AND connections.discord_id = $1
+                 WHERE users.discord_id = $1 OR connections.discord_id = $1
+                 LIMIT 2`,
+                [discordId]
+              );
+              if (new Set(racedMapping.rows.map(row => row.id)).size > 1) {
+                res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_conflict' });
+                res.end();
+                return;
+              } else if (racedMapping.rows.length > 0) {
+                targetUser = racedMapping.rows[0];
+              } else {
+                res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/login?discord_error=account_link_required' });
+                res.end();
+                return;
+              }
+            } else {
+              throw createErr;
+            }
+          } finally {
+            dbClient.release();
+          }
+        }
+
+        targetUser = await ensureUserUsername(pool, targetUser);
+        const token = signJwt({
+          email: targetUser.email,
+          role: targetUser.role,
+          roles: targetUser.roles || [targetUser.role],
+          id: targetUser.uid || targetUser.id
+        });
+        res.writeHead(302, {
+          'Set-Cookie': [clearStateCookie, buildSessionCookie(token, req)],
+          'Location': getSafeRelativeRedirect(statePayload.returnTo, '/')
+        });
         res.end();
         return;
       }
@@ -2693,7 +3034,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       );
       if (userLookupRes.rows.length === 0) {
         console.error('[DISCORD CONNECT ERROR] Step: user_lookup | Code: session_expired | Reason: user row not found in users table');
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=session_expired' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('session_expired') });
         res.end();
         return;
       }
@@ -2710,7 +3051,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       );
       if (conflictCheck.rows.length > 0) {
         console.warn(`[DISCORD CONNECT] Step: collision_check | Code: already_linked | Reason: discord_id claimed by other user`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=already_linked' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('already_linked') });
         res.end();
         return;
       }
@@ -2718,7 +3059,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       // Check collision 2: Does current user already have a different Discord connected? Only replace if reconnect requested.
       if (existingDiscordId && existingDiscordId !== discordId && !statePayload.reconnect) {
         console.warn(`[DISCORD CONNECT] Step: user_collision_check | Code: already_linked | Reason: user already connected to different discord`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=already_linked' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('already_linked') });
         res.end();
         return;
       }
@@ -2744,7 +3085,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         await dbClient.query('ROLLBACK').catch(() => {});
         const pgCode = txErr.code || 'UNKNOWN';
         console.error(`[DISCORD CONNECT ERROR] Step: db_transaction | PostgresCode: ${pgCode} | Exception: ${txErr.message}`);
-        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': '/profile?discord=error&code=db_error' });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation('db_error') });
         res.end();
         return;
       } finally {
@@ -2764,7 +3105,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const isDb = Boolean(pgCode || /postgres|relation|column|database|syntax error/i.test(err.message));
       const stepCode = isDb ? 'db_error' : 'unknown';
       console.error(`[DISCORD CONNECT ERROR] Step: callback_handler | Code: ${stepCode} | PostgresCode: ${pgCode || 'N/A'} | Exception: ${err.message}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': `/profile?discord=error&code=${stepCode}` });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookie, 'Location': callbackErrorLocation(stepCode) });
       res.end();
       return;
     }
@@ -2787,24 +3128,53 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       return;
     }
 
-    const dbClient = await pool.connect();
-    try {
-      await dbClient.query('BEGIN');
-      await dbClient.query('UPDATE users SET discord_id = NULL WHERE id = $1 OR uid = $1', [authUser.id]);
-      await dbClient.query('DELETE FROM user_discord_connections WHERE user_id = $1', [authUser.id]);
-      await dbClient.query('COMMIT');
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let dbClient;
+      try {
+        const { currentPassword } = JSON.parse(body || '{}');
+        dbClient = await pool.connect();
+        await dbClient.query('BEGIN');
+        const accountResult = await dbClient.query(
+          'SELECT id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          [authUser.id || authUser.uid]
+        );
+        const account = accountResult.rows[0];
+        if (!account) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
+          return;
+        }
+        if (account.password_set !== true || !account.password) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PASSWORD_REQUIRED', message: 'Create a Match District password before disconnecting Discord. This confirms your identity and keeps another sign-in method available.' }));
+          return;
+        }
+        if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, account.password)) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
+          return;
+        }
+        await dbClient.query('UPDATE users SET discord_id = NULL WHERE id = $1', [account.id]);
+        await dbClient.query('DELETE FROM user_discord_connections WHERE user_id = $1', [account.id]);
+        await dbClient.query('COMMIT');
 
-      console.log(`\n🛡️ [MATCH DISTRICT AUTH] User "${authUser.id}" disconnected Discord.\n`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, message: 'Discord disconnected successfully.' }));
-    } catch (err) {
-      await dbClient.query('ROLLBACK').catch(() => {});
-      console.error('❌ [DISCORD DISCONNECT EXCEPTION]:', err.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Failed to disconnect Discord account.' }));
-    } finally {
-      dbClient.release();
-    }
+        console.log('[DISCORD AUTH] Discord provider disconnected after password reauthentication.');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Discord disconnected successfully.' }));
+      } catch (err) {
+        await dbClient?.query('ROLLBACK').catch(() => {});
+        console.error('[DISCORD DISCONNECT] Failed [code: ' + (err?.code || 'UNKNOWN') + '].');
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: 'Failed to disconnect Discord account.' }));
+      } finally {
+        dbClient?.release();
+      }
+    });
     return;
   }
 

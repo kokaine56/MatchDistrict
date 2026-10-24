@@ -270,6 +270,26 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setTimeout(() => setShowToast(false), 4000)
   }
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const errorCode = params.get('discord_error')
+    if (!errorCode) return
+    const messages = {
+      account_link_required: 'This Discord account is not linked. Sign in to your existing account, then connect Discord in Profile settings.',
+      account_conflict: 'This Discord identity has conflicting account links. Contact support before trying again.',
+      verified_email_required: 'Discord did not provide a verified email. Verify an email with Discord or use email registration.',
+      not_configured: 'Discord sign-in is not configured on the server.',
+      state_mismatch: 'Discord sign-in could not be verified. Please try again.',
+      session_expired: 'Your sign-in session expired. Please try again.',
+      discord_denied: 'Discord authorization was cancelled.',
+      rate_limited: 'Too many Discord sign-in attempts. Wait a moment and try again.',
+    }
+    triggerToast(messages[errorCode] || 'Discord sign-in failed. Please try again.')
+    params.delete('discord_error')
+    const query = params.toString()
+    window.history.replaceState({}, document.title, `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+  }, [])
+
   // OTP Cooldown Timer Effect
   useEffect(() => {
     if (cooldownSeconds <= 0) return
@@ -567,6 +587,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     } catch (err) {
       triggerToast('Failed to trigger Google prompt.')
     }
+  }
+
+  const handleDiscordLogin = () => {
+    const safeRedirect = getSafeRedirect(redirectTo) || '/'
+    window.location.assign(`/api/auth/discord/login?redirect=${encodeURIComponent(safeRedirect)}`)
   }
 
   // Auto-clear notification alerts after timeout
@@ -1790,6 +1815,15 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                           </button>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={handleDiscordLogin}
+                        disabled={isLoading}
+                        className="w-full h-11 bg-[#5865F2] hover:bg-[#4752C4] disabled:opacity-50 rounded-xl font-headline-md text-xs font-bold text-white transition-all flex items-center justify-center gap-2.5"
+                      >
+                        <span className="font-black text-lg leading-none">◉</span>
+                        <span>Continue with Discord</span>
+                      </button>
                     </div>
                   </div>
                 </motion.div>
@@ -1966,6 +2000,15 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         </button>
                       )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleDiscordLogin}
+                      disabled={isLoading}
+                      className="w-full h-11 bg-[#5865F2] hover:bg-[#4752C4] disabled:opacity-50 rounded-xl font-headline-md text-xs font-bold text-white transition-all flex items-center justify-center gap-2.5"
+                    >
+                      <span className="font-black text-lg leading-none">◉</span>
+                      <span>Continue with Discord</span>
+                    </button>
                   </div>
                 </motion.div>
               ) : (
@@ -2141,6 +2184,15 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                         </button>
                       )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={handleDiscordLogin}
+                      disabled={isLoading}
+                      className="w-full h-11 bg-[#5865F2] hover:bg-[#4752C4] disabled:opacity-50 rounded-xl font-headline-md text-xs font-bold text-white transition-all flex items-center justify-center gap-2.5"
+                    >
+                      <span className="font-black text-lg leading-none">◉</span>
+                      <span>Continue with Discord</span>
+                    </button>
                   </div>
                 </motion.div>
               )}

@@ -25,6 +25,7 @@ import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 import { validateUsername, getCanonicalUsername } from '../utils/usernameValidator.js'
 import DiscordConnectCard from '../components/DiscordConnectCard.jsx'
+import GoogleConnectCard from '../components/GoogleConnectCard.jsx'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -4161,6 +4162,11 @@ className="px-4 min-h-[44px] bg-emerald-500 hover:bg-emerald-600 rounded-lg text
                     </div>
 
                     {/* Section 5: Connected Accounts */}
+                    <GoogleConnectCard
+                      currentUser={currentUser || currentUserFromContext}
+                      onUserUpdated={refreshProfileUser}
+                      triggerToast={triggerToast}
+                    />
                     <DiscordConnectCard
                       currentUser={currentUser || currentUserFromContext}
                       onUserUpdated={refreshProfileUser}
