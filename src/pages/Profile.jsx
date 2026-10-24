@@ -2814,6 +2814,34 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       <p className="font-body-sm text-[11px] text-on-surface-variant mt-0.5">Your registration activity on Match District.</p>
                     </div>
 
+                    <div className="glass-card p-4 rounded-2xl border border-outline-variant/30 bg-surface-container-low/50 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-label-caps text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">District ID</span>
+                        <p className="mt-1 font-mono text-lg font-bold tracking-[0.18em] text-on-background">
+                          {(currentUser || currentUserFromContext)?.district_id || 'Assigning ID…'}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-on-surface-variant">Permanent public account identifier</p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!(currentUser || currentUserFromContext)?.district_id}
+                        onClick={async () => {
+                          const districtId = (currentUser || currentUserFromContext)?.district_id
+                          if (!districtId) return
+                          try {
+                            await navigator.clipboard.writeText(String(districtId))
+                            triggerToast('District ID copied.')
+                          } catch {
+                            triggerToast('Could not copy the District ID. Select and copy it manually.')
+                          }
+                        }}
+                        className="shrink-0 min-h-[40px] rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold text-on-background hover:bg-surface-variant disabled:opacity-50"
+                        aria-label="Copy District ID"
+                      >
+                        <span className="material-symbols-outlined mr-1 align-middle text-sm">content_copy</span>Copy
+                      </button>
+                    </div>
+
                     {/* Stat card */}
                     <motion.div
                       variants={statsContainerVariants}

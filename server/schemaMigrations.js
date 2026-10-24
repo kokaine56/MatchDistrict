@@ -168,6 +168,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
 
       ALTER TABLE users ADD COLUMN IF NOT EXISTS uid VARCHAR(255);
+      -- Kept nullable until the explicitly phased backfill migration verifies all accounts.
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS district_id VARCHAR(32);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "riotId" VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "bgmiId" VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "steamId" VARCHAR(255);

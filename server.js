@@ -53,6 +53,7 @@ import {
 import { mapPublicMatchResult } from './server/matchResultService.js';
 import { runSchemaMigrations, runMigrationBatch, SCHEMA_TABLES } from './server/schemaMigrations.js';
 import { syncMissingProfiles } from './server/profileSync.js';
+import { generateDistrictId, insertWithDistrictId, migrateDistrictIds } from './server/districtId.js';
 import { createDatabasePool } from './server/db.js';
 import { updateTeamQualificationStatus } from './server/teamDisqualificationService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
@@ -566,6 +567,8 @@ async function initDb() {
     // Authoritative idempotent schema migrations for the live Supabase database.
     // Runs shared DDL for all core tables (CREATE TABLE IF NOT EXISTS tournament_planning_config, etc.)
     await runSchemaMigrations(client);
+    const districtIdMigration = await migrateDistrictIds(client);
+    console.log(`[STARTUP] District ID backfill complete: ${districtIdMigration.assigned} assigned across ${districtIdMigration.scanned} account(s).`);
     for (const table of SCHEMA_TABLES) {
       console.log(`[SCHEMA] ${table}: ${existingTables.has(table) ? 'already present; checked' : 'created'}`);
     }
@@ -811,9 +814,10 @@ async function initDb() {
       if (checkAdmin.rows.length === 0) {
         const adminId = 'ADM-' + crypto.randomBytes(8).toString('hex');
         const hashedAdminPassword = hashPassword(adminPassword);
-        await client.query(
-          `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status) 
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        const seededAdmin = await insertWithDistrictId((districtId) => client.query(
+          `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, district_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ON CONFLICT (district_id) DO NOTHING RETURNING *`,
           [
             adminId,
             adminId,
@@ -826,9 +830,11 @@ async function initDb() {
             'Pro',
             'none',
             'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=500&q=80',
-            'Active'
+            'Active',
+            districtId
           ]
-        );
+        ));
+        await ensureSupabaseProfile(client, seededAdmin);
         console.log(`🛡️ [MATCH DISTRICT DB] Super Admin user seeded successfully (${adminEmail}).`);
       } else {
         console.log('[SEED] Root-admin email already exists; existing account data was left unchanged.');
@@ -2032,23 +2038,31 @@ const server = http.createServer(async (req, res) => {
             foundUser.uid = authData.user.id;
           }
         } else {
-          const insertRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus") 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-            [
-              authData.user.id,
-              authData.user.id,
-              email.split('@')[0],
-              email,
-              'REDACTED',
-              '@' + email.split('@')[0],
-              'player',
-              ['user'],
-              'Amateur',
-              'none'
-            ]
-          );
-          foundUser = insertRes.rows[0];
+          const registrationClient = await pool.connect();
+          try {
+            await registrationClient.query('BEGIN');
+            foundUser = await insertWithDistrictId((districtId) => registrationClient.query(
+              `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", district_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               ON CONFLICT (district_id) DO NOTHING RETURNING *`,
+              [authData.user.id, authData.user.id, email.split('@')[0], email, 'REDACTED',
+                '@' + email.split('@')[0], 'player', ['user'], 'Amateur', 'none', districtId]
+            ));
+            await ensureSupabaseProfile(registrationClient, foundUser);
+            const profileCheck = await registrationClient.query(
+              'SELECT 1 FROM profiles WHERE id = $1 AND email = $2',
+              [foundUser.uid || foundUser.id, foundUser.email]
+            );
+            if (profileCheck.rows.length === 0) {
+              throw new Error('Supabase-authenticated account profile was not created.');
+            }
+            await registrationClient.query('COMMIT');
+          } catch (registrationError) {
+            await registrationClient.query('ROLLBACK').catch(() => {});
+            throw registrationError;
+          } finally {
+            registrationClient.release();
+          }
         }
 
         await ensureSupabaseProfile(pool, foundUser);
@@ -2280,31 +2294,50 @@ const server = http.createServer(async (req, res) => {
               return;
             }
 
-            const insertRes = await registrationClient.query(
-              `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set)
-               VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, $13, false)
-               ON CONFLICT DO NOTHING
-               RETURNING *`,
-              [userUUID, userUUID, cleanName, googleEmail, gamerTag, assignedUsername, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub]
-            );
-            targetUser = insertRes.rows[0];
-            if (!targetUser) {
+            let createdNewUser = false;
+            for (let attempt = 0; attempt < 8 && !targetUser; attempt += 1) {
+              const districtId = generateDistrictId();
+              const insertRes = await registrationClient.query(
+                `INSERT INTO users (id, uid, name, email, password, "gamerTag", username, role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set, district_id)
+                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, $13, false, $14)
+                 ON CONFLICT DO NOTHING
+                 RETURNING *`,
+                [userUUID, userUUID, cleanName, googleEmail, gamerTag, assignedUsername, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub, districtId]
+              );
+              targetUser = insertRes.rows[0] || null;
+              if (targetUser) {
+                createdNewUser = true;
+                break;
+              }
+
               // A concurrent provider registration may have won. Reuse only
               // the same Google subject; matching email alone is never proof.
               const racedGoogleIdentity = await registrationClient.query('SELECT * FROM users WHERE google_id = $1', [googleSub]);
-              if (racedGoogleIdentity.rows.length > 0) {
-                targetUser = racedGoogleIdentity.rows[0];
-              } else {
-                await registrationClient.query('ROLLBACK');
-                res.writeHead(409, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                  success: false,
-                  error: 'ACCOUNT_LINK_REQUIRED',
-                  message: 'An account already uses this email. Sign in to that account first, then link Google from your profile.'
-                }));
-                return;
+              targetUser = racedGoogleIdentity.rows[0] || null;
+              if (!targetUser) {
+                const racedEmail = await registrationClient.query(
+                  `SELECT id FROM users WHERE LOWER(email) = $1
+                   UNION ALL SELECT id FROM profiles WHERE LOWER(email) = $1 LIMIT 1`,
+                  [googleEmail]
+                );
+                if (racedEmail.rows.length > 0) {
+                  await registrationClient.query('ROLLBACK');
+                  res.writeHead(409, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({
+                    success: false,
+                    error: 'ACCOUNT_LINK_REQUIRED',
+                    message: 'An account already uses this email. Sign in to that account first, then link Google from your profile.'
+                  }));
+                  return;
+                }
               }
-            } else {
+            }
+            if (!targetUser) {
+              const collisionError = new Error('Could not allocate a unique District ID for Google registration after 8 attempts.');
+              collisionError.code = 'DISTRICT_ID_COLLISION_LIMIT';
+              throw collisionError;
+            }
+            if (createdNewUser) {
               await ensureSupabaseProfile(registrationClient, targetUser);
               const profileCheck = await registrationClient.query(
                 'SELECT 1 FROM profiles WHERE id = $1 AND email = $2',
@@ -2964,13 +2997,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           const dbClient = await pool.connect();
           try {
             await dbClient.query('BEGIN');
-            const inserted = await dbClient.query(
-              `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set)
-               VALUES ($1, $1, $2, $3, NULL, $4, 'player', ARRAY['user'], 'Amateur', 'none', NULL, 'Active', $5, false)
-               RETURNING *`,
-              [userId, cleanName, discordEmail, gamerTag, discordId]
-            );
-            targetUser = inserted.rows[0];
+            targetUser = await insertWithDistrictId((districtId) => dbClient.query(
+              `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, discord_id, password_set, district_id)
+               VALUES ($1, $1, $2, $3, NULL, $4, 'player', ARRAY['user'], 'Amateur', 'none', NULL, 'Active', $5, false, $6)
+               ON CONFLICT (district_id) DO NOTHING RETURNING *`,
+              [userId, cleanName, discordEmail, gamerTag, discordId, districtId]
+            ));
             await dbClient.query(
               `INSERT INTO profiles (id, uid, name, email, "gamerTag", role, roles, tier, status, "discordTag")
                VALUES ($1, $1, $2, $3, $4, 'player', ARRAY['user'], 'Amateur', 'Active', $5)`,
@@ -3373,42 +3405,45 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const defaultGamerTag = tempUser.gamerTag || ('@' + (tempUser.name || tempUser.email.split('@')[0]).toLowerCase().replace(/\s+/g, '_'));
 
         let newUser = null;
+        const registrationClient = await pool.connect();
         try {
-          const dbRes = await pool.query(
-            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-            [
-              userUUID,
-              userUUID,
-              tempUser.name || '',
-              tempUser.email,
-              tempUser.password, // Store hashed password from tempUser
-              defaultGamerTag,
-              defaultRole,
-              defaultRoles,
-              'Amateur',
-              'none',
+          await registrationClient.query('BEGIN');
+          newUser = await insertWithDistrictId((districtId) => registrationClient.query(
+            `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, district_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (district_id) DO NOTHING RETURNING *`,
+            [userUUID, userUUID, tempUser.name || '', tempUser.email, tempUser.password,
+              defaultGamerTag, defaultRole, defaultRoles, 'Amateur', 'none',
               'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=500&q=80',
-              defaultStatus
-            ]
+              defaultStatus, districtId]
+          ));
+          newUser = await ensureUserUsername(registrationClient, newUser);
+          await ensureSupabaseProfile(registrationClient, newUser);
+          const profileCheck = await registrationClient.query(
+            'SELECT 1 FROM profiles WHERE id = $1 AND email = $2',
+            [newUser.uid || newUser.id, newUser.email]
           );
-          newUser = dbRes.rows[0];
+          if (profileCheck.rows.length === 0) {
+            throw new Error('Registration profile was not created for the new account.');
+          }
 
           // Delete from temp_users (single-use: registration completed)
-          await pool.query('DELETE FROM temp_users WHERE email = $1', [tempUser.email]);
+          await registrationClient.query('DELETE FROM temp_users WHERE email = $1', [tempUser.email]);
+          await registrationClient.query('COMMIT');
           console.log(`\n📦 [MATCH DISTRICT DB] User "${newUser.email}" registered permanently.\n`);
 
           // Log final terms acceptance
           logTermsAcceptance(pool, newUser.email, newUser.id || newUser.uid, 'final_register', req).catch(() => {});
         } catch (dbErr) {
-          const errorMsg = dbErr.message.includes('duplicate key value') ? 'Email is already registered.' : dbErr.message;
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: errorMsg }));
+          await registrationClient.query('ROLLBACK').catch(() => {});
+          const duplicateEmail = dbErr.code === '23505' && /email/i.test(dbErr.constraint || '');
+          console.error(`[AUTH REGISTER] Account/profile transaction failed [code: ${dbErr.code || 'UNKNOWN'}].`);
+          res.writeHead(duplicateEmail ? 409 : 500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: duplicateEmail ? 'Email is already registered.' : 'Account registration could not be completed. Please try again.' }));
           return;
+        } finally {
+          registrationClient.release();
         }
-
-        newUser = await ensureUserUsername(pool, newUser);
-        await ensureSupabaseProfile(pool, newUser);
 
         const token = signJwt({ email: newUser.email, role: newUser.role, roles: newUser.roles || [newUser.role], id: newUser.uid || newUser.id });
 
