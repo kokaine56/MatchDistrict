@@ -419,12 +419,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [fieldModalState, setFieldModalState] = useState({ open: false, type: '', initial: '' })
   const [upiId, setUpiId] = useState('')
 
-  // Sync reference-counted modal lock for custom dialogs in Profile
-  useEffect(() => {
-    if (!isEditingOrg && !cropState) return;
-    const release = acquireModalLock();
-    return () => release();
-  }, [isEditingOrg, cropState]);
 
   useEffect(() => {
     let active = true
@@ -549,6 +543,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
       setCropOffset({ x: 0, y: 0 });
     }
   }, [cropState]);
+
+  // Sync reference-counted modal lock for custom dialogs in Profile
+  useEffect(() => {
+    if (!isEditingOrg && !cropState) return;
+    const release = acquireModalLock();
+    return () => release();
+  }, [isEditingOrg, cropState]);
 
   // Tournament lists and user details
   const [tournamentsList, setTournamentsList] = useState([])
