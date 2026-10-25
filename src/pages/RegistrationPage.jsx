@@ -94,6 +94,39 @@ const FieldError = ({ id, message }) =>
     <p id={id} role="alert" className="text-red-400 text-xs mt-1">{message}</p>
   ) : null
 
+function PaymentAppIcon({ name }) {
+  return (
+    <span className="w-12 h-12 rounded-xl bg-white flex items-center justify-center shadow-sm" aria-hidden="true">
+      {name === 'Google Pay' ? (
+        <svg viewBox="0 0 48 48" className="w-8 h-8" fill="none">
+          <path d="M35.5 24.5c0-1.2-.1-2.1-.4-3.1H24v5.4h6.5a5.6 5.6 0 0 1-2.4 3.7l4.2 3.2c2.1-2 3.2-5 3.2-9.2Z" fill="#4285F4" />
+          <path d="M24 36c3.2 0 5.9-1.1 7.9-3l-4.2-3.2c-1.1.7-2.3 1.1-3.7 1.1-2.9 0-5.3-2-6.2-4.7l-4.3 3.3A11.9 11.9 0 0 0 24 36Z" fill="#34A853" />
+          <path d="M17.8 26.2a7.2 7.2 0 0 1 0-4.5l-4.3-3.3a12 12 0 0 0 0 11.1l4.3-3.3Z" fill="#FBBC05" />
+          <path d="M24 17c1.8 0 3.4.6 4.7 1.9l3.5-3.5A11.5 11.5 0 0 0 24 12a11.9 11.9 0 0 0-10.5 6.4l4.3 3.3c.9-2.7 3.3-4.7 6.2-4.7Z" fill="#EA4335" />
+        </svg>
+      ) : name === 'PhonePe' ? (
+        <svg viewBox="0 0 48 48" className="w-9 h-9">
+          <circle cx="24" cy="24" r="22" fill="#5F259F" />
+          <path d="M18 14h15v5H23v4h7v5h-7v7h-5V14Z" fill="white" />
+        </svg>
+      ) : name === 'Paytm' ? (
+        <svg viewBox="0 0 48 48" className="w-10 h-8">
+          <text x="24" y="30" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="15" fontWeight="700">
+            <tspan fill="#002970">pay</tspan><tspan fill="#00BAF2">tm</tspan>
+          </text>
+        </svg>
+      ) : (
+        <svg viewBox="0 0 48 48" className="w-9 h-9">
+          <circle cx="24" cy="24" r="22" fill="#FFF5E9" />
+          <path d="M12 16h24" stroke="#F58220" strokeWidth="4" strokeLinecap="round" />
+          <path d="M12 24h24" stroke="#263A80" strokeWidth="4" strokeLinecap="round" />
+          <path d="M12 32h24" stroke="#138808" strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
 const rosterOf = (value) => {
   if (Array.isArray(value)) {
     return value
@@ -172,7 +205,6 @@ function RegistrationPage({ onNavigate }) {
 
   const isPaid = parseInt(tourney?.entry_fee_amount || 0) > 0
   const entryFee = parseInt(tourney?.entry_fee_amount || 0)
-  const isGpay = payment.app === 'Google Pay'
 
   useEffect(() => {
     if (!id) return
@@ -495,13 +527,18 @@ function RegistrationPage({ onNavigate }) {
     const trimmedUtr = payment.transactionId.trim()
     if (!trimmedUtr) {
       errs.transactionId = 'Transaction ID / UTR is required'
-    } else if (!/^[A-Za-z0-9]{12}$/.test(trimmedUtr)) {
-      errs.transactionId = 'A valid 12-digit UPI reference (UTR) is required'
+    } else if (!/^\d{12}$/.test(trimmedUtr)) {
+      errs.transactionId = 'UTR must contain exactly 12 digits'
     }
-    if (!isGpay && !payment.screenshotFile) errs.screenshot = 'Upload payment screenshot'
+    if (!payment.screenshotFile) errs.screenshot = 'Upload payment screenshot'
     setPaymentErrors(errs)
     return Object.keys(errs).length === 0
   }
+
+  const isPaymentFormValid = PAYMENT_APPS.includes(payment.app) &&
+    /^\d{12}$/.test(payment.transactionId.trim()) &&
+    Boolean(payment.screenshotFile) &&
+    !paymentErrors.screenshot
 
   const totalPlayers = 1 + form.players.filter(p => p.ign.trim() && p.uid.trim()).length
   const entryDisplay = useMemo(() => {
@@ -559,7 +596,7 @@ function RegistrationPage({ onNavigate }) {
 
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-[#07080C] text-white flex items-center justify-center p-4">
+      <div className="registration-viewport min-h-screen bg-[#07080C] text-white flex items-center justify-center p-4">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
             <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -621,35 +658,31 @@ function RegistrationPage({ onNavigate }) {
   if (step === 'payment') {
     const upiLink = `upi://pay?pa=matchdistrict@upi&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
 
-    // 4 core UPI apps — official CDN logos, no card styling
+    // Payment app icons render locally, without third-party image requests.
     const upiApps = [
       {
         name: 'Google Pay',
         scheme: 'tez://upi/pay',
         package: 'com.google.android.apps.nbu.paisa.user',
         ringColor: 'ring-[#4285F4]',
-        logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Google_Pay_Logo.svg/320px-Google_Pay_Logo.svg.png',
       },
       {
         name: 'PhonePe',
         scheme: 'phonepe://pay',
         package: 'com.phonepe.app',
         ringColor: 'ring-[#5f259f]',
-        logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/PhonePe_Logo.svg/320px-PhonePe_Logo.svg.png',
       },
       {
         name: 'Paytm',
         scheme: 'paytmmp://pay',
         package: 'net.one97.paytm',
         ringColor: 'ring-[#00baf2]',
-        logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/24/Paytm_Logo_%28standalone%29.svg/320px-Paytm_Logo_%28standalone%29.svg.png',
       },
       {
         name: 'BHIM',
         scheme: 'bhim://pay',
         package: 'in.org.npci.upiapp',
         ringColor: 'ring-[#128807]',
-        logo: 'https://upload.wikimedia.org/wikipedia/en/thumb/e/ee/BHIM_logo_%28orange_background%29.svg/240px-BHIM_logo_%28orange_background%29.svg.png',
       },
     ]
 
@@ -678,7 +711,7 @@ function RegistrationPage({ onNavigate }) {
     }
 
     return (
-      <div className="min-h-screen bg-[#07080C] text-white relative">
+      <div className="registration-viewport min-h-screen bg-[#07080C] text-white relative">
         <div className="max-w-2xl mx-auto px-4 py-8 registration-content-padding">
           {/* Header */}
           <div className="flex items-center gap-3 mb-6">
@@ -809,16 +842,16 @@ function RegistrationPage({ onNavigate }) {
                             : 'opacity-70 hover:opacity-100 hover:scale-105'
                         }`}
                       >
-                        <img
-                          src={app.logo}
-                          alt={app.name}
-                          className="w-12 h-12 rounded-xl object-contain"
-                          draggable={false}
-                        />
-                        <span className="text-[10px] font-semibold text-white/70 tracking-wide">{app.name}</span>
+                        <PaymentAppIcon name={app.name} />
+                        <span className="min-w-0 w-full text-center text-[10px] leading-tight font-semibold text-white/70 tracking-wide">{app.name}</span>
                       </button>
                     ))}
                   </div>
+                  {(!payment.app || paymentErrors.app) && (
+                    <p className="text-[10px] text-amber-300/90" role="status">
+                      {paymentErrors.app || 'Select a payment app to continue.'}
+                    </p>
+                  )}
                 </div>
 
               </div>
@@ -849,6 +882,7 @@ function RegistrationPage({ onNavigate }) {
                 </div>
                 <input
                   type="text"
+                  inputMode="numeric"
                   maxLength={12}
                   value={payment.transactionId}
                   onChange={e => {
@@ -867,16 +901,15 @@ function RegistrationPage({ onNavigate }) {
                 />
                 {paymentErrors.transactionId ? (
                   <p className="text-red-400 text-xs mt-1">{paymentErrors.transactionId}</p>
-                ) : payment.transactionId.trim().length === 12 ? (
+                ) : /^\d{12}$/.test(payment.transactionId.trim()) ? (
                   <p className="text-emerald-400 text-xs mt-1 flex items-center gap-1 font-semibold">
                     <span>✓</span> Valid 12-digit reference
                   </p>
                 ) : null}
               </div>
 
-              {/* Screenshot upload — hidden for Google Pay */}
-              {!isGpay && (
-                <div>
+              {/* Screenshot is required because the backend records a reviewable payment only with its proof URL. */}
+              <div>
                   <label className="block text-xs font-semibold text-white/60 mb-1.5">Payment Screenshot *</label>
                   <div
                     onClick={() => fileInputRef.current?.click()}
@@ -907,19 +940,8 @@ function RegistrationPage({ onNavigate }) {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleScreenshotChange} />
                   {paymentErrors.screenshot && <p className="text-red-400 text-xs mt-1">{paymentErrors.screenshot}</p>}
-                </div>
-              )}
+              </div>
 
-              {isGpay && (
-                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3">
-                  <p className="text-xs text-blue-400 flex items-center gap-2">
-                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Google Pay selected — no screenshot required. Just enter the UTR number.
-                  </p>
-                </div>
-              )}
             </div>
 
             {/* Desktop Submit */}
@@ -934,7 +956,7 @@ function RegistrationPage({ onNavigate }) {
                   if (!validatePayment()) return
                   setShowConfirmModal(true)
                 }}
-                disabled={paymentSubmitting}
+                disabled={paymentSubmitting || !isPaymentFormValid}
                 className="w-full bg-primary text-white font-bold py-3.5 px-6 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {paymentSubmitting ? (
@@ -965,7 +987,7 @@ function RegistrationPage({ onNavigate }) {
               if (!validatePayment()) return
               setShowConfirmModal(true)
             }}
-            disabled={paymentSubmitting}
+            disabled={paymentSubmitting || !isPaymentFormValid}
             className="flex-1 bg-primary text-white font-bold py-2.5 rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-md shadow-primary/25"
           >
             {paymentSubmitting ? (
@@ -1025,27 +1047,51 @@ function RegistrationPage({ onNavigate }) {
                       try {
                         const token = await getAuthToken()
                         let screenshotUrl = null
-                        if (!isGpay && payment.screenshotFile) {
-                          try {
-                            screenshotUrl = await uploadImage(payment.screenshotFile)
-                          } catch (uploadErr) {
-                            setServerError('Upload failed. Please try again or choose a different image.')
-                            setPaymentSubmitting(false)
-                            paymentSubmittedRef.current = false
-                            return
-                          }
+                        try {
+                          screenshotUrl = await uploadImage(payment.screenshotFile)
+                        } catch {
+                          setServerError('Could not upload the screenshot. Your UTR and selected file are still here; please try again.')
+                          paymentSubmittedRef.current = false
+                          return
                         }
-                        const res = await fetch(`/api/sessions/${sessionId}/complete`, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            utr_number: payment.transactionId.trim(),
-                            payment_app: payment.app,
-                            screenshot_url: screenshotUrl,
-                          }),
-                        })
-                        const data = await res.json()
-                        if (data.already_registered || data.success) {
+                        let res
+                        try {
+                          res = await fetch(`/api/sessions/${sessionId}/complete`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                            body: JSON.stringify({
+                              utr_number: payment.transactionId.trim(),
+                              payment_app: payment.app,
+                              screenshot_url: screenshotUrl,
+                            }),
+                          })
+                        } catch {
+                          setServerError('Could not reach the server. Your UTR and screenshot are still here; check your connection and try again.')
+                          paymentSubmittedRef.current = false
+                          return
+                        }
+
+                        let data
+                        try {
+                          data = await res.json()
+                        } catch {
+                          setServerError('The server returned an unreadable response. Your UTR and screenshot are still here; please try again.')
+                          paymentSubmittedRef.current = false
+                          return
+                        }
+
+                        if (!data || typeof data !== 'object') {
+                          setServerError('The server did not confirm the payment proof. Your UTR and screenshot are still here; please try again.')
+                          paymentSubmittedRef.current = false
+                          return
+                        }
+
+                        const existingProofSaved = data.already_registered &&
+                          Boolean(data.registration?.payment_id && data.registration?.screenshot_url)
+                        const newlySavedProof = data.success &&
+                          Boolean(data.payment?.id && data.registration?.screenshot_url)
+
+                        if (res.ok && (existingProofSaved || newlySavedProof)) {
                           const nowIST = new Date().toLocaleTimeString('en-IN', {
                             timeZone: 'Asia/Kolkata',
                             hour: '2-digit',
@@ -1059,13 +1105,11 @@ function RegistrationPage({ onNavigate }) {
                           setStep('success')
                           return
                         } else {
-                          const raw = data.message || data.error || ''
-                          const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
-                          setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Could not save, please try again.'))
+                          setServerError(data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.')
                           paymentSubmittedRef.current = false
                         }
-                      } catch (err) {
-                        setServerError('Network error. Please try again.')
+                      } catch {
+                        setServerError('Could not submit the payment. Your UTR and screenshot are still here; please try again.')
                         paymentSubmittedRef.current = false
                       } finally {
                         setPaymentSubmitting(false)
@@ -1096,7 +1140,7 @@ function RegistrationPage({ onNavigate }) {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
-      className="min-h-screen bg-[#07080C] text-white relative"
+      className="registration-viewport min-h-screen bg-[#07080C] text-white relative"
     >
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 registration-content-padding">
         {/* Header */}

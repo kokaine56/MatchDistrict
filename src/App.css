@@ -56,6 +56,11 @@
   padding-bottom: calc(var(--bottom-nav-h, 64px) + var(--action-bar-h, 68px) + env(safe-area-inset-bottom, 0px));
 }
 
+.registration-viewport {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
 @media (min-width: 640px) {
   .sticky-bottom-action-bar {
     display: none;

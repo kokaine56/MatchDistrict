@@ -1707,7 +1707,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+    // Payment screenshots may be 10 MiB before base64 encoding (about 13.4 MiB as JSON).
+    const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     let body = '';
     let size = 0;
     let aborted = false;
@@ -1717,9 +1719,8 @@ const server = http.createServer(async (req, res) => {
       size += chunk.length;
       if (size > MAX_UPLOAD_BYTES) {
         aborted = true;
-        req.destroy();
         res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Upload size exceeds maximum allowed limit (5 MB).' }));
+        res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Upload request exceeds the allowed size.' }));
         return;
       }
       body += chunk.toString();
@@ -1729,14 +1730,12 @@ const server = http.createServer(async (req, res) => {
       if (aborted) return;
       try {
         if (!IMAGEKIT_PRIVATE_KEY || !IMAGEKIT_URL_ENDPOINT) {
-          const missingImageKitSettings = [
-            !IMAGEKIT_PRIVATE_KEY && 'IMAGEKIT_PRIVATE_KEY',
-            !IMAGEKIT_URL_ENDPOINT && 'IMAGEKIT_URL_ENDPOINT',
-          ].filter(Boolean);
+          const ref = makeErrorRef();
+          logErrorWithRef(ref, 'POST /api/media/upload', new Error('ImageKit media configuration is missing.'));
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
-            message: `Server missing ImageKit media configuration: ${missingImageKitSettings.join(', ')}`,
+            message: `Could not upload image. Please try again. (Ref: ${ref})`,
           }));
           return;
         }
@@ -1804,6 +1803,12 @@ const server = http.createServer(async (req, res) => {
           uploadSource = new Blob([rawBuffer], { type: mimeType });
         }
 
+        if (rawBuffer && rawBuffer.length > MAX_IMAGE_BYTES) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Image must be 10 MB or smaller.' }));
+          return;
+        }
+
         if (rawBuffer && !isValidImageBuffer(rawBuffer)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_IMAGE_TYPE', message: 'Invalid image format. Allowed formats: PNG, JPEG, GIF, WEBP.' }));
@@ -1842,14 +1847,16 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, secure_url: imageKitData.url }));
         } else {
-          console.error('[MediaProxy] ImageKit upload failed with status:', imageKitResponse.status);
+          const ref = makeErrorRef();
+          logErrorWithRef(ref, 'POST /api/media/upload', new Error(`ImageKit upload failed with HTTP ${imageKitResponse.status}.`));
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: 'Upstream upload failed' }));
+          res.end(JSON.stringify({ success: false, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
         }
       } catch (err) {
-        console.error('[MediaProxy] Exception:', err.message);
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'POST /api/media/upload', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, message: 'Internal Server Error' }));
+        res.end(JSON.stringify({ success: false, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -12167,8 +12174,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
-      const client = await pool.connect();
+      let client = null;
+      let payload = null;
       try {
+        client = await pool.connect();
         const authUser = getAuthUser(req);
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -12176,7 +12185,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        const payload = JSON.parse(body);
+        payload = JSON.parse(body);
         const idempotencyKey = payload.idempotency_key;
 
         // Verify session belongs to user and is active
@@ -12187,7 +12196,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (sesRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Session not found.' }));
-          client.release();
           return;
         }
 
@@ -12195,14 +12203,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (session.status !== 'active') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'This session has already been used.' }));
-          client.release();
           return;
         }
         if (new Date(session.expires_at) < new Date()) {
           await client.query("UPDATE registration_sessions SET status = 'expired' WHERE id = $1", [sessionId]);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'Session has expired. Please register again.' }));
-          client.release();
           return;
         }
 
@@ -12215,7 +12221,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           if (existingReg.rows.length > 0) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, registration: existingReg.rows[0], idempotent: true }));
-            client.release();
             return;
           }
         }
@@ -12230,7 +12235,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (tRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
-          client.release();
           return;
         }
         const tournament = tRes.rows[0];
@@ -12244,7 +12248,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           if (closeDate < new Date()) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'REGISTRATION_CLOSED', message: 'Registration for this tournament has closed.' }));
-            client.release();
             return;
           }
         }
@@ -12253,12 +12256,25 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (tournament.slotsFilled >= tournament.slotsTotal) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FULL', message: 'All slots are filled.' }));
-          client.release();
           return;
         }
 
         const entryFeeAmount = parseInt(tournament.entry_fee_amount) || 0;
         const isPaid = entryFeeAmount > 0;
+
+        if (isPaid && (
+          !payload?.screenshot_url ||
+          !payload?.utr_number ||
+          !['Google Pay', 'PhonePe', 'Paytm', 'BHIM', 'Other'].includes(payload?.payment_app)
+        )) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'PAYMENT_PROOF_REQUIRED',
+            message: 'Select a payment app, enter the 12-digit UTR, and upload a payment screenshot.',
+          }));
+          return;
+        }
 
         // v1.1: Unique amount suffix for high-volume tournaments
         let amountToPay = entryFeeAmount;
@@ -12300,7 +12316,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                 registration: existing,
                 message: `You have already registered a team for this tournament. Current status: ${existing.payment_status || existing.status}.`
               }));
-              client.release();
               return;
             } else {
               // Orphan registration found! Safe retry attaches payment to this row
@@ -12311,7 +12326,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
         if (payload && payload.screenshot_url && !isAllowedStorageUrl(payload.screenshot_url)) {
           await client.query('ROLLBACK');
-          client.release();
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_STORAGE_URL', message: 'Payment screenshot URL must use HTTPS and an allowed ImageKit or Supabase storage endpoint.' }));
           return;
@@ -12322,7 +12336,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           const isUpi = !payload.payment_app || ['gpay', 'phonepe', 'paytm', 'bhim', 'upi'].includes((payload.payment_app || '').toLowerCase()) || Boolean(payload.utr_number);
           if (isUpi && !isValidUpiUtr(payload.utr_number)) {
             await client.query('ROLLBACK');
-            client.release();
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'INVALID_UTR', message: 'A valid 12-digit UPI reference (UTR) is required.' }));
             return;
@@ -12411,15 +12424,24 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           amount_to_pay: isPaid ? amountToPay : null
         }));
       } catch (err) {
-        await client.query('ROLLBACK');
-        if (payload?.screenshot_url) {
-          await removeUploadedMedia(payload.screenshot_url);
+        if (client) {
+          try { await client.query('ROLLBACK'); } catch {}
         }
-        console.error('[SessionComplete] Error:', err.message);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Could not save, please try again.' }));
+        if (payload?.screenshot_url) {
+          try {
+            await removeUploadedMedia(payload.screenshot_url);
+          } catch (cleanupError) {
+            console.warn('[SessionComplete] Uploaded image cleanup failed:', cleanupError.message);
+          }
+        }
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'POST /api/sessions/:id/complete', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save, please try again. (Ref: ${ref})` }));
+        }
       } finally {
-        client.release();
+        client?.release();
       }
     });
     return;
