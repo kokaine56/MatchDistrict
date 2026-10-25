@@ -68,6 +68,17 @@ import {
   parseDisplayLimit,
 } from './server/tournamentPromotion.js';
 import { isTournamentOrganizer, checkTournamentOrganizerAccess } from './server/tournamentAuth.js';
+import {
+  listQueue as reviewListQueue,
+  getItem as reviewGetItem,
+  approve as reviewApprove,
+  reject as reviewReject,
+  reopen as reviewReopen,
+  releaseSlot as reviewReleaseSlot,
+  bulkApprove as reviewBulkApprove,
+  isValidUpiUtr,
+  normalizeUtr
+} from './server/paymentReviewService.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
 import { createAccountSecurity } from './server/accountSecurity.js';
 import { attachResolvedAvatars } from './server/avatarResolver.js';
@@ -12291,6 +12302,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        // Validate 12-digit reference when UPI is used
+        if (isPaid && payload && payload.utr_number) {
+          const isUpi = !payload.payment_app || ['gpay', 'phonepe', 'paytm', 'bhim', 'upi'].includes((payload.payment_app || '').toLowerCase()) || Boolean(payload.utr_number);
+          if (isUpi && !isValidUpiUtr(payload.utr_number)) {
+            await client.query('ROLLBACK');
+            client.release();
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_UTR', message: 'A valid 12-digit UPI reference (UTR) is required.' }));
+            return;
+          }
+        }
+
+        const assignedAmountDue = isPaid ? amountToPay : null;
         const membersStr = formData.members ? (typeof formData.members === 'string' ? formData.members : JSON.stringify(formData.members)) : '[]';
         const status = isPaid ? (payload.screenshot_url ? 'pending' : 'pending_payment') : 'pending';
 
@@ -12302,21 +12326,21 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             `UPDATE tournament_registrations
              SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
                  status = $5, email = $6, phone = $7, screenshot_url = $8,
-                 transaction_id = $9, payment_app = $10, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $11 RETURNING *`,
+                 transaction_id = $9, payment_app = $10, amount_due = COALESCE(amount_due, $11), updated_at = CURRENT_TIMESTAMP
+             WHERE id = $12 RETURNING *`,
             [formData.team_name, formData.captain, formData.captain_uid || null, membersStr,
              status, formData.email || null, formData.phone || null,
              payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null,
-             regId]
+             assignedAmountDue, regId]
           );
         } else {
           regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
           regRes = await client.query(
-            `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14) RETURNING *`,
+            `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app, amount_due)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14, $15) RETURNING *`,
             [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
              membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
-             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null]
+             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null, assignedAmountDue]
           );
         }
 
@@ -12528,19 +12552,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             }
           }
 
+          const assignedAmountDue = isPaid ? amountToPay : null;
           if (existingOrphanId) {
             dbRes = await regClient.query(
               `UPDATE tournament_registrations
                SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
-                   status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, updated_at = CURRENT_TIMESTAMP
-               WHERE id = $10 RETURNING *`,
-              [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, existingOrphanId]
+                   status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, amount_due = COALESCE(amount_due, $10), updated_at = CURRENT_TIMESTAMP
+               WHERE id = $11 RETURNING *`,
+              [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, assignedAmountDue, existingOrphanId]
             );
           } else {
             dbRes = await regClient.query(
-              `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1) RETURNING *`,
-              [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey]
+              `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version, amount_due)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, $13) RETURNING *`,
+              [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, assignedAmountDue]
             );
           }
 
@@ -12651,6 +12676,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        // Validate 12-digit reference when UPI is used
+        if (bodyData.transaction_id) {
+          const isUpi = !bodyData.payment_app || ['gpay', 'phonepe', 'paytm', 'bhim', 'upi'].includes((bodyData.payment_app || '').toLowerCase());
+          if (isUpi && !isValidUpiUtr(bodyData.transaction_id)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'INVALID_UTR', message: 'A valid 12-digit UPI reference (UTR) is required.' }));
+            return;
+          }
+        }
+
         const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, tournamentId]);
         if (regRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -12665,19 +12700,45 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        if (reg.status !== 'pending_payment') {
+        const allowedUploadStatuses = ['pending_payment', 'rejected', 'PAYMENT_REJECTED'];
+        if (!allowedUploadStatuses.includes(reg.status)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'This registration is not awaiting payment.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'This registration is not awaiting payment or proof re-upload.' }));
           return;
         }
 
+        // Transitions: payment pending -> pending review; rejected -> pending review
         const dbRes = await pool.query(
-          `UPDATE tournament_registrations SET transaction_id = $1, payment_app = $2, screenshot_url = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *`,
+          `UPDATE tournament_registrations
+           SET status = 'pending', transaction_id = $1, payment_app = $2, screenshot_url = $3,
+               rejection_reason = NULL, rejected_at = NULL, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4 RETURNING *`,
           [bodyData.transaction_id || null, bodyData.payment_app || null, bodyData.screenshot_url, regId]
         );
 
+        // Update or insert payment_submissions
+        if (reg.payment_id) {
+          await pool.query(
+            `UPDATE payment_submissions
+             SET payment_status = 'pending_admin_review', proof_url = $1, utr_number = $2,
+                 payment_app = $3, admin_notes = NULL, reviewed_by = NULL, reviewed_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4`,
+            [bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null, reg.payment_id]
+          );
+        } else {
+          const payId = 'PAY-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
+          await pool.query(
+            `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_admin_review')`,
+            [payId, regId, tournamentId, authUser.id, reg.amount_due || 0, bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null]
+          );
+          await pool.query('UPDATE tournament_registrations SET payment_id = $1 WHERE id = $2', [payId, regId]);
+        }
+
+        await reconcileTournamentSlots(pool, tournamentId);
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Payment proof submitted successfully.', registration: dbRes.rows[0] }));
+        res.end(JSON.stringify({ success: true, message: 'Payment proof submitted successfully. Verification pending.', registration: dbRes.rows[0] }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -13384,193 +13445,29 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         const data = JSON.parse(body);
-        const newStatus = data.status; // 'approved', 'rejected', 'pending', 'pending_payment', 'confirmed', 'cancelled', 'expired', 'waitlisted', 'PENDING_PAYMENT_VERIFICATION', 'PAYMENT_REJECTED', 'CONFIRMED'
-        const validStatuses = ['approved', 'rejected', 'pending', 'pending_payment', 'confirmed', 'cancelled', 'expired', 'waitlisted', 'PENDING_PAYMENT_VERIFICATION', 'PAYMENT_REJECTED', 'CONFIRMED', 'VERIFIED_BY_HOST'];
-        if (!validStatuses.includes(newStatus)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: `Invalid status: ${newStatus}` }));
-          return;
-        }
+        const newStatus = data.status;
 
-        // Get current registration
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, id]);
-        if (regRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
-          return;
-        }
-        const currentReg = regRes.rows[0];
-
-        if (currentReg.status === newStatus) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, registration: currentReg }));
-          return;
-        }
-
-        const rejectionReason = data.rejection_reason || null;
-
-        let dbRes;
-        if (newStatus === 'rejected' || newStatus === 'PAYMENT_REJECTED') {
-          dbRes = await pool.query(
-            `UPDATE tournament_registrations SET status = $1, rejected_at = NOW(), rejection_reason = COALESCE($2, rejection_reason) WHERE id = $3 AND tournament_id = $4 RETURNING *`,
-            [newStatus, rejectionReason, regId, id]
-          );
-
-          // Also update payment_submissions if linked
-          if (currentReg.payment_id) {
-            await pool.query(
-              `UPDATE payment_submissions SET payment_status = 'rejected', admin_notes = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3`,
-              [rejectionReason, authUser.id, currentReg.payment_id]
-            );
-          }
-
-          // Alert user about rejection
-          try {
-            const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-            await pool.query(
-              `INSERT INTO alerts (id, user_id, title, message, tournament_id)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [alertId, currentReg.user_id, 'Registration Rejected',
-               `Your registration "${currentReg.team_name}" was not approved.${rejectionReason ? ' Reason: ' + rejectionReason : ''}`,
-               id]
-            );
-          } catch (alertErr) { /* non-critical */ }
-
-          // Audit log for rejection
-          try {
-            const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-            await pool.query(
-              `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-               VALUES ($1, $2, $3, $4, $5, $6)`,
-              [logId, authUser.id, 'registration_' + newStatus, 'registration', regId,
-               JSON.stringify({ teamName: currentReg.team_name, tournamentId: id, reason: rejectionReason })]
-            );
-          } catch (logErr) { /* non-critical */ }
-
-          // Email notification on rejection (if payment was involved)
-          if (currentReg.payment_id) {
-            const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-            if (userRes.rows.length > 0 && userRes.rows[0].email) {
-              const userEmail = userRes.rows[0].email;
-              const userName = userRes.rows[0].name || currentReg.captain;
-              const rejectMsg = rejectionReason || 'Payment verification failed';
-              await sendEmail({
-                to: userEmail,
-                subject: `Registration Rejected — ${t.title || 'Tournament'}`,
-                html: `
-                    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
-                      <h2 style="color:#dc2626;margin:0 0 16px 0;">Registration Status Update</h2>
-                      <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
-                      <p style="color:#333;font-size:15px;line-height:1.5;">
-                        Your registration for <strong>${t.title || 'the tournament'}</strong> has been reviewed.
-                      </p>
-                      <div style="background:#fef2f2;padding:16px;border-radius:6px;margin:16px 0;">
-                        <p style="margin:0 0 6px 0;font-weight:bold;color:#dc2626;">Status: <span style="text-transform:uppercase;">${newStatus === 'PAYMENT_REJECTED' ? 'Payment Rejected' : 'Rejected'}</span></p>
-                        <p style="margin:0;color:#991b1b;font-size:14px;">${rejectMsg}</p>
-                      </div>
-                      <p style="color:#666;font-size:13px;">Team: ${currentReg.team_name}</p>
-                      <hr style="border:0;border-top:1px solid #eee;margin:20px 0;" />
-                      <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
-                    </div>
-                  `
-              });
-            }
-          }
+        let result;
+        if (newStatus === 'confirmed' || newStatus === 'approved' || newStatus === 'VERIFIED_BY_HOST') {
+          result = await reviewApprove(pool, authUser, { registrationId: regId, tournamentId: id, note: data.note || '' });
+        } else if (newStatus === 'rejected' || newStatus === 'PAYMENT_REJECTED') {
+          result = await reviewReject(pool, authUser, { registrationId: regId, tournamentId: id, reason: data.reason_code || 'other', note: data.rejection_reason || data.note || '' });
+        } else if (newStatus === 'cancelled') {
+          result = await reviewReleaseSlot(pool, authUser, { registrationId: regId, tournamentId: id, note: data.note || '' });
+        } else if (newStatus === 'pending') {
+          result = await reviewReopen(pool, authUser, { registrationId: regId, tournamentId: id, reason: data.reason || 'Moved back to pending review' });
         } else {
-          dbRes = await pool.query(
-            `UPDATE tournament_registrations SET status = $1 WHERE id = $2 AND tournament_id = $3 RETURNING *`,
-            [newStatus, regId, id]
-          );
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: `Invalid status: ${newStatus}` }));
         }
 
-        // Track analytics event for approved/confirmed registrations
-        if (newStatus === 'approved' || newStatus === 'confirmed') {
-          try {
-            await pool.query(
-              `INSERT INTO analytics_events (id, organizer_id, event_type, event_data, tournament_id)
-               VALUES ($1, $2, $3, $4, $5)`,
-              ['AE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), t.orgId, 'registration_' + newStatus,
-              JSON.stringify({ teamName: currentReg.team_name, captain: currentReg.captain }), id]
-            );
-          } catch (aeErr) { /* analytics non-critical */ }
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: result.error || 'ERROR', message: result.message }));
         }
 
-        // Update payment_submissions status when approving
-        if ((newStatus === 'approved' || newStatus === 'confirmed') && currentReg.payment_id) {
-          try {
-            await pool.query(
-              `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
-              [authUser.id, currentReg.payment_id]
-            );
-          } catch (payUpdErr) { /* non-critical */ }
-        }
-
-        // Alert + email + audit log for approval
-        if (newStatus === 'approved' || newStatus === 'confirmed') {
-          // B2: Ensure team is created immediately upon registration approval
-          try {
-            await ensureTeamForRegistration(pool, id, currentReg.user_id, currentReg.team_name);
-          } catch (teamErr) {
-            console.warn(`[REG_APPROVE] ensureTeamForRegistration non-fatal error:`, teamErr?.message);
-          }
-
-          // Alert user
-          try {
-            const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-            await pool.query(
-              `INSERT INTO alerts (id, user_id, title, message, tournament_id)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [alertId, currentReg.user_id, 'Registration Confirmed',
-               `Your team "${currentReg.team_name}" has been confirmed for ${t.title || 'the tournament'}!`,
-               id]
-            );
-          } catch (alertErr) { /* non-critical */ }
-
-          // Audit log
-          try {
-            const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-            await pool.query(
-              `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-               VALUES ($1, $2, $3, $4, $5, $6)`,
-              [logId, authUser.id, 'registration_' + newStatus, 'registration', regId,
-               JSON.stringify({ teamName: currentReg.team_name, tournamentId: id, hasPayment: !!currentReg.payment_id })]
-            );
-          } catch (logErr) { /* non-critical */ }
-
-          // Email notification on approval (if payment was involved)
-          if (currentReg.payment_id) {
-            const userRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-            if (userRes.rows.length > 0 && userRes.rows[0].email) {
-              const userEmail = userRes.rows[0].email;
-              const userName = userRes.rows[0].name || currentReg.captain;
-              await sendEmail({
-                to: userEmail,
-                subject: `Registration Confirmed ✅ — ${t.title || 'Tournament'}`,
-                html: `
-                    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
-                      <h2 style="color:#16a34a;margin:0 0 16px 0;">Registration Confirmed!</h2>
-                      <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
-                      <p style="color:#333;font-size:15px;line-height:1.5;">
-                        Great news! Your team <strong>${currentReg.team_name}</strong> has been confirmed for <strong>${t.title || 'the tournament'}</strong>.
-                      </p>
-                      <div style="background:#f0fdf4;padding:16px;border-radius:6px;margin:16px 0;">
-                        <p style="margin:0;font-weight:bold;color:#16a34a;">Status: Confirmed</p>
-                      </div>
-                      <p style="color:#666;font-size:13px;">Stay tuned for room credentials and further instructions.</p>
-                      <hr style="border:0;border-top:1px solid #eee;margin:20px 0;" />
-                      <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
-                    </div>
-                  `
-              });
-            }
-          }
-        }
-
-        await reconcileTournamentSlots(pool, id);
-
-        console.log(`\n📦 [MATCH DISTRICT DB] Registration "${regId}" updated to status "${newStatus}" in Supabase and slot manager updated.\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, registration: dbRes.rows[0] }));
+        res.end(JSON.stringify({ success: true, message: result.message, registration: result.registration }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -16403,29 +16300,32 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // --- ADMIN GET PENDING REGISTRATIONS WITH TOURNAMENT GAME INFO ---
-  if (req.url === '/api/admin/pending-registrations' && req.method === 'GET') {
+  // ==========================================
+  // UNIFIED PAYMENT REVIEW QUEUE SERVICES
+  // ==========================================
+
+  // GET /api/admin/payments/review-queue
+  if (req.url.startsWith('/api/admin/payments/review-queue') && req.method === 'GET' && !req.url.includes('/review-queue/')) {
     try {
       const authUser = getAuthUser(req);
-      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
-        return;
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
       }
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const tab = parsedUrl.searchParams.get('tab') || 'pending_review';
+      const tournamentId = parsedUrl.searchParams.get('tournamentId') || null;
+      const search = parsedUrl.searchParams.get('search') || '';
+      const limit = parseInt(parsedUrl.searchParams.get('limit')) || 20;
+      const cursor = parsedUrl.searchParams.get('cursor') || null;
 
-      const dbRes = await pool.query(`
-        SELECT r.*, t.title AS tournament_title, t.game AS tournament_game,
-               t.entry_fee_amount, ps.payment_status AS pay_status, ps.id AS payment_submission_id,
-               ps.proof_url AS payment_proof_url, ps.utr_number AS payment_utr
-        FROM tournament_registrations r
-        LEFT JOIN tournaments t ON r.tournament_id = t.id
-        LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
-        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
-           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
-        ORDER BY t.game NULLS LAST, t.title NULLS LAST, r.created_at ASC
-      `);
+      const result = await reviewListQueue(pool, authUser, { tab, tournamentId, search, limit, cursor });
+      if (!result.success) {
+        res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, registrations: dbRes.rows }));
+      res.end(JSON.stringify(result));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
@@ -16433,7 +16333,184 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // --- VERIFIER: VERIFY A SINGLE REGISTRATION PAYMENT ---
+  // GET /api/admin/payments/review-queue/:regId
+  const reviewGetMatch = req.url.match(/^\/api\/admin\/payments\/review-queue\/([A-Za-z0-9_-]+)$/);
+  if (reviewGetMatch && req.method === 'GET') {
+    const regId = reviewGetMatch[1];
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      }
+      const result = await reviewGetItem(pool, authUser, { registrationId: regId });
+      if (!result.success) {
+        res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(result));
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/admin/payments/review-queue/:regId/approve
+  const reviewApproveMatch = req.url.match(/^\/api\/admin\/payments\/review-queue\/([A-Za-z0-9_-]+)\/approve$/);
+  if (reviewApproveMatch && req.method === 'POST') {
+    const regId = reviewApproveMatch[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewApprove(pool, authUser, { registrationId: regId, note: data.note || '' });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/payments/review-queue/:regId/reject
+  const reviewRejectMatch = req.url.match(/^\/api\/admin\/payments\/review-queue\/([A-Za-z0-9_-]+)\/reject$/);
+  if (reviewRejectMatch && req.method === 'POST') {
+    const regId = reviewRejectMatch[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewReject(pool, authUser, {
+          registrationId: regId,
+          reason: data.reason || 'other',
+          note: data.note || ''
+        });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/payments/review-queue/:regId/reopen
+  const reviewReopenMatch = req.url.match(/^\/api\/admin\/payments\/review-queue\/([A-Za-z0-9_-]+)\/reopen$/);
+  if (reviewReopenMatch && req.method === 'POST') {
+    const regId = reviewReopenMatch[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewReopen(pool, authUser, {
+          registrationId: regId,
+          reason: data.reason || ''
+        });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/payments/review-queue/:regId/release-slot
+  const reviewReleaseSlotMatch = req.url.match(/^\/api\/admin\/payments\/review-queue\/([A-Za-z0-9_-]+)\/release-slot$/);
+  if (reviewReleaseSlotMatch && req.method === 'POST') {
+    const regId = reviewReleaseSlotMatch[1];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewReleaseSlot(pool, authUser, {
+          registrationId: regId,
+          note: data.note || ''
+        });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/admin/payments/review-queue/bulk-approve
+  if (req.url === '/api/admin/payments/review-queue/bulk-approve' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewBulkApprove(pool, authUser, { registrationIds: data.registrationIds || [] });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // --- VERIFIER: VERIFY A SINGLE REGISTRATION PAYMENT (DELEGATES TO REVIEW SERVICE) ---
   if (req.url.startsWith('/api/verifier/verify/') && req.method === 'POST') {
     const regId = req.url.split('/api/verifier/verify/')[1];
     let body = '';
@@ -16447,131 +16524,22 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, id]);
-        if (regRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
-          return;
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewApprove(pool, authUser, {
+          registrationId: regId,
+          note: data.payment_app ? 'Verified via payment app: ' + data.payment_app : ''
+        });
+
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: result.error, message: result.message }));
         }
-
-        const currentReg = regRes.rows[0];
-        const verifiableStatuses = ['pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'pending', 'VERIFIED_BY_HOST', 'verified_by_host'];
-        if (!verifiableStatuses.includes(currentReg.status)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: `Registration cannot be verified from status "${currentReg.status}".` }));
-          return;
-        }
-
-
-        const data = JSON.parse(body);
-        const paymentApp = data.payment_app || currentReg.payment_app || null;
-        const tRes = await pool.query('SELECT title, entry_fee_amount FROM tournaments WHERE id = $1', [currentReg.tournament_id]);
-        const tourneyTitle = tRes.rows[0]?.title || 'the tournament';
-        const fee = tRes.rows.length ? (tRes.rows[0].entry_fee_amount || 0) : 0;
-
-        // 1. Mark as VERIFIED_BY_HOST (host confirmed payment; admin bulk-approve promotes to 'approved')
-        await pool.query(
-          `UPDATE tournament_registrations SET status = 'VERIFIED_BY_HOST', payment_app = COALESCE($1, payment_app), updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-          [paymentApp, regId]
-        );
-
-        // 2. Update payment_submissions to verified
-        if (currentReg.payment_id) {
-          await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
-            [authUser.id, currentReg.payment_id]
-          );
-        } else {
-          await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'VERIFIED_BY_HOST', reviewed_by = $1, reviewed_at = NOW() WHERE registration_id = $2 AND payment_status != 'VERIFIED_BY_HOST'`,
-            [authUser.id, regId]
-          );
-        }
-
-        try {
-          await reconcileTournamentSlots(pool, currentReg.tournament_id);
-        } catch (slotErr) {
-          console.error('❌ [VERIFIER] Slot reconciliation failed:', slotErr.message);
-        }
-
-        // 5. In-app alert (same as admin panel)
-        try {
-          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read)
-             VALUES ($1, $2, $3, $4, $5, false)`,
-            [alertId, currentReg.user_id, 'Registration Confirmed',
-             `Your team "${currentReg.team_name}" has been confirmed for ${tourneyTitle}!`, currentReg.tournament_id]
-          );
-        } catch (alertErr) { /* non-critical */ }
-
-        // 6. Email notification (same as admin panel)
-        const uRes = await pool.query('SELECT email, name FROM users WHERE id = $1', [currentReg.user_id]);
-        if (uRes.rows.length > 0 && uRes.rows[0].email) {
-          const userEmail = uRes.rows[0].email;
-          const userName = uRes.rows[0].name || currentReg.captain;
-          await sendEmail({
-            to: userEmail,
-            subject: `Registration Confirmed ✅ — ${tourneyTitle}`,
-            html: `
-                <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;border:1px solid #eaeaea;border-radius:8px;">
-                  <h2 style="color:#16a34a;margin:0 0 16px 0;">Registration Confirmed!</h2>
-                  <p style="color:#333;font-size:15px;line-height:1.5;">Hi ${userName},</p>
-                  <p style="color:#333;font-size:15px;line-height:1.5;">
-                    Your team <strong>${currentReg.team_name}</strong> has been confirmed for <strong>${tourneyTitle}</strong>.
-                  </p>
-                  <div style="background:#f0fdf4;padding:16px;border-radius:6px;margin:16px 0;">
-                    <p style="margin:0;font-weight:bold;color:#16a34a;">Status: Confirmed</p>
-                    <p style="margin:0;color:#333;font-size:14px;margin-top:4px;">Transaction: ${currentReg.transaction_id || '—'}</p>
-                  </div>
-                  <p style="color:#666;font-size:13px;">Stay tuned for room credentials and further instructions.</p>
-                  <hr style="border:0;border-top:1px solid #eee;margin:20px 0;" />
-                  <p style="font-size:12px;color:#888;text-align:center;">&copy; 2026 Match District</p>
-                </div>
-              `
-          });
-        }
-
-        // 7. Audit log (same as admin panel)
-        try {
-          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [logId, authUser.id, 'registration_confirmed_by_app', 'registration', regId,
-             JSON.stringify({ teamName: currentReg.team_name, tournamentId: currentReg.tournament_id, paymentApp })]
-          );
-        } catch (logErr) { /* non-critical */ }
-
-        // 8. Analytics event (same as admin panel)
-        try {
-          await pool.query(
-            `INSERT INTO analytics_events (id, organizer_id, event_type, event_data, tournament_id)
-             VALUES ($1, $2, $3, $4, $5)`,
-            ['AE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), currentReg.user_id, 'registration_confirmed_by_app',
-             JSON.stringify({ teamName: currentReg.team_name, captain: currentReg.captain }), currentReg.tournament_id]
-          );
-        } catch (aeErr) { /* analytics non-critical */ }
-
-        // Fetch updated registration with slot info for the response
-        let updatedReg = null;
-        try {
-          const finalRes = await pool.query(
-            `SELECT r.*, t.title AS tournament_title, t.game AS tournament_game
-             FROM tournament_registrations r
-             JOIN tournaments t ON r.tournament_id = t.id
-             WHERE r.id = $1`, [regId]
-          );
-          updatedReg = finalRes.rows[0] || null;
-        } catch (fetchErr) { /* non-critical */ }
-
-        console.log(`\n📦 [VERIFIER] Registration "${regId}" confirmed by ${authUser.id}. Status → confirmed. Slot allocated.\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          message: 'Payment verified, registration confirmed, and slot allocated.',
-          registration: updatedReg
+          message: 'Payment verified! Status set to VERIFIED_BY_HOST.',
+          registration: result.registration
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -16581,7 +16549,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // --- ADMIN: BULK APPROVE VERIFIED REGISTRATIONS ---
+  // --- ADMIN: BULK APPROVE (DELEGATES TO REVIEW SERVICE) ---
   if (req.url === '/api/admin/bulk-approve' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -16594,101 +16562,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        const { registrationIds } = JSON.parse(body);
-        if (!registrationIds || !Array.isArray(registrationIds) || registrationIds.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Registration IDs array is required.' }));
-          return;
+        const data = JSON.parse(body);
+        const result = await reviewBulkApprove(pool, authUser, { registrationIds: data.registrationIds || [] });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
         }
-
-        const results = { approved: [], skipped: [], errors: [] };
-
-        for (const regId of registrationIds) {
-          try {
-            const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1', [regId]);
-            if (regRes.rows.length === 0) {
-              results.skipped.push({ id: regId, reason: 'Not found' });
-              continue;
-            }
-
-            const reg = regRes.rows[0];
-            if (reg.status !== 'VERIFIED_BY_HOST') {
-              results.skipped.push({ id: regId, reason: `Status is "${reg.status}", not VERIFIED_BY_HOST` });
-              continue;
-            }
-
-            await pool.query(
-              `UPDATE tournament_registrations SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-              [regId]
-            );
-
-            // B2: Ensure team is created immediately upon approval
-            await ensureTeamForRegistration(pool, reg.tournament_id, reg.user_id, reg.team_name).catch(() => {});
-
-            // Update payment_submissions if linked
-            if (reg.payment_id) {
-              await pool.query(
-                `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
-                [authUser.id, reg.payment_id]
-              );
-            }
-
-            // Alert the user
-            try {
-              const tRes = await pool.query('SELECT title FROM tournaments WHERE id = $1', [reg.tournament_id]);
-              const tourneyTitle = tRes.rows[0]?.title || 'Tournament';
-              const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-              await pool.query(
-                `INSERT INTO alerts (id, user_id, title, message, tournament_id)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                [alertId, reg.user_id, 'Registration Approved',
-                 `Your team "${reg.team_name}" has been approved for ${tourneyTitle}!`,
-                 reg.tournament_id]
-              );
-            } catch (alertErr) { /* non-critical */ }
-
-            // Analytics event
-            try {
-              await pool.query(
-                `INSERT INTO analytics_events (id, organizer_id, event_type, event_data, tournament_id)
-                 VALUES ($1, $2, $3, $4, $5)`,
-                ['AE-' + crypto.randomBytes(6).toString('hex').toUpperCase(), authUser.id, 'registration_bulk_approved',
-                 JSON.stringify({ teamName: reg.team_name, captain: reg.captain, verifiedBy: reg.id }), reg.tournament_id]
-              );
-            } catch (aeErr) { /* analytics non-critical */ }
-
-            results.approved.push(regId);
-          } catch (err) {
-            results.errors.push({ id: regId, error: err.message });
-          }
-        }
-
-        // Reconcile slots for each affected tournament
-        const tournamentIds = [...new Set(registrationIds.map(id => id.split('-')[0] === id ? null : null))]; // placeholder
-        // Actually fetch tournament_ids from DB for the approved regs
-        const tIdsRes = await pool.query(
-          `SELECT DISTINCT tournament_id FROM tournament_registrations WHERE id = ANY($1)`,
-          [registrationIds]
-        );
-        for (const row of tIdsRes.rows) {
-          await reconcileTournamentSlots(pool, row.tournament_id);
-        }
-
-        // Audit log
-        try {
-          const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [logId, authUser.id, 'bulk_approve_registrations', 'registration', 'bulk',
-             JSON.stringify({ approvedCount: results.approved.length, skippedCount: results.skipped.length, errorCount: results.errors.length })]
-          );
-        } catch (logErr) { /* non-critical */ }
-
-        console.log(`\n📦 [ADMIN] Bulk approved ${results.approved.length} registrations (${results.skipped.length} skipped, ${results.errors.length} errors)\n`);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, results }));
+        res.end(JSON.stringify({ success: true, results: result.results, approvedCount: result.approvedCount }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
@@ -16697,8 +16579,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // --- ADMIN: BULK APPROVE ALL VERIFIED REGISTRATIONS (Approve All) ---
-  if (req.url === '/api/admin/bulk-approve-all' && req.method === 'POST') {
+  // --- ADMIN: BULK APPROVE ALL & BULK APPROVE VERIFIED (DELEGATES TO REVIEW SERVICE) ---
+  if ((req.url === '/api/admin/bulk-approve-all' || req.url === '/api/admin/bulk-approve-verified') && req.method === 'POST') {
     try {
       const authUser = getAuthUser(req);
       if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
@@ -16707,13 +16589,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
 
-      // Fetch all registrations staged as VERIFIED_BY_HOST
+      // Fetch pending review registrations eligible for bulk approval
       const pendingRes = await pool.query(
-        `SELECT r.*, t.title AS tournament_title, t.game AS tournament_game
+        `SELECT r.id
          FROM tournament_registrations r
-         JOIN tournaments t ON r.tournament_id = t.id
-         WHERE r.status = 'VERIFIED_BY_HOST'
-         ORDER BY r.created_at ASC`
+         WHERE r.status IN ('pending', 'VERIFIED_BY_HOST', 'verified_by_host')
+         ORDER BY r.created_at ASC
+         LIMIT 50`
       );
 
       if (pendingRes.rows.length === 0) {
@@ -16723,65 +16605,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
 
       const ids = pendingRes.rows.map(r => r.id);
-      const approvedCount = ids.length;
-
-      // Atomically approve all
-      await pool.query(
-        `UPDATE tournament_registrations SET status = 'approved', updated_at = CURRENT_TIMESTAMP WHERE status = 'VERIFIED_BY_HOST'`
-      );
-
-      // Update linked payment_submissions
-      for (const reg of pendingRes.rows) {
-        if (reg.payment_id) {
-          await pool.query(
-            `UPDATE payment_submissions SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`,
-            [authUser.id, reg.payment_id]
-          );
-        }
-      }
-
-      // Notify each user and reconcile slots
-      const tournamentIds = new Set();
-      for (const reg of pendingRes.rows) {
-        tournamentIds.add(reg.tournament_id);
-        // B2: Ensure team is created immediately upon approval
-        await ensureTeamForRegistration(pool, reg.tournament_id, reg.user_id, reg.team_name).catch(() => {});
-        try {
-          const alertId = 'ALT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-          await pool.query(
-            `INSERT INTO alerts (id, user_id, title, message, tournament_id)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [alertId, reg.user_id, 'Registration Approved',
-             `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}!`,
-             reg.tournament_id]
-          );
-        } catch (alertErr) { /* non-critical */ }
-      }
-
-      // Reconcile slots for each affected tournament
-      for (const tid of tournamentIds) {
-        await reconcileTournamentSlots(pool, tid);
-      }
-
-      // Audit log
-      try {
-        const logId = 'LOG-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-        await pool.query(
-          `INSERT INTO admin_action_log (id, admin_id, action_type, target_type, target_id, details)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [logId, authUser.id, 'approve_all_verified', 'registration', 'bulk',
-           JSON.stringify({ approvedCount, tournamentsAffected: tournamentIds.size })]
-        );
-      } catch (logErr) { /* non-critical */ }
-
-      console.log(`\n📦 [ADMIN] Bulk approved ALL ${approvedCount} VERIFIED_BY_HOST registrations across ${tournamentIds.size} tournaments.\n`);
+      const result = await reviewBulkApprove(pool, authUser, { registrationIds: ids });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
-        message: `Successfully approved all ${approvedCount} staged registrations.`,
-        approvedCount,
-        tournamentsAffected: tournamentIds.size
+        message: result.message,
+        approvedCount: result.approvedCount,
+        results: result.results
       }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });

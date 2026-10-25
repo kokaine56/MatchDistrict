@@ -586,12 +586,15 @@ export async function runSchemaMigrations(clientOrPool) {
         idempotency_key VARCHAR(64),
         version INTEGER DEFAULT 1,
         payment_id VARCHAR(50),
-        rejection_reason TEXT
+        rejection_reason TEXT,
+        amount_due NUMERIC(10, 2)
       );
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS amount_due NUMERIC(10, 2);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_status ON tournament_registrations(status);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_idempotency ON tournament_registrations(idempotency_key);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_amount_due ON tournament_registrations(amount_due);
 
       CREATE TABLE IF NOT EXISTS tournament_registration_groups (
         id VARCHAR(50) PRIMARY KEY,
@@ -663,8 +666,11 @@ export async function runSchemaMigrations(clientOrPool) {
       );
       ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS action TEXT;
       ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS action_type TEXT;
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS target_type VARCHAR(50);
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS target_id VARCHAR(50);
       ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS target_user VARCHAR(50);
       ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS details TEXT;
+      ALTER TABLE admin_action_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
       CREATE INDEX IF NOT EXISTS idx_admin_action_log_admin ON admin_action_log(admin_id);
       CREATE INDEX IF NOT EXISTS idx_admin_action_log_created ON admin_action_log(created_at DESC);
 

@@ -148,6 +148,9 @@ function RegistrationPage({ onNavigate }) {
   const [paymentErrors, setPaymentErrors] = useState({})
   const [paymentSubmitting, setPaymentSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [copiedToast, setCopiedToast] = useState('')
+  const [submittedTimeIST, setSubmittedTimeIST] = useState('')
+  const [rejectedReg, setRejectedReg] = useState(null)
 
   const isPaid = parseInt(tourney?.entry_fee_amount || 0) > 0
   const entryFee = parseInt(tourney?.entry_fee_amount || 0)
@@ -261,6 +264,13 @@ function RegistrationPage({ onNavigate }) {
           )
           if (myReg) {
             navigate(`/tournaments/${id}`, { replace: true })
+            return
+          }
+          const myRej = data.registrations.find(r =>
+            r.user_id === currentUser.id && ['rejected', 'payment_rejected'].includes((r.status || '').toLowerCase())
+          )
+          if (myRej) {
+            setRejectedReg(myRej)
           }
         }
       } catch (_) {}
@@ -423,7 +433,12 @@ function RegistrationPage({ onNavigate }) {
   const validatePayment = () => {
     const errs = {}
     if (!payment.app) errs.app = 'Please select a UPI app'
-    if (!payment.transactionId.trim()) errs.transactionId = 'Transaction ID / UTR is required'
+    const trimmedUtr = payment.transactionId.trim()
+    if (!trimmedUtr) {
+      errs.transactionId = 'Transaction ID / UTR is required'
+    } else if (!/^[A-Za-z0-9]{12}$/.test(trimmedUtr)) {
+      errs.transactionId = 'A valid 12-digit UPI reference (UTR) is required'
+    }
     if (!isGpay && !payment.screenshotFile) errs.screenshot = 'Upload payment screenshot'
     setPaymentErrors(errs)
     return Object.keys(errs).length === 0
@@ -493,6 +508,11 @@ function RegistrationPage({ onNavigate }) {
             </svg>
           </div>
           <h2 className="text-2xl font-bold mb-2">Team Registered!</h2>
+          {isPaid && (
+            <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-xl p-3 mb-4 text-emerald-300 font-bold text-sm">
+              {submittedTimeIST ? `Submitted at ${submittedTimeIST}. Verification pending.` : 'Submitted. Verification pending.'}
+            </div>
+          )}
           <p className="text-white/60 mb-6">
             {isPaid
               ? 'Your payment proof has been submitted. Awaiting admin verification.'
@@ -655,21 +675,64 @@ function RegistrationPage({ onNavigate }) {
 
                 <div className="space-y-1">
                   <p className="text-[11px] text-white/40 uppercase tracking-wider">Amount to Pay</p>
-                  <p className="text-3xl font-black text-green-400">₹{entryFee.toLocaleString('en-IN')}</p>
+                  <div className="inline-flex items-center gap-2">
+                    <p className="text-3xl font-black text-green-400">₹{entryFee.toLocaleString('en-IN')}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(String(entryFee));
+                        setCopiedToast('Exact amount copied!');
+                        setTimeout(() => setCopiedToast(''), 2000);
+                      }}
+                      className="p-1.5 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-400 transition-colors"
+                      title="Copy exact amount"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="bg-white/10 rounded-xl p-3 inline-flex items-center gap-2 mx-auto border border-white/5">
                   <span className="text-sm text-white/50">UPI ID:</span>
                   <span className="text-sm font-bold text-primary">matchdistrict@upi</span>
                   <button
-                    onClick={() => { navigator.clipboard.writeText('matchdistrict@upi'); setServerError(''); }}
-                    className="p-1.5 rounded-lg bg-primary/20 hover:bg-primary/30 transition-colors"
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText('matchdistrict@upi');
+                      setCopiedToast('UPI ID copied!');
+                      setTimeout(() => setCopiedToast(''), 2000);
+                    }}
+                    className="p-1.5 rounded-lg bg-primary/20 hover:bg-primary/30 transition-colors text-primary"
                     title="Copy UPI ID"
                   >
-                    <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                     </svg>
                   </button>
+                </div>
+
+                {copiedToast && (
+                  <div className="rounded-full px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                    {copiedToast}
+                  </div>
+                )}
+
+                {/* 3 Short Numbered Steps */}
+                <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-left">
+                  <div className="flex items-start gap-2">
+                    <span className="w-5 h-5 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0 text-[11px]">1</span>
+                    <span className="text-white/80">Pay exact amount via any UPI app</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-5 h-5 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0 text-[11px]">2</span>
+                    <span className="text-white/80">Note the 12-digit UTR reference</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="w-5 h-5 rounded-full bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0 text-[11px]">3</span>
+                    <span className="text-white/80">Submit proof below for review</span>
+                  </div>
                 </div>
 
                 {/* Direct UPI App row — single row, 4 apps, no card borders */}
@@ -713,15 +776,43 @@ function RegistrationPage({ onNavigate }) {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-white/60 mb-1.5">Transaction ID / UTR *</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-white/60">12-Digit UTR / Transaction Reference *</label>
+                  <span className={`text-[11px] font-mono ${
+                    payment.transactionId.trim().length === 12
+                      ? 'text-emerald-400 font-bold'
+                      : payment.transactionId.trim().length > 0
+                      ? 'text-amber-400'
+                      : 'text-white/40'
+                  }`}>
+                    {payment.transactionId.trim().length}/12
+                  </span>
+                </div>
                 <input
                   type="text"
+                  maxLength={12}
                   value={payment.transactionId}
-                  onChange={e => { setPayment(prev => ({ ...prev, transactionId: e.target.value })); setPaymentErrors(prev => ({ ...prev, transactionId: '' })); }}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors"
-                  placeholder="Enter UTR or transaction ID"
+                  onChange={e => {
+                    const val = e.target.value.replace(/\s+/g, '').toUpperCase();
+                    setPayment(prev => ({ ...prev, transactionId: val }));
+                    if (val.length === 12) {
+                      setPaymentErrors(prev => ({ ...prev, transactionId: '' }));
+                    } else if (val.length > 0 && val.length < 12) {
+                      setPaymentErrors(prev => ({ ...prev, transactionId: 'A valid 12-digit UPI reference (UTR) is required.' }));
+                    } else {
+                      setPaymentErrors(prev => ({ ...prev, transactionId: '' }));
+                    }
+                  }}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors font-mono tracking-wider"
+                  placeholder="e.g. 428901234567"
                 />
-                {paymentErrors.transactionId && <p className="text-red-400 text-xs mt-1">{paymentErrors.transactionId}</p>}
+                {paymentErrors.transactionId ? (
+                  <p className="text-red-400 text-xs mt-1">{paymentErrors.transactionId}</p>
+                ) : payment.transactionId.trim().length === 12 ? (
+                  <p className="text-emerald-400 text-xs mt-1 flex items-center gap-1 font-semibold">
+                    <span>✓</span> Valid 12-digit reference
+                  </p>
+                ) : null}
               </div>
 
               {/* Screenshot upload — hidden for Google Pay */}
@@ -903,16 +994,19 @@ function RegistrationPage({ onNavigate }) {
                           }),
                         })
                         const data = await res.json()
-                        if (data.already_registered) {
+                        if (data.already_registered || data.success) {
+                          const nowIST = new Date().toLocaleTimeString('en-IN', {
+                            timeZone: 'Asia/Kolkata',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          }).toUpperCase()
+                          setSubmittedTimeIST(nowIST)
                           setRegisteredTeam(data.registration)
+                          if (data.amount_to_pay) setAmountToPay(data.amount_to_pay)
+                          if (data.predicted_group) setPredictedGroup(data.predicted_group)
                           setStep('success')
                           return
-                        }
-                        if (data.success) {
-                          setRegisteredTeam(data.registration)
-                          setAmountToPay(data.amount_to_pay || null)
-                          setPredictedGroup(data.predicted_group || null)
-                          setStep('success')
                         } else {
                           const raw = data.message || data.error || ''
                           const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
@@ -969,6 +1063,34 @@ function RegistrationPage({ onNavigate }) {
         </div>
 
 
+
+        {rejectedReg && (
+          <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 sm:p-5 mb-6 space-y-3">
+            <div className="flex items-start gap-3">
+              <span className="material-symbols-outlined text-rose-400 text-xl mt-0.5">error</span>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-bold text-rose-300">Previous Submission Rejected</h3>
+                <p className="text-xs text-rose-200/90 mt-1">
+                  Reason: <strong>{rejectedReg.rejection_reason || 'Payment verification failed.'}</strong>
+                </p>
+                <p className="text-[11px] text-white/50 mt-1">
+                  You can re-upload your payment proof with a valid 12-digit UTR to return your team to pending review.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(prev => ({ ...prev, teamName: rejectedReg.team_name, captainIgn: rejectedReg.captain }));
+                setStep('payment');
+              }}
+              className="rounded-full px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold transition-all flex items-center gap-1.5"
+            >
+              <span className="material-symbols-outlined text-sm">upload_file</span>
+              Re-upload Payment Proof
+            </button>
+          </div>
+        )}
 
         {serverError && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 text-red-400 text-sm">

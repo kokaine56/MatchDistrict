@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getAuthToken } from '../utils/getAuthToken'
 import { formatDateTime } from '../utils/timeFormat'
+import PaymentReviewQueue from '../components/admin/PaymentReviewQueue.jsx'
 
 export default function TournamentRegistrations() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const [viewMode, setViewMode] = useState('squads') // 'squads' | 'payments'
   const [registrations, setRegistrations] = useState([])
   const [loading, setLoading] = useState(true)
   const [expandedRow, setExpandedRow] = useState(null)
@@ -218,19 +220,51 @@ export default function TournamentRegistrations() {
           </button>
         </div>
 
-        {/* Filter Tabs & Stats Bar (Part B9) */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setFilterTab('all')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                filterTab === 'all'
-                  ? 'bg-primary text-white shadow-md'
-                  : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:text-on-background'
-              }`}
-            >
-              All ({registrations.length})
-            </button>
+        {/* View Mode Toggle: Squads vs Manual Payment Review */}
+        <div className="flex items-center gap-2 border-b border-outline-variant/20 pb-3">
+          <button
+            type="button"
+            onClick={() => setViewMode('squads')}
+            className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 ${
+              viewMode === 'squads'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-surface border border-outline-variant/25 text-on-surface-variant hover:text-on-background'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">groups</span>
+            Squad Rosters
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('payments')}
+            className={`rounded-full px-4 py-1.5 text-xs font-bold transition-all flex items-center gap-1.5 ${
+              viewMode === 'payments'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-surface border border-outline-variant/25 text-on-surface-variant hover:text-on-background'
+            }`}
+          >
+            <span className="material-symbols-outlined text-sm">verified</span>
+            Manual Payment Review
+          </button>
+        </div>
+
+        {viewMode === 'payments' ? (
+          <PaymentReviewQueue tournamentId={id} role="organizer" />
+        ) : (
+          <>
+            {/* Filter Tabs & Stats Bar (Part B9) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setFilterTab('all')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    filterTab === 'all'
+                      ? 'bg-primary text-white shadow-md'
+                      : 'bg-surface border border-outline-variant/20 text-on-surface-variant hover:text-on-background'
+                  }`}
+                >
+                  All ({registrations.length})
+                </button>
             <button
               onClick={() => setFilterTab('incomplete')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
@@ -455,6 +489,8 @@ export default function TournamentRegistrations() {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   )
