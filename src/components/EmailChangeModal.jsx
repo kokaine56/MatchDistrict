@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import BottomSheetModal from './BottomSheetModal.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
 
 export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSuccess, triggerToast }) {
@@ -18,28 +17,6 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
   const [resendCooldown, setResendCooldown] = useState(0);
   const [cooldownDays, setCooldownDays] = useState(0);
   const [lockoutMsg, setLockoutMsg] = useState('');
-
-  // Manage body class & scroll lock
-  useEffect(() => {
-    if (!isOpen) return;
-    document.body.classList.add('md-modal-open');
-    const scrollY = window.scrollY || window.pageYOffset || 0;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-    const prevOverflow = document.body.style.overflow;
-    const prevPaddingRight = document.body.style.paddingRight;
-
-    if (scrollbarWidth > 0) {
-      document.body.style.paddingRight = `${scrollbarWidth}px`;
-    }
-    document.body.style.overflow = 'hidden';
-
-    return () => {
-      document.body.classList.remove('md-modal-open');
-      document.body.style.overflow = prevOverflow;
-      document.body.style.paddingRight = prevPaddingRight;
-      window.scrollTo(0, scrollY);
-    };
-  }, [isOpen]);
 
   // Fetch email change status on open
   useEffect(() => {
@@ -74,10 +51,7 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
         if (data.lockedUntil) {
           setLockoutMsg(`Account security timeout active until ${data.lockTimeIst || 'later'} IST.`);
         }
-
-        if (data.step === 'old_verified') {
-          setStep('old_verified');
-        }
+        // In-progress step is never restored on load or open; user always starts fresh at init
       } catch (err) {
         if (isMounted) setError('Failed to load email security status.');
       } finally {
@@ -225,37 +199,16 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
     }
   };
 
-  const prefersReducedMotion =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!isOpen) return null;
 
-  return createPortal(
-    <AnimatePresence>
-      <div role="dialog" aria-modal="true" className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80">
-        <motion.div
-          initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
-          animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-          exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
-          transition={{ duration: prefersReducedMotion ? 0.05 : 0.2, ease: [0.16, 1, 0.3, 1] }}
-          className="w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+20px)] sm:pb-6"
-        >
-          {/* Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-outline-variant/30">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary text-xl">mark_email_read</span>
-              <h3 className="font-headline-md text-base sm:text-lg font-bold text-on-background">
-                Change Email Address
-              </h3>
-            </div>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
-            >
-              <span className="material-symbols-outlined text-lg">close</span>
-            </button>
-          </div>
-
-          <div className="py-4 space-y-4">
+  return (
+    <BottomSheetModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Change Email Address"
+      icon="mark_email_read"
+    >
+      <div className="space-y-4">
             {/* Lockout banner */}
             {lockoutMsg && (
               <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2.5">
@@ -437,9 +390,6 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
               </>
             )}
           </div>
-        </motion.div>
-      </div>
-    </AnimatePresence>,
-    document.body
+    </BottomSheetModal>
   );
 }

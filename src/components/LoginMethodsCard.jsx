@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import PasswordModal from './PasswordModal.jsx'
+import BottomSheetModal from './BottomSheetModal.jsx'
 
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client'
 
@@ -17,18 +17,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
   const [modalError, setModalError] = useState('')
   const googleBtnRef = useRef(null)
 
-  // Manage body class for modals
-  useEffect(() => {
-    const isAnyModalOpen = Boolean(showGoogleConnectModal || disconnectModal || showPasswordModal)
-    if (isAnyModalOpen) {
-      document.body.classList.add('md-modal-open')
-    } else {
-      document.body.classList.remove('md-modal-open')
-    }
-    return () => {
-      document.body.classList.remove('md-modal-open')
-    }
-  }, [showGoogleConnectModal, disconnectModal, showPasswordModal])
+
 
   const refresh = useCallback(async () => {
     try {
@@ -312,127 +301,90 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
         }}
       />
 
-      {/* Google Connect Modal (Portaled) */}
-      {showGoogleConnectModal && typeof document !== 'undefined' && createPortal(
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[120] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
-          onClick={() => !isSubmitting && setShowGoogleConnectModal(false)}
-        >
-          <div
-            className="relative w-full max-w-sm bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
+      {/* Google Connect Modal */}
+      <BottomSheetModal
+        isOpen={showGoogleConnectModal}
+        onClose={() => !isSubmitting && setShowGoogleConnectModal(false)}
+        title="Connect Google"
+        maxWidth="max-w-sm"
+        actions={
+          <button
+            type="button"
+            onClick={() => setShowGoogleConnectModal(false)}
+            className="px-5 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant whitespace-nowrap"
           >
-            <div className="flex items-center justify-between pb-2 border-b border-outline-variant/20">
-              <h4 className="font-headline-md text-sm font-bold text-on-background">Connect Google</h4>
-              <button
-                type="button"
-                onClick={() => setShowGoogleConnectModal(false)}
-                className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
-              >
-                <span className="material-symbols-outlined text-base">close</span>
-              </button>
-            </div>
-            <p className="text-xs text-on-surface-variant">
-              Link your Google account to sign in with Google in one click.
-            </p>
-            <div className="flex justify-center py-2">
-              <div ref={googleBtnRef} className="min-h-[44px]" />
-            </div>
-            {!clientId && (
-              <p className="text-xs text-amber-500 text-center">Google sign-in is not configured on this server.</p>
-            )}
-            <div className="flex justify-end pt-2 border-t border-outline-variant/20">
-              <button
-                type="button"
-                onClick={() => setShowGoogleConnectModal(false)}
-                className="px-5 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant whitespace-nowrap"
-              >
-                Cancel
-              </button>
-            </div>
+            Cancel
+          </button>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-on-surface-variant">
+            Link your Google account to sign in with Google in one click.
+          </p>
+          <div className="flex justify-center py-2">
+            <div ref={googleBtnRef} className="min-h-[44px]" />
           </div>
-        </div>,
-        document.body
-      )}
+          {!clientId && (
+            <p className="text-xs text-amber-500 text-center">Google sign-in is not configured on this server.</p>
+          )}
+        </div>
+      </BottomSheetModal>
 
-      {/* Disconnect Modal (Portaled) */}
-      {disconnectModal && typeof document !== 'undefined' && createPortal(
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[120] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
-          onClick={() => !isSubmitting && setDisconnectModal(null)}
-        >
-          <div
-            className="relative w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-6 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-outline-variant/20">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-rose-500 text-lg">link_off</span>
-                <h4 className="font-headline-md text-sm font-bold text-on-background">
-                  Disconnect {disconnectModal === 'google' ? 'Google' : 'Discord'}
-                </h4>
-              </div>
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setDisconnectModal(null)}
-                className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
-              >
-                <span className="material-symbols-outlined text-base">close</span>
-              </button>
+      {/* Disconnect Modal */}
+      <BottomSheetModal
+        isOpen={Boolean(disconnectModal)}
+        onClose={() => !isSubmitting && setDisconnectModal(null)}
+        title={`Disconnect ${disconnectModal === 'google' ? 'Google' : 'Discord'}`}
+        icon="link_off"
+        maxWidth="max-w-md"
+        actions={
+          <>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => setDisconnectModal(null)}
+              className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant whitespace-nowrap"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting || (passwordSet && !confirmPassword)}
+              onClick={handleConfirmDisconnect}
+              className="px-5 h-9 rounded-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shadow-sm"
+            >
+              {isSubmitting ? 'Disconnecting...' : 'Confirm Disconnect'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-on-surface-variant">
+            Are you sure you want to disconnect {disconnectModal === 'google' ? 'Google' : 'Discord'}? You will no longer be able to log in with this method.
+          </p>
+
+          {modalError && (
+            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+              {modalError}
             </div>
+          )}
 
-            <p className="text-xs text-on-surface-variant">
-              Are you sure you want to disconnect {disconnectModal === 'google' ? 'Google' : 'Discord'}? You will no longer be able to log in with this method.
-            </p>
-
-            {modalError && (
-              <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
-                {modalError}
-              </div>
-            )}
-
-            {passwordSet && (
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">
-                  Current Password
-                </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Enter current password to confirm"
-                  className="w-full h-10 px-3 rounded-lg bg-surface-container border border-outline-variant text-xs text-on-background outline-none focus:border-primary"
-                />
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2.5 pt-2 border-t border-outline-variant/20">
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setDisconnectModal(null)}
-                className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant whitespace-nowrap"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting || (passwordSet && !confirmPassword)}
-                onClick={handleConfirmDisconnect}
-                className="px-5 h-9 rounded-full bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shadow-sm"
-              >
-                {isSubmitting ? 'Disconnecting...' : 'Confirm Disconnect'}
-              </button>
+          {passwordSet && (
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block">
+                Current Password
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Enter current password to confirm"
+                className="w-full h-10 px-3 rounded-lg bg-surface-container border border-outline-variant text-xs text-on-background outline-none focus:border-primary"
+              />
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          )}
+        </div>
+      </BottomSheetModal>
     </div>
   )
 }

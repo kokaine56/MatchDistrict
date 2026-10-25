@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { acquireModalLock } from '../utils/modalManager.js';
+
 /**
  * Universal portal bottom sheet & dialog modal.
  * Renders into document.body above the footer bar, hides the mobile bottom nav
@@ -22,19 +24,8 @@ export default function BottomSheetModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Mark body so CSS rules can hide bottom nav via transform
-    document.body.classList.add('md-modal-open');
-
-    // Compensate for scrollbar width to prevent page horizontal shift
-    const scrollY = window.scrollY || window.pageYOffset || 0;
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-    const prevOverflow = document.body.style.overflow;
-    const prevPaddingRight = document.body.style.paddingRight;
-
-    if (scrollbarWidth > 0) {
-      document.body.style.paddingRight = `${scrollbarWidth}px`;
-    }
-    document.body.style.overflow = 'hidden';
+    // Acquire global reference-counted modal lock
+    const releaseLock = acquireModalLock();
 
     // Handle on-screen keyboard via visualViewport
     const updateViewport = () => {
@@ -57,10 +48,7 @@ export default function BottomSheetModal({
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      document.body.classList.remove('md-modal-open');
-      document.body.style.overflow = prevOverflow;
-      document.body.style.paddingRight = prevPaddingRight;
-      window.scrollTo(0, scrollY);
+      releaseLock();
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', updateViewport);
         window.visualViewport.removeEventListener('scroll', updateViewport);
@@ -69,7 +57,7 @@ export default function BottomSheetModal({
     };
   }, [isOpen, onClose]);
 
-  if (typeof document === 'undefined') return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
   const prefersReducedMotion =
     typeof window !== 'undefined' &&

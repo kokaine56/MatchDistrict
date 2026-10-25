@@ -31,6 +31,7 @@ import EmailChangeModal from '../components/EmailChangeModal.jsx'
 import ProfileEditFieldModal from '../components/ProfileEditFieldModal.jsx'
 import PillTabs from '../components/PillTabs.jsx'
 import BottomSheetModal from '../components/BottomSheetModal.jsx'
+import { acquireModalLock } from '../utils/modalManager.js'
 import { createPortal } from 'react-dom'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
@@ -420,6 +421,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
   const [fieldModalState, setFieldModalState] = useState({ open: false, type: '', initial: '' })
   const [upiId, setUpiId] = useState('')
+
+  // Sync reference-counted modal lock for custom dialogs in Profile
+  useEffect(() => {
+    if (!isEditingOrg && !cropState) return;
+    const release = acquireModalLock();
+    return () => release();
+  }, [isEditingOrg, cropState]);
 
   useEffect(() => {
     let active = true
@@ -3484,6 +3492,12 @@ function VerifierPanelTab({ triggerToast }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [screenshotModal, setScreenshotModal] = useState(null);
   const [paymentAppInputs, setPaymentAppInputs] = useState({});
+
+  useEffect(() => {
+    if (!screenshotModal) return;
+    const release = acquireModalLock();
+    return () => release();
+  }, [screenshotModal]);
 
   const fetchPending = useCallback(async () => {
     setLoading(true);
