@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAuthToken } from '../utils/getAuthToken.js';
 
@@ -17,6 +18,19 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
   const [resendCooldown, setResendCooldown] = useState(0);
   const [cooldownDays, setCooldownDays] = useState(0);
   const [lockoutMsg, setLockoutMsg] = useState('');
+
+  // Manage body class & bottom nav
+  useEffect(() => {
+    if (!isOpen) return;
+    document.body.classList.add('md-modal-open');
+    const bottomNav = document.querySelector('.mobile-bottom-nav');
+    if (bottomNav) bottomNav.style.display = 'none';
+
+    return () => {
+      document.body.classList.remove('md-modal-open');
+      if (bottomNav) bottomNav.style.display = '';
+    };
+  }, [isOpen]);
 
   // Fetch email change status on open
   useEffect(() => {
@@ -202,17 +216,17 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
     }
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
-  return (
+  return createPortal(
     <AnimatePresence>
-      <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
+      <div role="dialog" aria-modal="true" className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 30 }}
           transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-          className="w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative max-h-[85vh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+20px)] sm:pb-6"
+          className="w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl relative max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+20px)] sm:pb-6"
         >
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-outline-variant/30">
@@ -414,6 +428,7 @@ export default function EmailChangeModal({ isOpen, onClose, currentEmail, onSucc
           </div>
         </motion.div>
       </div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }

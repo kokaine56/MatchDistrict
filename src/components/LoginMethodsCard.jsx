@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import PasswordModal from './PasswordModal.jsx'
 
 const GOOGLE_SCRIPT = 'https://accounts.google.com/gsi/client'
 
@@ -8,11 +10,31 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
   const [clientId, setClientId] = useState(import.meta.env.VITE_GOOGLE_CLIENT_ID || '')
   const [gisReady, setGisReady] = useState(() => typeof window !== 'undefined' && Boolean(window.google?.accounts?.id))
   const [showGoogleConnectModal, setShowGoogleConnectModal] = useState(false)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [disconnectModal, setDisconnectModal] = useState(null) // 'google' | 'discord' | null
   const [confirmPassword, setConfirmPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [modalError, setModalError] = useState('')
   const googleBtnRef = useRef(null)
+
+  // Manage body class for modals
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(showGoogleConnectModal || disconnectModal || showPasswordModal)
+    if (isAnyModalOpen) {
+      document.body.classList.add('md-modal-open')
+      const bottomNav = document.querySelector('.mobile-bottom-nav')
+      if (bottomNav) bottomNav.style.display = 'none'
+    } else {
+      document.body.classList.remove('md-modal-open')
+      const bottomNav = document.querySelector('.mobile-bottom-nav')
+      if (bottomNav) bottomNav.style.display = ''
+    }
+    return () => {
+      document.body.classList.remove('md-modal-open')
+      const bottomNav = document.querySelector('.mobile-bottom-nav')
+      if (bottomNav) bottomNav.style.display = ''
+    }
+  }, [showGoogleConnectModal, disconnectModal, showPasswordModal])
 
   const refresh = useCallback(async () => {
     try {
@@ -174,22 +196,14 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
     }
   }
 
-  const handlePasswordAction = () => {
-    const el = document.getElementById('password-management')
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      const btn = el.querySelector('button')
-      if (btn) btn.click()
-    }
-  }
-
   const googleEmail = methods?.google?.provider_email || (currentUser?.google_id ? currentUser?.email : null)
   const discordName = methods?.discord?.display_name || methods?.discord?.provider_email || currentUser?.discord?.username || currentUser?.discord?.global_name
 
   return (
-    <section
-      className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3"
+    <div
+      role="region"
       aria-label="Login methods"
+      className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3 outline-none"
     >
       <h3 className="font-headline-md text-xs sm:text-sm font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
         <span className="material-symbols-outlined text-primary text-lg">shield</span> Login methods
@@ -197,24 +211,24 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
 
       {error && <p role="status" className="text-xs text-rose-400">{error}</p>}
 
-      {/* Row 1: Email & password */}
+      {/* Row 1: Password */}
       <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="material-symbols-outlined text-primary text-lg shrink-0">lock</span>
           <div className="min-w-0">
-            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email &amp; password</span>
+            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Password</span>
             <p className="text-xs font-semibold text-on-background truncate">
-              {passwordSet ? 'Password set' : 'No password'}
+              {passwordSet ? 'Set' : 'Not set'}
             </p>
           </div>
         </div>
         <button
           type="button"
-          onClick={handlePasswordAction}
+          onClick={() => setShowPasswordModal(true)}
           className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
         >
           <span className="material-symbols-outlined text-sm">{passwordSet ? 'edit' : 'add'}</span>
-          <span>{passwordSet ? 'Change password' : 'Create password'}</span>
+          <span>{passwordSet ? 'Change' : 'Create'}</span>
         </button>
       </div>
 
@@ -291,16 +305,29 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
         )}
       </div>
 
-      {/* Google Connect Modal */}
-      {showGoogleConnectModal && (
+      {/* Password Modal */}
+      <PasswordModal
+        isOpen={showPasswordModal}
+        onClose={() => setShowPasswordModal(false)}
+        passwordSet={passwordSet}
+        currentUser={currentUser}
+        triggerToast={triggerToast}
+        onSuccess={() => {
+          onUserUpdated?.()
+          refresh()
+        }}
+      />
+
+      {/* Google Connect Modal (Portaled) */}
+      {showGoogleConnectModal && typeof document !== 'undefined' && createPortal(
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
           onClick={() => !isSubmitting && setShowGoogleConnectModal(false)}
         >
           <div
-            className="relative w-full max-w-sm bg-surface-container border-t sm:border border-outline-variant/60 rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85vh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-5 space-y-4"
+            className="relative w-full max-w-sm bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-5 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-outline-variant/20">
@@ -308,7 +335,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
               <button
                 type="button"
                 onClick={() => setShowGoogleConnectModal(false)}
-                className="w-7 h-7 rounded-full bg-surface-variant hover:bg-outline-variant/30 flex items-center justify-center text-on-surface-variant"
+                className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
               >
                 <span className="material-symbols-outlined text-base">close</span>
               </button>
@@ -322,7 +349,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
             {!clientId && (
               <p className="text-xs text-amber-500 text-center">Google sign-in is not configured on this server.</p>
             )}
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end pt-2 border-t border-outline-variant/20">
               <button
                 type="button"
                 onClick={() => setShowGoogleConnectModal(false)}
@@ -332,19 +359,20 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Disconnect Modal */}
-      {disconnectModal && (
+      {/* Disconnect Modal (Portaled) */}
+      {disconnectModal && typeof document !== 'undefined' && createPortal(
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
           onClick={() => !isSubmitting && setDisconnectModal(null)}
         >
           <div
-            className="relative w-full max-w-md bg-surface-container border-t sm:border border-outline-variant/60 rounded-t-2xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[85vh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-6 space-y-4"
+            className="relative w-full max-w-md bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-outline-variant/20">
@@ -358,7 +386,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => setDisconnectModal(null)}
-                className="w-7 h-7 rounded-full bg-surface-variant hover:bg-outline-variant/30 flex items-center justify-center text-on-surface-variant"
+                className="w-8 h-8 rounded-full bg-surface-container hover:bg-surface-variant flex items-center justify-center text-on-surface-variant transition-colors"
               >
                 <span className="material-symbols-outlined text-base">close</span>
               </button>
@@ -384,7 +412,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Enter current password to confirm"
-                  className="w-full h-10 px-3 rounded-lg bg-surface-container-low border border-outline-variant text-xs text-on-background outline-none focus:border-primary"
+                  className="w-full h-10 px-3 rounded-lg bg-surface-container border border-outline-variant text-xs text-on-background outline-none focus:border-primary"
                 />
               </div>
             )}
@@ -408,8 +436,9 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-    </section>
+    </div>
   )
 }

@@ -1061,8 +1061,12 @@ function getAuthUser(req) {
   let token = null;
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.split(' ')[1];
-  } else if (req.headers.cookie) {
+    const rawToken = authHeader.split(' ')[1];
+    if (rawToken && rawToken !== 'null' && rawToken !== 'undefined') {
+      token = rawToken;
+    }
+  }
+  if (!token && req.headers.cookie) {
     const match = req.headers.cookie.match(/(^|;)\s*token\s*=\s*([^;]+)/);
     if (match) {
       try {
@@ -5480,7 +5484,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const authUser = getAuthUser(req);
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+          res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to update your profile.' }));
           return;
         }
 
@@ -5493,7 +5497,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
         const authUserRecord = authUserRes.rows[0];
 
-        if (!hasRole(authUserRecord, ROLES.ADMIN) && authUserRecord.id !== id && authUserRecord.uid !== id) {
+        const targetId = (id === 'me' || !id) ? authUserRecord.id : id;
+
+        if (!hasRole(authUserRecord, ROLES.ADMIN) && authUserRecord.id !== targetId && authUserRecord.uid !== targetId) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this user profile.' }));
           return;
@@ -5600,7 +5606,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
             ) : undefined,
-            id,
+            targetId,
             updateData.orgHandle,
             normalizedPhone !== undefined
           ]

@@ -60,7 +60,8 @@
 
   body:has([role="dialog"]) .mobile-bottom-nav,
   body:has([aria-modal="true"]) .mobile-bottom-nav,
-  body.has-open-sheet .mobile-bottom-nav {
+  body.has-open-sheet .mobile-bottom-nav,
+  body.md-modal-open .mobile-bottom-nav {
     display: none !important;
   }
 

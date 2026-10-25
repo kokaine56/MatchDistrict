@@ -28,7 +28,9 @@ import LoginMethodsCard from '../components/LoginMethodsCard.jsx'
 import Avatar from '../components/Avatar.jsx'
 import EmailChangeModal from '../components/EmailChangeModal.jsx'
 import ProfileEditFieldModal from '../components/ProfileEditFieldModal.jsx'
-import ProfileCompletionBar from '../components/ProfileCompletionBar.jsx'
+import PillTabs from '../components/PillTabs.jsx'
+import BottomSheetModal from '../components/BottomSheetModal.jsx'
+import { createPortal } from 'react-dom'
 
 const PRESET_GAME_OPTIONS = GAME_CANONICAL_OPTIONS
 
@@ -1936,19 +1938,20 @@ function Profile({ onNavigate, selectedUserProfile }) {
   return (
     <>
       {/* Toast Notification */}
-      {showToast && (
+      {showToast && typeof document !== 'undefined' && createPortal(
         <div 
-          style={{ bottom: 'calc(64px + env(safe-area-inset-bottom, 0px) + 12px)' }}
-          className="fixed left-4 right-4 sm:left-auto sm:right-6 z-50 glass-card bg-surface-container-highest/95 backdrop-blur-2xl border border-primary/50 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl shadow-[0_10px_40px_rgba(192,193,255,0.3)] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 20px)' }}
+          className="fixed left-4 right-4 sm:left-auto sm:right-6 z-[200] glass-card bg-surface-container-highest/95 backdrop-blur-2xl border border-primary/50 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl shadow-[0_10px_40px_rgba(192,193,255,0.3)] flex items-center gap-3 animate-in fade-in slide-in-from-bottom-5 duration-300"
         >
           <span className="material-symbols-outlined text-primary text-2xl">check_circle</span>
           <span className="font-body-md font-medium">{toastMessage}</span>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Edit Tournament Command Drawer */}
-      {showEditDrawer && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] flex justify-end bg-black/75 backdrop-blur-sm animate-in fade-in duration-300">
+      {showEditDrawer && typeof document !== 'undefined' && createPortal(
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[120] flex justify-end bg-black/75 backdrop-blur-sm animate-in fade-in duration-300">
           <div className="glass-card bg-surface-container-highest/95 backdrop-blur-2xl border-l border-outline-variant/50 w-full max-w-xl h-full shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col animate-in slide-in-from-right duration-300">
             
             {/* Drawer Header */}
@@ -1972,22 +1975,18 @@ function Profile({ onNavigate, selectedUserProfile }) {
             </div>
 
             {/* Drawer Tab Navigation */}
-            <div className="flex border-b border-outline-variant/20 bg-surface-container-lowest/30 shrink-0 no-scrollbar overflow-x-auto">
-              {[
-                { id: 'general', label: 'General', icon: 'settings' },
-                { id: 'lobby', label: 'Lobby Info', icon: 'key' },
-                { id: 'notices', label: 'Noticeboard', icon: 'campaign' },
-                { id: 'rosters', label: 'Roster Approvals', icon: 'groups' }
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setDrawerTab(tab.id)}
-                  className={`flex-1 py-3 px-4 font-headline-md text-[10px] sm:text-xs font-semibold border-b-2 whitespace-nowrap transition-all flex items-center justify-center gap-1.5 ${drawerTab === tab.id ? 'border-secondary text-secondary bg-secondary/5' : 'border-transparent text-on-surface-variant hover:text-white'}`}
-                >
-                  <span className="material-symbols-outlined text-[15px]">{tab.icon}</span>
-                  {tab.label}
-                </button>
-              ))}
+            <div className="p-3 border-b border-outline-variant/20 bg-surface-container-lowest/30 shrink-0 no-scrollbar overflow-x-auto">
+              <PillTabs
+                size="sm"
+                activeId={drawerTab}
+                onChange={(id) => setDrawerTab(id)}
+                tabs={[
+                  { id: 'general', label: 'General', icon: 'settings' },
+                  { id: 'lobby', label: 'Lobby Info', icon: 'key' },
+                  { id: 'notices', label: 'Noticeboard', icon: 'campaign' },
+                  { id: 'rosters', label: 'Roster Approvals', icon: 'groups' }
+                ]}
+              />
             </div>
 
             {/* Drawer scrollable body */}
@@ -2332,7 +2331,8 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <Header activePage="profile" onNavigate={onNavigate} />
@@ -2526,37 +2526,17 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   </p>
                 </div>
 
-                {/* Underline tab row for "Teams & Squads", "Payment History", "Settings" */}
-                <div className="w-full max-w-md mx-auto border-b border-outline-variant/30 flex items-center justify-around mt-3 overflow-x-auto no-scrollbar">
-                  {[
-                    { id: 'teams', label: 'Teams & Squads' },
-                    { id: 'payments', label: 'Payment History' },
-                    { id: 'settings', label: 'Settings' }
-                  ].map((tab) => {
-                    const isActive = activeTab === tab.id || (tab.id === 'payments' && (activeTab === 'wallet' || activeTab === 'prize-payments'));
-                    return (
-                      <button
-                        key={tab.id}
-                        data-tab={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center justify-center py-3 px-2 sm:px-3 font-headline-md text-xs sm:text-sm font-semibold transition-colors relative select-none min-h-[44px] whitespace-nowrap ${
-                          isActive
-                            ? 'text-primary'
-                            : 'text-on-surface-variant hover:text-on-background'
-                        }`}
-                      >
-                        <span>{tab.label}</span>
-                        {isActive && (
-                          <motion.div
-                            layoutId="activeProfileSectionUnderline"
-                            className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full z-10"
-                            transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
+                {/* Pill tab row for "Teams & Squads", "Payment History", "Settings" */}
+                <div className="w-full flex items-center justify-center mt-3">
+                  <PillTabs
+                    tabs={[
+                      { id: 'teams', label: 'Teams & Squads' },
+                      { id: 'payments', label: 'Payment History' },
+                      { id: 'settings', label: 'Settings' }
+                    ]}
+                    activeId={activeTab === 'wallet' || activeTab === 'prize-payments' ? 'payments' : activeTab}
+                    onChange={(id) => setActiveTab(id)}
+                  />
                 </div>
               </div>
             </>
@@ -2605,21 +2585,18 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
 
                   {/* Game filter chips */}
                   {presets.length > 0 && (
-                    <div className="flex gap-1.5 flex-wrap">
-                      {['All', ...PRESET_GAME_OPTIONS].map((game) => {
-                        const count = game === 'All' ? presets.length : presets.filter(p => (p.game || 'BGMI') === game).length;
-                        if (game !== 'All' && count === 0) return null;
-                        return (
-                          <button
-                            key={game}
-                            onClick={() => setPresetGameFilter(game)}
-                            className={`px-3 py-1.5 rounded-lg border font-headline-md text-[10px] font-bold uppercase tracking-wider transition-all ${presetGameFilter === game ? 'bg-primary text-white border-primary' : 'bg-surface-container text-on-surface-variant border-outline-variant/30 hover:text-on-background'}`}
-                          >
-                            {game}{count > 0 ? ` (${count})` : ''}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <PillTabs
+                      size="sm"
+                      tabs={['All', ...PRESET_GAME_OPTIONS]
+                        .map((game) => {
+                          const count = game === 'All' ? presets.length : presets.filter(p => (p.game || 'BGMI') === game).length;
+                          if (game !== 'All' && count === 0) return null;
+                          return { id: game, label: `${game}${count > 0 ? ` (${count})` : ''}` };
+                        })
+                        .filter(Boolean)}
+                      activeId={presetGameFilter}
+                      onChange={(id) => setPresetGameFilter(id)}
+                    />
                   )}
 
                   {/* INLINE CREATE FORM */}
@@ -3076,26 +3053,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   exit="exit"
                   className="space-y-4 sm:space-y-5"
                 >
-                  {/* Row 1: Profile completion bar (% + missing chips opening bottom sheet) */}
-                  <ProfileCompletionBar
-                    user={playerData}
-                    upiId={upiId}
-                    onOpenField={(field) => {
-                      if (field === 'whatsapp') {
-                        setFieldModalState({
-                          open: true,
-                          type: 'whatsapp',
-                          initial: playerData.phone
-                        });
-                      } else if (field === 'upi') {
-                        setFieldModalState({
-                          open: true,
-                          type: 'upi',
-                          initial: upiId
-                        });
-                      }
-                    }}
-                  />
 
                   {/* GROUP 1: ACCOUNT */}
                   <div className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
@@ -3161,200 +3118,6 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       >
                         <span className="material-symbols-outlined text-sm">edit</span> {upiId ? 'Edit' : 'Add'}
                       </button>
-                    </div>
-
-                    {/* Password Row */}
-                    <div id="password-management" className="p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30 space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="material-symbols-outlined text-primary text-lg shrink-0">lock</span>
-                          <div className="min-w-0">
-                            <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Password</span>
-                            <p className="text-xs font-semibold text-on-background truncate">
-                              {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id))
-                                ? 'No password set (Google account)'
-                                : '••••••••••••'}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setIsChangingPassword(!isChangingPassword)}
-                          className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-                        >
-                          <span className="material-symbols-outlined text-sm">{isChangingPassword ? 'expand_less' : 'key'}</span>
-                          <span>
-                            {isChangingPassword 
-                              ? 'Cancel' 
-                              : (!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? 'Set Up' : 'Change')}
-                          </span>
-                        </button>
-                      </div>
-
-                      {/* Expandable Password Form */}
-                      {isChangingPassword && (
-                        <div className="pt-3 border-t border-outline-variant/20 space-y-3">
-                          {!(currentUser?.password_set !== false && (currentUser?.password_set === true || !currentUser?.google_id)) ? (
-                            /* --- CREATE PASSWORD (Google Account without password) --- */
-                            <div className="space-y-3">
-                              <p className="text-[11px] text-on-surface-variant">
-                                You registered with Google. Create a password to enable email & password sign-in.
-                              </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div className="space-y-1">
-                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
-                                  <div className="relative">
-                                    <input
-                                      type={showNewPassword ? "text" : "password"}
-                                      value={newPassword}
-                                      onChange={(e) => setNewPassword(e.target.value)}
-                                      placeholder="Min 6 characters"
-                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowNewPassword(!showNewPassword)}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
-                                    >
-                                      <span className="material-symbols-outlined text-base">
-                                        {showNewPassword ? 'visibility_off' : 'visibility'}
-                                      </span>
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
-                                  <div className="relative">
-                                    <input
-                                      type={showConfirmPassword ? "text" : "password"}
-                                      value={confirmPassword}
-                                      onChange={(e) => setConfirmPassword(e.target.value)}
-                                      placeholder="Re-type new password"
-                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
-                                    >
-                                      <span className="material-symbols-outlined text-base">
-                                        {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                                      </span>
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="flex justify-end gap-2 pt-1">
-                                <button
-                                  type="button"
-                                  disabled={isPasswordSubmitting || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
-                                  onClick={() => autoSavePassword('', newPassword, confirmPassword)}
-                                  className="px-5 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
-                                >
-                                  <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'key'}</span>
-                                  <span>{isPasswordSubmitting ? 'Saving...' : 'Save Password'}</span>
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            /* --- CHANGE PASSWORD (Account with existing password) --- */
-                            <div className="space-y-3">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[11px] text-on-surface-variant">Update your account login password</span>
-                                <button
-                                  type="button"
-                                  onClick={handleForgotPassword}
-                                  className="font-label-caps text-[10px] text-primary hover:underline uppercase font-bold flex items-center gap-1"
-                                >
-                                  <span className="material-symbols-outlined text-xs">help_outline</span> Forgot?
-                                </button>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div className="space-y-1">
-                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Current Password</label>
-                                  <div className="relative">
-                                    <input
-                                      type={showCurrentPassword ? "text" : "password"}
-                                      value={currentPassword}
-                                      onChange={(e) => setCurrentPassword(e.target.value)}
-                                      placeholder="Current password"
-                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
-                                    >
-                                      <span className="material-symbols-outlined text-base">
-                                        {showCurrentPassword ? 'visibility_off' : 'visibility'}
-                                      </span>
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">New Password</label>
-                                  <div className="relative">
-                                    <input
-                                      type={showNewPassword ? "text" : "password"}
-                                      value={newPassword}
-                                      onChange={(e) => setNewPassword(e.target.value)}
-                                      placeholder="Min 6 characters"
-                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowNewPassword(!showNewPassword)}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
-                                    >
-                                      <span className="material-symbols-outlined text-base">
-                                        {showNewPassword ? 'visibility_off' : 'visibility'}
-                                      </span>
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Confirm Password</label>
-                                  <div className="relative">
-                                    <input
-                                      type={showConfirmPassword ? "text" : "password"}
-                                      value={confirmPassword}
-                                      onChange={(e) => setConfirmPassword(e.target.value)}
-                                      placeholder="Confirm password"
-                                      className="w-full bg-surface-container border border-outline-variant rounded-lg pl-3 pr-9 py-2 text-on-background font-body-sm text-xs focus:border-primary outline-none transition-all shadow-sm"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-background transition-colors"
-                                    >
-                                      <span className="material-symbols-outlined text-base">
-                                        {showConfirmPassword ? 'visibility_off' : 'visibility'}
-                                      </span>
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="flex justify-end pt-1">
-                                <button
-                                  type="button"
-                                  disabled={isPasswordSubmitting || !currentPassword || !newPassword || !confirmPassword || newPassword.length < 6 || newPassword !== confirmPassword}
-                                  onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)}
-                                  className="px-5 h-9 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
-                                >
-                                  <span className="material-symbols-outlined text-sm">{isPasswordSubmitting ? 'progress_activity' : 'lock_reset'}</span>
-                                  <span>{isPasswordSubmitting ? 'Updating...' : 'Change Password'}</span>
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -3474,47 +3237,19 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
 
                   {/* GROUP 5: SIGN OUT */}
                   <div className="glass-card p-4 sm:p-5 rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] backdrop-blur-md shadow-sm">
-                    {!showSignOutConfirm ? (
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs sm:text-sm font-bold text-on-background">Sign out of your session</p>
-                          <p className="text-[11px] text-on-surface-variant">You will need to sign in again to access your teams, tournaments, and wallet.</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setShowSignOutConfirm(true)}
-                          className="h-10 px-6 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
-                        >
-                          <span className="material-symbols-outlined text-sm">logout</span> Log Out
-                        </button>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs sm:text-sm font-bold text-on-background">Sign out of your session</p>
+                        <p className="text-[11px] text-on-surface-variant">You will need to sign in again to access your teams, tournaments, and wallet.</p>
                       </div>
-                    ) : (
-                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-3 animate-in fade-in duration-150">
-                        <div className="flex items-center gap-2 text-rose-400">
-                          <span className="material-symbols-outlined text-base">warning</span>
-                          <span className="text-xs font-bold">Are you sure you want to sign out?</span>
-                        </div>
-                        <p className="text-[11px] text-on-surface-variant">
-                          Any unsaved session state will be cleared and you will be returned to the home screen.
-                        </p>
-                        <div className="flex items-center gap-2 justify-end pt-1">
-                          <button
-                            type="button"
-                            onClick={() => setShowSignOutConfirm(false)}
-                            className="px-4 h-9 rounded-full border border-outline-variant/60 text-xs font-semibold text-on-background hover:bg-surface-variant transition-colors whitespace-nowrap"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSignOut}
-                            className="px-5 h-9 rounded-full bg-rose-600 hover:bg-rose-700 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
-                          >
-                            <span className="material-symbols-outlined text-sm">logout</span> Confirm Sign Out
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => setShowSignOutConfirm(true)}
+                        className="h-10 px-6 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-headline-md text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+                      >
+                        <span className="material-symbols-outlined text-sm">logout</span> Log Out
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -3547,14 +3282,13 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
         fieldType={fieldModalState.type}
         initialValue={fieldModalState.initial}
         userId={(currentUser || currentUserFromContext)?.id}
-        onSaveSuccess={(newVal) => {
-          if (fieldModalState.type === 'upi') {
-            setUpiId(newVal);
-          }
-        }}
         onSuccess={(updatedUser) => {
           if (updatedUser) {
-            setPlayerData((prev) => ({ ...prev, ...updatedUser }));
+            setPlayerData((prev) => ({
+              ...prev,
+              ...updatedUser,
+              ...(updatedUser.phone ? { phone: updatedUser.phone } : {})
+            }));
             if (updatedUser.upi_id !== undefined) {
               setUpiId(updatedUser.upi_id);
             }
@@ -3564,67 +3298,92 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
         triggerToast={triggerToast}
       />
 
+      {/* Sign Out Confirmation Modal */}
+      <BottomSheetModal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        title="Sign Out"
+        icon="logout"
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setShowSignOutConfirm(false)}
+              className="px-5 h-9 rounded-full border border-outline-variant/60 hover:bg-surface-variant text-xs font-semibold text-on-background transition-colors whitespace-nowrap"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="px-5 h-9 rounded-full bg-rose-600 hover:bg-rose-700 text-white font-headline-md text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-sm">logout</span> Confirm Sign Out
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-rose-400">
+            <span className="material-symbols-outlined text-base">warning</span>
+            <span className="text-xs font-bold">Are you sure you want to sign out?</span>
+          </div>
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+            Any unsaved session state will be cleared and you will be returned to the home screen. You will need to sign in again to access your teams, tournaments, and wallet.
+          </p>
+        </div>
+      </BottomSheetModal>
 
       {/* Edit Organizer Modal */}
-      <AnimatePresence>
-        {isEditingOrg && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            role="dialog"
-            aria-modal="true"
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              transition={{ type: 'spring', duration: 0.3 }}
-              className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-lg space-y-4 relative max-h-[90vh] overflow-y-auto custom-scrollbar"
-            >
-              <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-lg font-bold text-on-background flex items-center gap-2 tracking-tight">
-                  <span className="material-symbols-outlined text-secondary text-xl">edit_square</span> Edit Profile
-                </h3>
-                <button onClick={() => setIsEditingOrg(false)} className="w-7 h-7 rounded-lg bg-surface-container hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors">
-                  <span className="material-symbols-outlined text-lg">close</span>
-                </button>
+      {isEditingOrg && typeof document !== 'undefined' && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4 animate-in fade-in duration-200"
+        >
+          <div className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-lg space-y-4 relative max-h-[85dvh] overflow-y-auto custom-scrollbar">
+            <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
+              <h3 className="font-headline-md text-lg font-bold text-on-background flex items-center gap-2 tracking-tight">
+                <span className="material-symbols-outlined text-secondary text-xl">edit_square</span> Edit Profile
+              </h3>
+              <button onClick={() => setIsEditingOrg(false)} className="w-7 h-7 rounded-lg bg-surface-container hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors">
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            </div>
+            <form onSubmit={handleSaveOrgModal} className="space-y-4">
+              <div className="space-y-1">
+                <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Organization Name</label>
+                <AbuseFieldWrapper fieldId="profile-orgName" value={orgEditForm.name} onWarning={setOrgNameAbuse}>
+                  <input type="text" value={orgEditForm.name} onChange={(e) => setOrgEditForm({...orgEditForm, name: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm" required />
+                </AbuseFieldWrapper>
               </div>
-              <form onSubmit={handleSaveOrgModal} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Organization Name</label>
-                  <AbuseFieldWrapper fieldId="profile-orgName" value={orgEditForm.name} onWarning={setOrgNameAbuse}>
-                    <input type="text" value={orgEditForm.name} onChange={(e) => setOrgEditForm({...orgEditForm, name: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm" required />
-                  </AbuseFieldWrapper>
-                </div>
 
-                <div className="space-y-1"><label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Verification Tier</label><input type="text" value={orgEditForm.tier} onChange={(e) => setOrgEditForm({...orgEditForm, tier: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm" required /></div>
-                <div className="space-y-1">
-                  <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Short Bio</label>
-                  <AbuseFieldWrapper fieldId="profile-orgBio" value={orgEditForm.bio} onWarning={setOrgBioAbuse}>
-                    <textarea
-                      rows="3"
-                      value={orgEditForm.bio}
-                      onChange={(e) => setOrgEditForm({...orgEditForm, bio: e.target.value})}
-                      maxLength={120}
-                      placeholder="Describe your organizer brand, tournament focus, and hosting track record."
-                      className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary outline-none transition-all shadow-sm resize-none"
-                    />
-                  </AbuseFieldWrapper>
-                  <div className="text-right text-[10px] text-on-surface-variant mt-1">
-                    {orgEditForm.bio?.length || 0} / 120 characters
-                  </div>
+              <div className="space-y-1"><label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Verification Tier</label><input type="text" value={orgEditForm.tier} onChange={(e) => setOrgEditForm({...orgEditForm, tier: e.target.value})} className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary focus:ring-1 focus:ring-secondary outline-none transition-all shadow-sm" required /></div>
+              <div className="space-y-1">
+                <label className="font-label-caps text-[10px] text-on-surface-variant uppercase tracking-wider block">Short Bio</label>
+                <AbuseFieldWrapper fieldId="profile-orgBio" value={orgEditForm.bio} onWarning={setOrgBioAbuse}>
+                  <textarea
+                    rows="3"
+                    value={orgEditForm.bio}
+                    onChange={(e) => setOrgEditForm({...orgEditForm, bio: e.target.value})}
+                    maxLength={120}
+                    placeholder="Describe your organizer brand, tournament focus, and hosting track record."
+                    className="w-full bg-surface-container border border-outline-variant rounded-lg px-3 py-2 text-on-background font-body-sm text-xs focus:border-secondary outline-none transition-all shadow-sm resize-none"
+                  />
+                </AbuseFieldWrapper>
+                <div className="text-right text-[10px] text-on-surface-variant mt-1">
+                  {orgEditForm.bio?.length || 0} / 120 characters
                 </div>
-                <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
-                  <button type="button" onClick={() => setIsEditingOrg(false)} className="px-5 h-9 border border-outline hover:bg-surface-variant transition-all text-on-background rounded-full font-headline-md text-xs font-semibold whitespace-nowrap">Cancel</button>
-                  <button type="submit" disabled={isUploadingImage} className="px-6 h-9 bg-secondary hover:bg-secondary/90 active:scale-95 transition-all text-background rounded-full font-headline-md text-xs font-bold shadow-sm flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"><span className="material-symbols-outlined text-sm">check</span> Save Changes</button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </div>
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-outline-variant/30">
+                <button type="button" onClick={() => setIsEditingOrg(false)} className="px-5 h-9 border border-outline hover:bg-surface-variant transition-all text-on-background rounded-full font-headline-md text-xs font-semibold whitespace-nowrap">Cancel</button>
+                <button type="submit" disabled={isUploadingImage} className="px-6 h-9 bg-secondary hover:bg-secondary/90 active:scale-95 transition-all text-background rounded-full font-headline-md text-xs font-bold shadow-sm flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"><span className="material-symbols-outlined text-sm">check</span> Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Footer */}
       <footer className="w-full bg-surface-container-lowest border-t border-outline-variant py-6 px-4 mt-20">
@@ -3644,21 +3403,15 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
       </footer>
 
       {/* Crop Modal */}
-      <AnimatePresence>
-        {cropState && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+      {cropState && typeof document !== 'undefined' && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[120] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 relative max-h-[85dvh] overflow-y-auto custom-scrollbar"
           >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              transition={{ type: 'spring', duration: 0.3 }}
-              className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 relative"
-            >
               <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
                 <h3 className="font-headline-md text-lg font-bold text-on-background flex items-center gap-2 tracking-tight">
                   <span className="material-symbols-outlined text-primary text-xl">crop</span> Crop {cropState.shape === 'rectangle' ? 'Banner' : 'Profile Picture'}
@@ -3731,10 +3484,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   <span className="material-symbols-outlined text-sm">check</span> Apply &amp; Upload
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>,
+          document.body
         )}
-      </AnimatePresence>
     </>
   )
 }
@@ -3894,16 +3647,17 @@ function VerifierPanelTab({ triggerToast }) {
       ))}
 
       {/* Screenshot Modal */}
-      {screenshotModal && (
-        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4" onClick={() => setScreenshotModal(null)}>
-          <div className="relative max-w-lg w-full max-h-[80vh]" onClick={e => e.stopPropagation()}>
+      {screenshotModal && typeof document !== 'undefined' && createPortal(
+        <div role="dialog" aria-modal="true" className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-4 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4 animate-in fade-in duration-200" onClick={() => setScreenshotModal(null)}>
+          <div className="relative max-w-lg w-full max-h-[85dvh]" onClick={e => e.stopPropagation()}>
             <button onClick={() => setScreenshotModal(null)}
               className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-surface border border-outline-variant/30 flex items-center justify-center shadow-lg z-10 hover:bg-surface-variant transition-colors">
               <span className="material-symbols-outlined text-[16px] text-on-background">close</span>
             </button>
             <img src={screenshotModal} alt="Payment screenshot" className="w-full rounded-xl shadow-2xl" />
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </motion.div>
