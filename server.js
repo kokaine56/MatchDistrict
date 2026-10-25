@@ -12186,11 +12186,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         payload = JSON.parse(body);
-        const idempotencyKey = payload.idempotency_key;
 
         // Verify session belongs to user and is active
         const sesRes = await client.query(
-          'SELECT * FROM registration_sessions WHERE id = $1 AND user_id = $2',
+          'SELECT * FROM registration_sessions WHERE id = $1::varchar AND user_id = $2::varchar',
           [sessionId, authUser.id]
         );
         if (sesRes.rows.length === 0) {
@@ -12199,14 +12198,62 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        const session = sesRes.rows[0];
+        let session = sesRes.rows[0];
+        const sendCompletedSession = async (sessionRow, commit = false) => {
+          let regRes = await client.query(
+            `SELECT * FROM tournament_registrations
+             WHERE idempotency_key = $1::varchar AND tournament_id = $2::varchar AND user_id = $3::varchar
+             ORDER BY created_at DESC LIMIT 1`,
+            [sessionRow.idempotency_key, sessionRow.tournament_id, sessionRow.user_id]
+          );
+          if (!regRes.rows.length) {
+            // Older completed sessions may predate use of the session key on registrations.
+            regRes = await client.query(
+              `SELECT * FROM tournament_registrations
+               WHERE tournament_id = $1::varchar AND user_id = $2::varchar
+               ORDER BY created_at DESC LIMIT 1`,
+              [sessionRow.tournament_id, sessionRow.user_id]
+            );
+          }
+          const registration = regRes.rows[0] || null;
+          let payment = null;
+          if (registration) {
+            const paymentRes = await client.query(
+              `SELECT id, amount, payment_status AS status
+               FROM payment_submissions WHERE registration_id = $1::varchar
+               ORDER BY created_at DESC LIMIT 1`,
+              [registration.id]
+            );
+            payment = paymentRes.rows[0] || null;
+          }
+          if (!registration) {
+            if (commit) await client.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'REGISTRATION_NOT_FOUND', message: 'We could not find the saved registration. Please contact support.' }));
+            return;
+          }
+          if (commit) await client.query('COMMIT');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            registration,
+            payment,
+            requiresPayment: Boolean(payment),
+            amount_to_pay: payment?.amount ?? registration?.amount_due ?? null,
+            idempotent: true
+          }));
+        };
+        if (session.status === 'completed') {
+          await sendCompletedSession(session);
+          return;
+        }
         if (session.status !== 'active') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'This session has already been used.' }));
           return;
         }
         if (new Date(session.expires_at) < new Date()) {
-          await client.query("UPDATE registration_sessions SET status = 'expired' WHERE id = $1", [sessionId]);
+          await client.query("UPDATE registration_sessions SET status = 'expired' WHERE id = $1::varchar", [sessionId]);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'Session has expired. Please register again.' }));
           return;
@@ -12229,7 +12276,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Verify tournament is still open
         const tRes = await client.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group FROM tournaments WHERE id = $1',
+          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group FROM tournaments WHERE id = $1::varchar',
           [session.tournament_id]
         );
         if (tRes.rows.length === 0) {
@@ -12285,14 +12332,52 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         await client.query('BEGIN');
 
+        // Serialize completion attempts for this session before creating records.
+        const lockedSessionRes = await client.query(
+          `SELECT * FROM registration_sessions
+           WHERE id = $1::varchar AND user_id = $2::varchar FOR UPDATE`,
+          [sessionId, authUser.id]
+        );
+        if (lockedSessionRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Session not found.' }));
+          return;
+        }
+        session = lockedSessionRes.rows[0];
+        if (session.status === 'completed') {
+          await sendCompletedSession(session, true);
+          return;
+        }
+        if (session.status !== 'active' || new Date(session.expires_at) < new Date()) {
+          await client.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'Session has expired. Please register again.' }));
+          return;
+        }
+        const idempotencyKey = session.idempotency_key;
+
+        // Serialize distinct sessions for the same tournament so parallel tabs cannot
+        // both pass the duplicate-registration check before either inserts a row.
+        const tournamentLockRes = await client.query(
+          'SELECT id FROM tournaments WHERE id = $1::varchar FOR UPDATE',
+          [session.tournament_id]
+        );
+        if (tournamentLockRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+
         // Check duplicate registration / handle safe retry for orphans (within transaction)
         const dupGuard = await client.query(
           `SELECT tr.id, tr.status, tr.screenshot_url, tr.transaction_id,
                   ps.id AS payment_id, ps.payment_status, ps.proof_url
            FROM tournament_registrations tr
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
-           WHERE tr.tournament_id = $1 AND tr.user_id = $2
-           ORDER BY tr.created_at DESC LIMIT 1 FOR UPDATE`,
+           WHERE tr.tournament_id = $1::varchar AND tr.user_id = $2::varchar
+           ORDER BY tr.created_at DESC LIMIT 1 FOR UPDATE OF tr`,
           [session.tournament_id, authUser.id]
         );
 
@@ -12397,7 +12482,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Mark session as used
         await client.query(
-          "UPDATE registration_sessions SET status = 'completed' WHERE id = $1",
+          "UPDATE registration_sessions SET status = 'completed' WHERE id = $1::varchar",
           [sessionId]
         );
 
