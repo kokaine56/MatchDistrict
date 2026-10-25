@@ -16,6 +16,7 @@ import {
 } from '../utils/userStorage.js'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { useUser } from '../UserContext.jsx'
+import { useRefetchOnFocus } from '../hooks/useRefetchOnFocus.js'
 import { hasCapability, getUserRoles, ROLES, hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/imagekitUpload'
