@@ -5233,32 +5233,115 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // Recipient-only immutable outgoing prize payment history.
+  // Unified money movements (debited registration payments + credited prize payouts) and total earnings
   if (urlPath === '/api/users/me/payment-history' && req.method === 'GET') {
     res.setHeader('Cache-Control', 'private, no-store');
     const authUser = getAuthUser(req);
-    if (!authUser) {
+    const authUserId = authUser?.id || authUser?.uid;
+    if (!authUser || !authUserId) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Please sign in to view payment history.' }));
     }
+
     try {
-      const result = await pool.query(
-        `SELECT p.id, p.tournament_id, p.prize_award_id, p.team_id, p.amount, p.currency,
-                p.payment_type, p.payment_status, p.utr_reference, p.paid_at,
-                t.title AS tournament_title, a.rank, a.award_type
-         FROM tournament_prize_payments p
-         JOIN tournaments t ON t.id = p.tournament_id
-         JOIN tournament_prize_awards a ON a.id = p.prize_award_id
-         WHERE p.user_id = $1 ORDER BY p.paid_at DESC, p.created_at DESC`,
-        [authUser.id]
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const limit = Math.max(1, Math.min(100, parseInt(parsedUrl.searchParams.get('limit') || '20', 10) || 20));
+      const offset = Math.max(0, parseInt(parsedUrl.searchParams.get('offset') || '0', 10) || 0);
+
+      // Fetch total earnings: sum of all paid prize payments for this user
+      const earningsRes = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS total_earnings
+         FROM tournament_prize_payments
+         WHERE user_id = $1::varchar AND payment_status = 'paid'`,
+        [authUserId]
       );
+      const totalEarnings = Number(earningsRes.rows[0]?.total_earnings || 0);
+
+      // Unified money movements (debited registration payments + credited prize payouts)
+      // Fetch limit + 1 to determine has_more
+      const fetchCount = limit + 1;
+      const historyRes = await pool.query(
+        `WITH user_movements AS (
+           SELECT 
+             ps.id AS id,
+             'debit' AS kind,
+             COALESCE(t.title, 'Tournament Registration') AS title,
+             'Registration fee' AS label,
+             ps.amount::numeric AS amount,
+             CASE 
+               WHEN lower(COALESCE(ps.payment_status, '')) IN ('verified', 'verified_by_host', 'approved')
+                 OR lower(COALESCE(tr.status, '')) = 'approved' THEN 'approved'
+               WHEN lower(COALESCE(ps.payment_status, '')) = 'rejected'
+                 OR lower(COALESCE(tr.status, '')) = 'rejected' THEN 'rejected'
+               ELSE 'pending_verification'
+             END AS status,
+             ps.created_at AS created_at,
+             ps.tournament_id AS tournament_id
+           FROM payment_submissions ps
+           LEFT JOIN tournament_registrations tr ON tr.id = ps.registration_id
+           LEFT JOIN tournaments t ON t.id = ps.tournament_id
+           WHERE ps.user_id = $1::varchar
+
+           UNION ALL
+
+           SELECT
+             COALESCE(p.id, a.id) AS id,
+             'credit' AS kind,
+             COALESCE(t.title, 'Tournament Prize') AS title,
+             'Prize payout' AS label,
+             COALESCE(p.amount, a.prize_amount)::numeric AS amount,
+             CASE
+               WHEN lower(COALESCE(p.payment_status, '')) = 'paid' OR lower(COALESCE(a.status, '')) = 'paid' THEN 'paid'
+               WHEN lower(COALESCE(a.status, '')) IN ('processing', 'in_payout') THEN 'processing'
+               ELSE 'pending'
+             END AS status,
+             COALESCE(p.paid_at, p.created_at, a.created_at) AS created_at,
+             COALESCE(p.tournament_id, a.tournament_id) AS tournament_id
+           FROM tournament_prize_awards a
+           LEFT JOIN tournament_prize_payments p ON p.prize_award_id = a.id
+           LEFT JOIN tournaments t ON t.id = a.tournament_id
+           WHERE a.recipient_user_id = $1::varchar OR p.user_id = $1::varchar
+         )
+         SELECT id, kind, title, label, amount, status, created_at, tournament_id
+         FROM user_movements
+         ORDER BY created_at DESC
+         LIMIT $2::integer OFFSET $3::integer`,
+        [authUserId, fetchCount, offset]
+      );
+
+      const hasMore = historyRes.rows.length > limit;
+      const rawRows = hasMore ? historyRes.rows.slice(0, limit) : historyRes.rows;
+
+      const transactions = rawRows.map(row => ({
+        id: row.id,
+        kind: row.kind,
+        title: row.title,
+        label: row.label,
+        amount: Number(row.amount) || 0,
+        status: row.status,
+        created_at: row.created_at,
+        tournament_id: row.tournament_id
+      }));
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, payments: result.rows }));
+      return res.end(JSON.stringify({
+        success: true,
+        transactions,
+        total_earnings: totalEarnings,
+        has_more: hasMore,
+        // Legacy compatibility for any caller reading payments
+        payments: transactions.filter(t => t.kind === 'credit')
+      }));
     } catch (err) {
+      const ref = `ERR_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      console.error(`[API ERROR] GET /api/users/me/payment-history (Ref: ${ref}):`, err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR' }));
+      return res.end(JSON.stringify({
+        success: false,
+        error: 'SERVER_ERROR',
+        message: `Could not load payment history. Please try again. (Ref: ${ref})`
+      }));
     }
-    return;
   }
 
   // 7b-1. Supabase Get Public Organisers Service

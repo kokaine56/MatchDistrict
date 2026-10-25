@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const CountUp = ({ endValue, prefix = '', suffix = '', duration = 2000, decimals = 0 }) => {
+const CountUp = ({ endValue, end, prefix = '', suffix = '', duration = 2000, decimals = 0 }) => {
+  const target = Number(endValue !== undefined ? endValue : (end !== undefined ? end : 0)) || 0;
   const [count, setCount] = useState(0);
   const ref = useRef(null);
 
@@ -14,7 +15,7 @@ const CountUp = ({ endValue, prefix = '', suffix = '', duration = 2000, decimals
             const progress = Math.min((currentTime - startTime) / duration, 1);
             // easeOutQuad for smooth deceleration
             const easeOutProgress = progress * (2 - progress);
-            setCount(easeOutProgress * endValue);
+            setCount(easeOutProgress * target);
             if (progress < 1) {
               window.requestAnimationFrame(step);
             }
@@ -31,7 +32,7 @@ const CountUp = ({ endValue, prefix = '', suffix = '', duration = 2000, decimals
     }
 
     return () => observer.disconnect();
-  }, [endValue, duration]);
+  }, [target, duration]);
 
   let formattedCount = '';
   if (decimals > 0) {

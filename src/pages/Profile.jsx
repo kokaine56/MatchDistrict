@@ -589,7 +589,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   // Tournament lists and user details
   const [tournamentsList, setTournamentsList] = useState([])
   const [userRegistrations, setUserRegistrations] = useState([])
-  const [walletTransactions, setWalletTransactions] = useState([])
   const [presets, setPresets] = useState([])
   
   // Registration and Command Drawer settings
@@ -1346,28 +1345,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
           })
           .catch(e => console.error("Error fetching user registrations:", e)));
 
-        // Fetch wallet transactions
-        getAuthToken().then(t => fetch(`/api/users/${targetUser.id}/wallet-transactions`, {
-          headers: {
-            'Authorization': `Bearer ${t}`
-          }
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success && data.transactions) {
-              const mapped = data.transactions.map(tx => ({
-                id: tx.id,
-                desc: tx.description,
-                type: tx.type,
-                amount: tx.type === 'credit' ? `+₹${Number(tx.amount).toLocaleString('en-IN')}` : `-₹${Number(tx.amount).toLocaleString('en-IN')}`,
-                status: tx.status || 'Completed',
-                date: new Date(tx.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-              }))
-              setWalletTransactions(mapped);
-            }
-          })
-          .catch(e => console.error("Error fetching wallet transactions:", e)));
-
         // Fetch team presets
         setPresetsLoading(true);
         getAuthToken().then(t => fetch('/api/team-presets', {
@@ -1763,8 +1740,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
       };
     });
   }, [userRegistrations, tournamentsList]);
-
-  const playerWalletTransactions = walletTransactions
 
   // --- PRESET CRUD OPERATIONS ---
   const handleCreatePreset = async (e) => {
@@ -2908,86 +2883,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
               {/* Tab 3: Payment History */}
               <div
                 key="payments"
-                className={(activeTab === 'payments' || activeTab === 'wallet' || activeTab === 'prize-payments') ? 'space-y-6 sm:space-y-8' : 'hidden'}
+                className={(activeTab === 'payments' || activeTab === 'wallet' || activeTab === 'prize-payments') ? 'space-y-6 pb-28 sm:pb-20' : 'hidden'}
               >
-                  {/* Balance Showcase */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm flex flex-col justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <span className="font-label-caps text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">Available Balance</span>
-                        <div className="font-prize-display text-2xl sm:text-3xl font-extrabold text-on-background flex items-baseline gap-1 pt-1">
-                          ₹<CountUp end={currentUser?.wallet_balance || 0.00} decimals={2} />
-                        </div>
-                      </div>
-                      <button onClick={() => triggerToast('Withdrawal gateway is opening soon...')} className="w-full min-h-[44px] bg-primary hover:bg-primary/95 active:scale-95 text-on-primary rounded-xl font-headline-md text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5">
-                        <span className="material-symbols-outlined text-sm">payments</span> Withdraw Funds
-                      </button>
-                    </div>
-
-                    <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm flex flex-col justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <span className="font-label-caps text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">Total Earnings</span>
-                        <div className="font-prize-display text-2xl sm:text-3xl font-extrabold text-secondary flex items-baseline gap-1 pt-1">
-                          ₹<CountUp end={playerWalletTransactions.reduce((acc, t) => t.type === 'credit' ? acc + parseFloat(t.amount.replace(/[^0-9.]/g, '')) : acc, 0)} decimals={2} />
-                        </div>
-                      </div>
-                      <span className="font-body-sm text-[10px] sm:text-xs text-on-surface-variant/60 leading-tight">All tournament rewards and distributions.</span>
-                    </div>
-
-                    <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm flex flex-col justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <span className="font-label-caps text-[10px] text-on-surface-variant font-bold uppercase tracking-wider">KYC Verification</span>
-                        <div className="font-headline-md text-lg font-bold text-emerald-400 flex items-center gap-1.5 pt-1 uppercase tracking-wider">
-                          <span className="material-symbols-outlined text-xl">verified_user</span> Approved
-                        </div>
-                      </div>
-                      <span className="font-body-sm text-[10px] sm:text-xs text-on-surface-variant/60 leading-tight">Your KYC documents are verified — all withdrawal caps and fast-payout features are active.</span>
-                    </div>
-                  </div>
-
-                  {/* Prize Payout Details & History */}
-                  <PrizePaymentHistory />
-
-                  {/* Wallet History */}
-                  <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-                    <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight"><span className="material-symbols-outlined text-primary text-xl">account_balance_wallet</span> Transaction Ledger</h3>
-                    {playerWalletTransactions.length === 0 ? (
-                      <div className="text-center py-8 space-y-2.5">
-                        <span className="material-symbols-outlined text-4xl text-on-surface-variant/30">receipt_long</span>
-                        <div className="font-headline-md text-sm text-on-surface-variant">No transaction history found on this wallet ledger.</div>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto no-scrollbar">
-                        <table className="w-full text-left font-body-sm text-xs border-collapse min-w-[650px]">
-                          <thead>
-                            <tr className="border-b border-outline-variant/35 text-[10px] text-on-surface-variant/80 uppercase font-bold tracking-wider">
-                              <th className="py-2.5 px-4 font-bold">Transaction Reference ID</th>
-                              <th className="py-2.5 px-4 font-bold">Description</th>
-                              <th className="py-2.5 px-4 font-bold">Type</th>
-                              <th className="py-2.5 px-4 font-bold">Amount</th>
-                              <th className="py-2.5 px-4 font-bold">Status</th>
-                              <th className="py-2.5 px-4 font-bold text-right">Timestamp</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-outline-variant/20">
-                            {playerWalletTransactions.map((tx, idx) => (
-                              <tr key={tx.id || idx} className="hover:bg-surface-variant/20 transition-colors">
-                                <td className="py-3 px-4 font-bold text-on-background truncate max-w-[120px]">{tx.id || `TXN-REF-${10293 + idx}`}</td>
-                                <td className="py-3 px-4 font-medium max-w-[200px] truncate">{tx.desc}</td>
-                                <td className="py-3 px-4">
-                                  <span className={`px-2 py-0.5 rounded font-label-caps text-[8px] font-bold uppercase tracking-wider ${tx.type === 'credit' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{tx.type}</span>
-                                </td>
-                                <td className={`py-3 px-4 font-bold font-prize-display ${tx.type === 'credit' ? 'text-emerald-400' : 'text-rose-400'}`}>{tx.amount}</td>
-                                <td className="py-3 px-4 font-medium text-on-surface-variant/80">{tx.status}</td>
-                                <td className="py-3 px-4 text-right text-on-surface-variant">{tx.date}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <PrizePaymentHistory />
+              </div>
               {/* Tab 5: Settings */}
               <div
                 key="settings"
