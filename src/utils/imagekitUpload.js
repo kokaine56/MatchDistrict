@@ -30,17 +30,28 @@ export async function uploadImage(image) {
 
     const response = await fetch('/api/media/upload', {
       method: 'POST',
+      credentials: 'include',
       headers,
       body: JSON.stringify({ file: fileData }),
     });
 
-    const data = await response.json();
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
 
-    if (response.ok && data.secure_url) {
+    if (response.ok && data?.secure_url) {
       return data.secure_url;
     } else {
       console.error('[MediaUpload] API Error response:', data);
-      throw new Error(data.error?.message || data.message || 'Media upload failed');
+      const err = new Error(data?.message || data?.error?.message || 'Media upload failed');
+      err.status = response.status;
+      err.code = data?.error;
+      err.ref = data?.ref || null;
+      err.retryAfter = data?.retryAfter || response.headers.get('Retry-After') || null;
+      throw err;
     }
   } catch (error) {
     console.error('[MediaUpload] Network/Request failure:', error);

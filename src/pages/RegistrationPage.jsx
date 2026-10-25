@@ -156,6 +156,71 @@ const getPresetSubs = (preset) => {
   return rosterOf(preset.substitutes)
 }
 
+/**
+ * Downscales an image to at most 1600px on the longest side and outputs JPEG at 0.8 quality.
+ * If HEIC/HEIF cannot be decoded by the browser, cleanly rejects with a descriptive message.
+ */
+async function downscaleScreenshot(file) {
+  if (!file) return file
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name)
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      try {
+        let width = img.naturalWidth || img.width
+        let height = img.naturalHeight || img.height
+        const maxDim = 1600
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width)
+            width = maxDim
+          } else {
+            width = Math.round((width * maxDim) / height)
+            height = maxDim
+          }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          return resolve(file)
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const baseName = (file.name || 'screenshot').replace(/\.[^.]+$/, '')
+              const convertedFile = new File([blob], `${baseName}.jpg`, {
+                type: 'image/jpeg',
+                lastModified: Date.now(),
+              })
+              resolve(convertedFile)
+            } else {
+              resolve(file)
+            }
+          },
+          'image/jpeg',
+          0.8
+        )
+      } catch {
+        resolve(file)
+      }
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      if (isHeic) {
+        reject(new Error('HEIC/HEIF images cannot be decoded by your browser. Please select or take a JPEG, PNG, or WebP screenshot.'))
+      } else {
+        reject(new Error('Could not decode the selected image file.'))
+      }
+    }
+    img.src = objectUrl
+  })
+}
+
 function RegistrationPage({ onNavigate }) {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -342,9 +407,11 @@ function RegistrationPage({ onNavigate }) {
     ;(async () => {
       try {
         const token = await getAuthToken()
-        if (!token) return
+        const headers = {}
+        if (token) headers['Authorization'] = `Bearer ${token}`
         const res = await fetch(`/api/tournaments/${id}/registrations`, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          headers,
         })
         const data = await res.json()
         if (cancelled) return
@@ -447,9 +514,12 @@ function RegistrationPage({ onNavigate }) {
       }
 
       // Create a registration session (validates form, checks dupes, but NO DB registration yet)
+      const sessionHeaders = { 'Content-Type': 'application/json' }
+      if (token) sessionHeaders['Authorization'] = `Bearer ${token}`
       const sessionRes = await fetch(`/api/sessions/create/${id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers: sessionHeaders,
         body: JSON.stringify(formPayload),
       })
       const sessionData = await sessionRes.json()
@@ -461,7 +531,8 @@ function RegistrationPage({ onNavigate }) {
       if (!sessionData.success) {
         const raw = sessionData.message || sessionData.error || ''
         const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
-        setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Registration failed. Please try again.'))
+        const refStr = sessionData.ref ? ` (Ref: ${sessionData.ref})` : ''
+        setServerError(isSql ? `Could not save, please try again.${refStr}` : `${raw || 'Registration failed. Please try again.'}${refStr}`)
         return
       }
 
@@ -473,9 +544,12 @@ function RegistrationPage({ onNavigate }) {
         setStep('payment')
       } else {
         // Free tournament: complete registration immediately via session
+        const completeHeaders = { 'Content-Type': 'application/json' }
+        if (token) completeHeaders['Authorization'] = `Bearer ${token}`
         const completeRes = await fetch(`/api/sessions/${newSessionId}/complete`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          headers: completeHeaders,
           body: JSON.stringify({}),
         })
         const completeData = await completeRes.json()
@@ -492,7 +566,8 @@ function RegistrationPage({ onNavigate }) {
         } else {
           const raw = completeData.message || completeData.error || ''
           const isSql = /relation|column|syntax error|violates|does not exist|select|update|insert/i.test(raw)
-          setServerError(isSql ? 'Could not save, please try again.' : (raw || 'Could not save, please try again.'))
+          const refStr = completeData.ref ? ` (Ref: ${completeData.ref})` : ''
+          setServerError(isSql ? `Could not save, please try again.${refStr}` : `${raw || 'Could not save, please try again.'}${refStr}`)
         }
       }
     } catch (err) {
@@ -502,23 +577,33 @@ function RegistrationPage({ onNavigate }) {
     }
   }
 
-  const handleScreenshotChange = (e) => {
-    const file = e.target.files[0]
+  const handleScreenshotChange = async (e) => {
+    const file = e.target.files?.[0]
     if (!file) return
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setPaymentErrors(prev => ({ ...prev, screenshot: 'Only JPEG, PNG, WebP allowed' }))
+    const isSupported = [
+      'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/avif'
+    ].includes(file.type) || /\.(jpe?g|png|webp|heic|heif|avif)$/i.test(file.name)
+
+    if (!isSupported) {
+      setPaymentErrors(prev => ({ ...prev, screenshot: 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.' }))
       return
     }
     if (file.size > 10 * 1024 * 1024) {
-      setPaymentErrors(prev => ({ ...prev, screenshot: 'Max 10MB' }))
+      setPaymentErrors(prev => ({ ...prev, screenshot: 'The selected file is too large (maximum allowed size is 10 MB).' }))
       return
     }
-    setPayment(prev => ({
-      ...prev,
-      screenshotFile: file,
-      screenshotPreview: URL.createObjectURL(file),
-    }))
-    setPaymentErrors(prev => ({ ...prev, screenshot: '' }))
+
+    try {
+      const processed = await downscaleScreenshot(file)
+      setPayment(prev => ({
+        ...prev,
+        screenshotFile: processed,
+        screenshotPreview: URL.createObjectURL(processed),
+      }))
+      setPaymentErrors(prev => ({ ...prev, screenshot: '' }))
+    } catch (err) {
+      setPaymentErrors(prev => ({ ...prev, screenshot: err.message || 'Could not process screenshot image.' }))
+    }
   }
 
   const validatePayment = () => {
@@ -528,7 +613,7 @@ function RegistrationPage({ onNavigate }) {
     if (!trimmedUtr) {
       errs.transactionId = 'Transaction ID / UTR is required'
     } else if (!/^\d{12}$/.test(trimmedUtr)) {
-      errs.transactionId = 'UTR must contain exactly 12 digits'
+      errs.transactionId = 'A valid 12-digit UPI reference (UTR) is required.'
     }
     if (!payment.screenshotFile) errs.screenshot = 'Upload payment screenshot'
     setPaymentErrors(errs)
@@ -934,11 +1019,11 @@ function RegistrationPage({ onNavigate }) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                         <p className="text-xs text-white/40">Click to upload screenshot</p>
-                        <p className="text-[10px] text-white/20">JPEG, PNG, WebP • Max 10MB</p>
+                        <p className="text-[10px] text-white/20">JPEG, PNG, WebP, HEIC • Max 10MB</p>
                       </div>
                     )}
                   </div>
-                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={handleScreenshotChange} />
+                  <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif" className="hidden" onChange={handleScreenshotChange} />
                   {paymentErrors.screenshot && <p className="text-red-400 text-xs mt-1">{paymentErrors.screenshot}</p>}
               </div>
 
@@ -1048,17 +1133,35 @@ function RegistrationPage({ onNavigate }) {
                         const token = await getAuthToken()
                         let screenshotUrl = null
                         try {
-                          screenshotUrl = await uploadImage(payment.screenshotFile)
-                        } catch {
-                          setServerError('Could not upload the screenshot. Your UTR and selected file are still here; please try again.')
+                          const fileToUpload = await downscaleScreenshot(payment.screenshotFile)
+                          screenshotUrl = await uploadImage(fileToUpload)
+                        } catch (uploadErr) {
+                          let errorMsg = 'Could not upload the screenshot. Your UTR and selected file are still here; please try again.'
+                          if (uploadErr?.status === 413 || uploadErr?.code === 'FILE_TOO_LARGE') {
+                            errorMsg = 'The selected file is too large (maximum allowed size is 10 MB).'
+                          } else if (uploadErr?.status === 415 || uploadErr?.code === 'INVALID_FILE_TYPE') {
+                            errorMsg = 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.'
+                          } else if (uploadErr?.status === 429 || uploadErr?.code === 'RATE_LIMIT_EXCEEDED') {
+                            const waitTime = uploadErr?.retryAfter || 60
+                            errorMsg = `Too many uploads. Please wait ${waitTime} seconds and try again.`
+                          } else if (uploadErr?.ref) {
+                            errorMsg = `Could not upload the screenshot. Your UTR and selected file are still here; please try again. (Ref: ${uploadErr.ref})`
+                          } else if (uploadErr?.message && !uploadErr?.message.includes('fetch') && !uploadErr?.message.includes('network')) {
+                            errorMsg = uploadErr.message
+                          }
+                          setServerError(errorMsg)
                           paymentSubmittedRef.current = false
                           return
                         }
+
                         let res
+                        const headers = { 'Content-Type': 'application/json' }
+                        if (token) headers['Authorization'] = `Bearer ${token}`
                         try {
                           res = await fetch(`/api/sessions/${sessionId}/complete`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                            credentials: 'include',
+                            headers,
                             body: JSON.stringify({
                               utr_number: payment.transactionId.trim(),
                               payment_app: payment.app,
@@ -1105,10 +1208,11 @@ function RegistrationPage({ onNavigate }) {
                           setStep('success')
                           return
                         } else {
-                          setServerError(data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.')
+                          const refCode = data.ref ? ` (Ref: ${data.ref})` : ''
+                          setServerError((data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.') + refCode)
                           paymentSubmittedRef.current = false
                         }
-                      } catch {
+                      } catch (unexpectedErr) {
                         setServerError('Could not submit the payment. Your UTR and screenshot are still here; please try again.')
                         paymentSubmittedRef.current = false
                       } finally {

@@ -589,6 +589,17 @@ export async function runSchemaMigrations(clientOrPool) {
         rejection_reason TEXT,
         amount_due NUMERIC(10, 2)
       );
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS captain_uid VARCHAR(100);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS payment_id VARCHAR(50);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP;
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS screenshot_url TEXT;
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(100);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_id VARCHAR(50);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_name VARCHAR(50);
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS amount_due NUMERIC(10, 2);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);
@@ -618,6 +629,8 @@ export async function runSchemaMigrations(clientOrPool) {
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE registration_sessions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
+      ALTER TABLE registration_sessions ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active';
 
       CREATE TABLE IF NOT EXISTS payment_submissions (
         id VARCHAR(50) PRIMARY KEY,
@@ -636,6 +649,18 @@ export async function runSchemaMigrations(clientOrPool) {
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS utr_number VARCHAR(255);
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS payment_app VARCHAR(50);
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS payment_status VARCHAR(30) DEFAULT 'pending_admin_review';
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS reviewed_by VARCHAR(50);
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64);
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2) DEFAULT 0;
+      ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS proof_url TEXT;
+      CREATE INDEX IF NOT EXISTS idx_payment_submissions_registration ON payment_submissions(registration_id);
+      CREATE INDEX IF NOT EXISTS idx_payment_submissions_tournament ON payment_submissions(tournament_id);
+      CREATE INDEX IF NOT EXISTS idx_payment_submissions_user ON payment_submissions(user_id);
 
       CREATE TABLE IF NOT EXISTS team_presets (
         id VARCHAR(50) PRIMARY KEY,

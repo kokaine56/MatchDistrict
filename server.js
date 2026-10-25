@@ -96,6 +96,25 @@ function sanitizeImageUrlForDb(value) {
   return trimmed;
 }
 
+// Clean environment variables: strip whitespace and surrounding double/single quotes
+function cleanEnvVar(val) {
+  if (typeof val !== 'string') return '';
+  return val.trim().replace(/^["']|["']$/g, '').trim();
+}
+
+function cleanEndpointUrl(val) {
+  const cleaned = cleanEnvVar(val);
+  return cleaned ? cleaned.replace(/\/+$/, '') : '';
+}
+
+function getImageKitPrivateKey() {
+  return cleanEnvVar(process.env.IMAGEKIT_PRIVATE_KEY);
+}
+
+function getImageKitUrlEndpoint() {
+  return cleanEndpointUrl(process.env.IMAGEKIT_URL_ENDPOINT);
+}
+
 /**
  * PAY-002 / SENS-009: Strict allow-list validation for payment proof / screenshot URLs.
  * Requires https: and strictly matches the configured ImageKit endpoint or Supabase Storage.
@@ -132,9 +151,10 @@ function isAllowedStorageUrl(urlString) {
   }
 
   // Match the configured ImageKit endpoint host and path, including custom URL endpoints.
-  if (process.env.IMAGEKIT_URL_ENDPOINT) {
+  const configuredEndpoint = getImageKitUrlEndpoint();
+  if (configuredEndpoint) {
     try {
-      const imageKitEndpoint = new URL(process.env.IMAGEKIT_URL_ENDPOINT);
+      const imageKitEndpoint = new URL(configuredEndpoint);
       const endpointPath = imageKitEndpoint.pathname.replace(/\/+$/, '');
       if (
         imageKitEndpoint.protocol === 'https:' &&
@@ -147,13 +167,19 @@ function isAllowedStorageUrl(urlString) {
     } catch {}
   }
 
+  // Also accept standard ImageKit delivery domains
+  if (hostname === 'ik.imagekit.io' || hostname.endsWith('.imagekit.io')) {
+    return true;
+  }
+
   if (hostname.endsWith('.supabase.co') || hostname.endsWith('.supabase.in')) {
     return true;
   }
 
-  if (process.env.SUPABASE_URL) {
+  const supaUrl = cleanEnvVar(process.env.SUPABASE_URL);
+  if (supaUrl) {
     try {
-      const supaHost = new URL(process.env.SUPABASE_URL).hostname.toLowerCase();
+      const supaHost = new URL(supaUrl).hostname.toLowerCase();
       if (hostname === supaHost) return true;
     } catch {}
   }
@@ -163,7 +189,7 @@ function isAllowedStorageUrl(urlString) {
 
 /**
  * SEC-004: Validates real file content using magic byte inspection.
- * Allowed formats: JPEG, PNG, GIF, WEBP.
+ * Allowed formats: JPEG, PNG, GIF, WEBP, and ISOBMFF formats (HEIC, HEIF, AVIF).
  */
 function isValidImageBuffer(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 12) return false;
@@ -205,6 +231,20 @@ function isValidImageBuffer(buffer) {
     buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
   ) {
     return true;
+  }
+
+  // ISOBMFF (HEIC/HEIF, AVIF): bytes 4..7 must be 'ftyp'
+  if (buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp') {
+    const brand = buffer.toString('ascii', 8, 12).toLowerCase();
+    const isHeic = ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand);
+    const isAvif = ['avif', 'avis'].includes(brand);
+    if (isHeic || isAvif) {
+      return true;
+    }
+    const headerString = buffer.slice(8, Math.min(buffer.length, 64)).toString('ascii').toLowerCase();
+    if (/heic|heix|hevc|hevx|mif1|msf1|avif|avis/.test(headerString)) {
+      return true;
+    }
   }
 
   return false;
@@ -263,10 +303,13 @@ function makeErrorRef() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
-function logErrorWithRef(ref, routeName, err) {
-  const code = err?.code || 'N/A';
+function logErrorWithRef(ref, routeName, err, step = 'execute') {
+  const code = err?.code || (typeof err === 'object' && err?.pgCode) || 'N/A';
+  const status = err?.status || (typeof err === 'object' && err?.httpStatus) || '';
+  const statusStr = status ? ` status=${status}` : '';
   const detail = err?.constraint ? ` constraint=${err.constraint}` : (err?.column ? ` column=${err.column}` : '');
-  console.error(`[ERROR Ref:${ref}] route="${routeName}" pgCode=${code}${detail} message="${err?.message || 'Unknown error'}" stack=${err?.stack || ''}`);
+  const msg = (err?.message || (typeof err === 'string' ? err : 'Unknown error')).replace(/[\r\n]+/g, ' ');
+  console.error(`[ERROR Ref:${ref}] route="${routeName}" step="${step}" pgCode=${code}${statusStr}${detail} message="${msg}"`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -520,8 +563,8 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const IMAGEKIT_PRIVATE_KEY = process.env.IMAGEKIT_PRIVATE_KEY || '';
-const IMAGEKIT_URL_ENDPOINT = process.env.IMAGEKIT_URL_ENDPOINT || '';
+const IMAGEKIT_PRIVATE_KEY = getImageKitPrivateKey();
+const IMAGEKIT_URL_ENDPOINT = getImageKitUrlEndpoint();
 const IMAGEKIT_UPLOAD_IDS_BY_URL = new Map();
 // Sponsorship feature flag — gated until production-ready. Flip `ENABLE_SPONSORSHIP=true` to activate the full flow.
 const SPONSORSHIP_ENABLED = process.env.ENABLE_SPONSORSHIP === 'true';
@@ -566,10 +609,10 @@ async function removeUploadedMedia(mediaUrl) {
     for (const [url, file] of IMAGEKIT_UPLOAD_IDS_BY_URL) {
       if (now - file.createdAt > 10 * 60 * 1000) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(url);
     }
-    const uploadedFile = IMAGEKIT_UPLOAD_IDS_BY_URL.get(mediaUrl);
-    if (!uploadedFile || !IMAGEKIT_PRIVATE_KEY) return;
+    const ikPrivateKey = getImageKitPrivateKey();
+    if (!uploadedFile || !ikPrivateKey) return;
 
-    const auth = Buffer.from(IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+    const auth = Buffer.from(ikPrivateKey + ':').toString('base64');
     const response = await fetch('https://api.imagekit.io/v1/files/' + encodeURIComponent(uploadedFile.fileId), {
       method: 'DELETE',
       headers: { Authorization: 'Basic ' + auth }
@@ -1729,12 +1772,16 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       if (aborted) return;
       try {
-        if (!IMAGEKIT_PRIVATE_KEY || !IMAGEKIT_URL_ENDPOINT) {
+        const privateKey = getImageKitPrivateKey();
+        const urlEndpoint = getImageKitUrlEndpoint();
+        if (!privateKey || !urlEndpoint) {
           const ref = makeErrorRef();
-          logErrorWithRef(ref, 'POST /api/media/upload', new Error('ImageKit media configuration is missing.'));
+          logErrorWithRef(ref, 'POST /api/media/upload', new Error('ImageKit media configuration is missing or empty.'), 'check_config', 500);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
+            error: 'SERVER_ERROR',
+            ref,
             message: `Could not upload image. Please try again. (Ref: ${ref})`,
           }));
           return;
@@ -1758,7 +1805,7 @@ const server = http.createServer(async (req, res) => {
         if (/^https:\/\//i.test(data.file)) {
           try {
             const sourceUrl = new URL(data.file);
-            const imageKitEndpoint = new URL(IMAGEKIT_URL_ENDPOINT);
+            const imageKitEndpoint = new URL(urlEndpoint);
             const endpointPath = imageKitEndpoint.pathname.replace(/\/+$/, '');
             if (
               sourceUrl.origin === imageKitEndpoint.origin &&
@@ -1771,7 +1818,7 @@ const server = http.createServer(async (req, res) => {
           } catch {}
         }
 
-        const dataUrlMatch = data.file.match(/^data:(image\/(?:jpeg|png|gif|webp));base64,([\s\S]*)$/i);
+        const dataUrlMatch = data.file.match(/^data:(image\/(?:jpeg|jpg|png|gif|webp|heic|heif|avif));base64,([\s\S]*)$/i);
         const isRemoteUrl = /^https:\/\//i.test(data.file);
         let rawBuffer = null;
         let uploadSource = null;
@@ -1815,7 +1862,13 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/gif' ? 'gif' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+        const extension = mimeType === 'image/png' ? 'png'
+          : mimeType === 'image/gif' ? 'gif'
+          : mimeType === 'image/webp' ? 'webp'
+          : mimeType === 'image/heic' ? 'heic'
+          : mimeType === 'image/heif' ? 'heif'
+          : mimeType === 'image/avif' ? 'avif'
+          : 'jpg';
         const uploadName = 'matchdistrict-' + crypto.randomBytes(12).toString('hex') + '.' + extension;
         const imageKitForm = new FormData();
         if (typeof uploadSource === 'string') {
@@ -1825,16 +1878,21 @@ const server = http.createServer(async (req, res) => {
         }
         imageKitForm.append('fileName', uploadName);
         imageKitForm.append('folder', '/matchdistrict');
+        imageKitForm.append('useUniqueFileName', 'true');
 
-        const imageKitAuth = Buffer.from(IMAGEKIT_PRIVATE_KEY + ':').toString('base64');
+        const imageKitAuth = Buffer.from(privateKey + ':').toString('base64');
         const imageKitResponse = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
           method: 'POST',
           headers: { Authorization: 'Basic ' + imageKitAuth },
           body: imageKitForm,
         });
 
-        const imageKitData = await imageKitResponse.json();
-        if (imageKitResponse.ok && imageKitData.url && imageKitData.fileId) {
+        let imageKitData = null;
+        try {
+          imageKitData = await imageKitResponse.json();
+        } catch {}
+
+        if (imageKitResponse.ok && imageKitData?.url && imageKitData?.fileId) {
           const now = Date.now();
           for (const [url, file] of IMAGEKIT_UPLOAD_IDS_BY_URL) {
             if (now - file.createdAt > 10 * 60 * 1000) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(url);
@@ -1848,15 +1906,18 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: true, secure_url: imageKitData.url }));
         } else {
           const ref = makeErrorRef();
-          logErrorWithRef(ref, 'POST /api/media/upload', new Error(`ImageKit upload failed with HTTP ${imageKitResponse.status}.`));
+          const ikMsg = imageKitData?.message || imageKitData?.help || `HTTP ${imageKitResponse.status}`;
+          const ikError = new Error(`ImageKit rejected upload: ${ikMsg}`);
+          ikError.status = imageKitResponse.status;
+          logErrorWithRef(ref, 'POST /api/media/upload', ikError, 'imagekit_upload');
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
+          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
         }
       } catch (err) {
         const ref = makeErrorRef();
-        logErrorWithRef(ref, 'POST /api/media/upload', err);
+        logErrorWithRef(ref, 'POST /api/media/upload', err, 'handler');
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -12199,6 +12260,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         let session = sesRes.rows[0];
+        const idempotencyKey = session.idempotency_key;
         const sendCompletedSession = async (sessionRow, commit = false) => {
           let regRes = await client.query(
             `SELECT * FROM tournament_registrations
@@ -12262,7 +12324,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // Idempotency check: if we've already processed this key, return existing result
         if (idempotencyKey) {
           const existingReg = await client.query(
-            'SELECT * FROM tournament_registrations WHERE idempotency_key = $1',
+            'SELECT * FROM tournament_registrations WHERE idempotency_key = $1::varchar',
             [idempotencyKey]
           );
           if (existingReg.rows.length > 0) {
@@ -12276,7 +12338,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Verify tournament is still open
         const tRes = await client.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group FROM tournaments WHERE id = $1::varchar',
+          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group, unique_amount_suffix_enabled FROM tournaments WHERE id = $1::varchar',
           [session.tournament_id]
         );
         if (tRes.rows.length === 0) {
@@ -12355,7 +12417,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'SESSION_EXPIRED', message: 'Session has expired. Please register again.' }));
           return;
         }
-        const idempotencyKey = session.idempotency_key;
 
         // Serialize distinct sessions for the same tournament so parallel tabs cannot
         // both pass the duplicate-registration check before either inserts a row.
@@ -12437,10 +12498,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (isUpdatingExisting && regId) {
           regRes = await client.query(
             `UPDATE tournament_registrations
-             SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
-                 status = $5, email = $6, phone = $7, screenshot_url = $8,
-                 transaction_id = $9, payment_app = $10, amount_due = COALESCE(amount_due, $11), updated_at = CURRENT_TIMESTAMP
-             WHERE id = $12 RETURNING *`,
+             SET team_name = $1::varchar, captain = $2::varchar, captain_uid = $3::varchar, members = $4::text,
+                 status = $5::varchar, email = $6::varchar, phone = $7::varchar, screenshot_url = $8::text,
+                 transaction_id = $9::varchar, payment_app = $10::varchar, amount_due = COALESCE(amount_due, $11::numeric), updated_at = CURRENT_TIMESTAMP
+             WHERE id = $12::varchar RETURNING *`,
             [formData.team_name, formData.captain, formData.captain_uid || null, membersStr,
              status, formData.email || null, formData.phone || null,
              payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null,
@@ -12450,7 +12511,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
           regRes = await client.query(
             `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app, amount_due)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1, $12, $13, $14, $15) RETURNING *`,
+             VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::text, $8::varchar, $9::varchar, $10::varchar, $11::varchar, 1, $12::text, $13::varchar, $14::varchar, $15::numeric) RETURNING *`,
             [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
              membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
              payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null, assignedAmountDue]
@@ -12466,14 +12527,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
           await client.query(
             `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_admin_review', $9)`,
+             VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::numeric, $6::text, $7::varchar, $8::varchar, 'pending_admin_review', $9::varchar)`,
             [payId, regId, session.tournament_id, authUser.id, amountToPay,
              payload.screenshot_url, payload.utr_number || null, payload.payment_app || null, payIdempKey]
           );
 
           // Link payment to registration
           await client.query(
-            'UPDATE tournament_registrations SET payment_id = $1 WHERE id = $2',
+            'UPDATE tournament_registrations SET payment_id = $1::varchar WHERE id = $2::varchar',
             [payId, regId]
           );
 
@@ -12491,13 +12552,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const tpgPredicted = normalizeTeamsPerGroup(tournament.teams_per_group, 16);
         const confirmedCountRes = await client.query(
           `SELECT COUNT(*) FROM tournament_registrations
-           WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')`,
+           WHERE tournament_id = $1::varchar AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')`,
           [session.tournament_id]
         );
         const confirmedCount = parseInt(confirmedCountRes.rows[0].count) || 0;
         const predictedGroup = predictedGroupFor(confirmedCount, tournament.slotsTotal, tpgPredicted);
 
         await client.query('COMMIT');
+
+        try {
+          await reconcileTournamentSlots(pool, session.tournament_id);
+        } catch (slotErr) {
+          console.warn('[SessionComplete] reconcileTournamentSlots skipped:', slotErr.message);
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -12520,10 +12587,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
         }
         const ref = makeErrorRef();
-        logErrorWithRef(ref, 'POST /api/sessions/:id/complete', err);
+        logErrorWithRef(ref, 'POST /api/sessions/:id/complete', err, 'complete_transaction');
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save, please try again. (Ref: ${ref})` }));
+          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not save, please try again. (Ref: ${ref})` }));
         }
       } finally {
         client?.release();
@@ -12561,7 +12628,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                   ps.id AS payment_id, ps.payment_status, ps.proof_url
            FROM tournament_registrations tr
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
-           WHERE tr.tournament_id = $1 AND tr.user_id = $2
+           WHERE tr.tournament_id = $1::varchar AND tr.user_id = $2::varchar
            ORDER BY tr.created_at DESC LIMIT 1`,
           [id, authUser.id]
         );
@@ -12596,7 +12663,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           await regClient.query('BEGIN');
 
           // Transaction row-lock on tournament row (PAY-004 concurrency control)
-          const tRes = await regClient.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate" FROM tournaments WHERE id = $1 FOR UPDATE', [id]);
+          const tRes = await regClient.query('SELECT "slotsTotal", "slotsFilled", "entry_fee_amount", "registrationCloseDate", unique_amount_suffix_enabled FROM tournaments WHERE id = $1::varchar FOR UPDATE', [id]);
           if (tRes.rows.length === 0) {
             await regClient.query('ROLLBACK');
             res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -12626,7 +12693,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
           // Count active non-waitlisted registrations within transaction
           const activeCountRes = await regClient.query(
-            "SELECT COUNT(*) AS active_count FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'pending', 'pending_payment')",
+            "SELECT COUNT(*) AS active_count FROM tournament_registrations WHERE tournament_id = $1::varchar AND status IN ('approved', 'confirmed', 'pending', 'pending_payment')",
             [id]
           );
           const activeCount = parseInt(activeCountRes.rows[0]?.active_count || '0');
@@ -12644,7 +12711,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           let slotNumber = data.slot_number ? parseInt(data.slot_number) : null;
           if (slotNumber && !isWaitlisted) {
             const slotCheck = await regClient.query(
-              "SELECT id FROM tournament_registrations WHERE tournament_id = $1 AND slot_number = $2 AND status IN ('approved', 'confirmed', 'pending', 'pending_payment') FOR UPDATE",
+              "SELECT id FROM tournament_registrations WHERE tournament_id = $1::varchar AND slot_number = $2::int AND status IN ('approved', 'confirmed', 'pending', 'pending_payment') FOR UPDATE",
               [id, slotNumber]
             );
             if (slotCheck.rows.length > 0) {
@@ -12662,7 +12729,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
           if (idempotencyKey) {
             const existingReg = await regClient.query(
-              'SELECT * FROM tournament_registrations WHERE idempotency_key = $1',
+              'SELECT * FROM tournament_registrations WHERE idempotency_key = $1::varchar',
               [idempotencyKey]
             );
             if (existingReg.rows.length > 0) {
@@ -12678,15 +12745,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           if (existingOrphanId) {
             dbRes = await regClient.query(
               `UPDATE tournament_registrations
-               SET team_name = $1, captain = $2, captain_uid = $3, members = $4,
-                   status = $5, slot_number = $6, email = $7, phone = $8, idempotency_key = $9, amount_due = COALESCE(amount_due, $10), updated_at = CURRENT_TIMESTAMP
-               WHERE id = $11 RETURNING *`,
+               SET team_name = $1::varchar, captain = $2::varchar, captain_uid = $3::varchar, members = $4::text,
+                   status = $5::varchar, slot_number = $6::int, email = $7::varchar, phone = $8::varchar, idempotency_key = $9::varchar, amount_due = COALESCE(amount_due, $10::numeric), updated_at = CURRENT_TIMESTAMP
+               WHERE id = $11::varchar RETURNING *`,
               [data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, assignedAmountDue, existingOrphanId]
             );
           } else {
             dbRes = await regClient.query(
               `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, email, phone, idempotency_key, version, amount_due)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1, $13) RETURNING *`,
+               VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::text, $8::varchar, $9::int, $10::varchar, $11::varchar, $12::varchar, 1, $13::numeric) RETURNING *`,
               [regId, id, authUser.id, data.team_name, data.captain, data.captain_uid || null, membersStr, status, slotNumber, data.email || null, data.phone || null, idempotencyKey, assignedAmountDue]
             );
           }
@@ -12705,12 +12772,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, registration: dbRes.rows[0], requiresPayment: isPaid, amount_to_pay: isPaid ? amountToPay : null }));
       } catch (err) {
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'POST /api/tournaments/:id/register', err, 'register_team');
         const isSchemaError = err.message && err.message.includes('does not exist');
         const message = isSchemaError
-          ? 'Registration service configuration error. Please contact support.'
-          : err.message;
+          ? `Registration service configuration error. Please contact support. (Ref: ${ref})`
+          : `Could not complete registration. Please try again. (Ref: ${ref})`;
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message }));
       }
     });
     return;
@@ -12732,7 +12801,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, tournamentId]);
+        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1::varchar AND tournament_id = $2::varchar', [regId, tournamentId]);
         if (regRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
@@ -12759,7 +12828,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
         const dbRes = await pool.query(
-          `UPDATE tournament_registrations SET status = 'pending', transaction_id = $1, payment_app = $2, screenshot_url = $3 WHERE id = $4 RETURNING *`,
+          `UPDATE tournament_registrations SET status = 'pending', transaction_id = $1::varchar, payment_app = $2::varchar, screenshot_url = $3::text WHERE id = $4::varchar RETURNING *`,
           [bodyData.transaction_id || null, bodyData.payment_app || null, bodyData.screenshot_url || null, regId]
         );
 
@@ -12768,8 +12837,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, registration: dbRes.rows[0] }));
       } catch (err) {
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'POST /api/tournaments/:id/register/:regId/confirm', err, 'confirm_registration');
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not save, please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -12808,7 +12879,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
         }
 
-        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [regId, tournamentId]);
+        const regRes = await pool.query('SELECT * FROM tournament_registrations WHERE id = $1::varchar AND tournament_id = $2::varchar', [regId, tournamentId]);
         if (regRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Registration not found.' }));
@@ -12832,9 +12903,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // Transitions: payment pending -> pending review; rejected -> pending review
         const dbRes = await pool.query(
           `UPDATE tournament_registrations
-           SET status = 'pending', transaction_id = $1, payment_app = $2, screenshot_url = $3,
+           SET status = 'pending', transaction_id = $1::varchar, payment_app = $2::varchar, screenshot_url = $3::text,
                rejection_reason = NULL, rejected_at = NULL, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $4 RETURNING *`,
+           WHERE id = $4::varchar RETURNING *`,
           [bodyData.transaction_id || null, bodyData.payment_app || null, bodyData.screenshot_url, regId]
         );
 
@@ -12842,19 +12913,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (reg.payment_id) {
           await pool.query(
             `UPDATE payment_submissions
-             SET payment_status = 'pending_admin_review', proof_url = $1, utr_number = $2,
-                 payment_app = $3, admin_notes = NULL, reviewed_by = NULL, reviewed_at = NULL, updated_at = CURRENT_TIMESTAMP
-             WHERE id = $4`,
+             SET payment_status = 'pending_admin_review', proof_url = $1::text, utr_number = $2::varchar,
+                 payment_app = $3::varchar, admin_notes = NULL, reviewed_by = NULL, reviewed_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4::varchar`,
             [bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null, reg.payment_id]
           );
         } else {
           const payId = 'PAY-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
           await pool.query(
             `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending_admin_review')`,
+             VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::numeric, $6::text, $7::varchar, $8::varchar, 'pending_admin_review')`,
             [payId, regId, tournamentId, authUser.id, reg.amount_due || 0, bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null]
           );
-          await pool.query('UPDATE tournament_registrations SET payment_id = $1 WHERE id = $2', [payId, regId]);
+          await pool.query('UPDATE tournament_registrations SET payment_id = $1::varchar WHERE id = $2::varchar', [payId, regId]);
         }
 
         await reconcileTournamentSlots(pool, tournamentId);
