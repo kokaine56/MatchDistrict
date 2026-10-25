@@ -15,7 +15,6 @@ const PRIORITY_OPTIONS = [
   { value: 100, label: 'Top priority' },
 ]
 
-// ISO string -> value accepted by <input type="datetime-local"> (local time).
 function isoToLocalInput(iso) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -24,7 +23,6 @@ function isoToLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-// datetime-local value (local time) -> ISO UTC string (or null when blank).
 function localInputToIso(value) {
   if (!value) return null
   const d = new Date(value)
@@ -32,10 +30,6 @@ function localInputToIso(value) {
   return d.toISOString()
 }
 
-/**
- * Admin-only dialog for creating / editing / removing a tournament promotion.
- * Promotion is presentation-only and never mutates the tournament record.
- */
 export default function TournamentPromotionModal({ isOpen, tournament, promotion, onClose, onSaved }) {
   const [placement, setPlacement] = useState(() => promotion?.placement || 'trending_featured')
   const [priority, setPriority] = useState(() => Number(promotion?.priority) || 0)
@@ -128,8 +122,7 @@ export default function TournamentPromotionModal({ isOpen, tournament, promotion
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-          style={{ background: 'rgba(7, 8, 12, 0.85)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
           onClick={onClose}
         >
           <motion.div
@@ -138,48 +131,41 @@ export default function TournamentPromotionModal({ isOpen, tournament, promotion
             exit={{ opacity: 0, scale: 0.96, y: 8 }}
             transition={{ duration: 0.22, ease: 'easeOut' }}
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md overflow-hidden rounded-2xl"
-            style={{
-              background: 'linear-gradient(135deg, #0d0e16 0%, #0a0b12 100%)',
-              border: '1px solid rgba(192,193,255,0.12)',
-              boxShadow: '0 40px 120px rgba(0,0,0,0.95), 0 0 0 1px rgba(192,193,255,0.05)',
-            }}
+            className="relative w-full max-w-md overflow-hidden rounded-2xl bg-surface border border-outline-variant/30 shadow-2xl text-on-background"
           >
             <button
               onClick={onClose}
-              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-lg flex items-center justify-center transition-all"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-xl bg-surface-variant/40 hover:bg-surface-variant border border-outline-variant/20 flex items-center justify-center text-on-surface-variant hover:text-on-background transition-colors"
             >
-              <span className="material-symbols-outlined text-white/50 hover:text-white text-base transition-colors">close</span>
+              <span className="material-symbols-outlined text-base">close</span>
             </button>
 
             {/* Header */}
-            <div className="px-6 pt-6 pb-4 border-b border-white/5">
+            <div className="px-6 pt-6 pb-4 border-b border-outline-variant/20">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-secondary text-lg">local_fire_department</span>
-                <h2 className="text-sm font-extrabold text-white tracking-tight uppercase">Promote Tournament</h2>
+                <span className="material-symbols-outlined text-primary text-lg">local_fire_department</span>
+                <h2 className="text-sm font-extrabold text-on-background tracking-tight uppercase">Promote Tournament</h2>
               </div>
-              <p className="text-[11px] text-white/40 mt-1 truncate">{tournament.title || tournament.id}</p>
-              <p className="text-[10px] text-white/25 mt-0.5">Presentation only — registration, payments, slots and schedule are never affected.</p>
+              <p className="text-[11px] text-on-surface-variant mt-1 truncate font-medium">{tournament.title || tournament.id}</p>
+              <p className="text-[10px] text-on-surface-variant/60 mt-0.5">Presentation only — registration, payments, slots and schedule are untouched.</p>
             </div>
 
             {/* Body */}
-            <div className="px-6 py-5 space-y-5 max-h-[60vh] overflow-y-auto">
+            <div className="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
               {/* Placement */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Section placement</span>
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Section placement</span>
                 <div className="grid grid-cols-1 gap-2">
                   {PLACEMENT_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
                       type="button"
                       onClick={() => setPlacement(opt.value)}
-                      className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold text-left transition-all"
-                      style={{
-                        background: placement === opt.value ? 'rgba(192,193,255,0.12)' : 'rgba(255,255,255,0.03)',
-                        border: placement === opt.value ? '1px solid rgba(192,193,255,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                        color: placement === opt.value ? '#c0c1ff' : 'rgba(255,255,255,0.6)',
-                      }}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-left transition-all border ${
+                        placement === opt.value
+                          ? 'bg-primary/10 border-primary/40 text-primary font-bold'
+                          : 'bg-surface-variant/30 border-outline-variant/20 text-on-surface-variant hover:text-on-background'
+                      }`}
                     >
                       <span className="material-symbols-outlined text-[16px]">{opt.icon}</span>
                       {opt.label}
@@ -190,101 +176,91 @@ export default function TournamentPromotionModal({ isOpen, tournament, promotion
 
               {/* Priority + Display order */}
               <div className="grid grid-cols-2 gap-3">
-                <label className="space-y-2 block">
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Priority</span>
+                <label className="space-y-1.5 block">
+                  <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Priority</span>
                   <select
                     value={priority}
                     onChange={(e) => setPriority(parseInt(e.target.value, 10) || 0)}
-                    className="w-full rounded-xl px-3 py-2.5 text-xs text-white outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-surface border border-outline-variant/30 text-on-background outline-none focus:border-primary"
                   >
                     {PRIORITY_OPTIONS.map((p) => (
-                      <option key={p.value} value={p.value} className="bg-[#0d0e16]">{p.label}</option>
+                      <option key={p.value} value={p.value} className="bg-surface text-on-background">{p.label}</option>
                     ))}
                   </select>
                 </label>
-                <label className="space-y-2 block">
-                  <span className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Order</span>
+                <label className="space-y-1.5 block">
+                  <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Order</span>
                   <input
                     type="number"
                     min={0}
                     value={displayOrder}
                     onChange={(e) => setDisplayOrder(parseInt(e.target.value, 10) || 0)}
-                    className="w-full rounded-xl px-3 py-2.5 text-xs text-white outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-surface border border-outline-variant/30 text-on-background outline-none focus:border-primary"
                   />
                 </label>
               </div>
-              <p className="-mt-3 text-[10px] text-white/25 leading-relaxed">
-                Ordering: highest priority first, then lowest order, then earliest promoted.
-              </p>
 
               {/* Active toggle */}
               <button
                 type="button"
                 onClick={() => setIsActive((v) => !v)}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl border border-outline-variant/20 bg-surface-variant/30 transition-all text-xs font-semibold text-on-background"
               >
-                <span className="text-xs font-bold text-white/70">Active in section</span>
+                <span>Active in section</span>
                 <span
-                  className="relative inline-flex items-center w-9 h-5 rounded-full transition-colors"
-                  style={{ background: isActive ? 'rgba(52,211,153,0.35)' : 'rgba(255,255,255,0.12)' }}
+                  className={`relative inline-flex items-center w-8 h-4.5 rounded-full transition-colors ${
+                    isActive ? 'bg-primary' : 'bg-outline-variant/50'
+                  }`}
                 >
                   <span
-                    className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all"
-                    style={{ left: isActive ? '18px' : '2px' }}
+                    className={`absolute w-3.5 h-3.5 rounded-full bg-white transition-all ${
+                      isActive ? 'left-4' : 'left-0.5'
+                    }`}
                   />
                 </span>
               </button>
 
               {/* Schedule */}
-              <div className="space-y-3">
-                <span className="text-[10px] font-bold text-white/50 uppercase tracking-widest">Schedule (optional)</span>
-                <label className="space-y-1.5 block">
-                  <span className="text-[10px] text-white/35">Starts at</span>
+              <div className="space-y-2.5">
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">Schedule (optional)</span>
+                <label className="space-y-1 block">
+                  <span className="text-[10px] text-on-surface-variant">Starts at</span>
                   <input
                     type="datetime-local"
                     value={startsAt}
                     onChange={(e) => setStartsAt(e.target.value)}
-                    className="w-full rounded-xl px-3 py-2.5 text-xs text-white outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', colorScheme: 'dark' }}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-surface border border-outline-variant/30 text-on-background outline-none focus:border-primary"
                   />
                 </label>
-                <label className="space-y-1.5 block">
-                  <span className="text-[10px] text-white/35">Ends at (blank = no expiry)</span>
+                <label className="space-y-1 block">
+                  <span className="text-[10px] text-on-surface-variant">Ends at (blank = indefinite)</span>
                   <input
                     type="datetime-local"
                     value={endsAt}
                     onChange={(e) => setEndsAt(e.target.value)}
-                    className="w-full rounded-xl px-3 py-2.5 text-xs text-white outline-none"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', colorScheme: 'dark' }}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-surface border border-outline-variant/30 text-on-background outline-none focus:border-primary"
                   />
                 </label>
                 {hasEndBeforeStart && (
-                  <p className="text-[10px] text-rose-400">The end time must be after the start time.</p>
+                  <p className="text-[11px] text-rose-500">The end time must be after the start time.</p>
                 )}
               </div>
 
               {error && (
-                <div
-                  className="text-[11px] rounded-xl px-3 py-2"
-                  style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}
-                >
+                <div className="text-[11px] font-medium rounded-xl px-3 py-2 bg-rose-500/10 border border-rose-500/20 text-rose-500">
                   {error}
                 </div>
               )}
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-4 border-t border-white/5 flex items-center gap-2">
+            <div className="px-6 py-4 border-t border-outline-variant/20 flex items-center gap-2 bg-surface/50">
               {promotion && (
                 <button
                   type="button"
                   disabled={saving}
                   onClick={handleRemove}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-                  style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', color: '#f87171' }}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold text-rose-500 bg-rose-500/10 hover:bg-rose-500 hover:text-white border border-rose-500/20 transition-all disabled:opacity-50"
                 >
                   Remove
                 </button>
@@ -293,8 +269,7 @@ export default function TournamentPromotionModal({ isOpen, tournament, promotion
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2.5 rounded-xl text-xs font-bold transition-all"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.6)' }}
+                className="px-3.5 py-2 rounded-xl text-xs font-semibold text-on-surface-variant hover:text-on-background hover:bg-surface-variant/50 transition-all"
               >
                 Cancel
               </button>
@@ -302,8 +277,7 @@ export default function TournamentPromotionModal({ isOpen, tournament, promotion
                 type="button"
                 disabled={saving || hasEndBeforeStart}
                 onClick={handleSave}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #c0c1ff, #a5b4fc)', color: '#07080C' }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white shadow-sm shadow-primary/20 transition-all disabled:opacity-50"
               >
                 {saving ? 'Saving…' : promotion ? 'Update promotion' : 'Promote'}
               </button>

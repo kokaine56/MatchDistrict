@@ -47,21 +47,20 @@ export const DangerZoneSettings = ({ resetGlobalState }) => {
 
   return (
     <div className="flex flex-col gap-6">
-
       {/* Settings Card */}
-      <div className="p-6 border border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/[0.04] rounded-xl">
+      <div className="p-5 sm:p-6 border border-rose-500/25 bg-rose-500/[0.03] rounded-2xl shadow-sm">
         <div className="flex items-start gap-4">
-          <div className="p-3 bg-red-100 dark:bg-red-500/20 rounded-full text-red-600 dark:text-red-400">
-            <AlertTriangle className="w-6 h-6" />
+          <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 shrink-0">
+            <AlertTriangle className="w-5 h-5" />
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-red-900 dark:text-red-300">Danger Zone: Database Purge</h3>
-            <p className="max-w-2xl mt-1 text-sm text-red-700 dark:text-red-400/70">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm sm:text-base font-bold text-on-background">Danger Zone: Database Purge</h3>
+            <p className="max-w-2xl mt-1 text-xs text-on-surface-variant leading-relaxed">
               This action is irreversible. It will permanently delete all registered users, game rosters, tournament histories, prize pools, and abuse filter settings. The platform will be reset to an absolute factory state.
             </p>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="px-4 py-2 mt-4 text-sm font-bold text-white transition-colors bg-red-600 rounded-lg hover:bg-red-700 shadow-sm"
+              className="px-4 py-2 mt-4 text-xs font-bold text-white transition-all bg-rose-600 hover:bg-rose-500 rounded-xl shadow-sm shadow-rose-600/20 active:scale-95"
             >
               Wipe Platform Data
             </button>
@@ -71,20 +70,22 @@ export const DangerZoneSettings = ({ resetGlobalState }) => {
 
       {/* Strict Confirmation Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="w-full max-w-md p-6 bg-white dark:bg-surface rounded-2xl shadow-xl border border-outline-variant/20">
-
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md p-6 bg-surface border border-outline-variant/30 rounded-2xl shadow-2xl text-on-background animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">Confirm Global Purge</h2>
-              <button onClick={() => { setIsModalOpen(false); setConfirmationText('') }} className="text-slate-400 hover:text-slate-600 dark:hover:text-white/60">
-                <X className="w-5 h-5" />
+              <h2 className="text-base sm:text-lg font-bold text-on-background">Confirm Global Purge</h2>
+              <button
+                onClick={() => { setIsModalOpen(false); setConfirmationText('') }}
+                className="w-8 h-8 rounded-xl bg-surface-variant/40 hover:bg-surface-variant text-on-surface-variant hover:text-on-background flex items-center justify-center transition-colors"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-4 mb-6 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 rounded-lg">
-              <p className="text-sm font-medium text-red-800 dark:text-red-300 text-center">
+            <div className="p-4 mb-5 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+              <p className="text-xs font-medium text-on-surface-variant text-center">
                 To confirm this destructive action, please type exactly:<br />
-                <span className="block mt-2 font-mono text-base font-bold text-red-900 dark:text-red-200 select-none">
+                <span className="block mt-2 font-mono text-sm font-bold text-rose-500 select-none">
                   {CONFIRMATION_PHRASE}
                 </span>
               </p>
@@ -95,7 +96,7 @@ export const DangerZoneSettings = ({ resetGlobalState }) => {
               value={confirmationText}
               onChange={(e) => setConfirmationText(e.target.value)}
               placeholder="Type confirmation phrase..."
-              className="w-full px-4 py-3 mb-6 font-mono text-center border rounded-lg border-slate-300 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+              className="w-full px-4 py-2.5 mb-5 font-mono text-center text-xs border rounded-xl border-outline-variant/30 bg-surface text-on-background focus:outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 transition-all"
               autoComplete="off"
               onPaste={(e) => e.preventDefault()}
             />
@@ -103,23 +104,21 @@ export const DangerZoneSettings = ({ resetGlobalState }) => {
             <button
               onClick={handlePurgeDatabase}
               disabled={!isConfirmValid || isPurging}
-              className={`flex items-center justify-center w-full py-3 text-sm font-bold text-white rounded-lg transition-all ${
+              className={`flex items-center justify-center w-full py-2.5 text-xs font-bold text-white rounded-xl transition-all ${
                 isConfirmValid && !isPurging
-                  ? 'bg-red-600 hover:bg-red-700 shadow-md cursor-pointer'
-                  : 'bg-slate-300 dark:bg-white/10 cursor-not-allowed'
+                  ? 'bg-rose-600 hover:bg-rose-500 shadow-md shadow-rose-600/25 cursor-pointer active:scale-95'
+                  : 'bg-surface-variant/60 text-on-surface-variant/40 border border-outline-variant/20 cursor-not-allowed'
               }`}
             >
               {isPurging ? (
                 'Purging Database...'
               ) : (
-                <><Trash2 className="w-4 h-4 mr-2" /> EXECUTE PURGE</>
+                <><Trash2 className="w-4 h-4 mr-1.5" /> EXECUTE PURGE</>
               )}
             </button>
-
           </div>
         </div>
       )}
-
     </div>
   )
 }

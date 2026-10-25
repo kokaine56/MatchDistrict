@@ -9,7 +9,6 @@ export default function TournamentPromotionControl({ promotion, onManage }) {
 
   const label = promoted ? (active ? 'Promoted' : 'Paused') : 'Promote'
   const icon = promoted ? (active ? 'local_fire_department' : 'pause_circle') : 'add_circle'
-  const color = promoted ? (active ? '#fbbf24' : 'rgba(255,255,255,0.5)') : '#c0c1ff'
 
   return (
     <button
@@ -20,19 +19,17 @@ export default function TournamentPromotionControl({ promotion, onManage }) {
         onManage && onManage()
       }}
       title={promoted ? 'Manage promotion' : 'Promote this tournament'}
-      className="absolute top-0 left-0 z-50 flex items-center gap-1 px-1.5 py-1 rounded-lg text-[8px] font-extrabold uppercase tracking-wider transition-all hover:scale-105"
-      style={{
-        background: 'rgba(10,11,18,0.92)',
-        border: `1px solid ${promoted ? 'rgba(251,191,36,0.4)' : 'rgba(192,193,255,0.4)'}`,
-        color,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
-      }}
+      className={`absolute top-2 left-2 z-50 flex items-center gap-1 px-2 py-1 rounded-lg text-[9px] font-extrabold uppercase tracking-wider backdrop-blur-md transition-all hover:scale-105 shadow-md ${
+        promoted
+          ? active
+            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-amber-500/10'
+            : 'bg-surface/80 text-on-surface-variant border border-outline-variant/40'
+          : 'bg-primary/20 text-primary border border-primary/40 shadow-primary/10 hover:bg-primary hover:text-white'
+      }`}
     >
-      <span className="material-symbols-outlined leading-none" style={{ fontSize: '11px' }}>{icon}</span>
+      <span className="material-symbols-outlined leading-none" style={{ fontSize: '12px' }}>{icon}</span>
       {label}
-      <span className="material-symbols-outlined leading-none opacity-60" style={{ fontSize: '10px' }}>settings</span>
+      <span className="material-symbols-outlined leading-none opacity-60" style={{ fontSize: '11px' }}>settings</span>
     </button>
   )
 }
