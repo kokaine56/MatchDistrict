@@ -31,9 +31,39 @@
   animation: marquee-bounce 8s ease-in-out infinite;
 }
 
+:root {
+  --bottom-nav-h: 64px;
+  --action-bar-h: 68px;
+}
+
 /* Mobile-only primary navigation. The lg desktop header remains untouched. */
 .mobile-bottom-nav {
   display: none;
+}
+
+/* Shared sticky bottom action bar on phone widths (<640px) */
+.sticky-bottom-action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  box-sizing: border-box;
+}
+
+/* Page content bottom padding ensuring fields are never occluded by action bar + footer nav */
+.registration-content-padding {
+  padding-bottom: calc(var(--bottom-nav-h, 64px) + var(--action-bar-h, 68px) + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 640px) {
+  .sticky-bottom-action-bar {
+    display: none;
+  }
+
+  .registration-content-padding {
+    padding-bottom: 3rem;
+  }
 }
 
 @media (max-width: 1023px) {
@@ -49,7 +79,7 @@
     box-sizing: border-box;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    height: calc(64px + env(safe-area-inset-bottom, 0px));
+    height: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
     padding: 4px max(8px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(8px, env(safe-area-inset-left, 0px));
     border-top: 1px solid rgb(var(--outline-variant) / 0.7);
     background: rgb(var(--surface-container) / 0.96);

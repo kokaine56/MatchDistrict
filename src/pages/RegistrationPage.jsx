@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import LoadingScreen from '../components/LoadingScreen.jsx'
+import StickyBottomBar from '../components/StickyBottomBar.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
@@ -95,7 +96,9 @@ const FieldError = ({ id, message }) =>
 
 const rosterOf = (value) => {
   if (Array.isArray(value)) {
-    return value.filter(s => s && (s.ign || s.uid)).map(s => ({ ign: s.ign || '', uid: s.uid || '' }))
+    return value
+      .filter(s => s && (typeof s === 'string' ? s.trim() : (s.ign || s.uid)))
+      .map(s => (typeof s === 'string' ? { ign: s.trim(), uid: '' } : { ign: s.ign || '', uid: s.uid || '' }))
   }
   if (typeof value === 'string' && value.trim()) {
     try {
@@ -106,6 +109,18 @@ const rosterOf = (value) => {
     }
   }
   return []
+}
+
+const getPresetRoster = (preset) => {
+  if (!preset) return []
+  const pList = rosterOf(preset.players)
+  if (pList.length > 0) return pList
+  return rosterOf(preset.members)
+}
+
+const getPresetSubs = (preset) => {
+  if (!preset) return []
+  return rosterOf(preset.substitutes)
 }
 
 function RegistrationPage({ onNavigate }) {
@@ -129,6 +144,9 @@ function RegistrationPage({ onNavigate }) {
     substitutes: [{ ign: '', uid: '' }, { ign: '', uid: '' }],
   })
   const [savedPresets, setSavedPresets] = useState([])
+  const [loadingPresets, setLoadingPresets] = useState(false)
+  const [presetsError, setPresetsError] = useState('')
+  const [selectedPresetId, setSelectedPresetId] = useState('')
   const [presetRosterWarning, setPresetRosterWarning] = useState('')
   const [errors, setErrors] = useState({})
   const [touched, setTouched] = useState({})
@@ -177,47 +195,88 @@ function RegistrationPage({ onNavigate }) {
   }, [currentUser, tourney])
 
   // Fetch the user's saved squad presets (Teams & Squads feature) for auto-fill
-  useEffect(() => {
+  const fetchPresets = useCallback(() => {
     if (!currentUser) return
-    let cancelled = false
-    getAuthToken().then(token => {
-      if (!token) return
-      return fetch('/api/team-presets', { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => res.json())
-        .then(data => {
-          if (!cancelled && data.success && data.presets) setSavedPresets(data.presets)
+    setLoadingPresets(true)
+    setPresetsError('')
+    getAuthToken()
+      .then(token => {
+        const headers = {}
+        if (token) headers['Authorization'] = `Bearer ${token}`
+        return fetch('/api/team-presets', {
+          credentials: 'include',
+          headers,
         })
-        .catch(() => {})
-    })
-    return () => { cancelled = true }
+      })
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`Failed to load presets (${res.status})`)
+        }
+        return res.json()
+      })
+      .then(data => {
+        if (data.success && Array.isArray(data.presets)) {
+          setSavedPresets(data.presets)
+          setPresetsError('')
+        } else {
+          throw new Error(data.message || 'Failed to load presets')
+        }
+      })
+      .catch(err => {
+        setPresetsError(err?.message || 'Failed to load saved squad presets.')
+      })
+      .finally(() => {
+        setLoadingPresets(false)
+      })
   }, [currentUser])
 
-  const PRESET_ROSTER_SIZE = 3
+  useEffect(() => {
+    fetchPresets()
+  }, [fetchPresets])
 
-  const matchingPresets = useMemo(() => {
-    if (!tourney?.game) return []
-    const game = normalizeGameName(tourney.game).toLowerCase()
-    if (!game) return []
-    return (savedPresets || [])
-      .filter(p => normalizeGameName(p.game).toLowerCase() === game)
-      .map(p => ({
+  const matchType = String(tourney?.match_type || tourney?.matchType || 'squad').toLowerCase()
+  const matchLabel = matchType === 'solo' ? 'Solo' : matchType === 'duo' ? 'Duo' : 'Squad'
+  const requiredPlayers = matchType === 'solo' ? 0 : matchType === 'duo' ? 1 : 3
+
+  const presetsWithStatus = useMemo(() => {
+    if (!savedPresets || savedPresets.length === 0) return []
+    const tourneyGame = normalizeGameName(tourney?.game).toLowerCase()
+
+    return savedPresets.map(p => {
+      const pRoster = getPresetRoster(p)
+      const pGame = normalizeGameName(p.game || 'BGMI').toLowerCase()
+      const isGameMatch = !tourneyGame || !pGame || tourneyGame === pGame
+      const hasEnoughPlayers = pRoster.length >= requiredPlayers
+
+      let disabledReason = ''
+      if (!isGameMatch) {
+        disabledReason = `saved for ${p.game || 'other game'}`
+      } else if (!hasEnoughPlayers) {
+        disabledReason = `needs ${requiredPlayers} player${requiredPlayers === 1 ? '' : 's'} for ${matchLabel} (has ${pRoster.length})`
+      }
+
+      return {
         ...p,
-        rosterCount: rosterOf(p.players).length,
-        rosterComplete: rosterOf(p.players).length >= PRESET_ROSTER_SIZE,
-      }))
-      .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0))
-  }, [savedPresets, tourney])
+        rosterCount: pRoster.length,
+        selectable: isGameMatch && hasEnoughPlayers,
+        disabledReason,
+      }
+    }).sort((a, b) => {
+      if (a.selectable !== b.selectable) return a.selectable ? -1 : 1
+      return (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0)
+    })
+  }, [savedPresets, tourney, requiredPlayers, matchLabel])
 
   const applyPreset = (preset) => {
-    const playersRaw = rosterOf(preset.players)
-    const subsRaw = rosterOf(preset.substitutes)
-    if (playersRaw.length < PRESET_ROSTER_SIZE) {
-      setPresetRosterWarning('Not enough players in this squad for this tournament.')
+    const playersRaw = getPresetRoster(preset)
+    const subsRaw = getPresetSubs(preset)
+    if (playersRaw.length < requiredPlayers) {
+      setPresetRosterWarning(`Not enough players in this squad for this ${matchLabel} tournament.`)
       return
     }
     setPresetRosterWarning('')
     const pad = (list, n) => {
-      const out = list.slice(0, n).map(s => ({ ign: s.ign, uid: s.uid }))
+      const out = (list || []).slice(0, n).map(s => ({ ign: s?.ign || '', uid: s?.uid || '' }))
       while (out.length < n) out.push({ ign: '', uid: '' })
       return out
     }

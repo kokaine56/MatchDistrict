@@ -4659,12 +4659,18 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
-      const dbRes = await pool.query('SELECT * FROM team_presets WHERE user_id = $1 ORDER BY is_default DESC, created_at DESC', [authUser.id]);
+      const userId = authUser.id || authUser.uid;
+      const dbRes = await pool.query(
+        'SELECT * FROM team_presets WHERE user_id = $1::varchar ORDER BY is_default DESC, created_at DESC',
+        [userId]
+      );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, presets: dbRes.rows }));
     } catch (err) {
+      const ref = makeErrorRef();
+      logErrorWithRef(ref, 'GET /api/team-presets', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Something went wrong. Please try again. (Ref: ${ref})` }));
     }
     return;
   }
@@ -4681,6 +4687,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
+        const userId = authUser.id || authUser.uid;
         const data = JSON.parse(body);
         const parsed = validatePresetPayload(data);
         if (parsed.error) {
@@ -4691,7 +4698,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
 
         // Limit check: max 4 presets
-        const countRes = await pool.query('SELECT COUNT(*) FROM team_presets WHERE user_id = $1', [authUser.id]);
+        const countRes = await pool.query('SELECT COUNT(*) FROM team_presets WHERE user_id = $1::varchar', [userId]);
         const currentCount = parseInt(countRes.rows[0].count, 10);
         if (currentCount >= 4) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4701,8 +4708,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Duplicate check: team_name (case-insensitive, per user + game)
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1 AND game = $2 AND LOWER(team_name) = LOWER($3)',
-          [authUser.id, game, teamName]
+          'SELECT * FROM team_presets WHERE user_id = $1::varchar AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar)',
+          [userId, game, teamName]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4712,7 +4719,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Only one default preset per game
         if (isDefault) {
-          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1 AND game = $2', [authUser.id, game]);
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1::varchar AND game = $2::varchar', [userId, game]);
         }
 
         const presetId = 'PRST-' + Date.now().toString().slice(-6);
@@ -4722,14 +4729,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         const dbRes = await pool.query(
           `INSERT INTO team_presets (id, user_id, preset_name, game, team_name, captain, captain_uid, members, players, substitutes, is_default)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-          [presetId, authUser.id, presetName, game, teamName, captain, captainUid || null, membersStr, playersStr, subsStr, isDefault]
+           VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::varchar, $8::text, $9::text, $10::text, $11::boolean) RETURNING *`,
+          [presetId, userId, presetName, game, teamName, captain, captainUid || null, membersStr, playersStr, subsStr, isDefault]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, preset: dbRes.rows[0] }));
       } catch (err) {
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'POST /api/team-presets', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Something went wrong. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -4745,23 +4754,26 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
-      const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1', [id]);
+      const userId = authUser.id || authUser.uid;
+      const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1::varchar', [id]);
       if (existRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Preset not found.' }));
         return;
       }
-      if (existRes.rows[0].user_id !== authUser.id) {
+      if (existRes.rows[0].user_id !== userId) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to delete this preset.' }));
         return;
       }
-      await pool.query('DELETE FROM team_presets WHERE id = $1', [id]);
+      await pool.query('DELETE FROM team_presets WHERE id = $1::varchar', [id]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Preset deleted successfully.' }));
     } catch (err) {
+      const ref = makeErrorRef();
+      logErrorWithRef(ref, 'DELETE /api/team-presets/:id', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Something went wrong. Please try again. (Ref: ${ref})` }));
     }
     return;
   }
@@ -4779,6 +4791,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
+        const userId = authUser.id || authUser.uid;
         const data = JSON.parse(body);
         const parsed = validatePresetPayload(data);
         if (parsed.error) {
@@ -4788,13 +4801,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
         const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
 
-        const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1', [id]);
+        const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1::varchar', [id]);
         if (existRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Preset not found.' }));
           return;
         }
-        if (existRes.rows[0].user_id !== authUser.id) {
+        if (existRes.rows[0].user_id !== userId) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this preset.' }));
           return;
@@ -4802,8 +4815,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Duplicate check: team_name (case-insensitive, per user + game) excluding current preset
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1 AND game = $2 AND LOWER(team_name) = LOWER($3) AND id <> $4',
-          [authUser.id, game, teamName, id]
+          'SELECT * FROM team_presets WHERE user_id = $1::varchar AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar) AND id <> $4::varchar',
+          [userId, game, teamName, id]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4813,7 +4826,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Only one default preset per game
         if (isDefault) {
-          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1 AND game = $2', [authUser.id, game]);
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1::varchar AND game = $2::varchar', [userId, game]);
         }
 
         const membersStr = JSON.stringify(players.map(p => p.ign).filter(Boolean));
@@ -4822,15 +4835,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         const dbRes = await pool.query(
           `UPDATE team_presets 
-           SET preset_name = $1, game = $2, team_name = $3, captain = $4, captain_uid = $5, members = $6, players = $7, substitutes = $8, is_default = $9, updated_at = CURRENT_TIMESTAMP
-           WHERE id = $10 RETURNING *`,
+           SET preset_name = $1::varchar, game = $2::varchar, team_name = $3::varchar, captain = $4::varchar, captain_uid = $5::varchar, members = $6::text, players = $7::text, substitutes = $8::text, is_default = $9::boolean, updated_at = CURRENT_TIMESTAMP
+           WHERE id = $10::varchar RETURNING *`,
           [presetName, game, teamName, captain, captainUid || null, membersStr, playersStr, subsStr, isDefault, id]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, preset: dbRes.rows[0] }));
       } catch (err) {
+        const ref = makeErrorRef();
+        logErrorWithRef(ref, 'PUT /api/team-presets/:id', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Something went wrong. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
