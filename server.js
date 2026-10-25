@@ -252,6 +252,12 @@ function makeErrorRef() {
   return crypto.randomBytes(4).toString('hex').toUpperCase();
 }
 
+function logErrorWithRef(ref, routeName, err) {
+  const code = err?.code || 'N/A';
+  const detail = err?.constraint ? ` constraint=${err.constraint}` : (err?.column ? ` column=${err.column}` : '');
+  console.error(`[ERROR Ref:${ref}] route="${routeName}" pgCode=${code}${detail} message="${err?.message || 'Unknown error'}" stack=${err?.stack || ''}`);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Shared Session Cookie Engine
 // Ensures set and clear operations use identical attributes so cookies never drift.
@@ -4259,7 +4265,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }));
       } catch (err) {
         const ref = makeErrorRef();
-        console.error(`[CHANGE PASSWORD ERROR Ref:${ref}] ${err.message}`, err.stack);
+        logErrorWithRef(ref, 'POST /api/auth/change-password', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
@@ -4334,7 +4340,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: true, message: 'Password reset link sent.' }));
       } catch (err) {
         const ref = makeErrorRef();
-        console.error(`[FORGOT PASSWORD ERROR Ref:${ref}] ${err.message}`, err.stack);
+        logErrorWithRef(ref, 'POST /api/auth/forgot-password-link', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
@@ -5225,7 +5231,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: true, payout_profile: result.rows[0] }));
       } catch (err) {
         const ref = makeErrorRef();
-        console.error(`⚠️ [PAYOUT PROFILE Ref:${ref}] Error:`, err.message, err.stack);
+        logErrorWithRef(ref, 'POST /api/payments/payout-profile', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
@@ -5333,8 +5339,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         payments: transactions.filter(t => t.kind === 'credit')
       }));
     } catch (err) {
-      const ref = `ERR_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-      console.error(`[API ERROR] GET /api/users/me/payment-history (Ref: ${ref}):`, err);
+      const ref = makeErrorRef();
+      logErrorWithRef(ref, 'GET /api/users/me/payment-history', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: false,
@@ -5481,7 +5487,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.end(JSON.stringify({ success: true, alerts: dbRes.rows, notifications: dbRes.rows }));
     } catch (err) {
       const ref = makeErrorRef();
-      console.error(`⚠️ [ALERTS Ref:${ref}] Error:`, err.message, err.stack);
+      logErrorWithRef(ref, 'GET /api/alerts', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not load notifications. Please try again. (Ref: ${ref})` }));
     }
@@ -5510,7 +5516,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.end(JSON.stringify({ success: true, message: 'All alerts marked as read.' }));
     } catch (err) {
       const ref = makeErrorRef();
-      console.error(`⚠️ [ALERTS READ Ref:${ref}] Error:`, err.message, err.stack);
+      logErrorWithRef(ref, 'POST /api/alerts/read', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not mark notifications as read. (Ref: ${ref})` }));
     }
@@ -5686,8 +5692,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        const authUserId = authUser.id || authUser.uid;
         // Fetch authenticated user's database record to verify permissions
-        const authUserRes = await pool.query('SELECT id, uid, role FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+        const authUserRes = await pool.query('SELECT id, uid, role FROM users WHERE id = $1::text OR uid = $1::text', [String(authUserId)]);
         if (authUserRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'Authenticated user profile not found.' }));
@@ -5705,14 +5712,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         const updateData = JSON.parse(body);
 
-        // Normal users cannot modify email or email_last_changed; any such fields are ignored below.
-        // Admins retain the ability to update a user's email directly.
+        // Dynamic SET builder: setClauses and values are built from the exact same list so they never drift apart.
+        const setClauses = [];
+        const values = [];
 
-        // WhatsApp / mobile number validation (must be 10-digit Indian mobile starting with 6-9)
-        let normalizedPhone = undefined;
+        function addField(columnSql, val, castType) {
+          values.push(val);
+          setClauses.push(`${columnSql} = $${values.length}::${castType}`);
+        }
+
+        // 1. Phone / WhatsApp (must be 10-digit Indian mobile starting with 6-9)
         if (updateData.phone !== undefined) {
           if (updateData.phone === '' || updateData.phone === null) {
-            normalizedPhone = null;
+            addField('phone', null, 'text');
           } else {
             const digits = normalizeIndianMobile(updateData.phone);
             if (!digits) {
@@ -5724,81 +5736,138 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               }));
               return;
             }
-            normalizedPhone = `+91 ${digits}`;
+            addField('phone', `+91 ${digits}`, 'text');
           }
         }
 
-        const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
-        const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
+        // 2. Name
+        if (updateData.name !== undefined) {
+          addField('name', updateData.name != null ? String(updateData.name).trim() : null, 'text');
+        }
 
-        let emailLastChangedVal = undefined;
+        // 3. Email & email_last_changed (Admin only; non-admin requests ignore these fields)
         if (updateData.email !== undefined && hasRole(authUserRecord, ROLES.ADMIN)) {
-          const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1 OR uid = $1', [id]);
-          if (userCheckRes.rows[0] && userCheckRes.rows[0].email.trim().toLowerCase() !== updateData.email.trim().toLowerCase()) {
-            emailLastChangedVal = new Date();
+          const newEmail = updateData.email != null ? String(updateData.email).trim().toLowerCase() : null;
+          addField('email', newEmail, 'text');
+
+          const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1::text OR uid = $1::text', [String(targetId)]);
+          if (userCheckRes.rows[0] && newEmail && userCheckRes.rows[0].email && userCheckRes.rows[0].email.trim().toLowerCase() !== newEmail) {
+            addField('"email_last_changed"', new Date(), 'timestamptz');
           }
         }
 
-        const dbRes = await pool.query(
-          `UPDATE users SET 
-            name = COALESCE($1::text, name),
-            email = COALESCE($2::text, email),
-            phone = CASE WHEN $3::boolean THEN $4::text ELSE phone END,
-            avatar = COALESCE($5::text, avatar),
-            experience = COALESCE($6::text, experience),
-            "socialLinks" = COALESCE($7::jsonb, "socialLinks"),
-            tier = COALESCE($8::text, tier),
-            status = COALESCE($9::text, status),
-            "riotId" = COALESCE($10::text, "riotId"),
-            "bgmiId" = COALESCE($11::text, "bgmiId"),
-            "steamId" = COALESCE($12::text, "steamId"),
-            "discordTag" = COALESCE($13::text, "discordTag"),
-            banner = COALESCE($14::text, banner),
-            "email_last_changed" = COALESCE($15::timestamptz, "email_last_changed"),
-            role = COALESCE($16::varchar, role),
-            roles = COALESCE($17::text[], roles),
-            "orgHandle" = COALESCE($18::text, "orgHandle")
-           WHERE (id = $19::text OR uid = $19::text) RETURNING *`,
-          [
-            updateData.name != null ? String(updateData.name) : null,
-            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.email) ? String(updateData.email) : null,
-            normalizedPhone !== undefined,
-            normalizedPhone !== undefined ? normalizedPhone : null,
-            avatarUrl || null,
-            (updateData.experience !== undefined ? updateData.experience : updateData.bio) || null,
-            updateData.socialLinks ? JSON.stringify(updateData.socialLinks) : null,
-            updateData.tier || null,
-            updateData.status || null,
-            updateData.riotId !== undefined ? updateData.riotId : null,
-            updateData.bgmiId !== undefined ? updateData.bgmiId : null,
-            updateData.steamId !== undefined ? updateData.steamId : null,
-            updateData.discordTag !== undefined ? updateData.discordTag : null,
-            bannerUrl || null,
-            emailLastChangedVal || null,
-            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? updateData.role : null),
-            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? (
-              updateData.role === 'player' || updateData.role === 'user' ? ['user'] :
-              updateData.role === 'organiser' ? ['user', 'organiser'] :
-              updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
-              updateData.role === 'admin' ? ['user', 'admin'] : ['user']
-            ) : null),
-            updateData.orgHandle || null,
-            String(targetId)
-          ]
-        );
-        if (dbRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile to update not found.' }));
-          return;
+        // 4. Avatar
+        if (updateData.avatar !== undefined) {
+          const avatarUrl = sanitizeImageUrlForDb(updateData.avatar);
+          addField('avatar', avatarUrl || null, 'text');
         }
-        console.log(`\n📦 [MATCH DISTRICT DB] User "${id}" updated in Supabase PostgreSQL.\n`);
-        const updatedUser = publicUserRow(dbRes.rows[0]);
+
+        // 5. Banner
+        if (updateData.banner !== undefined) {
+          const bannerUrl = sanitizeImageUrlForDb(updateData.banner);
+          addField('banner', bannerUrl || null, 'text');
+        }
+
+        // 6. Experience / Bio
+        if (updateData.experience !== undefined || updateData.bio !== undefined) {
+          const expVal = updateData.experience !== undefined ? updateData.experience : updateData.bio;
+          addField('experience', expVal != null ? String(expVal) : null, 'text');
+        }
+
+        // 7. Social Links (stored as TEXT in users table)
+        if (updateData.socialLinks !== undefined) {
+          let slVal = null;
+          if (updateData.socialLinks != null) {
+            slVal = typeof updateData.socialLinks === 'string'
+              ? updateData.socialLinks
+              : JSON.stringify(updateData.socialLinks);
+          }
+          addField('"socialLinks"', slVal, 'text');
+        }
+
+        // 8. Riot ID
+        if (updateData.riotId !== undefined) {
+          addField('"riotId"', updateData.riotId != null ? String(updateData.riotId) : null, 'text');
+        }
+
+        // 9. BGMI ID
+        if (updateData.bgmiId !== undefined) {
+          addField('"bgmiId"', updateData.bgmiId != null ? String(updateData.bgmiId) : null, 'text');
+        }
+
+        // 10. Steam ID
+        if (updateData.steamId !== undefined) {
+          addField('"steamId"', updateData.steamId != null ? String(updateData.steamId) : null, 'text');
+        }
+
+        // 11. Discord Tag
+        if (updateData.discordTag !== undefined) {
+          addField('"discordTag"', updateData.discordTag != null ? String(updateData.discordTag) : null, 'text');
+        }
+
+        // 12. Org Handle
+        if (updateData.orgHandle !== undefined) {
+          addField('"orgHandle"', updateData.orgHandle != null ? String(updateData.orgHandle) : null, 'text');
+        }
+
+        // 13. Tier (Admin only)
+        if (updateData.tier !== undefined && hasRole(authUserRecord, ROLES.ADMIN)) {
+          addField('tier', updateData.tier != null ? String(updateData.tier) : null, 'text');
+        }
+
+        // 14. Status (Admin only)
+        if (updateData.status !== undefined && hasRole(authUserRecord, ROLES.ADMIN)) {
+          addField('status', updateData.status != null ? String(updateData.status) : null, 'text');
+        }
+
+        // 15. Role & Roles (Admin only)
+        if (hasRole(authUserRecord, ROLES.ADMIN)) {
+          if (updateData.role !== undefined) {
+            const roleVal = updateData.role != null ? String(updateData.role) : null;
+            addField('role', roleVal, 'varchar');
+            const rolesArr = roleVal === 'player' || roleVal === 'user' ? ['user'] :
+              roleVal === 'organiser' ? ['user', 'organiser'] :
+              roleVal === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
+              roleVal === 'admin' ? ['user', 'admin'] : ['user'];
+            addField('roles', rolesArr, 'text[]');
+          } else if (updateData.roles !== undefined) {
+            addField('roles', Array.isArray(updateData.roles) ? updateData.roles : null, 'text[]');
+          }
+        }
+
+        let updatedRow;
+        if (setClauses.length === 0) {
+          const currentRes = await pool.query(
+            'SELECT * FROM users WHERE id = $1::text OR uid = $1::text',
+            [String(targetId)]
+          );
+          if (currentRes.rows.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile not found.' }));
+            return;
+          }
+          updatedRow = currentRes.rows[0];
+        } else {
+          values.push(String(targetId));
+          const targetParamIndex = values.length;
+          const queryText = `UPDATE users SET ${setClauses.join(', ')} WHERE (id = $${targetParamIndex}::text OR uid = $${targetParamIndex}::text) RETURNING *`;
+          const dbRes = await pool.query(queryText, values);
+          if (dbRes.rows.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User profile to update not found.' }));
+            return;
+          }
+          console.log(`\n📦 [MATCH DISTRICT DB] User "${targetId}" updated in Supabase PostgreSQL.\n`);
+          updatedRow = dbRes.rows[0];
+        }
+
+        const updatedUser = publicUserRow(updatedRow);
         await attachResolvedAvatars(pool, [updatedUser]);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, user: updatedUser }));
       } catch (err) {
         const ref = makeErrorRef();
-        console.error(`⚠️ [MATCH DISTRICT DB Ref:${ref}] Supabase update user failed:`, err.message, err.stack);
+        logErrorWithRef(ref, 'PUT /api/users/:id', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
