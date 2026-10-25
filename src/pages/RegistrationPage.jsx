@@ -223,7 +223,7 @@ function RegistrationPage({ onNavigate }) {
         }
       })
       .catch(err => {
-        setPresetsError(err?.message || 'Failed to load saved squad presets.')
+        setPresetsError('Could not load saved squads. Please try again.')
       })
       .finally(() => {
         setLoadingPresets(false)
@@ -679,7 +679,7 @@ function RegistrationPage({ onNavigate }) {
 
     return (
       <div className="min-h-screen bg-[#07080C] text-white relative">
-        <div className="max-w-2xl mx-auto px-4 py-8 pb-32">
+        <div className="max-w-2xl mx-auto px-4 py-8 registration-content-padding">
           {/* Header */}
           <div className="flex items-center gap-3 mb-6">
             <button onClick={() => setStep('form')} className="p-2 -ml-2 hover:bg-white/5 rounded-xl transition-colors">
@@ -948,15 +948,7 @@ function RegistrationPage({ onNavigate }) {
         </div>
 
         {/* Mobile Sticky Bar */}
-        <div
-          className="fixed bottom-0 left-0 right-0 sm:hidden z-30 px-4 pt-3 flex items-center gap-3 rounded-t-2xl border-t border-white/60 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]"
-          style={{
-            background: 'rgba(255, 255, 255, 0.84)',
-            backdropFilter: 'blur(20px)',
-            WebkitBackdropFilter: 'blur(20px)',
-            paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
-          }}
-        >
+        <StickyBottomBar>
           <button
             onClick={() => setStep('form')}
             className="flex-1 bg-black/5 hover:bg-black/10 border border-black/10 text-slate-800 font-semibold py-2.5 rounded-xl transition-colors text-sm"
@@ -982,7 +974,7 @@ function RegistrationPage({ onNavigate }) {
               <>Submit</>
             )}
           </button>
-        </div>
+        </StickyBottomBar>
 
         {/* Confirmation Modal */}
         {showConfirmModal && (
@@ -1106,7 +1098,7 @@ function RegistrationPage({ onNavigate }) {
       transition={{ duration: 0.22, ease: 'easeOut' }}
       className="min-h-screen bg-[#07080C] text-white relative"
     >
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-28">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 registration-content-padding">
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <button onClick={() => navigate(-1)} className="p-2 -ml-2 hover:bg-white/5 rounded-xl transition-colors shrink-0">
@@ -1166,7 +1158,18 @@ function RegistrationPage({ onNavigate }) {
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Team Information</h2>
 
-              {matchingPresets.length > 0 && (
+              {loadingPresets ? (
+                <p className="text-xs text-white/50">Loading saved squads…</p>
+              ) : presetsError ? (
+                <div className="flex items-center gap-3 text-xs text-amber-300" role="status">
+                  <span>{presetsError}</span>
+                  <button type="button" onClick={fetchPresets} className="underline underline-offset-2 font-semibold">Retry</button>
+                </div>
+              ) : savedPresets.length === 0 ? (
+                <p className="text-xs text-white/50">
+                  No saved squads yet. <Link to="/profile?tab=teams" className="text-primary underline underline-offset-2">Create one in Teams &amp; Squads</Link>.
+                </p>
+              ) : (
                 <>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-primary/10 border border-primary/30 rounded-xl p-3.5">
                   <div className="flex items-center gap-2 min-w-0">
@@ -1174,34 +1177,32 @@ function RegistrationPage({ onNavigate }) {
                     <span className="text-[10px] font-bold text-white/80 uppercase tracking-wider">Use a saved squad</span>
                   </div>
                   <select
-                    value=""
+                    value={selectedPresetId}
                     onChange={e => {
-                      const preset = matchingPresets.find(p => p.id === e.target.value)
-                      if (preset) applyPreset(preset)
+                      const preset = presetsWithStatus.find(p => p.id === e.target.value)
+                      if (preset?.selectable) {
+                        setSelectedPresetId(preset.id)
+                        applyPreset(preset)
+                      }
                     }}
                     className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
                   >
                     <option value="" disabled>Select a squad to auto-fill…</option>
-                    {matchingPresets.map(p => (
-                      <option key={p.id} value={p.id} disabled={!p.rosterComplete}>
+                    {presetsWithStatus.map(p => (
+                      <option key={p.id} value={p.id} disabled={!p.selectable}>
                         {p.preset_name || p.team_name}{p.is_default ? ' (default)' : ''}
-                        {!p.rosterComplete ? ' (not enough players)' : ''}
+                        {p.disabledReason ? ` (${p.disabledReason})` : ''}
                       </option>
                     ))}
                   </select>
                 </div>
-                {matchingPresets.some(p => !p.rosterComplete) && !presetRosterWarning && (
-                  <p className="text-[10px] text-amber-400/90">
-                    Some saved squads have too few players for this tournament and are disabled.
-                  </p>
-                )}
                 {presetRosterWarning && (
                   <p className="text-[10px] text-amber-400/90">
                     {presetRosterWarning} Add more players, or enter the squad manually.
                   </p>
                 )}
                 </>
-              )}
+      )}
 
               <div>
                 <label htmlFor="reg-teamName" className="block text-xs font-semibold text-white/60 mb-1.5">Team Name *</label>
@@ -1391,15 +1392,7 @@ function RegistrationPage({ onNavigate }) {
       </div>
 
       {/* Mobile Sticky Bar — clean frosted-glass treatment */}
-      <div
-        className="fixed bottom-0 left-0 right-0 sm:hidden z-30 px-4 pt-3 flex items-center gap-3 rounded-t-2xl border-t border-white/60 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]"
-        style={{
-          background: 'rgba(255, 255, 255, 0.84)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
-        }}
-      >
+      <StickyBottomBar>
         <button
           onClick={() => navigate(-1)}
           className="flex-1 bg-black/5 hover:bg-black/10 border border-black/10 text-slate-800 font-semibold py-2.5 rounded-xl transition-colors text-sm"
@@ -1418,7 +1411,7 @@ function RegistrationPage({ onNavigate }) {
             <>{isPaid ? 'Proceed to Payment' : 'Register Team'}</>
           )}
         </button>
-      </div>
+      </StickyBottomBar>
     </motion.div>
   )
 }
