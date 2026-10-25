@@ -27,7 +27,6 @@ import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 import LoginMethodsCard from '../components/LoginMethodsCard.jsx'
 import Avatar from '../components/Avatar.jsx'
-import EmailChangeModal from '../components/EmailChangeModal.jsx'
 import ProfileEditFieldModal from '../components/ProfileEditFieldModal.jsx'
 import PillTabs from '../components/PillTabs.jsx'
 import BottomSheetModal from '../components/BottomSheetModal.jsx'
@@ -410,7 +409,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   }, [searchParams, activeTab, setSearchParams]);
 
   const [copiedDistrictId, setCopiedDistrictId] = useState(false)
-  const [isChangingEmail, setIsChangingEmail] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false)
   const [showToast, setShowToast] = useState(false)
@@ -418,7 +416,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [profileMode, setProfileMode] = useState('player') // 'player' | 'organiser'
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [isEditingOrg, setIsEditingOrg] = useState(false)
-  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
   const [fieldModalState, setFieldModalState] = useState({ open: false, type: '', initial: '' })
   const [upiId, setUpiId] = useState('')
 
@@ -472,12 +469,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
   const [orgNameAbuse, setOrgNameAbuse] = useState(false)
   const [orgHandleAbuse, setOrgHandleAbuse] = useState(false)
   const [orgBioAbuse, setOrgBioAbuse] = useState(false)
-  // OTP Verification for Email changes (Settings tab)
-  const [settingsEmail, setSettingsEmail] = useState('')
-  const [emailOtpCode, setEmailOtpCode] = useState('')
-  const [emailOtpSent, setEmailOtpSent] = useState(false)
-  const [emailOtpCountdown, setEmailOtpCountdown] = useState(0)
-  const [isEmailSendingOtp, setIsEmailSendingOtp] = useState(false)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -509,17 +500,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
   };
 
-  useEffect(() => {
-    let interval = null;
-    if (emailOtpCountdown > 0) {
-      interval = setInterval(() => {
-        setEmailOtpCountdown(prev => prev - 1);
-      }, 1000);
-    } else {
-      clearInterval(interval);
-    }
-    return () => clearInterval(interval);
-  }, [emailOtpCountdown]);
+
 
 
 
@@ -868,70 +849,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }, cropState.file.type || 'image/jpeg');
   };
 
-  const sendEmailOtp = async (email) => {
-    if (!email) { triggerToast('No current email address found.'); return; }
-    const token = await getAuthToken();
-    setIsEmailSendingOtp(true);
-    try {
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ email, purpose: 'email_change' })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setEmailOtpSent(true);
-        setEmailOtpCountdown(60);
-        triggerToast(`Verification code sent to ${email}`);
-      } else {
-        triggerToast(data.error || 'Failed to send OTP.');
-      }
-    } catch (err) {
-      console.error(err);
-      triggerToast('Error sending verification code.');
-    } finally {
-      setIsEmailSendingOtp(false);
-    }
-  };
 
-  const handleVerifyAndSaveEmail = async () => {
-    const otpCode = emailOtpCode;
-    const newEmail = settingsEmail.trim();
-    if (!otpCode || otpCode.length < 6) {
-      triggerToast('Please enter a valid 6-digit OTP code.');
-      return;
-    }
-    if (!newEmail) {
-      triggerToast('Please enter a new email address.');
-      return;
-    }
-
-    const token = await getAuthToken();
-    const endpoint = `/api/users/${currentUser.id}`;
-    
-    try {
-      const res = await fetch(endpoint, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ email: newEmail, emailOtp: otpCode })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setPlayerData(prev => ({ ...prev, email: newEmail }));
-        setOrgData(prev => ({ ...prev, email: newEmail }));
-        setEmailOtpSent(false);
-        setEmailOtpCode('');
-        triggerToast('Email address updated successfully!');
-        setCurrentUser(data.user);
-        setCurrentUserFromContext(data.user);
-      } else {
-        triggerToast(data.error || 'Verification failed. Please check your OTP code.');
-      }
-    } catch (err) {
-      console.error(err);
-      triggerToast('Error verifying code and saving email.');
-    }
-  };
 
   const handleOpenCreateNew = () => {
     onNavigate && onNavigate('create-tournament')
@@ -1224,14 +1142,6 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   const ownDistrictId = currentUser?.district_id || playerData.district_id || '—';
   const viewedDistrictId = (!isOwnProfile && viewedUser?.district_id) || ownDistrictId;
-  useEffect(() => { setSettingsEmail(playerData.email || orgData.email || '') }, [playerData.email, orgData.email])
-
-  const emailCooldownDays = useMemo(() => {
-    if (!currentUserFromContext || !currentUserFromContext.email_last_changed) return 0
-    const lastChanged = new Date(currentUserFromContext.email_last_changed)
-    const daysDiff = (Date.now() - lastChanged.getTime()) / (1000 * 60 * 60 * 24)
-    return daysDiff < 15 ? Math.ceil(15 - daysDiff) : 0
-  }, [currentUserFromContext])
 
   useEffect(() => {
     // Skip if we've already fetched for this exact user — prevents the loop where
@@ -3054,24 +2964,17 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       <span className="material-symbols-outlined text-primary text-lg">manage_accounts</span> Account
                     </h3>
 
-                    {/* Email Row with 2-step verification & lockout timer */}
+                    {/* Email Row (read-only) */}
                     <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-container/60 border border-outline-variant/30">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="material-symbols-outlined text-primary text-lg shrink-0">mail</span>
                         <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email Address</span>
+                          <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider block">Email address</span>
                           <p className="text-xs font-semibold text-on-background truncate">
                             {playerData.email || (currentUser || currentUserFromContext)?.email || 'No email set'}
                           </p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsEmailModalOpen(true)}
-                        className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-                      >
-                        <span className="material-symbols-outlined text-sm">edit</span> Change Email
-                      </button>
                     </div>
 
                     {/* WhatsApp Mobile Number Row (+91 Indian 10-digit validation) */}
@@ -3255,17 +3158,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
       </main>
     )}
 
-      {/* 2-Step Email Change Bottom Sheet / Modal */}
-      <EmailChangeModal
-        isOpen={isEmailModalOpen}
-        onClose={() => setIsEmailModalOpen(false)}
-        currentEmail={playerData.email || (currentUser || currentUserFromContext)?.email || ''}
-        onSuccess={(updatedEmail) => {
-          setPlayerData((prev) => ({ ...prev, email: updatedEmail }));
-          refreshProfileUser();
-        }}
-        triggerToast={triggerToast}
-      />
+
 
       {/* Individual Field Edit Bottom Sheet / Modal */}
       <ProfileEditFieldModal

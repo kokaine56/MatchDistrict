@@ -12,7 +12,6 @@
 //   * Max 5 wrong codes / 15 min per subject per flow. Exceeding it => timeout.
 //   * Timeout: 30 min the first time, 8 h when a previous timeout ended < 24 h ago.
 //   * While a timeout is active every send and verify attempt returns the same message.
-//   * Email-change feature has its own stricter lock (8 h) tracked per user.
 import crypto from 'node:crypto';
 
 export const ABUSE_CONFIG = Object.freeze({
@@ -24,10 +23,6 @@ export const ABUSE_CONFIG = Object.freeze({
   LOCK_FIRST_MS: 30 * 60 * 1000,
   LOCK_REPEAT_MS: 8 * 60 * 60 * 1000,
   REPEAT_LOOKBACK_MS: 24 * 60 * 60 * 1000,
-  EMAIL_CHANGE_WINDOW_MS: 60 * 60 * 1000,
-  EMAIL_CHANGE_MAX_REQUESTS: 3,
-  EMAIL_CHANGE_MAX_EVENTS: 5,
-  EMAIL_CHANGE_LOCK_MS: 8 * 60 * 60 * 1000,
   RETENTION_DAYS: 7,
 });
 
@@ -273,72 +268,6 @@ export function createVerificationAbuseGuard({ secret }) {
       );
     },
 
-    // ───────────── Email-change feature lock (per user, authoritative) ─────────────
-    async emailChangeStatus(pool, userId, now = new Date()) {
-      const subject = { type: 'user', key: hashSubject('user', userId) };
-      const res = await pool.query(
-        `SELECT locked_until FROM verification_abuse
-          WHERE subject_type = $1 AND subject_key = $2 AND action = $3 AND locked_until > $4`,
-        [subject.type, subject.key, EMAIL_CHANGE_ACTION, now]
-      );
-      return res.rows[0]?.locked_until ? { locked: true, lockedUntil: new Date(res.rows[0].locked_until) } : { locked: false };
-    },
-
-    /**
-     * Count one email-change event. kind = 'request' | 'wrong'.
-     * 3 requests or 5 events (requests + wrong codes) in 60 min => 8 h lock.
-     * A request that would be the 3rd-over-limit or the 5th event is refused and locks the feature.
-     */
-    async emailChangeEvent(pool, { userId, kind, now = new Date() }) {
-      const subject = { type: 'user', key: hashSubject('user', userId) };
-      return withTx(pool, async (client) => {
-        let row = await lockRow(client, subject, EMAIL_CHANGE_ACTION);
-        if (row.locked_until && new Date(row.locked_until) > now) {
-          return { ok: false, locked: true, lockedUntil: new Date(row.locked_until) };
-        }
-        if (windowExpired(row, ABUSE_CONFIG.EMAIL_CHANGE_WINDOW_MS, now)) {
-          await client.query(
-            `UPDATE verification_abuse SET attempt_count = 0, request_count = 0, window_started_at = $2 WHERE id = $1`,
-            [row.id, now]
-          );
-          row = { ...row, attempt_count: 0, request_count: 0 };
-        }
-        const events = Number(row.attempt_count) + 1;
-        const requests = Number(row.request_count) + (kind === 'request' ? 1 : 0);
-        const tooManyRequests = kind === 'request' && Number(row.request_count) >= ABUSE_CONFIG.EMAIL_CHANGE_MAX_REQUESTS;
-        const refuseRequest = kind === 'request' && events >= ABUSE_CONFIG.EMAIL_CHANGE_MAX_EVENTS;
-        const wrongLimit = kind === 'wrong' && events >= ABUSE_CONFIG.EMAIL_CHANGE_MAX_EVENTS;
-        if (tooManyRequests || refuseRequest || wrongLimit) {
-          const lockedUntil = new Date(now.getTime() + ABUSE_CONFIG.EMAIL_CHANGE_LOCK_MS);
-          await client.query(
-            `UPDATE verification_abuse
-                SET locked_until = $2, lock_level = 2, attempt_count = 0, request_count = 0,
-                    window_started_at = $3, updated_at = $3
-              WHERE id = $1`,
-            [row.id, lockedUntil, now]
-          );
-          return {
-            ok: false,
-            locked: true,
-            lockedUntil,
-            newlyLocked: { lockedUntil, durationMs: ABUSE_CONFIG.EMAIL_CHANGE_LOCK_MS, level: 2, subjectType: 'user', reason: kind === 'wrong' ? 'failures' : 'requests' },
-          };
-        }
-        await client.query(
-          `UPDATE verification_abuse SET attempt_count = $2, request_count = $3, updated_at = $4 WHERE id = $1`,
-          [row.id, events, requests, now]
-        );
-        return { ok: true, locked: false };
-      });
-    },
-
-    async emailChangeReset(pool, userId) {
-      await pool.query(
-        `UPDATE verification_abuse SET attempt_count = 0, request_count = 0, updated_at = NOW()
-          WHERE subject_type = 'user' AND subject_key = $1 AND action = $2 AND (locked_until IS NULL OR locked_until <= NOW())`,
-        [hashSubject('user', userId), EMAIL_CHANGE_ACTION]
-      );
-    },
 
     /** Remove rows untouched for 7 days. */
     async cleanup(pool) {

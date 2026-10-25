@@ -1506,7 +1506,7 @@ const UNIQUE_AMOUNT_SUFFIX_RANGE = 99;         // max paisa suffix (0.01–0.99)
 // ── Existing in-memory rate limiter used by upload and invitation routes ──
 const rateLimitMap = new Map();
 
-// Account safety: verification abuse guard, email-change flow, notification/abuse cleanup jobs.
+// Account safety: verification abuse guard, notification/abuse cleanup jobs.
 const accountSecurity = createAccountSecurity({
   pool,
   secret: JWT_SECRET,
@@ -1645,9 +1645,11 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // Account security: 2-step email change flow endpoints
+  // Account security: email change flow endpoints (removed)
   if (urlPath.startsWith('/api/account/email-change')) {
-    return accountSecurity.handleEmailChangeRoute(req, res, urlPath);
+    res.writeHead(410, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ success: false, error: 'GONE', message: 'Email changes are no longer supported.' }));
+    return;
   }
 
   // --- SECURE IMAGEKIT MEDIA PROXY ---
@@ -5531,29 +5533,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         const updateData = JSON.parse(body);
 
-        // Prevent modifying email or username (gamerTag) for organisers (admins exempt)
-        if (!hasRole(authUserRecord, ROLES.ADMIN) && hasRole(authUserRecord, ROLES.ORGANISER)) {
-          if (updateData.email !== undefined) {
-            res.writeHead(403, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Organizers are not permitted to modify their account email directly.' }));
-            return;
-          }
-        }
-
-        // Email changes must go through the dedicated two-step verification flow (/api/account/email-change)
-        if (!hasRole(authUserRecord, ROLES.ADMIN) && updateData.email !== undefined) {
-          const userCheckRes = await pool.query('SELECT email FROM users WHERE id = $1 OR uid = $1', [id]);
-          const currentUserRecord = userCheckRes.rows[0];
-          if (currentUserRecord && updateData.email.trim().toLowerCase() !== currentUserRecord.email.trim().toLowerCase()) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              success: false,
-              error: 'USE_EMAIL_CHANGE_FLOW',
-              message: 'Email address cannot be changed directly. Please use the two-step verification flow in Settings.'
-            }));
-            return;
-          }
-        }
+        // Normal users cannot modify email or email_last_changed; any such fields are ignored below.
+        // Admins retain the ability to update a user's email directly.
 
         // WhatsApp / mobile number validation (must be 10-digit Indian mobile starting with 6-9)
         let normalizedPhone = undefined;
