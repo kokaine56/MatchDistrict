@@ -22,17 +22,11 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
     const isAnyModalOpen = Boolean(showGoogleConnectModal || disconnectModal || showPasswordModal)
     if (isAnyModalOpen) {
       document.body.classList.add('md-modal-open')
-      const bottomNav = document.querySelector('.mobile-bottom-nav')
-      if (bottomNav) bottomNav.style.display = 'none'
     } else {
       document.body.classList.remove('md-modal-open')
-      const bottomNav = document.querySelector('.mobile-bottom-nav')
-      if (bottomNav) bottomNav.style.display = ''
     }
     return () => {
       document.body.classList.remove('md-modal-open')
-      const bottomNav = document.querySelector('.mobile-bottom-nav')
-      if (bottomNav) bottomNav.style.display = ''
     }
   }, [showGoogleConnectModal, disconnectModal, showPasswordModal])
 
@@ -323,7 +317,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
           onClick={() => !isSubmitting && setShowGoogleConnectModal(false)}
         >
           <div
@@ -368,7 +362,7 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200"
           onClick={() => !isSubmitting && setDisconnectModal(null)}
         >
           <div

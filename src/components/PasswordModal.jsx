@@ -2,6 +2,15 @@ import React, { useState, useEffect } from 'react';
 import BottomSheetModal from './BottomSheetModal.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
 
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return email || '';
+  const [local, domain] = email.split('@');
+  if (local.length <= 1) {
+    return `${local}***@${domain}`;
+  }
+  return `${local[0]}***@${domain}`;
+}
+
 export default function PasswordModal({
   isOpen,
   onClose,
@@ -17,7 +26,9 @@ export default function PasswordModal({
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [error, setError] = useState('');
+  const [forgotMessage, setForgotMessage] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -28,6 +39,8 @@ export default function PasswordModal({
       setShowNew(false);
       setShowConfirm(false);
       setError('');
+      setForgotMessage('');
+      setForgotLoading(false);
     }
   }, [isOpen]);
 
@@ -38,6 +51,9 @@ export default function PasswordModal({
       setError('No email address associated with this account.');
       return;
     }
+    setForgotLoading(true);
+    setError('');
+    setForgotMessage('');
     try {
       const res = await fetch('/api/auth/forgot-password-link', {
         method: 'POST',
@@ -47,19 +63,23 @@ export default function PasswordModal({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        triggerToast?.(`Password reset link sent to ${currentUser.email}`);
-        onClose();
+        const masked = maskEmail(currentUser.email);
+        setForgotMessage(`We sent a reset link to ${masked}`);
+        triggerToast?.(`Password reset link sent to ${masked}`);
       } else {
-        setError(data.error || data.message || 'Failed to send reset link.');
+        setError(data.message || 'Could not send reset link. Please try again.');
       }
     } catch {
-      setError('Error sending reset link.');
+      setError('Could not send reset link. Please try again.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     setError('');
+    setForgotMessage('');
 
     if (passwordSet && !currentPassword) {
       setError('Please enter your current password.');
@@ -93,7 +113,7 @@ export default function PasswordModal({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        setError(data.message || data.error || 'Could not update password. Please check your current password.');
+        setError(data.message || (res.status === 401 ? 'Current password is incorrect. Please try again.' : 'Could not save. Please try again.'));
         return;
       }
 
@@ -101,7 +121,7 @@ export default function PasswordModal({
       if (onSuccess) onSuccess();
       onClose();
     } catch {
-      setError('Network error updating password. Please try again.');
+      setError('Could not save. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -150,6 +170,13 @@ export default function PasswordModal({
           </div>
         )}
 
+        {forgotMessage && (
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium flex items-center gap-2">
+            <span className="material-symbols-outlined text-base shrink-0">mark_email_read</span>
+            <span>{forgotMessage}</span>
+          </div>
+        )}
+
         {!passwordSet ? (
           <p className="text-xs text-on-surface-variant leading-relaxed">
             Create a password to enable email &amp; password sign-in for your account.
@@ -163,9 +190,11 @@ export default function PasswordModal({
               <button
                 type="button"
                 onClick={handleForgotPassword}
-                className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-0.5"
+                disabled={forgotLoading}
+                className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-0.5 disabled:opacity-50"
               >
-                <span className="material-symbols-outlined text-xs">help_outline</span> Forgot?
+                <span className="material-symbols-outlined text-xs">help_outline</span>
+                <span>{forgotLoading ? 'Sending...' : 'Forgot?'}</span>
               </button>
             </div>
             <div className="relative">

@@ -86,8 +86,7 @@ export default function ProfileEditFieldModal({
         if (!res.ok || !data.success) {
           setError(
             data.message ||
-            data.error ||
-            (res.status === 401 ? 'Please sign in to update your WhatsApp number.' : 'Could not save, please try again.')
+            (res.status === 401 ? 'Please sign in to update your WhatsApp number.' : 'Could not save. Please try again.')
           );
           return;
         }
@@ -98,7 +97,7 @@ export default function ProfileEditFieldModal({
         }
         onClose();
       } catch {
-        setError('Could not save, please try again.');
+        setError('Could not save. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -130,8 +129,7 @@ export default function ProfileEditFieldModal({
         if (!res.ok || !data.success) {
           setError(
             data.message ||
-            data.error ||
-            (res.status === 401 ? 'Please sign in to save UPI ID.' : 'Could not save, please try again.')
+            (res.status === 401 ? 'Please sign in to save UPI ID.' : 'Could not save. Please try again.')
           );
           return;
         }

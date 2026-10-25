@@ -440,6 +440,12 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
   }, [currentUser?.id])
 
+  // Preload lazy section chunks when Profile mounts to eliminate tab-switch delay
+  useEffect(() => {
+    import('./PaymentHistory.jsx').catch(() => {})
+    import('./MyTournaments.jsx').catch(() => {})
+  }, [])
+
   const formatWhatsAppDisplay = (phone) => {
     if (!phone) return 'Not added'
     const digits = String(phone).replace(/\D/g, '')
@@ -2545,22 +2551,14 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
           {/* Own Profile Tab Content wrapper */}
           {isOwnProfile && (
             <div 
-              className="pt-4 sm:pt-6 pb-28 sm:pb-12"
+              className="pt-4 sm:pt-6 pb-28 sm:pb-12 min-h-[520px]"
               style={{ paddingBottom: 'calc(84px + env(safe-area-inset-bottom, 0px))' }}
             >
-              <AnimatePresence mode="wait">
-
-
               {/* ===== TAB 1: TEAMS & SQUADS ===== */}
-              {activeTab === 'teams' && (
-                <motion.div
-                  key="teams"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  className="space-y-5"
-                >
+              <div
+                key="teams"
+                className={activeTab === 'teams' ? 'space-y-5' : 'hidden'}
+              >
                   {/* Header row */}
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -2949,20 +2947,14 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                   {presets.length >= 4 && (
                     <p className="font-body-sm text-[10px] text-on-surface-variant text-center">Maximum of 4 presets reached. Delete one to create a new squad.</p>
                   )}
-                </motion.div>
-              )}
+                </div>
 
 
               {/* Tab 3: Payment History */}
-              {(activeTab === 'payments' || activeTab === 'wallet' || activeTab === 'prize-payments') && (
-                <motion.div
-                  key="payments"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  className="space-y-6 sm:space-y-8"
-                >
+              <div
+                key="payments"
+                className={(activeTab === 'payments' || activeTab === 'wallet' || activeTab === 'prize-payments') ? 'space-y-6 sm:space-y-8' : 'hidden'}
+              >
                   {/* Balance Showcase */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm flex flex-col justify-between gap-3">
@@ -3040,19 +3032,12 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </div>
                     )}
                   </div>
-                </motion.div>
-              )}
+                </div>
               {/* Tab 5: Settings */}
-              {/* Tab 5: Settings */}
-              {activeTab === 'settings' && (
-                <motion.div
-                  key="settings"
-                  variants={tabContentVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  className="space-y-4 sm:space-y-5"
-                >
+              <div
+                key="settings"
+                className={activeTab === 'settings' ? 'space-y-4 sm:space-y-5' : 'hidden'}
+              >
 
                   {/* GROUP 1: ACCOUNT */}
                   <div className="glass-card p-4 sm:p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">
@@ -3251,15 +3236,13 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       </button>
                     </div>
                   </div>
-                </motion.div>
-              )}
+                </div>
               {/* Tab 6: Verifier Panel (conditional) */}
-              {activeTab === 'verifier' && (
+              <div className={activeTab === 'verifier' ? '' : 'hidden'}>
                 <VerifierPanelTab triggerToast={triggerToast} />
-              )}
-            </AnimatePresence>
-          </div>
-        )}
+              </div>
+            </div>
+          )}
       </main>
     )}
 
@@ -3339,7 +3322,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/80 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] sm:pb-4 animate-in fade-in duration-200"
         >
           <div className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-lg space-y-4 relative max-h-[85dvh] overflow-y-auto custom-scrollbar">
             <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
@@ -3407,7 +3390,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[120] flex flex-col items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] flex flex-col items-center justify-center p-4 bg-black/90 animate-in fade-in duration-200"
         >
           <div
             className="glass-card profile-edit-modal-card border border-outline-variant/60 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 relative max-h-[85dvh] overflow-y-auto custom-scrollbar"

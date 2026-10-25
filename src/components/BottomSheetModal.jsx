@@ -22,14 +22,18 @@ export default function BottomSheetModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    // Mark body so CSS rules can hide bottom nav
+    // Mark body so CSS rules can hide bottom nav via transform
     document.body.classList.add('md-modal-open');
-    const bottomNav = document.querySelector('.mobile-bottom-nav');
-    if (bottomNav) {
-      bottomNav.style.display = 'none';
-    }
 
+    // Compensate for scrollbar width to prevent page horizontal shift
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
     const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
+
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${scrollbarWidth}px`;
+    }
     document.body.style.overflow = 'hidden';
 
     // Handle on-screen keyboard via visualViewport
@@ -54,10 +58,9 @@ export default function BottomSheetModal({
 
     return () => {
       document.body.classList.remove('md-modal-open');
-      if (bottomNav) {
-        bottomNav.style.display = '';
-      }
       document.body.style.overflow = prevOverflow;
+      document.body.style.paddingRight = prevPaddingRight;
+      window.scrollTo(0, scrollY);
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', updateViewport);
         window.visualViewport.removeEventListener('scroll', updateViewport);
@@ -68,21 +71,25 @@ export default function BottomSheetModal({
 
   if (typeof document === 'undefined') return null;
 
+  const prefersReducedMotion =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   return createPortal(
     <AnimatePresence>
       {isOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm"
+          className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80"
           onClick={onClose}
         >
           <motion.div
             ref={containerRef}
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 40 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
+            animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
+            transition={{ duration: prefersReducedMotion ? 0.05 : 0.2, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
             className={`w-full ${maxWidth} bg-white dark:bg-[#121520] border-t sm:border border-outline-variant/50 rounded-t-3xl sm:rounded-2xl shadow-2xl relative max-h-[85dvh] flex flex-col overflow-hidden outline-none`}
           >

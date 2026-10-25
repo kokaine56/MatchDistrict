@@ -248,6 +248,10 @@ async function storeProviderIdentity(db, { userId, provider, providerUserId, pro
   );
 }
 
+function makeErrorRef() {
+  return crypto.randomBytes(4).toString('hex').toUpperCase();
+}
+
 // ─────────────────────────────────────────────────────────────
 // Shared Session Cookie Engine
 // Ensures set and clear operations use identical attributes so cookies never drift.
@@ -4064,17 +4068,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           parsedBody = JSON.parse(body || '{}');
         } catch {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Invalid request JSON.' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'Invalid request data.' }));
           return;
         }
 
         const { email, currentPassword, newPassword, confirmPassword } = parsedBody;
 
         // Fetch user from DB strictly by authenticated session ID
-        const userRes = await pool.query('SELECT * FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+        const userRes = await pool.query('SELECT * FROM users WHERE id = $1::text OR uid = $1::text', [String(authUser.id)]);
         if (userRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'User account not found.' }));
+          res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND', message: 'User account not found.' }));
           return;
         }
 
@@ -4083,31 +4087,31 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // Security check: if email is supplied, it must match authenticated account
         if (email && email.toLowerCase() !== dbUser.email.toLowerCase()) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Cannot modify password credentials for another account.' }));
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Cannot modify password credentials for another account.' }));
           return;
         }
 
         // Validate new password format and length
         if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'Password must be at least 6 characters long.' }));
+          res.end(JSON.stringify({ success: false, error: 'PASSWORD_TOO_SHORT', message: 'Password must be at least 6 characters long.' }));
           return;
         }
 
         if (confirmPassword !== undefined && newPassword !== confirmPassword) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'New passwords do not match.' }));
+          res.end(JSON.stringify({ success: false, error: 'PASSWORDS_DO_NOT_MATCH', message: 'New passwords do not match.' }));
           return;
         }
 
         // Determine whether user already has a valid password credential configured
-        const hasExistingPassword = dbUser.password_set === true || (dbUser.password_set !== false && !dbUser.google_id);
+        const hasExistingPassword = Boolean(dbUser.password_set === true && dbUser.password);
 
         if (hasExistingPassword) {
           // Existing password credential: current password verification is mandatory
           if (!currentPassword || typeof currentPassword !== 'string') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'Current password is required to change password.' }));
+            res.end(JSON.stringify({ success: false, error: 'CURRENT_PASSWORD_REQUIRED', message: 'Current password is required to change password.' }));
             return;
           }
 
@@ -4131,7 +4135,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
           if (!isPasswordCorrect) {
             res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'Incorrect current password.' }));
+            res.end(JSON.stringify({ success: false, error: 'INCORRECT_CURRENT_PASSWORD', message: 'Incorrect current password. Please try again.' }));
             return;
           }
         }
@@ -4140,8 +4144,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Update password and record password_set = true
         const dbRes = await pool.query(
-          'UPDATE users SET password = $1, password_set = true WHERE id = $2 RETURNING *',
-          [hashedNewPassword, dbUser.id]
+          'UPDATE users SET password = $1::text, password_set = true WHERE id = $2::text RETURNING *',
+          [hashedNewPassword, String(dbUser.id)]
         );
 
         const updatedUser = dbRes.rows[0];
@@ -4163,8 +4167,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           user: publicUserRow(updatedUser)
         }));
       } catch (err) {
+        const ref = makeErrorRef();
+        console.error(`[CHANGE PASSWORD ERROR Ref:${ref}] ${err.message}`, err.stack);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -4176,7 +4182,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
       try {
-        const cleanEmail = (email || '').trim().toLowerCase();
+        let parsed = {};
+        try {
+          parsed = JSON.parse(body || '{}');
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_JSON', message: 'A valid email address is required.' }));
+          return;
+        }
+
+        const rawEmail = typeof parsed.email === 'string' ? parsed.email : '';
+        const cleanEmail = rawEmail.trim().toLowerCase();
         if (!cleanEmail || !cleanEmail.includes('@')) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_EMAIL', message: 'A valid email address is required.' }));
@@ -4187,7 +4203,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!(await accountSecurity.guardSend(req, res, { flow: 'password_reset', email: cleanEmail }))) return;
 
         // Check if user exists in database (generic response to prevent user enumeration - AUTH-006)
-        const userRes = await pool.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
+        const userRes = await pool.query('SELECT id FROM users WHERE email = $1::text', [cleanEmail]);
         if (userRes.rows.length === 0) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, message: 'If an account exists with this email, a password reset link has been sent.' }));
@@ -4198,14 +4214,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiry (AUTH-005)
 
         await pool.query(
-          'INSERT INTO password_resets (email, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (email) DO UPDATE SET token = $2, expires_at = $3, created_at = CURRENT_TIMESTAMP',
-          [email, token, expiresAt]
+          'INSERT INTO password_resets (email, token, expires_at) VALUES ($1::text, $2::text, $3::timestamptz) ON CONFLICT (email) DO UPDATE SET token = $2::text, expires_at = $3::timestamptz, created_at = CURRENT_TIMESTAMP',
+          [cleanEmail, token, expiresAt]
         );
 
         const proto = req.headers['x-forwarded-proto'] || (process.env.NODE_ENV === 'production' ? 'https' : 'http');
         const resetLink = `${proto}://${req.headers.host}/reset-password?token=${token}`;
         await sendEmail({
-          to: email,
+          to: cleanEmail,
           subject: 'Reset Your Match District Password',
           html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaea; border-radius: 5px;">
@@ -4226,8 +4242,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Password reset link sent.' }));
       } catch (err) {
+        const ref = makeErrorRef();
+        console.error(`[FORGOT PASSWORD ERROR Ref:${ref}] ${err.message}`, err.stack);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -5107,16 +5125,18 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
         const result = await pool.query(
-          `INSERT INTO user_payout_profiles (user_id, upi_id, updated_at) VALUES ($1, $2, NOW())
+          `INSERT INTO user_payout_profiles (user_id, upi_id, updated_at) VALUES ($1::text, $2::text, NOW())
            ON CONFLICT (user_id) DO UPDATE SET upi_id = EXCLUDED.upi_id, updated_at = NOW()
            RETURNING upi_id, updated_at`,
-          [authUser.id, upiId]
+          [String(authUser.id), String(upiId)]
         );
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, payout_profile: result.rows[0] }));
       } catch (err) {
+        const ref = makeErrorRef();
+        console.error(`⚠️ [PAYOUT PROFILE Ref:${ref}] Error:`, err.message, err.stack);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'INTERNAL_ERROR' }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -5279,15 +5299,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const dbRes = await pool.query(
         `SELECT id, user_id, COALESCE(type, 'info') AS type, title, message, tournament_id, COALESCE(is_read, false) AS is_read, created_at
          FROM alerts
-         WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'
+         WHERE user_id = $1::text AND created_at > NOW() - INTERVAL '24 hours'
          ORDER BY created_at DESC LIMIT 50`,
-        [authUser.id]
+        [String(authUser.id)]
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, alerts: dbRes.rows, notifications: dbRes.rows }));
     } catch (err) {
+      const ref = makeErrorRef();
+      console.error(`⚠️ [ALERTS Ref:${ref}] Error:`, err.message, err.stack);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not load notifications. Please try again. (Ref: ${ref})` }));
     }
     return;
   }
@@ -5303,18 +5325,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
 
       await pool.query(
-        `UPDATE alerts SET is_read = true WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
-        [authUser.id]
+        `UPDATE alerts SET is_read = true WHERE user_id = $1::text AND created_at > NOW() - INTERVAL '24 hours'`,
+        [String(authUser.id)]
       );
       await pool.query(
-        `UPDATE notifications SET is_read = true WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
-        [authUser.id]
+        `UPDATE notifications SET is_read = true WHERE user_id = $1::text AND created_at > NOW() - INTERVAL '24 hours'`,
+        [String(authUser.id)]
       ).catch(() => {});
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'All alerts marked as read.' }));
     } catch (err) {
+      const ref = makeErrorRef();
+      console.error(`⚠️ [ALERTS READ Ref:${ref}] Error:`, err.message, err.stack);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not mark notifications as read. (Ref: ${ref})` }));
     }
     return;
   }
@@ -5564,51 +5588,49 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         const dbRes = await pool.query(
           `UPDATE users SET 
-            name = COALESCE($1, name),
-            email = COALESCE($3, email),
-            phone = CASE WHEN $21::boolean THEN $4 ELSE phone END,
-            avatar = COALESCE($5, avatar),
-            experience = COALESCE($6, experience),
-            "socialLinks" = COALESCE($7, "socialLinks"),
-            tier = COALESCE($8, tier),
-            status = COALESCE($9, status),
-            "riotId" = COALESCE($10, "riotId"),
-            "bgmiId" = COALESCE($11, "bgmiId"),
-            "steamId" = COALESCE($12, "steamId"),
-            "discordTag" = COALESCE($13, "discordTag"),
-            banner = COALESCE($14, banner),
-            "email_last_changed" = COALESCE($16, "email_last_changed"),
-            role = COALESCE($17, role),
-            roles = COALESCE($18, roles),
-            "orgHandle" = COALESCE($20, "orgHandle")
-           WHERE (id = $19 OR uid = $19) RETURNING *`,
+            name = COALESCE($1::text, name),
+            email = COALESCE($2::text, email),
+            phone = CASE WHEN $3::boolean THEN $4::text ELSE phone END,
+            avatar = COALESCE($5::text, avatar),
+            experience = COALESCE($6::text, experience),
+            "socialLinks" = COALESCE($7::jsonb, "socialLinks"),
+            tier = COALESCE($8::text, tier),
+            status = COALESCE($9::text, status),
+            "riotId" = COALESCE($10::text, "riotId"),
+            "bgmiId" = COALESCE($11::text, "bgmiId"),
+            "steamId" = COALESCE($12::text, "steamId"),
+            "discordTag" = COALESCE($13::text, "discordTag"),
+            banner = COALESCE($14::text, banner),
+            "email_last_changed" = COALESCE($15::timestamptz, "email_last_changed"),
+            role = COALESCE($16::varchar, role),
+            roles = COALESCE($17::text[], roles),
+            "orgHandle" = COALESCE($18::text, "orgHandle")
+           WHERE (id = $19::text OR uid = $19::text) RETURNING *`,
           [
-            updateData.name,
-            undefined,
-            hasRole(authUserRecord, ROLES.ADMIN) ? updateData.email : undefined,
-            normalizedPhone,
-            avatarUrl,
-            updateData.experience !== undefined ? updateData.experience : updateData.bio,
-            updateData.socialLinks,
-            updateData.tier,
-            updateData.status,
+            updateData.name != null ? String(updateData.name) : null,
+            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.email) ? String(updateData.email) : null,
+            normalizedPhone !== undefined,
+            normalizedPhone !== undefined ? normalizedPhone : null,
+            avatarUrl || null,
+            (updateData.experience !== undefined ? updateData.experience : updateData.bio) || null,
+            updateData.socialLinks ? JSON.stringify(updateData.socialLinks) : null,
+            updateData.tier || null,
+            updateData.status || null,
             updateData.riotId !== undefined ? updateData.riotId : null,
             updateData.bgmiId !== undefined ? updateData.bgmiId : null,
             updateData.steamId !== undefined ? updateData.steamId : null,
             updateData.discordTag !== undefined ? updateData.discordTag : null,
-            bannerUrl,
-            undefined,
-            emailLastChangedVal,
-            hasRole(authUserRecord, ROLES.ADMIN) ? updateData.role : undefined,
-            hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? (
+            bannerUrl || null,
+            emailLastChangedVal || null,
+            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? updateData.role : null),
+            (hasRole(authUserRecord, ROLES.ADMIN) && updateData.role ? (
               updateData.role === 'player' || updateData.role === 'user' ? ['user'] :
               updateData.role === 'organiser' ? ['user', 'organiser'] :
               updateData.role === 'reg_payment_verifier' ? ['user', 'reg_payment_verifier'] :
               updateData.role === 'admin' ? ['user', 'admin'] : ['user']
-            ) : undefined,
-            targetId,
-            updateData.orgHandle,
-            normalizedPhone !== undefined
+            ) : null),
+            updateData.orgHandle || null,
+            String(targetId)
           ]
         );
         if (dbRes.rows.length === 0) {
@@ -5622,9 +5644,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, user: updatedUser }));
       } catch (err) {
-        console.warn('⚠️ [MATCH DISTRICT DB] Supabase update user failed:', err.message);
+        const ref = makeErrorRef();
+        console.error(`⚠️ [MATCH DISTRICT DB Ref:${ref}] Supabase update user failed:`, err.message, err.stack);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: `Could not save. Please try again. (Ref: ${ref})` }));
       }
     });
     return;

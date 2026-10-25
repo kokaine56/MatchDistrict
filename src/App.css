@@ -56,13 +56,23 @@
     -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 -8px 24px rgb(0 0 0 / 0.12);
+    transition: transform 200ms ease, opacity 200ms ease;
+    will-change: transform, opacity;
   }
 
   body:has([role="dialog"]) .mobile-bottom-nav,
   body:has([aria-modal="true"]) .mobile-bottom-nav,
   body.has-open-sheet .mobile-bottom-nav,
   body.md-modal-open .mobile-bottom-nav {
-    display: none !important;
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mobile-bottom-nav {
+      transition: none !important;
+    }
   }
 
   .mobile-bottom-nav__item {
