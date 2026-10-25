@@ -383,13 +383,48 @@ function Profile({ onNavigate, selectedUserProfile }) {
         setToastMessage('Discord account connected successfully!');
       } else if (discordParam === 'error') {
         setShowToast(true);
-        setToastMessage('Discord connection failed.');
+        if (errCode === 'rate_limited') {
+          const retrySec = Number(searchParams.get('retry_after')) || 60;
+          const minutes = Math.max(1, Math.ceil(retrySec / 60));
+          setToastMessage(`Too many attempts. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+        } else {
+          const friendlyDiscordErrors = {
+            cancelled: 'Discord authorization was cancelled.',
+            access_denied: 'Discord authorization was cancelled.',
+            already_linked: 'This Discord account is already connected to another user.',
+            email_required: 'A Discord account with an email address is required.',
+            email_unverified: 'Please verify your email address on Discord before connecting.',
+            state_mismatch: 'Discord connection session expired. Please try again.',
+            no_code: 'Invalid authorization request. Please try again.',
+            invalid_request: 'Invalid authorization request. Please try again.',
+            unauthorized: 'Please log in again before connecting Discord.',
+            misconfigured: 'Discord connection is not configured on the server.',
+            exchange_failed: 'Failed to authorize with Discord. Please try again.',
+            save_failed: 'Failed to save Discord account details. Please try again.',
+            server_error: 'A server error occurred. Please try again later.',
+          };
+          setToastMessage(friendlyDiscordErrors[errCode] || 'Discord connection failed.');
+        }
       } else if (googleParam === 'connected' || googleParam === 'linked') {
         setShowToast(true);
         setToastMessage('Google account connected successfully!');
       } else if (googleParam === 'error') {
         setShowToast(true);
-        setToastMessage('Google connection failed.');
+        if (errCode === 'rate_limited') {
+          const retrySec = Number(searchParams.get('retry_after')) || 60;
+          const minutes = Math.max(1, Math.ceil(retrySec / 60));
+          setToastMessage(`Too many attempts. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+        } else {
+          const friendlyGoogleErrors = {
+            cancelled: 'Google authorization was cancelled.',
+            access_denied: 'Google authorization was cancelled.',
+            already_linked: 'This Google account is already connected to another user.',
+            state_mismatch: 'Google connection session expired. Please try again.',
+            unauthorized: 'Please log in again before connecting Google.',
+            server_error: 'A server error occurred. Please try again later.',
+          };
+          setToastMessage(friendlyGoogleErrors[errCode] || 'Google connection failed.');
+        }
       }
       setSearchParams({ tab: 'settings' }, { replace: true });
       setTimeout(() => {

@@ -1522,33 +1522,54 @@ const accountSecurity = createAccountSecurity({
   checkRateLimit,
 });
 
-function checkRateLimit(key, maxRequests, windowMs) {
-  const isMultiParam = maxRequests !== undefined;
-  const limit = maxRequests !== undefined ? maxRequests : 60;
-  const window = windowMs !== undefined ? windowMs : 60_000;
+function getClientIp(req) {
+  if (!req) return '127.0.0.1';
+  const remoteAddr = req.socket?.remoteAddress || '127.0.0.1';
+  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
+  if (!trustProxy) {
+    return remoteAddr;
+  }
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const parts = String(forwarded).split(',').map(s => s.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[0];
+  }
+  return remoteAddr;
+}
+
+function checkRateLimit(key, maxRequests = 60, windowMs = 60_000) {
+  const limit = typeof maxRequests === 'number' && maxRequests > 0 ? maxRequests : 60;
+  const window = typeof windowMs === 'number' && windowMs > 0 ? windowMs : 60_000;
   const now = Date.now();
   let entry = rateLimitMap.get(key);
+
   if (!entry || now - entry.windowStart > window) {
     entry = { count: 1, windowStart: now };
     rateLimitMap.set(key, entry);
-    if (isMultiParam) return true;
-    return { allowed: true, remaining: limit - 1, retryAfter: 0 };
+    return { allowed: true, remaining: Math.max(0, limit - 1), retryAfter: 0 };
   }
-  entry.count++;
-  if (entry.count > limit) {
-    if (isMultiParam) return false;
-    const retryAfter = Math.ceil((entry.windowStart + window - now) / 1000);
+
+  if (entry.count >= limit) {
+    const retryAfter = Math.max(1, Math.ceil((entry.windowStart + window - now) / 1000));
     return { allowed: false, remaining: 0, retryAfter };
   }
-  if (isMultiParam) return true;
-  return { allowed: true, remaining: limit - entry.count, retryAfter: 0 };
+
+  entry.count++;
+  return { allowed: true, remaining: Math.max(0, limit - entry.count), retryAfter: 0 };
 }
 
-// Periodic cleanup of stale upload/invitation rate-limit entries (every 5 min)
+function rollbackRateLimit(key) {
+  const entry = rateLimitMap.get(key);
+  if (entry && entry.count > 0) {
+    entry.count--;
+  }
+}
+
+// Periodic cleanup of stale upload/invitation/auth rate-limit entries (every 5 min)
 setInterval(() => {
-  const cutoff = Date.now() - 120_000;
+  const now = Date.now();
   for (const [key, entry] of rateLimitMap) {
-    if (entry.windowStart < cutoff) rateLimitMap.delete(key);
+    if (now - entry.windowStart > 15 * 60_000) rateLimitMap.delete(key);
   }
 }, 300_000);
 
@@ -1661,8 +1682,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!checkRateLimit('upload:' + authUser.id, 15, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
+    const authUserId = authUser.id || authUser.uid;
+    const uploadLimit = checkRateLimit('upload:' + authUserId, 15, 60000);
+    if (!uploadLimit.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': uploadLimit.retryAfter });
       res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many uploads. Please wait a minute and try again.' }));
       return;
     }
@@ -2192,9 +2215,10 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       if (bodySize > MAX_AUTH_BODY) return;
       try {
-        const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || (req.socket ? req.socket.remoteAddress : '') || 'unknown';
-        if (!checkRateLimit('google_auth:' + clientIp, 20, 60000)) {
-          res.writeHead(429, { 'Content-Type': 'application/json' });
+        const clientIp = getClientIp(req);
+        const googleAuthLimit = checkRateLimit('google_auth:' + clientIp, 30, 10 * 60 * 1000);
+        if (!googleAuthLimit.allowed) {
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': googleAuthLimit.retryAfter });
           res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a moment and try again.' }));
           return;
         }
@@ -2502,8 +2526,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const ip = getClientIp(req);
-    if (!checkRateLimit(`auth_link_ip:${ip}`, 4, 10 * 60 * 1000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
+    const linkSendLimit = checkRateLimit(`auth_link_ip:${ip}`, 10, 10 * 60 * 1000);
+    if (!linkSendLimit.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': linkSendLimit.retryAfter });
       res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Please wait before requesting another code.' }));
       return;
     }
@@ -2551,8 +2576,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const ip = getClientIp(req);
-    if (!checkRateLimit(`auth_link_complete_ip:${ip}`, 10, 10 * 60 * 1000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
+    const linkCompIpLimit = checkRateLimit(`auth_link_complete_ip:${ip}`, 20, 10 * 60 * 1000);
+    if (!linkCompIpLimit.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': linkCompIpLimit.retryAfter });
       res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
       return;
     }
@@ -2572,11 +2598,16 @@ const server = http.createServer(async (req, res) => {
         await db.query('BEGIN');
         const locked = await db.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [accounts[0].id]);
         const account = locked.rows[0];
-        if (!checkRateLimit(`auth_link_complete_account:${account?.id || 'unknown'}`, 10, 10 * 60 * 1000)) {
-          await db.query('ROLLBACK');
-          res.writeHead(429, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
-          return;
+        const accountId = account?.id || account?.uid;
+        if (accountId) {
+          const linkCompAccLimit = checkRateLimit(`auth_link_complete_account:${accountId}`, 10, 10 * 60 * 1000);
+          if (!linkCompAccLimit.allowed) {
+            rollbackRateLimit(`auth_link_complete_ip:${ip}`);
+            await db.query('ROLLBACK');
+            res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': linkCompAccLimit.retryAfter });
+            res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+            return;
+          }
         }
         if (!account || ['banned', 'suspended', 'disabled'].includes(String(account.status || '').toLowerCase())) {
           await db.query('ROLLBACK');
@@ -2678,9 +2709,21 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Sign in before linking Google.' }));
       return;
     }
-    if (!checkRateLimit(`google_link:${authUser.id}`, 10, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+    const clientIp = getClientIp(req);
+    const authUserId = authUser.id || authUser.uid;
+    const ipLimit = checkRateLimit(`google_link_ip:${clientIp}`, 30, 10 * 60 * 1000);
+    if (!ipLimit.allowed) {
+      const mins = Math.max(1, Math.ceil(ipLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': ipLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: ipLimit.retryAfter }));
+      return;
+    }
+    const userLimit = authUserId ? checkRateLimit(`google_link_user:${authUserId}`, 10, 10 * 60 * 1000) : { allowed: true, retryAfter: 0 };
+    if (!userLimit.allowed) {
+      rollbackRateLimit(`google_link_ip:${clientIp}`);
+      const mins = Math.max(1, Math.ceil(userLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': userLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: userLimit.retryAfter }));
       return;
     }
 
@@ -2798,9 +2841,21 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Sign in before unlinking Google.' }));
       return;
     }
-    if (!checkRateLimit(`google_unlink:${authUser.id}`, 5, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many attempts. Please wait and try again.' }));
+    const clientIp = getClientIp(req);
+    const authUserId = authUser.id || authUser.uid;
+    const ipLimit = checkRateLimit(`google_unlink_ip:${clientIp}`, 30, 10 * 60 * 1000);
+    if (!ipLimit.allowed) {
+      const mins = Math.max(1, Math.ceil(ipLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': ipLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: ipLimit.retryAfter }));
+      return;
+    }
+    const userLimit = authUserId ? checkRateLimit(`google_unlink_user:${authUserId}`, 10, 10 * 60 * 1000) : { allowed: true, retryAfter: 0 };
+    if (!userLimit.allowed) {
+      rollbackRateLimit(`google_unlink_ip:${clientIp}`);
+      const mins = Math.max(1, Math.ceil(userLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': userLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: userLimit.retryAfter }));
       return;
     }
     let body = '';
@@ -3002,12 +3057,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
 
     const clientIp = getClientIp(req);
-    if (!checkRateLimit('discord_connect_ip:' + clientIp, 20, 60000) ||
-        (authUser && !checkRateLimit('discord_connect_user:' + authUser.id, 10, 60000))) {
-      console.error(`[DISCORD AUTH] Step: connect_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | IP: ${clientIp}`);
-      res.writeHead(302, { Location: isLoginFlow ? '/login?discord_error=rate_limited' : '/profile?discord=error&code=rate_limited' });
+    const authUserId = authUser ? (authUser.id || authUser.uid) : null;
+    const ipLimit = checkRateLimit('discord_connect_ip:' + clientIp, 30, 10 * 60 * 1000);
+    if (!ipLimit.allowed) {
+      console.error(`[DISCORD AUTH] Step: connect_ip_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | IP: ${clientIp}`);
+      res.writeHead(302, { Location: isLoginFlow ? `/login?discord_error=rate_limited&retry_after=${ipLimit.retryAfter}` : `/profile?discord=error&code=rate_limited&retry_after=${ipLimit.retryAfter}` });
       res.end();
       return;
+    }
+    if (authUserId) {
+      const userLimit = checkRateLimit('discord_connect_user:' + authUserId, 10, 10 * 60 * 1000);
+      if (!userLimit.allowed) {
+        rollbackRateLimit('discord_connect_ip:' + clientIp);
+        console.error(`[DISCORD AUTH] Step: connect_user_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | User: ${authUserId}`);
+        res.writeHead(302, { Location: isLoginFlow ? `/login?discord_error=rate_limited&retry_after=${userLimit.retryAfter}` : `/profile?discord=error&code=rate_limited&retry_after=${userLimit.retryAfter}` });
+        res.end();
+        return;
+      }
     }
 
     loadEnv();
@@ -3084,13 +3150,17 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     ];
     const clearStateCookie = clearStateCookies;
     let statePayload = null;
-    const callbackErrorLocation = (code) => statePayload?.flow === 'login'
-      ? `/login?discord_error=${encodeURIComponent(code)}`
-      : `/profile?discord=error&code=${encodeURIComponent(code)}`;
+    const callbackErrorLocation = (code, retryAfter = null) => {
+      const qs = retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : '';
+      return statePayload?.flow === 'login'
+        ? `/login?discord_error=${encodeURIComponent(code)}${qs}`
+        : `/profile?discord=error&code=${encodeURIComponent(code)}${qs}`;
+    };
 
-    if (!checkRateLimit('discord_callback_ip:' + clientIp, 20, 60000)) {
+    const cbIpLimit = checkRateLimit('discord_callback_ip:' + clientIp, 60, 10 * 60 * 1000);
+    if (!cbIpLimit.allowed) {
       console.error(`[DISCORD CONNECT ERROR] Step: callback_ip_rate_limit | Code: rate_limited | IP: ${clientIp}`);
-      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited') });
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited', cbIpLimit.retryAfter) });
       res.end();
       return;
     }
@@ -3190,11 +3260,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       return;
     }
 
-    if (authUser && !checkRateLimit('discord_callback_user:' + authUser.id, 10, 60000)) {
-      console.error('[DISCORD AUTH] Step: callback_user_rate_limit | Code: rate_limited');
-      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited') });
-      res.end();
-      return;
+    const cbUserId = authUser ? (authUser.id || authUser.uid) : null;
+    if (cbUserId) {
+      const cbUserLimit = checkRateLimit('discord_callback_user:' + cbUserId, 20, 10 * 60 * 1000);
+      if (!cbUserLimit.allowed) {
+        rollbackRateLimit('discord_callback_ip:' + clientIp);
+        console.error('[DISCORD AUTH] Step: callback_user_rate_limit | Code: rate_limited');
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited', cbUserLimit.retryAfter) });
+        res.end();
+        return;
+      }
     }
 
     if (queryError) {
@@ -3310,15 +3385,18 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         console.error(`[DISCORD TOKEN EXCHANGE ERROR] step: token_exchange | status: ${tokenRes.status} | content_type: ${contentType} | ${bodySnippet} | pkce: ${pkceUsed} | redirect_uri_auth: ${statePayload.redirectUri || 'none'} | redirect_uri_token: ${effectiveRedirectUri} | uris_match: ${urisMatch} | duration_ms: ${durationMs}`);
 
         let clientRedirectCode = 'token_exchange_failed';
+        let retryAfterVal = null;
         if (discordError === 'invalid_grant') {
           clientRedirectCode = 'invalid_grant';
         } else if (discordError === 'invalid_client') {
           clientRedirectCode = 'invalid_client';
         } else if (tokenRes.status === 403 || tokenRes.status === 429) {
           clientRedirectCode = tokenRes.status === 429 ? 'rate_limited' : 'blocked';
+          const headerRetry = tokenRes.headers.get('retry-after');
+          if (headerRetry) retryAfterVal = parseInt(headerRetry, 10) || 60;
         }
 
-        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode) });
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode, retryAfterVal) });
         res.end();
         return;
       }
@@ -3670,9 +3748,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
 
     const clientIp = getClientIp(req);
-    if (!checkRateLimit('discord_disconnect_ip:' + clientIp, 20, 60000) || !checkRateLimit('discord_disconnect_user:' + authUser.id, 10, 60000)) {
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: 'Too many requests. Please wait a moment.' }));
+    const authUserId = authUser.id || authUser.uid;
+    const ipLimit = checkRateLimit('discord_disconnect_ip:' + clientIp, 30, 10 * 60 * 1000);
+    if (!ipLimit.allowed) {
+      const mins = Math.max(1, Math.ceil(ipLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': ipLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: ipLimit.retryAfter }));
+      return;
+    }
+    const userLimit = authUserId ? checkRateLimit('discord_disconnect_user:' + authUserId, 10, 10 * 60 * 1000) : { allowed: true, retryAfter: 0 };
+    if (!userLimit.allowed) {
+      rollbackRateLimit('discord_disconnect_ip:' + clientIp);
+      const mins = Math.max(1, Math.ceil(userLimit.retryAfter / 60));
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': userLimit.retryAfter });
+      res.end(JSON.stringify({ success: false, error: 'RATE_LIMITED', message: `Too many attempts. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, retryAfter: userLimit.retryAfter }));
       return;
     }
 
@@ -9642,19 +9731,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  function getClientIp(req) {
-    const remoteAddr = req.socket?.remoteAddress || '127.0.0.1';
-    const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1';
-    if (!trustProxy) {
-      return remoteAddr;
-    }
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) {
-      const parts = forwarded.split(',').map(s => s.trim()).filter(Boolean);
-      if (parts.length > 0) return parts[0];
-    }
-    return remoteAddr;
-  }
+
 
   // --- B2: AUTOMATIC / ON-DEMAND TEAM CREATION ---
   async function ensureTeamForRegistration(clientOrPool, tournamentId, userId, teamNameFallback = '') {
@@ -10203,8 +10280,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const teamId = decodeURIComponent(generateInviteMatch[2]);
 
       // A7: In-memory rate limit on invite creation (10 per minute per user)
-      if (!checkRateLimit(`invite-create:${authUser.id}`, 10, 60000)) {
-        res.writeHead(429, { 'Content-Type': 'application/json' });
+      const authUserId = authUser.id || authUser.uid;
+      const inviteLimit = checkRateLimit(`invite-create:${authUserId}`, 10, 60000);
+      if (!inviteLimit.allowed) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': inviteLimit.retryAfter });
         return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many invite requests. Please wait a minute.' }));
       }
 
@@ -10329,8 +10408,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   if (resolveInviteMatch && req.method === 'GET') {
     try {
       const clientIp = getClientIp(req);
-      if (!checkRateLimit(`invite-resolve:${clientIp}`, 30, 60000)) {
-        res.writeHead(429, { 'Content-Type': 'application/json' });
+      const resolveLimit = checkRateLimit(`invite-resolve:${clientIp}`, 30, 60000);
+      if (!resolveLimit.allowed) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': resolveLimit.retryAfter });
         return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests. Please wait a minute.' }));
       }
 
@@ -10435,8 +10515,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         // A7: In-memory rate limits per IP and per user
-        if (!checkRateLimit(`invite-join-ip:${clientIp}`, 10, 60000) || !checkRateLimit(`invite-join-user:${authUser.id}`, 10, 60000)) {
-          res.writeHead(429, { 'Content-Type': 'application/json' });
+        const joinIpLimit = checkRateLimit(`invite-join-ip:${clientIp}`, 10, 60000);
+        if (!joinIpLimit.allowed) {
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': joinIpLimit.retryAfter });
+          return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many join attempts. Please wait a minute.' }));
+        }
+        const authUserId = authUser.id || authUser.uid;
+        const joinUserLimit = checkRateLimit(`invite-join-user:${authUserId}`, 10, 60000);
+        if (!joinUserLimit.allowed) {
+          rollbackRateLimit(`invite-join-ip:${clientIp}`);
+          res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': joinUserLimit.retryAfter });
           return res.end(JSON.stringify({ success: false, error: 'RATE_LIMIT_EXCEEDED', message: 'Too many join attempts. Please wait a minute.' }));
         }
 

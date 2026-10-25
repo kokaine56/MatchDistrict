@@ -291,8 +291,15 @@ function Auth({ onNavigate, initialMode = 'login' }) {
       blocked: 'Connection to Discord was temporarily blocked. Please try again in a few moments.',
       token_exchange_failed: 'Could not complete sign-in with Discord. Please try again.',
     }
-    triggerToast(messages[errorCode] || 'Discord sign-in failed. Please try again.')
+    if (errorCode === 'rate_limited') {
+      const retrySec = Number(params.get('retry_after')) || 60
+      const minutes = Math.max(1, Math.ceil(retrySec / 60))
+      triggerToast(`Too many attempts. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`)
+    } else {
+      triggerToast(messages[errorCode] || 'Discord sign-in failed. Please try again.')
+    }
     params.delete('discord_error')
+    params.delete('retry_after')
     const query = params.toString()
     window.history.replaceState({}, document.title, `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
   }, [])
