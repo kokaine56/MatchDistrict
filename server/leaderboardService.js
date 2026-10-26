@@ -24,6 +24,44 @@ export function validateScore(value, label = 'Score') {
   return { valid: true, value: num };
 }
 
+// Mirrors the tournament_scoring_rules DDL defaults; used when no custom rules row exists.
+export const DEFAULT_SCORING_RULES = Object.freeze({
+  kill_points_multiplier: 1,
+  placement_points_map: {
+    '1': 15, '2': 12, '3': 10, '4': 8, '5': 6, '6': 4, '7': 2, '8': 1, '9': 1,
+    '10': 1, '11': 1, '12': 1, '13': 0, '14': 0, '15': 0, '16': 0, '17': 0,
+    '18': 0, '19': 0, '20': 0,
+  },
+  wwcd_bonus: 0,
+});
+
+/**
+ * Loads authoritative tournament scoring rules from tournament_scoring_rules table.
+ * Falls back to DEFAULT_SCORING_RULES if no custom rules row exists or query fails.
+ */
+export async function getTournamentScoringRules(clientOrPool, tournamentId) {
+  if (!clientOrPool || !tournamentId) return { ...DEFAULT_SCORING_RULES };
+  try {
+    const res = await clientOrPool.query(
+      'SELECT kill_points_multiplier, placement_points_map, wwcd_bonus FROM tournament_scoring_rules WHERE tournament_id = $1::varchar',
+      [tournamentId]
+    );
+    if (res.rows.length > 0 && res.rows[0]) {
+      const row = res.rows[0];
+      return {
+        kill_points_multiplier: Number(row.kill_points_multiplier ?? 1),
+        placement_points_map: typeof row.placement_points_map === 'string'
+          ? JSON.parse(row.placement_points_map)
+          : (row.placement_points_map || DEFAULT_SCORING_RULES.placement_points_map),
+        wwcd_bonus: Number(row.wwcd_bonus ?? 0),
+      };
+    }
+  } catch {
+    // If table doesn't exist or query fails, fall back to defaults
+  }
+  return { ...DEFAULT_SCORING_RULES };
+}
+
 /**
  * Calculates match points for a single team's result based on scoring rules.
  * Rule: total points = placement points + total kills x kill multiplier (default 1).

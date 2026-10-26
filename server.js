@@ -11,7 +11,7 @@ import QRCode from 'qrcode';
 import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
-import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings, editTeamLeaderboardPoints, saveDistrictScores, getEligibleTournamentTeams, getDistrictSaveState } from './server/leaderboardService.js';
+import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings, editTeamLeaderboardPoints, saveDistrictScores, getEligibleTournamentTeams, getDistrictSaveState, getTournamentScoringRules } from './server/leaderboardService.js';
 import { calculateTournamentPlan } from './server/tournamentPlanner.js';
 import { generateTournamentRoadmap } from './server/roadmapGenerator.js';
 import { normalizeRoadmapConfig, validateRoadmapConfig, distributeDistrictSizes, computeDistrictCount, defaultTeamsAdvancing, isValidTime, releaseTimeFor } from './server/roadmapConfig.js';
@@ -13608,18 +13608,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const effectiveRoundId = routeRoundId || data.round_id || data.roundId || null;
         const expectedVersion = data.expected_version != null ? data.expected_version : (data.expectedVersion != null ? data.expectedVersion : null);
 
-        // Fetch tournament scoring rules if available
-        let scoringRules = {};
-        try {
-          const rulesRes = await pool.query('SELECT scoring_rules FROM tournaments WHERE id = $1::varchar', [tournId]);
-          if (rulesRes.rows.length > 0 && rulesRes.rows[0].scoring_rules) {
-            scoringRules = typeof rulesRes.rows[0].scoring_rules === 'string'
-              ? JSON.parse(rulesRes.rows[0].scoring_rules)
-              : rulesRes.rows[0].scoring_rules;
-          }
-        } catch {
-          // ignore
-        }
+        // Fetch tournament scoring rules from authoritative tournament_scoring_rules table
+        const scoringRules = await getTournamentScoringRules(pool, tournId);
 
         const client = await pool.connect();
         try {

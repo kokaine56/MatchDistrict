@@ -242,7 +242,7 @@ function QualifyTeamsModalInner({
                     <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border ${
                       isChosen ? 'bg-primary border-primary text-on-primary' : 'border-outline-variant/50'
                     }`}>
-                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {isChosen && <CheckCircle2 className="w-3.5 h-3.5" />}
                     </div>
                   </button>
                 );

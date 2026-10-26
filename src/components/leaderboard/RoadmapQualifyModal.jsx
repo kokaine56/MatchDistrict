@@ -120,6 +120,7 @@ function RoadmapQualifyModalInner({
       setPreviewData(data.preview);
     } catch (err) {
       setError(err.message || 'Error generating qualification preview.');
+      setPreviewData(null);
     } finally {
       setLoadingPreview(false);
     }
@@ -254,9 +255,18 @@ function RoadmapQualifyModalInner({
         </div>
 
         {error && (
-          <div className="p-3.5 rounded-xl bg-error/10 border border-error/25 text-error text-xs flex items-start gap-2.5 animate-in fade-in">
-            <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-            <div className="font-bold flex-1">{error}</div>
+          <div className="p-3.5 rounded-xl bg-error/10 border border-error/25 text-error text-xs flex items-center justify-between gap-2.5 animate-in fade-in">
+            <div className="flex items-start gap-2.5 flex-1">
+              <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="font-bold flex-1">{error}</div>
+            </div>
+            <button
+              type="button"
+              onClick={fetchPreview}
+              className="px-3 py-1 rounded-full text-xs font-bold bg-error/20 hover:bg-error/30 text-error transition cursor-pointer shrink-0"
+            >
+              Retry
+            </button>
           </div>
         )}
 
@@ -427,7 +437,7 @@ function RoadmapQualifyModalInner({
                     <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 border ${
                       isChosen ? 'bg-primary border-primary text-on-primary' : 'border-outline-variant/50'
                     }`}>
-                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {isChosen && <CheckCircle2 className="w-3.5 h-3.5" />}
                     </div>
                   </button>
                 );
@@ -489,9 +499,21 @@ function RoadmapQualifyModalInner({
                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
                 <span>Computing authoritative qualification preview...</span>
               </div>
+            ) : error ? (
+              <div className="py-6 text-center text-xs space-y-2 px-4">
+                <div className="text-error font-medium">Failed to calculate qualification preview due to a server error.</div>
+                <button
+                  type="button"
+                  onClick={fetchPreview}
+                  className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/30 text-on-surface transition cursor-pointer"
+                >
+                  Retry Preview Calculation
+                </button>
+              </div>
             ) : !previewData || previewData.qualifying_teams.length === 0 ? (
-              <div className="py-8 text-center text-on-surface-variant text-xs">
-                No eligible teams qualified for current parameters.
+              <div className="py-8 text-center text-on-surface-variant text-xs px-4">
+                <div className="font-semibold text-on-surface mb-1">Zero Eligible Qualifiers</div>
+                <div>{previewData?.zero_qualifiers_reason || 'No eligible teams qualified for current parameters.'}</div>
               </div>
             ) : (
               previewData.qualifying_teams.map((team, idx) => (

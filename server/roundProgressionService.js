@@ -1,5 +1,5 @@
 import { ALLOCATION_SOURCES, randomId } from './allocationService.js';
-import { sortAndRank, ensureCanonicalTeams, getEligibleTournamentTeams, getDistrictSaveState, compareTeams, detectCutoffTies } from './leaderboardService.js';
+import { sortAndRank, ensureCanonicalTeams, getEligibleTournamentTeams, getDistrictSaveState, compareTeams, detectCutoffTies, getTournamentScoringRules } from './leaderboardService.js';
 import { getDistrictDisplayName } from './roadmapDistricts.js';
 export { getPrizePositions } from './manualRoadmapService.js';
 import { getPrizePositions } from './manualRoadmapService.js';
@@ -1469,18 +1469,14 @@ export async function previewRoundQualification(client, {
 
   // 1. Fetch tournament
   const tournRes = await client.query(
-    'SELECT id, "orgId", roadmap_status, finalized_at, scoring_rules FROM tournaments WHERE id = $1::varchar',
+    'SELECT id, "orgId", roadmap_status, finalized_at FROM tournaments WHERE id = $1::varchar',
     [tournamentId]
   );
   if (tournRes.rows.length === 0) throw progressionError(PROGRESSION_ERR.TOURNAMENT_NOT_FOUND, 'Tournament not found.');
   const tournament = tournRes.rows[0];
 
-  let scoringRules = {};
-  if (tournament.scoring_rules) {
-    scoringRules = typeof tournament.scoring_rules === 'string'
-      ? JSON.parse(tournament.scoring_rules)
-      : tournament.scoring_rules;
-  }
+  // Authoritative scoring rules loaded from tournament_scoring_rules table
+  const scoringRules = await getTournamentScoringRules(client, tournamentId);
 
   // 2. Fetch source round
   let sourceRound = null;
@@ -1574,7 +1570,7 @@ export async function previewRoundQualification(client, {
       : standingsData.districts;
 
     for (const dist of includedDistricts) {
-      const eligibleInDist = (dist.teams || []).filter((t) => !t.is_disqualified);
+      const eligibleInDist = sortAndRank((dist.teams || []).filter((t) => !t.is_disqualified), scoringRules);
       const isReady = dist.scores_saved || dist.scores_status === 'saved';
       const hasSomeScores = dist.teams.some((t) => t.has_saved_scores);
       const distStatus = isReady ? 'ready' : (hasSomeScores ? 'incomplete' : 'not_processed');
@@ -1662,6 +1658,28 @@ export async function previewRoundQualification(client, {
     };
   });
 
+  // 11. Authoritative explanation if preview yields zero qualifiers
+  let zeroQualifiersReason = null;
+  if (qualifyingTeams.length === 0) {
+    const totalEligible = activeMethod === 'per_district'
+      ? (standingsData.districts || []).reduce((sum, d) => sum + (d.teams || []).filter((t) => !t.is_disqualified).length, 0)
+      : (standingsData.overallStandings || []).filter((t) => !t.is_disqualified).length;
+
+    const hasAnySavedScores = activeMethod === 'per_district'
+      ? (standingsData.districts || []).some((d) => (d.teams || []).some((t) => t.has_saved_scores || (t.total_points != null && Number(t.total_points) > 0)))
+      : (standingsData.overallStandings || []).some((t) => t.has_saved_scores || (t.total_points != null && Number(t.total_points) > 0));
+
+    if (totalEligible === 0) {
+      zeroQualifiersReason = 'No eligible teams found allocated to this stage.';
+    } else if (!hasAnySavedScores) {
+      zeroQualifiersReason = 'No scores have been saved yet for teams in this stage. Enter and save match scores before generating qualification preview.';
+    } else if (activeCount <= 0) {
+      zeroQualifiersReason = 'Advancing team count is set to 0. Adjust the qualifying count parameter.';
+    } else {
+      zeroQualifiersReason = 'No eligible teams met the qualification criteria under current parameters.';
+    }
+  }
+
   return {
     source_round: {
       id: sourceRound.id,
@@ -1705,6 +1723,7 @@ export async function previewRoundQualification(client, {
       district_name: t.district_name || null,
       is_provisional: isProvisional,
     })),
+    zero_qualifiers_reason: zeroQualifiersReason,
     allocation_preview: allocationPreview,
   };
 }
