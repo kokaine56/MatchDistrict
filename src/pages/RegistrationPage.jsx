@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import StickyBottomBar from '../components/StickyBottomBar.jsx'
+import BottomSheetModal from '../components/BottomSheetModal.jsx'
 import { useCurrentUser } from '../hooks/useCurrentUser.js'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { fetchJsonWithRetry } from '../utils/api.js'
@@ -220,7 +221,9 @@ function PaymentAppIcon({ id, name, className = 'w-6 h-6' }) {
 
 function PaymentAppDropdown({ value, onChange, error }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [openUpwards, setOpenUpwards] = useState(false)
   const containerRef = useRef(null)
+  const listboxRef = useRef(null)
 
   useEffect(() => {
     function handleOutside(e) {
@@ -236,15 +239,46 @@ function PaymentAppDropdown({ value, onChange, error }) {
     }
   }, [])
 
+  const handleToggle = () => {
+    if (!isOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - rect.bottom
+      setOpenUpwards(spaceBelow < 280 && rect.top > 280)
+    }
+    setIsOpen(prev => !prev)
+  }
+
   const selectedApp = UPI_APPS.find(
     a => a.id.toLowerCase() === (value || '').toLowerCase() ||
          a.name.toLowerCase() === (value || '').toLowerCase()
   )
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setIsOpen(false)
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (!isOpen) {
+        handleToggle()
+        return
+      }
+      const currentIndex = UPI_APPS.findIndex(a => a.id === selectedApp?.id)
+      const nextIndex = e.key === 'ArrowDown'
+        ? (currentIndex + 1) % UPI_APPS.length
+        : (currentIndex - 1 + UPI_APPS.length) % UPI_APPS.length
+      onChange(UPI_APPS[nextIndex].id)
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      if (!isOpen) {
+        e.preventDefault()
+        handleToggle()
+      }
+    }
+  }
+
   return (
-    <div ref={containerRef} className="relative">
-      <label id="upi-app-select-label" className="block text-xs font-semibold text-white/60 mb-1.5">
-        Which UPI app did you use to pay? <span className="text-rose-400">*</span>
+    <div ref={containerRef} className="relative w-full">
+      <label id="upi-app-select-label" className="block text-xs font-semibold text-on-surface-variant mb-1.5">
+        Which UPI app did you use to pay? <span className="text-error">*</span>
       </label>
       <button
         type="button"
@@ -252,38 +286,41 @@ function PaymentAppDropdown({ value, onChange, error }) {
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-labelledby="upi-app-select-label upi-app-dropdown-btn"
-        onClick={() => setIsOpen(prev => !prev)}
-        className={`w-full bg-white/5 border ${
-          error ? 'border-rose-500/70 bg-rose-500/5' : isOpen ? 'border-primary/60 ring-2 ring-primary/20' : 'border-white/10'
-        } rounded-xl px-4 py-3 text-sm flex items-center justify-between text-left transition-all hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer`}
+        onClick={handleToggle}
+        onKeyDown={handleKeyDown}
+        className={`w-full bg-surface-container-low border ${
+          error
+            ? 'border-error ring-1 ring-error/30'
+            : isOpen
+            ? 'border-primary ring-2 ring-primary/20'
+            : 'border-outline-variant/30 hover:border-outline-variant/60'
+        } rounded-xl px-4 py-3 text-sm flex items-center justify-between text-left transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 cursor-pointer shadow-sm`}
       >
         <span className="flex items-center gap-3 min-w-0">
           {selectedApp ? (
             <>
-              <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 p-1">
+              <span className="w-7 h-7 rounded-lg bg-surface-variant/80 border border-outline-variant/20 flex items-center justify-center shrink-0 p-1">
                 <PaymentAppIcon id={selectedApp.id} className="w-5 h-5 shrink-0" />
               </span>
-              <span className="text-white font-medium truncate">{selectedApp.label}</span>
+              <span className="text-on-background font-semibold truncate">{selectedApp.label}</span>
             </>
           ) : (
-            <span className="text-white/40">Select payment app</span>
+            <span className="text-on-surface-variant/60 text-sm">Select payment app</span>
           )}
         </span>
-        <svg
-          className={`w-4 h-4 text-white/50 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <span className={`material-symbols-outlined text-lg text-on-surface-variant shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180 text-primary' : ''}`}>
+          expand_more
+        </span>
       </button>
 
       {isOpen && (
         <div
+          ref={listboxRef}
           role="listbox"
           aria-labelledby="upi-app-select-label"
-          className="absolute left-0 right-0 top-full mt-1.5 bg-[#12131C] border border-white/15 rounded-xl shadow-2xl py-1.5 z-40 max-h-60 overflow-y-auto backdrop-blur-xl"
+          className={`absolute left-0 right-0 z-50 bg-surface-container-high border border-outline-variant/40 rounded-xl shadow-2xl py-1.5 max-h-60 overflow-y-auto backdrop-blur-xl transition-all ${
+            openUpwards ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]'
+          }`}
         >
           {UPI_APPS.map((app) => {
             const isSelected = selectedApp?.id === app.id
@@ -297,22 +334,20 @@ function PaymentAppDropdown({ value, onChange, error }) {
                   onChange(app.id)
                   setIsOpen(false)
                 }}
-                className={`w-full px-4 py-2.5 flex items-center justify-between gap-3 text-sm transition-colors text-left cursor-pointer ${
+                className={`w-full px-3.5 py-2.5 flex items-center justify-between gap-3 text-sm transition-colors text-left cursor-pointer ${
                   isSelected
-                    ? 'bg-primary/20 text-white font-semibold'
-                    : 'text-white/80 hover:bg-white/10 hover:text-white'
+                    ? 'bg-primary/15 text-primary font-bold'
+                    : 'text-on-surface-variant hover:bg-surface-variant/70 hover:text-on-background'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 p-1">
+                  <span className="w-7 h-7 rounded-lg bg-surface-variant/70 border border-outline-variant/20 flex items-center justify-center shrink-0 p-1">
                     <PaymentAppIcon id={app.id} className="w-5 h-5 shrink-0" />
                   </span>
                   <span className="truncate">{app.label}</span>
                 </div>
                 {isSelected && (
-                  <svg className="w-4 h-4 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                  </svg>
+                  <span className="material-symbols-outlined text-primary text-base shrink-0">check</span>
                 )}
               </button>
             )
@@ -320,7 +355,7 @@ function PaymentAppDropdown({ value, onChange, error }) {
         </div>
       )}
 
-      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+      {error && <p className="text-error text-xs mt-1.5 font-medium">{error}</p>}
     </div>
   )
 }
@@ -463,6 +498,7 @@ function RegistrationPage({ onNavigate }) {
   const [paymentSubmitting, setPaymentSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [copiedToast, setCopiedToast] = useState('')
+  const [copiedRegId, setCopiedRegId] = useState(false)
   const [submittedTimeIST, setSubmittedTimeIST] = useState('')
   const [rejectedReg, setRejectedReg] = useState(null)
 
@@ -883,60 +919,122 @@ function RegistrationPage({ onNavigate }) {
 
   if (step === 'success') {
     return (
-      <div className="registration-viewport min-h-screen bg-[#07080C] text-white flex items-center justify-center p-4">
-        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white/5 border border-white/10 rounded-2xl p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
-            <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold mb-2">Team Registered!</h2>
-          {isPaid && (
-            <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-xl p-3 mb-4 text-emerald-300 font-bold text-sm">
-              {submittedTimeIST ? `Submitted at ${submittedTimeIST}. Verification pending.` : 'Submitted. Verification pending.'}
+      <div className="registration-viewport min-h-screen bg-background text-on-background py-10 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center pb-[calc(env(safe-area-inset-bottom,0px)+36px)]">
+        <motion.div
+          initial={{ opacity: 0, y: 12, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+          className="bg-surface-container-low border border-outline-variant/30 rounded-2xl p-6 sm:p-8 max-w-lg w-full shadow-2xl relative overflow-hidden text-left"
+        >
+          {/* Success Header */}
+          <div className="text-center">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 mx-auto mb-3.5 shadow-sm">
+              <span className="material-symbols-outlined text-2xl font-bold">check</span>
             </div>
-          )}
-          <p className="text-white/60 mb-6">
+            <h2 className="font-headline-md text-2xl sm:text-3xl font-extrabold text-on-background tracking-tight">Team Registered!</h2>
+            {tourney?.title && (
+              <p className="text-xs text-on-surface-variant font-medium mt-1 truncate">{tourney.title}</p>
+            )}
+          </div>
+
+          {/* Registration Status */}
+          <div className="mt-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+              <span className="font-bold text-amber-700 dark:text-amber-300 truncate">
+                {isPaid ? 'Payment Proof Submitted • Pending Review' : 'Registration Submitted • Pending Approval'}
+              </span>
+            </div>
+            {submittedTimeIST && (
+              <span className="font-mono text-[11px] font-semibold text-on-surface-variant shrink-0">{submittedTimeIST}</span>
+            )}
+          </div>
+          <p className="text-xs text-on-surface-variant text-center mt-2.5 leading-relaxed max-w-sm mx-auto">
             {isPaid
-              ? 'Your payment proof has been submitted. Awaiting admin verification.'
-              : 'Your registration is pending organizer approval.'}
+              ? 'Your payment proof has been submitted for admin verification. Your team slot will be confirmed upon approval.'
+              : 'Your squad registration has been submitted and is awaiting tournament organizer review.'}
           </p>
+
+          {/* Registration Details */}
           {registeredTeam && (
-            <div className="bg-white/5 rounded-xl p-4 mb-6 text-left text-sm space-y-1">
-              <p><span className="text-white/40">Team:</span> <span className="font-bold">{toMessage(form.teamName)}</span></p>
-              <p><span className="text-white/40">Status:</span> <span className="text-amber-400 font-semibold">{toMessage(registeredTeam.status)}</span></p>
-              <p><span className="text-white/40">Registration ID:</span> <span className="font-mono text-xs">{toMessage(registeredTeam.id)}</span></p>
+            <div className="mt-5 rounded-xl border border-outline-variant/30 divide-y divide-outline-variant/20 bg-surface-container/50 text-xs">
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Team Name</span>
+                <span className="font-bold text-on-background text-sm truncate max-w-[220px]">{toMessage(form.teamName)}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Registration Status</span>
+                <span className="px-2.5 py-0.5 rounded-full font-bold text-[11px] bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 capitalize">
+                  {toMessage(registeredTeam.status || 'pending').replace('_', ' ')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-2">
+                <span className="text-on-surface-variant font-medium shrink-0">Registration ID</span>
+                <div className="inline-flex items-center gap-1.5 font-mono text-[11px] text-on-background bg-surface-variant/70 px-2 py-0.5 rounded border border-outline-variant/30">
+                  <span className="truncate max-w-[160px] sm:max-w-[200px]">{toMessage(registeredTeam.id)}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!registeredTeam?.id) return
+                      navigator.clipboard.writeText(String(registeredTeam.id))
+                      setCopiedRegId(true)
+                      setTimeout(() => setCopiedRegId(false), 2000)
+                    }}
+                    className="text-on-surface-variant hover:text-on-background transition-colors p-0.5"
+                    title="Copy Registration ID"
+                    aria-label="Copy Registration ID"
+                  >
+                    <span className="material-symbols-outlined text-xs leading-none">
+                      {copiedRegId ? 'check' : 'content_copy'}
+                    </span>
+                  </button>
+                </div>
+              </div>
               {predictedGroup && (
-                <p><span className="text-white/40">Group:</span> <span className="font-bold text-primary">{toMessage(predictedGroup).startsWith('Group') ? toMessage(predictedGroup) : `Group ${toMessage(predictedGroup)}`}</span></p>
+                <div className="flex items-center justify-between p-3 gap-3">
+                  <span className="text-on-surface-variant font-medium shrink-0">Assigned Group</span>
+                  <span className="font-bold text-primary text-xs">
+                    {toMessage(predictedGroup).startsWith('Group') ? toMessage(predictedGroup) : `Group ${toMessage(predictedGroup)}`}
+                  </span>
+                </div>
               )}
               {amountToPay && (
-                <p className="pt-1 border-t border-white/10 mt-2">
-                  <span className="text-white/40">Amount to Pay:</span>{' '}
-                  <span className="text-green-400 font-bold text-base">₹{Number(amountToPay).toFixed(2)}</span>
-                </p>
+                <div className="flex items-center justify-between p-3 gap-3">
+                  <span className="text-on-surface-variant font-medium shrink-0">Amount Due</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                    ₹{Number(amountToPay).toFixed(2)}
+                  </span>
+                </div>
               )}
             </div>
           )}
 
-          {/* Next Step Reminder Banner (Part B) */}
-          <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-4 mb-6 text-left space-y-1.5">
-            <div className="flex items-center gap-2 text-amber-400 font-bold text-xs uppercase tracking-wider">
-              <span>Next Step: Complete Your Squad Roster</span>
+          {/* Squad Roster Guidance */}
+          <div className="mt-4 p-4 rounded-xl border border-outline-variant/30 bg-surface-container/30 space-y-2">
+            <div className="flex items-center gap-2 text-on-background font-bold text-xs">
+              <span className="material-symbols-outlined text-primary text-base">group_add</span>
+              <span className="uppercase tracking-wider">Next Step: Complete Your Squad Roster</span>
             </div>
-            <p className="text-xs text-amber-200/90 leading-relaxed">
-              Once approved, your team slot is secured! Share your team invitation link with your teammates so they can claim their roster slots.
+            <p className="text-xs text-on-surface-variant leading-relaxed">
+              Once approved, your slot is confirmed. Share your team invitation link with your teammates from the Team Hub so they can claim their roster slots.
             </p>
-            <p className="text-[11px] text-amber-300/70 font-medium">
-              🔒 Match room credentials unlock only after all roster slots are linked to registered player accounts.
-            </p>
+            <div className="flex items-start gap-2 pt-1.5 text-[11px] text-on-surface-variant/80 border-t border-outline-variant/20">
+              <span className="material-symbols-outlined text-sm text-primary shrink-0 mt-0.5">lock</span>
+              <span>Match room credentials unlock only after all roster slots are linked to registered player accounts.</span>
+            </div>
           </div>
 
-          <button
-            onClick={() => navigate(`/tournaments/${id}`)}
-            className="w-full bg-primary text-white font-bold py-3 px-6 rounded-xl hover:opacity-90 transition-all"
-          >
-            View Tournament Details
-          </button>
+          {/* Primary Action */}
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => navigate(`/tournaments/${id}`)}
+              className="w-full bg-primary hover:bg-primary/90 text-on-primary font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-primary/25 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            >
+              <span>View Tournament Details</span>
+              <span className="material-symbols-outlined text-base">arrow_forward</span>
+            </button>
+          </div>
         </motion.div>
       </div>
     )
@@ -1434,137 +1532,97 @@ function RegistrationPage({ onNavigate }) {
         </StickyBottomBar>
 
         {/* Confirmation Modal */}
-        {showConfirmModal && (
-          <>
-            <div
-              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 transition-opacity"
-              onClick={() => {
-                if (!paymentSubmitting) setShowConfirmModal(false)
-              }}
-              aria-hidden="true"
-            />
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="confirm-modal-title"
-                className="bg-[#10121A] border border-white/15 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 my-auto relative"
+        <BottomSheetModal
+          isOpen={showConfirmModal}
+          onClose={() => {
+            if (!paymentSubmitting) setShowConfirmModal(false)
+          }}
+          title="Confirm Payment Submission"
+          icon="verified_user"
+          maxWidth="max-w-md"
+          actions={
+            <>
+              <button
+                type="button"
+                disabled={paymentSubmitting}
+                onClick={() => setShowConfirmModal(false)}
+                className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl border border-outline-variant/40 hover:bg-surface-variant text-on-surface-variant hover:text-on-background font-semibold text-sm transition-all disabled:opacity-50 cursor-pointer text-center"
               >
-                {/* Header */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary shrink-0">
-                      <span className="material-symbols-outlined text-xl">verified_user</span>
-                    </div>
-                    <div>
-                      <h3 id="confirm-modal-title" className="text-base sm:text-lg font-black text-white leading-tight">
-                        Confirm Payment Submission
-                      </h3>
-                      <p className="text-[11px] text-white/50">Review your payment details</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={paymentSubmitting}
-                    onClick={() => setShowConfirmModal(false)}
-                    aria-label="Close dialog"
-                    className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-lg">close</span>
-                  </button>
-                </div>
-
-                {/* Notice message */}
-                <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 flex items-start gap-2.5">
-                  <span className="material-symbols-outlined text-amber-400 text-base shrink-0 mt-0.5">info</span>
-                  <p className="text-xs text-amber-200/90 leading-relaxed">
-                    Please confirm that you have completed the payment and that the transaction reference and screenshot are correct. Submitting payment proof does not guarantee payment verification.
-                  </p>
-                </div>
-
-                {/* Summary Table */}
-                <div className="bg-white/5 border border-white/10 rounded-xl p-3.5 space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
-                    <span className="text-white/50">Tournament</span>
-                    <span className="font-semibold text-white text-right truncate max-w-[200px]" title={tourney.title}>
-                      {tourney.title}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
-                    <span className="text-white/50">Entry Fee</span>
-                    <span className="font-bold text-emerald-400">
-                      {entryDisplay || (entryFee ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free')}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
-                    <span className="text-white/50">Payment App</span>
-                    <div className="inline-flex items-center gap-2 font-medium text-white">
-                      <span className="w-5 h-5 rounded bg-white/10 flex items-center justify-center p-0.5 shrink-0">
-                        <PaymentAppIcon id={payment.app} className="w-3.5 h-3.5" />
-                      </span>
-                      <span>{getPaymentAppLabel(payment.app)}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
-                    <span className="text-white/50">UTR / Reference</span>
-                    <span className="font-mono font-bold text-emerald-300 tracking-wider">
-                      {payment.transactionId.trim()}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-white/50">Payment Screenshot</span>
-                    <div className="inline-flex items-center gap-2">
-                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                        <span className="material-symbols-outlined text-sm">check_circle</span>
-                        Attached
-                      </span>
-                      {payment.screenshotPreview && (
-                        <img
-                          src={payment.screenshotPreview}
-                          alt="Screenshot preview"
-                          className="w-7 h-7 object-cover rounded border border-white/20"
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    type="button"
-                    disabled={paymentSubmitting}
-                    onClick={() => setShowConfirmModal(false)}
-                    className="flex-1 py-3 px-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white font-semibold rounded-xl transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    Go Back
-                  </button>
-                  <button
-                    type="button"
-                    disabled={paymentSubmitting || paymentSubmittedRef.current}
-                    onClick={handleConfirmPaymentSubmission}
-                    className="flex-1 py-3 px-4 bg-primary hover:bg-primary/90 text-white font-bold rounded-xl transition-all text-sm shadow-lg shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    {paymentSubmitting ? (
-                      <>
-                        <span className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-                        <span>Submitting...</span>
-                      </>
-                    ) : (
-                      <span>Confirm &amp; Submit</span>
-                    )}
-                  </button>
-                </div>
-              </motion.div>
+                Go Back
+              </button>
+              <button
+                type="button"
+                disabled={paymentSubmitting || paymentSubmittedRef.current}
+                onClick={handleConfirmPaymentSubmission}
+                className="flex-1 sm:flex-none px-6 py-2.5 rounded-xl bg-primary hover:bg-primary/90 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {paymentSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                    <span>Submitting...</span>
+                  </>
+                ) : (
+                  <span>Confirm &amp; Submit</span>
+                )}
+              </button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-300 text-xs leading-relaxed flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-amber-500 text-base shrink-0 mt-0.5">info</span>
+              <span>
+                Please confirm that you have completed the payment and that the transaction reference and screenshot are correct. Submitting payment proof does not guarantee payment verification.
+              </span>
             </div>
-          </>
-        )}
+
+            <div className="rounded-xl border border-outline-variant/30 divide-y divide-outline-variant/20 bg-surface-container-low/50 text-xs overflow-hidden">
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Tournament</span>
+                <span className="font-bold text-on-background text-right truncate max-w-[220px]" title={tourney?.title}>
+                  {tourney?.title}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Entry Fee</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                  {entryDisplay || (entryFee ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Payment App</span>
+                <div className="inline-flex items-center gap-2 font-semibold text-on-background">
+                  <span className="w-5 h-5 rounded bg-surface-variant/80 flex items-center justify-center p-0.5 shrink-0 border border-outline-variant/20">
+                    <PaymentAppIcon id={payment.app} className="w-3.5 h-3.5 shrink-0" />
+                  </span>
+                  <span className="truncate">{getPaymentAppLabel(payment.app)}</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">UTR / Reference</span>
+                <span className="font-mono font-bold text-on-background tracking-wider">
+                  {payment.transactionId.trim()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 gap-3">
+                <span className="text-on-surface-variant font-medium shrink-0">Payment Screenshot</span>
+                <div className="inline-flex items-center gap-2">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm">check_circle</span>
+                    Attached
+                  </span>
+                  {payment.screenshotPreview && (
+                    <img
+                      src={payment.screenshotPreview}
+                      alt="Screenshot preview"
+                      className="w-8 h-8 object-cover rounded-lg border border-outline-variant/40 shrink-0"
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </BottomSheetModal>
       </div>
     );
   }

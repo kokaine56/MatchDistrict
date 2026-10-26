@@ -219,16 +219,10 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
   };
 
   const executeApprove = async (regId, note) => {
-    const targetItem = items.find(i => i.id === regId);
+    if (actionLoadingId) return;
+    const targetItem = items.find(i => i.id === regId) || selectedItem;
     if (!targetItem) return;
 
-    // Optimistic removal
-    setItems(prev => prev.filter(i => i.id !== regId));
-    setCounts(prev => ({
-      ...prev,
-      pending_review: Math.max(0, prev.pending_review - 1),
-      approved: prev.approved + 1
-    }));
     setFlagWarningItem(null);
     setActionLoadingId(regId);
 
@@ -243,19 +237,36 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         headers,
         body: JSON.stringify({ note })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.status === 409) {
         showToast(data.message || 'Already handled by another reviewer.', 'warning');
         fetchQueue(true);
-      } else if (!data.success) {
-        showToast(data.message || 'Failed to approve registration.', 'error');
+      } else if (!res.ok || !data.success) {
+        let errMsg = data.message || data.error;
+        if (!errMsg) {
+          if (res.status === 401) errMsg = 'Authentication required. Please sign in again.';
+          else if (res.status === 403) errMsg = 'Access denied: You do not have permission to approve registrations.';
+          else if (res.status === 404) errMsg = 'Registration record not found.';
+          else errMsg = 'Failed to approve registration.';
+        }
+        showToast(errMsg, 'error');
         fetchQueue(true);
       } else {
+        // Successful confirmation from backend: update UI state
+        setItems(prev => prev.filter(i => i.id !== regId));
+        setCounts(prev => ({
+          ...prev,
+          pending_review: Math.max(0, prev.pending_review - 1),
+          approved: prev.approved + 1
+        }));
+        if (selectedItem?.id === regId) {
+          setSelectedItem(prev => prev ? { ...prev, status: 'approved', payment_status: 'verified' } : null);
+        }
         showToast(`Approved ${targetItem.team_name} successfully.`, 'success');
       }
-    } catch {
-      showToast('Network error during approval.', 'error');
+    } catch (err) {
+      showToast('Network error during approval: ' + (err.message || 'connection failed'), 'error');
       fetchQueue(true);
     } finally {
       setActionLoadingId(null);
@@ -264,20 +275,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
   // Reject action
   const executeReject = async () => {
-    if (!rejectingItem) return;
+    if (actionLoadingId || !rejectingItem) return;
     const item = rejectingItem;
     if (rejectReason === 'other' && !rejectNote.trim()) {
       showToast('A note is required when selecting "Other issue".', 'error');
       return;
     }
 
-    // Optimistic removal
-    setItems(prev => prev.filter(i => i.id !== item.id));
-    setCounts(prev => ({
-      ...prev,
-      pending_review: Math.max(0, prev.pending_review - 1),
-      rejected: prev.rejected + 1
-    }));
     setRejectingItem(null);
     setActionLoadingId(item.id);
 
@@ -292,19 +296,35 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         headers,
         body: JSON.stringify({ reason: rejectReason, note: rejectNote.trim() })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.status === 409) {
         showToast(data.message || 'Already handled by another reviewer.', 'warning');
         fetchQueue(true);
-      } else if (!data.success) {
-        showToast(data.message || 'Failed to reject registration.', 'error');
+      } else if (!res.ok || !data.success) {
+        let errMsg = data.message || data.error;
+        if (!errMsg) {
+          if (res.status === 401) errMsg = 'Authentication required. Please sign in again.';
+          else if (res.status === 403) errMsg = 'Access denied: You do not have permission to reject registrations.';
+          else if (res.status === 404) errMsg = 'Registration record not found.';
+          else errMsg = 'Failed to reject registration.';
+        }
+        showToast(errMsg, 'error');
         fetchQueue(true);
       } else {
+        setItems(prev => prev.filter(i => i.id !== item.id));
+        setCounts(prev => ({
+          ...prev,
+          pending_review: Math.max(0, prev.pending_review - 1),
+          rejected: prev.rejected + 1
+        }));
+        if (selectedItem?.id === item.id) {
+          setSelectedItem(prev => prev ? { ...prev, status: 'rejected', payment_status: 'rejected' } : null);
+        }
         showToast(`Registration for ${item.team_name} rejected.`, 'info');
       }
-    } catch {
-      showToast('Network error during rejection.', 'error');
+    } catch (err) {
+      showToast('Network error during rejection: ' + (err.message || 'connection failed'), 'error');
       fetchQueue(true);
     } finally {
       setActionLoadingId(null);
@@ -313,20 +333,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
   // Reopen action (Admins only)
   const executeReopen = async () => {
-    if (!reopeningItem) return;
+    if (actionLoadingId || !reopeningItem) return;
     const item = reopeningItem;
     if (!reopenReason.trim()) {
       showToast('A reason is required to move back to pending review.', 'error');
       return;
     }
 
-    // Optimistic removal
-    setItems(prev => prev.filter(i => i.id !== item.id));
-    setCounts(prev => ({
-      ...prev,
-      [activeTab]: Math.max(0, prev[activeTab] - 1),
-      pending_review: prev.pending_review + 1
-    }));
     setReopeningItem(null);
     setActionLoadingId(item.id);
 
@@ -341,16 +354,25 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         headers,
         body: JSON.stringify({ reason: reopenReason.trim() })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      if (!data.success) {
-        showToast(data.message || 'Failed to reopen registration.', 'error');
+      if (!res.ok || !data.success) {
+        showToast(data.message || data.error || 'Failed to reopen registration.', 'error');
         fetchQueue(true);
       } else {
+        setItems(prev => prev.filter(i => i.id !== item.id));
+        setCounts(prev => ({
+          ...prev,
+          [activeTab]: Math.max(0, prev[activeTab] - 1),
+          pending_review: prev.pending_review + 1
+        }));
+        if (selectedItem?.id === item.id) {
+          setSelectedItem(prev => prev ? { ...prev, status: 'pending', payment_status: 'pending_admin_review' } : null);
+        }
         showToast(`Reopened ${item.team_name} and moved back to pending review.`, 'success');
       }
-    } catch {
-      showToast('Network error during reopen.', 'error');
+    } catch (err) {
+      showToast('Network error during reopen: ' + (err.message || 'connection failed'), 'error');
       fetchQueue(true);
     } finally {
       setActionLoadingId(null);
@@ -359,15 +381,9 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
   // Release slot action
   const executeReleaseSlot = async () => {
-    if (!releasingItem) return;
+    if (actionLoadingId || !releasingItem) return;
     const item = releasingItem;
 
-    // Optimistic removal
-    setItems(prev => prev.filter(i => i.id !== item.id));
-    setCounts(prev => ({
-      ...prev,
-      awaiting_payment: Math.max(0, prev.awaiting_payment - 1)
-    }));
     setReleasingItem(null);
     setActionLoadingId(item.id);
 
@@ -382,16 +398,24 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         headers,
         body: JSON.stringify({ note: releaseNote.trim() })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
-      if (!data.success) {
-        showToast(data.message || 'Failed to release slot.', 'error');
+      if (!res.ok || !data.success) {
+        showToast(data.message || data.error || 'Failed to release slot.', 'error');
         fetchQueue(true);
       } else {
+        setItems(prev => prev.filter(i => i.id !== item.id));
+        setCounts(prev => ({
+          ...prev,
+          awaiting_payment: Math.max(0, prev.awaiting_payment - 1)
+        }));
+        if (selectedItem?.id === item.id) {
+          setSelectedItem(prev => prev ? { ...prev, status: 'cancelled', slot_number: null } : null);
+        }
         showToast(`Slot released for ${item.team_name}.`, 'info');
       }
-    } catch {
-      showToast('Network error during slot release.', 'error');
+    } catch (err) {
+      showToast('Network error during slot release: ' + (err.message || 'connection failed'), 'error');
       fetchQueue(true);
     } finally {
       setActionLoadingId(null);
@@ -415,16 +439,16 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         headers,
         body: JSON.stringify({ registrationIds: ids })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.success) {
         setBulkResults(data);
         showToast(data.message || `Bulk approved ${data.approvedCount} registrations.`, 'success');
         fetchQueue(true);
       } else {
-        showToast(data.message || 'Bulk approval failed.', 'error');
+        showToast(data.message || data.error || 'Bulk approval failed.', 'error');
       }
-    } catch {
-      showToast('Network error during bulk approval.', 'error');
+    } catch (err) {
+      showToast('Network error during bulk approval: ' + (err.message || 'connection failed'), 'error');
     } finally {
       setBulkLoading(false);
     }

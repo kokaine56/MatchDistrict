@@ -16621,8 +16621,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
+        console.error(`[review-queue/approve] Internal server error for ${regId}:`, err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err.message, message: 'Server error while approving registration: ' + err.message }));
       }
     });
     return;
@@ -16654,8 +16655,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
+        console.error(`[review-queue/reject] Internal server error for ${regId}:`, err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err.message, message: 'Server error while rejecting registration: ' + err.message }));
       }
     });
     return;
@@ -16688,8 +16690,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
+        console.error(`[tournaments/registrations/approve] Internal server error for ${regId}:`, err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err.message, message: 'Server error while approving registration: ' + err.message }));
       }
     });
     return;
@@ -16723,8 +16726,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch (err) {
+        console.error(`[tournaments/registrations/reject] Internal server error for ${regId}:`, err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message }));
+        res.end(JSON.stringify({ success: false, error: err.message, message: 'Server error while rejecting registration: ' + err.message }));
       }
     });
     return;

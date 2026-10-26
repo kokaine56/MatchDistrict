@@ -1209,17 +1209,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   // Distinct rejected-payment UI separating status message from the action
                   if (btnState.isRejected) {
                     return (
-                      <div className="w-full bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="w-full bg-error/10 border border-error/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-sm shadow-sm">
                         <div className="flex items-start gap-3 min-w-0">
-                          <div className="w-9 h-9 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5 text-rose-400">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
+                          <div className="w-10 h-10 rounded-xl bg-error/15 border border-error/30 flex items-center justify-center shrink-0 mt-0.5 text-error shadow-sm">
+                            <span className="material-symbols-outlined text-xl leading-none">error</span>
                           </div>
-                          <div className="space-y-0.5 min-w-0">
-                            <div className="text-sm font-bold text-rose-300">Payment Rejected</div>
-                            <p className="text-xs text-rose-200/90 leading-relaxed">
-                              Payment verification failed.{btnState.rejectionReason ? ` Reason: ${btnState.rejectionReason}` : ''}
+                          <div className="space-y-1 min-w-0">
+                            <h4 className="text-sm sm:text-base font-bold text-on-background tracking-tight">Payment Rejected</h4>
+                            <p className="text-xs text-on-surface-variant leading-relaxed">
+                              Payment verification failed.{btnState.rejectionReason ? <span className="font-semibold text-error"> Reason: {btnState.rejectionReason}</span> : ''}
                             </p>
                           </div>
                         </div>
@@ -1231,18 +1229,16 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             setIsNavigatingToRegister(true);
                             navigate(`/tournaments/${tourney.id}/register`);
                           }}
-                          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-75 disabled:cursor-wait shrink-0 min-h-[44px]"
+                          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-error hover:bg-error/90 active:bg-error/80 text-on-error font-bold text-sm shadow-md shadow-error/20 hover:shadow-lg hover:shadow-error/30 active:scale-[0.98] transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-75 disabled:cursor-wait shrink-0 min-h-[44px]"
                         >
                           {isNavigatingToRegister ? (
                             <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <div className="w-4 h-4 border-2 border-on-error border-t-transparent rounded-full animate-spin" />
                               <span>Loading...</span>
                             </>
                           ) : (
                             <>
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
+                              <span className="material-symbols-outlined text-lg leading-none shrink-0">refresh</span>
                               <span>Register Again</span>
                             </>
                           )}

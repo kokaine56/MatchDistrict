@@ -186,8 +186,13 @@ export function checkReviewerPermissions(user, tournament, action = 'view') {
 
 /**
  * Automatic team squad creation helper (safe fallback if not already created).
+ * Handled with a PostgreSQL SAVEPOINT to ensure team/member creation issues cannot
+ * abort the enclosing transaction.
  */
-async function ensureTeamForRegistrationSafe(client, tournamentId, userId, teamName) {
+async function ensureTeamForRegistrationSafe(client, tournamentId, userId, teamName, registrationId) {
+  if (!tournamentId || !userId) return;
+
+  await client.query('SAVEPOINT ensure_team_sp');
   try {
     const existing = await client.query(
       `SELECT t.id FROM tournament_teams t
@@ -195,22 +200,55 @@ async function ensureTeamForRegistrationSafe(client, tournamentId, userId, teamN
        WHERE t.tournament_id = $1 AND tm.user_id = $2 LIMIT 1`,
       [tournamentId, userId]
     );
-    if (existing.rows.length > 0) return existing.rows[0];
+    if (existing.rows.length > 0) {
+      if (registrationId) {
+        await client.query(
+          `UPDATE tournament_teams SET registration_id = COALESCE(registration_id, $1), updated_at = NOW() WHERE id = $2`,
+          [registrationId, existing.rows[0].id]
+        );
+      }
+      await client.query('RELEASE SAVEPOINT ensure_team_sp');
+      return existing.rows[0];
+    }
+
+    let targetName = (teamName || 'Team ' + String(userId).slice(0, 6)).trim().slice(0, 30);
+    if (!targetName) targetName = 'Team ' + String(userId).slice(0, 6);
+
+    // If a team with targetName already exists in this tournament, deduplicate name
+    const nameCheck = await client.query(
+      'SELECT id FROM tournament_teams WHERE tournament_id = $1 AND LOWER(team_name) = LOWER($2)',
+      [tournamentId, targetName]
+    );
+    if (nameCheck.rows.length > 0) {
+      const suffix = '-' + crypto.randomBytes(2).toString('hex');
+      targetName = (targetName.slice(0, 30 - suffix.length) + suffix).trim();
+    }
 
     const teamId = 'TEAM-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(3).toString('hex');
-    const safeName = (teamName || 'Team ' + userId.slice(0, 6)).trim().slice(0, 30);
-    await client.query(
-      `INSERT INTO tournament_teams (id, tournament_id, team_name, leader_user_id, status)
-       VALUES ($1, $2, $3, $4, 'approved') ON CONFLICT DO NOTHING`,
-      [teamId, tournamentId, safeName, userId]
+    const memberId = 'MEM-' + crypto.randomBytes(6).toString('hex');
+
+    const insTeamRes = await client.query(
+      `INSERT INTO tournament_teams (id, tournament_id, team_name, leader_user_id, status, registration_id)
+       VALUES ($1, $2, $3, $4, 'awaiting_members', $5)
+       ON CONFLICT (tournament_id, team_name) DO NOTHING
+       RETURNING *`,
+      [teamId, tournamentId, targetName, userId, registrationId || null]
     );
+
+    const actualTeamId = insTeamRes.rows.length > 0 ? insTeamRes.rows[0].id : teamId;
+
     await client.query(
-      `INSERT INTO tournament_team_members (id, tournament_team_id, user_id, role, status, roster_slot)
-       VALUES ($1, $2, $3, 'leader', 'active', 0) ON CONFLICT DO NOTHING`,
-      ['MEM-' + crypto.randomBytes(6).toString('hex'), teamId, userId]
+      `INSERT INTO tournament_team_members (id, tournament_team_id, tournament_id, user_id, role, status, roster_slot)
+       VALUES ($1, $2, $3, $4, 'leader', 'active', 0)
+       ON CONFLICT (tournament_id, user_id) DO NOTHING`,
+      [memberId, actualTeamId, tournamentId, userId]
     );
+
+    await client.query('RELEASE SAVEPOINT ensure_team_sp');
+    return { id: actualTeamId };
   } catch (err) {
-    console.warn('[paymentReviewService] ensureTeamForRegistrationSafe non-fatal error:', err.message);
+    await client.query('ROLLBACK TO SAVEPOINT ensure_team_sp');
+    console.warn('[paymentReviewService] ensureTeamForRegistrationSafe rolled back to savepoint:', err.message);
   }
 }
 
@@ -710,6 +748,8 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
       return perm;
     }
 
+    const reviewerId = String(user.id || user.uid || user.userId || 'admin');
+
     // 4. Idempotency & Concurrency check
     const currentStatus = (reg.status || '').toLowerCase();
     if (currentStatus === 'approved' || currentStatus === 'confirmed') {
@@ -717,7 +757,16 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
       return { success: true, idempotent: true, message: 'Registration is already approved.', registration: reg };
     }
 
-    const allowedStatuses = ['pending', 'pending_payment', 'pending_admin_review', 'verified_by_host'];
+    const allowedStatuses = [
+      'pending',
+      'pending_payment',
+      'pending_admin_review',
+      'pending_payment_verification',
+      'pending_verification',
+      'verified_by_host',
+      'waitlisted',
+      'submitted'
+    ];
     if (!allowedStatuses.includes(currentStatus)) {
       let reviewerName = 'another reviewer';
       let reviewedAt = reg.updated_at || reg.created_at;
@@ -752,12 +801,12 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
         `UPDATE payment_submissions
          SET payment_status = 'verified', reviewed_by = $1, reviewed_at = NOW(), admin_notes = COALESCE($2, admin_notes), updated_at = NOW()
          WHERE id = $3`,
-        [user.id, note || null, payment.id]
+        [reviewerId, note || null, payment.id]
       );
     }
 
     // 7. Ensure team squad is created
-    await ensureTeamForRegistrationSafe(client, actualTournamentId, reg.user_id, reg.team_name);
+    await ensureTeamForRegistrationSafe(client, actualTournamentId, reg.user_id, reg.team_name, registrationId);
 
     // 8. Write audit entry INSIDE transaction
     const logId = 'LOG-' + crypto.randomBytes(8).toString('hex').toUpperCase();
@@ -766,12 +815,12 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
       [
         logId,
-        user.id,
+        reviewerId,
         'payment_approved',
         'payment_approved',
         'registration',
         registrationId,
-        reg.user_id,
+        reg.user_id || null,
         JSON.stringify({
           note: note || null,
           previousStatus: currentStatus,
@@ -781,28 +830,31 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
       ]
     );
 
-    // 9. Write alert player notification INSIDE transaction
-    const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-       VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-      [
-        alertId,
-        reg.user_id,
-        'Registration Approved ✅',
-        `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}. Slot #${reg.slot_number || 'allocated'} secured!`,
-        actualTournamentId
-      ]
-    );
+    // 9. Write alert player notification INSIDE transaction (if player has user record)
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [
+          alertId,
+          reg.user_id,
+          'Registration Approved ✅',
+          `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}. Slot #${reg.slot_number || 'allocated'} secured!`,
+          actualTournamentId
+        ]
+      );
+    }
 
     await client.query('COMMIT');
 
     // 10. Reconcile slots once after commit
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('Slot reconciliation error:', err));
+    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.approve] Slot reconciliation error:', err));
 
     return { success: true, message: 'Registration approved successfully.', registration: updatedReg };
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error(`[paymentReviewService.approve] Error approving registration ${registrationId}:`, err);
     throw err;
   } finally {
     client.release();
@@ -879,6 +931,8 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
       };
     }
 
+    const reviewerId = String(user.id || user.uid || user.userId || 'admin');
+
     // 5. Resolve reason text and code
     const reasonCode = reason || 'other';
     const defaultText = REJECTION_REASONS[reasonCode] || 'Payment verification failed.';
@@ -902,7 +956,7 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
         `UPDATE payment_submissions
          SET payment_status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), admin_notes = $2, updated_at = NOW()
          WHERE id = $3`,
-        [user.id, reasonText, payment.id]
+        [reviewerId, reasonText, payment.id]
       );
     }
 
@@ -913,12 +967,12 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
       [
         logId,
-        user.id,
+        reviewerId,
         'payment_rejected',
         'payment_rejected',
         'registration',
         registrationId,
-        reg.user_id,
+        reg.user_id || null,
         JSON.stringify({
           reasonCode,
           reasonText,
@@ -929,28 +983,31 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
       ]
     );
 
-    // 9. Write alert notification INSIDE transaction
-    const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-       VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-      [
-        alertId,
-        reg.user_id,
-        'Payment Proof Rejected ❌',
-        `Payment proof for "${reg.team_name}" was rejected. Reason: ${reasonText}. You may re-upload correct proof from the tournament page.`,
-        actualTournamentId
-      ]
-    );
+    // 9. Write alert notification INSIDE transaction (if user record exists)
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [
+          alertId,
+          reg.user_id,
+          'Payment Proof Rejected ❌',
+          `Payment proof for "${reg.team_name}" was rejected. Reason: ${reasonText}. You may re-upload correct proof from the tournament page.`,
+          actualTournamentId
+        ]
+      );
+    }
 
     await client.query('COMMIT');
 
     // 10. Reconcile slots once after commit
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('Slot reconciliation error:', err));
+    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.reject] Slot reconciliation error:', err));
 
     return { success: true, message: 'Registration rejected.', registration: updatedReg };
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error(`[paymentReviewService.reject] Error rejecting registration ${registrationId}:`, err);
     throw err;
   } finally {
     client.release();
@@ -993,6 +1050,7 @@ export async function reopen(pool, user, { registrationId, tournamentId, reason 
     }
     const reg = regRes.rows[0];
     const actualTournamentId = reg.tournament_id;
+    const reviewerId = String(user.id || user.uid || user.userId || 'admin');
 
     const currentStatus = (reg.status || '').toLowerCase();
     const reopenable = ['approved', 'confirmed', 'rejected', 'payment_rejected'];
@@ -1026,12 +1084,12 @@ export async function reopen(pool, user, { registrationId, tournamentId, reason 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
       [
         logId,
-        user.id,
+        reviewerId,
         'payment_reopened',
         'payment_reopened',
         'registration',
         registrationId,
-        reg.user_id,
+        reg.user_id || null,
         JSON.stringify({
           reason: reason.trim(),
           previousStatus: currentStatus,
@@ -1041,26 +1099,29 @@ export async function reopen(pool, user, { registrationId, tournamentId, reason 
       ]
     );
 
-    // Write player notification
-    const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-       VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-      [
-        alertId,
-        reg.user_id,
-        'Registration Under Re-review ⏳',
-        `Your registration for "${reg.team_name}" has been returned to pending review by an administrator. Reason: ${reason.trim()}`,
-        actualTournamentId
-      ]
-    );
+    // Write player notification (if player has user record)
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [
+          alertId,
+          reg.user_id,
+          'Registration Under Re-review ⏳',
+          `Your registration for "${reg.team_name}" has been returned to pending review by an administrator. Reason: ${reason.trim()}`,
+          actualTournamentId
+        ]
+      );
+    }
 
     await client.query('COMMIT');
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('Slot reconciliation error:', err));
+    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.reopen] Slot reconciliation error:', err));
 
     return { success: true, message: 'Registration reopened and returned to pending review.', registration: updatedReg };
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error(`[paymentReviewService.reopen] Error reopening registration ${registrationId}:`, err);
     throw err;
   } finally {
     client.release();
@@ -1095,6 +1156,7 @@ export async function releaseSlot(pool, user, { registrationId, tournamentId, no
     }
     const reg = regRes.rows[0];
     const actualTournamentId = reg.tournament_id;
+    const reviewerId = String(user.id || user.uid || user.userId || 'admin');
 
     const perm = checkReviewerPermissions(user, reg, 'releaseSlot');
     if (!perm.authorized) {
@@ -1135,12 +1197,12 @@ export async function releaseSlot(pool, user, { registrationId, tournamentId, no
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
       [
         logId,
-        user.id,
+        reviewerId,
         'slot_released',
         'slot_released',
         'registration',
         registrationId,
-        reg.user_id,
+        reg.user_id || null,
         JSON.stringify({
           note: note || null,
           teamName: reg.team_name,
@@ -1149,26 +1211,29 @@ export async function releaseSlot(pool, user, { registrationId, tournamentId, no
       ]
     );
 
-    // Write player notification
-    const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-       VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-      [
-        alertId,
-        reg.user_id,
-        'Registration Slot Released',
-        `Your reserved slot for "${reg.team_name}" in ${reg.tournament_title} has been released due to pending payment timeout.`,
-        actualTournamentId
-      ]
-    );
+    // Write player notification (if user record exists)
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [
+          alertId,
+          reg.user_id,
+          'Registration Slot Released',
+          `Your reserved slot for "${reg.team_name}" in ${reg.tournament_title} has been released due to pending payment timeout.`,
+          actualTournamentId
+        ]
+      );
+    }
 
     await client.query('COMMIT');
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('Slot reconciliation error:', err));
+    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.releaseSlot] Slot reconciliation error:', err));
 
     return { success: true, message: 'Slot released and registration cancelled.', registration: updatedReg };
   } catch (err) {
     await client.query('ROLLBACK');
+    console.error(`[paymentReviewService.releaseSlot] Error releasing slot for registration ${registrationId}:`, err);
     throw err;
   } finally {
     client.release();
