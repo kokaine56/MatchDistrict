@@ -4718,6 +4718,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     };
   };
 
+  // Helper to resolve all identity keys (id and uid) for the authenticated user
+  const getUserIdentityIds = async (dbPool, authUser) => {
+    const rawId = authUser.id || authUser.uid;
+    const ids = [String(rawId)];
+    try {
+      const uRes = await dbPool.query(
+        'SELECT id, uid FROM users WHERE id::varchar = $1::varchar OR uid::varchar = $1::varchar',
+        [rawId]
+      );
+      if (uRes.rows.length > 0) {
+        if (uRes.rows[0].id && !ids.includes(String(uRes.rows[0].id))) ids.push(String(uRes.rows[0].id));
+        if (uRes.rows[0].uid && !ids.includes(String(uRes.rows[0].uid))) ids.push(String(uRes.rows[0].uid));
+      }
+    } catch {}
+    return ids;
+  };
+
   // 3c. GET /api/team-presets Service
   if (req.url === '/api/team-presets' && req.method === 'GET') {
     try {
@@ -4727,10 +4744,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
-      const userId = authUser.id || authUser.uid;
+      const userIds = await getUserIdentityIds(pool, authUser);
       const dbRes = await pool.query(
-        'SELECT * FROM team_presets WHERE user_id = $1::varchar ORDER BY is_default DESC, created_at DESC',
-        [userId]
+        'SELECT * FROM team_presets WHERE user_id = ANY($1::varchar[]) ORDER BY is_default DESC, created_at DESC',
+        [userIds]
       );
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, presets: dbRes.rows }));
@@ -4755,7 +4772,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
-        const userId = authUser.id || authUser.uid;
+        const userIds = await getUserIdentityIds(pool, authUser);
+        const userId = userIds[0];
         const data = JSON.parse(body);
         const parsed = validatePresetPayload(data);
         if (parsed.error) {
@@ -4766,7 +4784,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
 
         // Limit check: max 4 presets
-        const countRes = await pool.query('SELECT COUNT(*) FROM team_presets WHERE user_id = $1::varchar', [userId]);
+        const countRes = await pool.query('SELECT COUNT(*) FROM team_presets WHERE user_id = ANY($1::varchar[])', [userIds]);
         const currentCount = parseInt(countRes.rows[0].count, 10);
         if (currentCount >= 4) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4776,8 +4794,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Duplicate check: team_name (case-insensitive, per user + game)
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1::varchar AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar)',
-          [userId, game, teamName]
+          'SELECT * FROM team_presets WHERE user_id = ANY($1::varchar[]) AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar)',
+          [userIds, game, teamName]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4787,7 +4805,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Only one default preset per game
         if (isDefault) {
-          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1::varchar AND game = $2::varchar', [userId, game]);
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = ANY($1::varchar[]) AND game = $2::varchar', [userIds, game]);
         }
 
         const presetId = 'PRST-' + Date.now().toString().slice(-6);
@@ -4822,14 +4840,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
         return;
       }
-      const userId = authUser.id || authUser.uid;
+      const userIds = await getUserIdentityIds(pool, authUser);
       const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1::varchar', [id]);
       if (existRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Preset not found.' }));
         return;
       }
-      if (existRes.rows[0].user_id !== userId) {
+      if (!userIds.includes(String(existRes.rows[0].user_id))) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to delete this preset.' }));
         return;
@@ -4859,7 +4877,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
           return;
         }
-        const userId = authUser.id || authUser.uid;
+        const userIds = await getUserIdentityIds(pool, authUser);
         const data = JSON.parse(body);
         const parsed = validatePresetPayload(data);
         if (parsed.error) {
@@ -4875,7 +4893,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Preset not found.' }));
           return;
         }
-        if (existRes.rows[0].user_id !== userId) {
+        if (!userIds.includes(String(existRes.rows[0].user_id))) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You do not have permission to modify this preset.' }));
           return;
@@ -4883,8 +4901,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Duplicate check: team_name (case-insensitive, per user + game) excluding current preset
         const dupRes = await pool.query(
-          'SELECT * FROM team_presets WHERE user_id = $1::varchar AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar) AND id <> $4::varchar',
-          [userId, game, teamName, id]
+          'SELECT * FROM team_presets WHERE user_id = ANY($1::varchar[]) AND game = $2::varchar AND LOWER(team_name) = LOWER($3::varchar) AND id <> $4::varchar',
+          [userIds, game, teamName, id]
         );
         if (dupRes.rows.length > 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4894,7 +4912,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Only one default preset per game
         if (isDefault) {
-          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = $1::varchar AND game = $2::varchar', [userId, game]);
+          await pool.query('UPDATE team_presets SET is_default = false WHERE user_id = ANY($1::varchar[]) AND game = $2::varchar', [userIds, game]);
         }
 
         const membersStr = JSON.stringify(players.map(p => p.ign).filter(Boolean));
@@ -16308,8 +16326,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         FROM tournament_registrations r
         LEFT JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
-        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
-           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+        WHERE (
+          (r.status IN ('pending', 'pending_admin_review', 'PENDING_PAYMENT_VERIFICATION', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')
+           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed'))
+          AND (ps.proof_url IS NOT NULL OR r.screenshot_url IS NOT NULL OR COALESCE(t.entry_fee_amount, 0) = 0 OR r.status IN ('confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'))
+        )
         ORDER BY t.game NULLS LAST, t.title NULLS LAST, r.created_at ASC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -16341,8 +16362,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         LEFT JOIN tournaments t ON r.tournament_id = t.id
         LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
         LEFT JOIN users u ON r.user_id = u.id
-        WHERE r.status IN ('pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
-           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+        WHERE (
+          (r.status IN ('pending', 'pending_admin_review', 'PENDING_PAYMENT_VERIFICATION', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed')
+           OR ps.payment_status IN ('pending', 'pending_admin_review', 'VERIFIED_BY_HOST', 'verified_by_host', 'confirmed'))
+          AND (ps.proof_url IS NOT NULL OR r.screenshot_url IS NOT NULL OR COALESCE(t.entry_fee_amount, 0) = 0 OR r.status IN ('confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'))
+        )
         ORDER BY r.created_at DESC
       `);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -16595,6 +16619,75 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const data = body ? JSON.parse(body) : {};
         const result = await reviewReject(pool, authUser, {
           registrationId: regId,
+          reason: data.reason || 'other',
+          note: data.note || ''
+        });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/tournaments/:id/registrations/:regId/approve
+  const tourneyRegApproveMatch = req.url.match(/^\/api\/tournaments\/([A-Za-z0-9_-]+)\/registrations\/([A-Za-z0-9_-]+)\/approve$/);
+  if (tourneyRegApproveMatch && req.method === 'POST') {
+    const tournamentId = tourneyRegApproveMatch[1];
+    const regId = tourneyRegApproveMatch[2];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewApprove(pool, authUser, {
+          registrationId: regId,
+          tournamentId,
+          note: data.note || ''
+        });
+        if (!result.success) {
+          res.writeHead(result.statusCode || 400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify(result));
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/tournaments/:id/registrations/:regId/reject
+  const tourneyRegRejectMatch = req.url.match(/^\/api\/tournaments\/([A-Za-z0-9_-]+)\/registrations\/([A-Za-z0-9_-]+)\/reject$/);
+  if (tourneyRegRejectMatch && req.method === 'POST') {
+    const tournamentId = tourneyRegRejectMatch[1];
+    const regId = tourneyRegRejectMatch[2];
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+        }
+        const data = body ? JSON.parse(body) : {};
+        const result = await reviewReject(pool, authUser, {
+          registrationId: regId,
+          tournamentId,
           reason: data.reason || 'other',
           note: data.note || ''
         });

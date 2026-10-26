@@ -29,7 +29,26 @@ const ALL_FIELDS = [
   'sub_1_ign', 'sub_1_uid',
 ]
 
-const getFieldError = (field, f) => {
+export const toMessage = (value) => {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (typeof value === 'object') {
+    if (value.message) return toMessage(value.message)
+    if (value.error) return toMessage(value.error)
+    if (value.name) return String(value.name)
+    if (value.label) return String(value.label)
+    if (value.index != null) return `Group ${value.index + 1}`
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
+const getFieldError = (field, f, requiredPlayers = 3) => {
   switch (field) {
     case 'teamName':
       if (!f.teamName.trim()) return 'Team name is required'
@@ -52,11 +71,13 @@ const getFieldError = (field, f) => {
   const pIgn = field.match(/^player_(\d+)_ign$/)
   if (pIgn) {
     const i = Number(pIgn[1])
+    if (i >= requiredPlayers) return ''
     return f.players[i] && f.players[i].ign.trim() ? '' : `Player ${i + 2} IGN is required`
   }
   const pUid = field.match(/^player_(\d+)_uid$/)
   if (pUid) {
     const i = Number(pUid[1])
+    if (i >= requiredPlayers) return ''
     if (!f.players[i]) return ''
     if (!f.players[i].uid.trim()) return `Player ${i + 2} UID is required`
     if (!/^\d+$/.test(f.players[i].uid)) return `Player ${i + 2} UID must be numbers only`
@@ -80,10 +101,10 @@ const getFieldError = (field, f) => {
   return ''
 }
 
-const validateForm = (f) => {
+const validateForm = (f, requiredPlayers = 3) => {
   const errs = {}
   for (const key of ALL_FIELDS) {
-    const msg = getFieldError(key, f)
+    const msg = getFieldError(key, f, requiredPlayers)
     if (msg) errs[key] = msg
   }
   return errs
@@ -91,7 +112,7 @@ const validateForm = (f) => {
 
 const FieldError = ({ id, message }) =>
   message ? (
-    <p id={id} role="alert" className="text-red-400 text-xs mt-1">{message}</p>
+    <p id={id} role="alert" className="text-red-400 text-xs mt-1">{toMessage(message)}</p>
   ) : null
 
 function PaymentAppIcon({ name }) {
@@ -386,7 +407,7 @@ function RegistrationPage({ onNavigate }) {
         players: pad(playersRaw, 3),
         substitutes: pad(subsRaw, 2),
       }
-      setErrors(validateForm(next))
+      setErrors(validateForm(next, requiredPlayers))
       return next
     })
     setTouched({})
@@ -439,7 +460,7 @@ function RegistrationPage({ onNavigate }) {
   const updateField = (field, value) => {
     const next = { ...form, [field]: value }
     setForm(next)
-    const msg = getFieldError(field, next)
+    const msg = getFieldError(field, next, requiredPlayers)
     setErrors(prev => (prev[field] === msg ? prev : { ...prev, [field]: msg }))
   }
 
@@ -450,7 +471,7 @@ function RegistrationPage({ onNavigate }) {
     const a = `player_${index}_ign`
     const b = `player_${index}_uid`
     setErrors(prev => {
-      const updates = { [a]: getFieldError(a, next), [b]: getFieldError(b, next) }
+      const updates = { [a]: getFieldError(a, next, requiredPlayers), [b]: getFieldError(b, next, requiredPlayers) }
       return prev[a] === updates[a] && prev[b] === updates[b] ? prev : { ...prev, ...updates }
     })
   }
@@ -462,14 +483,14 @@ function RegistrationPage({ onNavigate }) {
     const a = `sub_${index}_ign`
     const b = `sub_${index}_uid`
     setErrors(prev => {
-      const updates = { [a]: getFieldError(a, next), [b]: getFieldError(b, next) }
+      const updates = { [a]: getFieldError(a, next, requiredPlayers), [b]: getFieldError(b, next, requiredPlayers) }
       return prev[a] === updates[a] && prev[b] === updates[b] ? prev : { ...prev, ...updates }
     })
   }
 
   const validate = () => {
     // email is auto-populated from authenticated user — no visible field, no validation needed
-    const errs = validateForm(form)
+    const errs = validateForm(form, requiredPlayers)
     setErrors(errs)
     return errs
   }
@@ -581,11 +602,11 @@ function RegistrationPage({ onNavigate }) {
     const file = e.target.files?.[0]
     if (!file) return
     const isSupported = [
-      'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/avif'
-    ].includes(file.type) || /\.(jpe?g|png|webp|heic|heif|avif)$/i.test(file.name)
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif', 'image/avif'
+    ].includes(file.type) || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(file.name)
 
     if (!isSupported) {
-      setPaymentErrors(prev => ({ ...prev, screenshot: 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.' }))
+      setPaymentErrors(prev => ({ ...prev, screenshot: 'Unsupported image format. Allowed formats: JPEG, PNG, WebP, GIF.' }))
       return
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -608,7 +629,6 @@ function RegistrationPage({ onNavigate }) {
 
   const validatePayment = () => {
     const errs = {}
-    if (!payment.app) errs.app = 'Please select a UPI app'
     const trimmedUtr = payment.transactionId.trim()
     if (!trimmedUtr) {
       errs.transactionId = 'Transaction ID / UTR is required'
@@ -620,7 +640,7 @@ function RegistrationPage({ onNavigate }) {
     return Object.keys(errs).length === 0
   }
 
-  const isPaymentFormValid = PAYMENT_APPS.includes(payment.app) &&
+  const isPaymentFormValid =
     /^\d{12}$/.test(payment.transactionId.trim()) &&
     Boolean(payment.screenshotFile) &&
     !paymentErrors.screenshot
@@ -701,11 +721,11 @@ function RegistrationPage({ onNavigate }) {
           </p>
           {registeredTeam && (
             <div className="bg-white/5 rounded-xl p-4 mb-6 text-left text-sm space-y-1">
-              <p><span className="text-white/40">Team:</span> <span className="font-bold">{form.teamName}</span></p>
-              <p><span className="text-white/40">Status:</span> <span className="text-amber-400 font-semibold">{registeredTeam.status}</span></p>
-              <p><span className="text-white/40">Registration ID:</span> <span className="font-mono text-xs">{registeredTeam.id}</span></p>
+              <p><span className="text-white/40">Team:</span> <span className="font-bold">{toMessage(form.teamName)}</span></p>
+              <p><span className="text-white/40">Status:</span> <span className="text-amber-400 font-semibold">{toMessage(registeredTeam.status)}</span></p>
+              <p><span className="text-white/40">Registration ID:</span> <span className="font-mono text-xs">{toMessage(registeredTeam.id)}</span></p>
               {predictedGroup && (
-                <p><span className="text-white/40">Group:</span> <span className="font-bold text-primary">Group {predictedGroup}</span></p>
+                <p><span className="text-white/40">Group:</span> <span className="font-bold text-primary">{toMessage(predictedGroup).startsWith('Group') ? toMessage(predictedGroup) : `Group ${toMessage(predictedGroup)}`}</span></p>
               )}
               {amountToPay && (
                 <p className="pt-1 border-t border-white/10 mt-2">
@@ -743,56 +763,62 @@ function RegistrationPage({ onNavigate }) {
   if (step === 'payment') {
     const upiLink = `upi://pay?pa=matchdistrict@upi&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
 
-    // Payment app icons render locally, without third-party image requests.
-    const upiApps = [
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+    const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent)
+
+    // Platform-specific app launchers: only keep icons that exist today.
+    // Android: package-based launch intent (NO payee, amount, or note).
+    // iOS: plain app launch scheme only where certain it exists (PhonePe: phonepe://, Paytm: paytmmp://). Hide Google Pay and BHIM on iOS.
+    // Desktop: hide all app icons (only QR and copy fields remain).
+    const allUpiApps = [
       {
         name: 'Google Pay',
-        scheme: 'tez://upi/pay',
         package: 'com.google.android.apps.nbu.paisa.user',
         ringColor: 'ring-[#4285F4]',
+        iosScheme: null,
       },
       {
         name: 'PhonePe',
-        scheme: 'phonepe://pay',
         package: 'com.phonepe.app',
         ringColor: 'ring-[#5f259f]',
+        iosScheme: 'phonepe://',
       },
       {
         name: 'Paytm',
-        scheme: 'paytmmp://pay',
         package: 'net.one97.paytm',
         ringColor: 'ring-[#00baf2]',
+        iosScheme: 'paytmmp://',
       },
       {
         name: 'BHIM',
-        scheme: 'bhim://pay',
         package: 'in.org.npci.upiapp',
         ringColor: 'ring-[#128807]',
+        iosScheme: null,
       },
     ]
+
+    const upiApps = allUpiApps.filter(app => {
+      if (isAndroid) return Boolean(app.package)
+      if (isIOS) return Boolean(app.iosScheme)
+      return false
+    })
 
     const handleAppClick = (app) => {
       setPayment(prev => ({ ...prev, app: app.name }))
       setPaymentErrors(prev => ({ ...prev, app: '' }))
 
-      const pa = 'matchdistrict@upi'
-      const pn = 'Match%20District'
-      const am = entryFee
-      const cu = 'INR'
-      const tn = encodeURIComponent(tourney.title)
-      const isAndroid = /Android/i.test(navigator.userAgent)
-
       let targetUrl = ''
       if (isAndroid && app.package) {
-        // Strict Android Intent URI format — forces OS to route directly to the installed app
-        // Format: intent://pay?pa=...&pn=...&am=...&cu=INR#Intent;scheme=upi;package=PKG_NAME;end;
-        targetUrl = `intent://pay?pa=${pa}&pn=${pn}&am=${am}&cu=${cu}&tn=${tn}#Intent;scheme=upi;package=${app.package};end;`
-      } else {
-        // Proprietary scheme fallback for iOS / desktop
-        targetUrl = `${app.scheme}?pa=${pa}&pn=${pn}&am=${am}&cu=${cu}&tn=${tn}`
+        // Pure package-based launch intent with NO payment parameters
+        targetUrl = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${app.package};end;`
+      } else if (isIOS && app.iosScheme) {
+        // Plain app launch scheme with NO payment parameters
+        targetUrl = app.iosScheme
       }
 
-      window.location.href = targetUrl
+      if (targetUrl) {
+        window.location.href = targetUrl
+      }
     }
 
     return (
@@ -831,7 +857,7 @@ function RegistrationPage({ onNavigate }) {
 
           {serverError && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 text-red-400 text-sm">
-              {serverError}
+              {toMessage(serverError)}
             </div>
           )}
 
@@ -892,9 +918,13 @@ function RegistrationPage({ onNavigate }) {
 
                 {copiedToast && (
                   <div className="rounded-full px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
-                    {copiedToast}
+                    {toMessage(copiedToast)}
                   </div>
                 )}
+
+                <p className="text-xs text-white/70 text-center max-w-sm mx-auto leading-relaxed">
+                  Open your UPI app, pay this amount to this UPI ID, then come back and add the UTR and screenshot.
+                </p>
 
                 {/* 3 Short Numbered Steps */}
                 <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-white/5 border border-white/10 text-xs text-left">
@@ -912,32 +942,29 @@ function RegistrationPage({ onNavigate }) {
                   </div>
                 </div>
 
-                {/* Direct UPI App row — single row, 4 apps, no card borders */}
-                <div className="w-full pt-4 border-t border-white/10 space-y-3">
-                  <p className="text-[11px] font-bold text-white/50 uppercase tracking-wider text-left">Open App to Pay</p>
-                  <div className="grid grid-cols-4 gap-4">
-                    {upiApps.map(app => (
-                      <button
-                        key={app.name}
-                        type="button"
-                        onClick={() => handleAppClick(app)}
-                        className={`flex flex-col items-center gap-2 py-2 rounded-xl transition-all duration-200 ${
-                          payment.app === app.name
-                            ? `ring-2 ${app.ringColor} bg-white/5 scale-105`
-                            : 'opacity-70 hover:opacity-100 hover:scale-105'
-                        }`}
-                      >
-                        <PaymentAppIcon name={app.name} />
-                        <span className="min-w-0 w-full text-center text-[10px] leading-tight font-semibold text-white/70 tracking-wide">{app.name}</span>
-                      </button>
-                    ))}
+                {/* Direct UPI App row — shown only on mobile where package/scheme launch is supported */}
+                {upiApps.length > 0 && (
+                  <div className="w-full pt-4 border-t border-white/10 space-y-3">
+                    <p className="text-[11px] font-bold text-white/50 uppercase tracking-wider text-left">Open App to Pay</p>
+                    <div className={`grid gap-4 ${upiApps.length === 2 ? 'grid-cols-2 max-w-xs mx-auto' : 'grid-cols-4'}`}>
+                      {upiApps.map(app => (
+                        <button
+                          key={app.name}
+                          type="button"
+                          onClick={() => handleAppClick(app)}
+                          className={`flex flex-col items-center gap-2 py-2 rounded-xl transition-all duration-200 ${
+                            payment.app === app.name
+                              ? `ring-2 ${app.ringColor} bg-white/5 scale-105`
+                              : 'opacity-70 hover:opacity-100 hover:scale-105'
+                          }`}
+                        >
+                          <PaymentAppIcon name={app.name} />
+                          <span className="min-w-0 w-full text-center text-[10px] leading-tight font-semibold text-white/70 tracking-wide">{app.name}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  {(!payment.app || paymentErrors.app) && (
-                    <p className="text-[10px] text-amber-300/90" role="status">
-                      {paymentErrors.app || 'Select a payment app to continue.'}
-                    </p>
-                  )}
-                </div>
+                )}
 
               </div>
             </div>
@@ -945,12 +972,6 @@ function RegistrationPage({ onNavigate }) {
             {/* Payment Proof Details */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Submit Payment Proof</h2>
-
-              {paymentErrors.app && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-400 text-xs">
-                  {paymentErrors.app} (Please select a UPI app above to continue)
-                </div>
-              )}
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -1164,7 +1185,7 @@ function RegistrationPage({ onNavigate }) {
                             headers,
                             body: JSON.stringify({
                               utr_number: payment.transactionId.trim(),
-                              payment_app: payment.app,
+                              payment_app: payment.app || 'UPI',
                               screenshot_url: screenshotUrl,
                             }),
                           })
@@ -1293,7 +1314,7 @@ function RegistrationPage({ onNavigate }) {
 
         {serverError && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6 text-red-400 text-sm">
-            {serverError}
+            {toMessage(serverError)}
           </div>
         )}
 
@@ -1310,7 +1331,7 @@ function RegistrationPage({ onNavigate }) {
                 <p className="text-xs text-white/50">Loading saved squads…</p>
               ) : presetsError ? (
                 <div className="flex items-center gap-3 text-xs text-amber-300" role="status">
-                  <span>{presetsError}</span>
+                  <span>{toMessage(presetsError)}</span>
                   <button type="button" onClick={fetchPresets} className="underline underline-offset-2 font-semibold">Retry</button>
                 </div>
               ) : savedPresets.length === 0 ? (
@@ -1346,7 +1367,7 @@ function RegistrationPage({ onNavigate }) {
                 </div>
                 {presetRosterWarning && (
                   <p className="text-[10px] text-amber-400/90">
-                    {presetRosterWarning} Add more players, or enter the squad manually.
+                    {toMessage(presetRosterWarning)} Add more players, or enter the squad manually.
                   </p>
                 )}
                 </>

@@ -1060,9 +1060,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
     setNewTourney(prev => { prevNewTourney = prev; return { ...prev, slotsFilled: prev.slotsFilled + 1 }; });
     setTournamentsList(prev => { prevTournamentsList = prev; return prev.map(t => t.id === newTourney.id ? { ...t, slotsFilled: t.slotsFilled + 1 } : t); });
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`/api/tournaments/${newTourney.id}/registrations/${regId}/approve`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ note: '' })
       });
       const data = await res.json();
       if (data.success) {
@@ -1083,6 +1087,25 @@ function Profile({ onNavigate, selectedUserProfile }) {
   };
 
   const rejectTeam = async (regId) => {
+    const reasonPrompt = window.prompt(
+      "Choose a rejection reason:\n1. Payment not received\n2. Wrong amount\n3. Invalid UTR\n4. Duplicate UTR\n5. Unclear proof\n6. Other\n\nEnter 1-6 or type a reason:",
+      "1"
+    );
+    if (reasonPrompt === null) return;
+
+    let reasonCode = 'other';
+    let note = '';
+    const trimmed = (reasonPrompt || '').trim();
+    if (trimmed === '1' || /payment not received/i.test(trimmed)) reasonCode = 'payment_not_received';
+    else if (trimmed === '2' || /wrong amount/i.test(trimmed)) reasonCode = 'wrong_amount';
+    else if (trimmed === '3' || /invalid utr/i.test(trimmed)) reasonCode = 'invalid_utr';
+    else if (trimmed === '4' || /duplicate utr/i.test(trimmed)) reasonCode = 'duplicate_utr';
+    else if (trimmed === '5' || /unclear proof/i.test(trimmed)) reasonCode = 'unclear_proof';
+    else {
+      reasonCode = 'other';
+      note = trimmed === '6' ? 'Rejected by organizer' : trimmed;
+    }
+
     const token = await getAuthToken();
     let prevRegistrations = [];
     let prevNewTourney = null;
@@ -1094,13 +1117,17 @@ function Profile({ onNavigate, selectedUserProfile }) {
       setTournamentsList(prev => { prevTournamentsList = prev; return prev.map(t => t.id === newTourney.id ? { ...t, slotsFilled: Math.max(0, t.slotsFilled - 1) } : t); });
     }
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`/api/tournaments/${newTourney.id}/registrations/${regId}/reject`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ reason: reasonCode, note })
       });
       const data = await res.json();
       if (data.success) {
-        triggerToast('Roster disqualified.');
+        triggerToast('Registration rejected.');
       } else {
         setDrawerRegistrations(prevRegistrations);
         if (prevNewTourney) setNewTourney(prevNewTourney);
@@ -1348,19 +1375,22 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
         // Fetch team presets
         setPresetsLoading(true);
-        getAuthToken().then(t => fetch('/api/team-presets', {
-          headers: {
-            'Authorization': `Bearer ${t}`
-          }
-        })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success && data.presets) {
-              setPresets(data.presets);
-            }
+        getAuthToken().then(t => {
+          const headers = {};
+          if (t) headers['Authorization'] = `Bearer ${t}`;
+          return fetch('/api/team-presets', {
+            credentials: 'include',
+            headers
           })
-          .catch(e => console.error("Error fetching team presets:", e))
-          .finally(() => setPresetsLoading(false)));
+            .then(res => res.json())
+            .then(data => {
+              if (data.success && data.presets) {
+                setPresets(data.presets);
+              }
+            })
+            .catch(e => console.error("Error fetching team presets:", e))
+            .finally(() => setPresetsLoading(false));
+        });
       } catch(e) {
         console.error(e)
       }
@@ -1764,13 +1794,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
 
     const token = await getAuthToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
       const res = await fetch('/api/team-presets', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        credentials: 'include',
+        headers,
         body: JSON.stringify(buildPresetPayload(presetForm))
       });
       const data = await res.json();
@@ -1805,13 +1835,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
     }
 
     const token = await getAuthToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
       const res = await fetch(`/api/team-presets/${presetId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        credentials: 'include',
+        headers,
         body: JSON.stringify(buildPresetPayload(editForm))
       });
       const data = await res.json();
@@ -1839,12 +1869,13 @@ function Profile({ onNavigate, selectedUserProfile }) {
 
   const handleDeletePreset = async (presetId) => {
     const token = await getAuthToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
       const res = await fetch(`/api/team-presets/${presetId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        credentials: 'include',
+        headers
       });
       const data = await res.json();
       if (data.success) {

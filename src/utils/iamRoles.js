@@ -58,8 +58,9 @@ export const getUserRoles = (user) => {
  * @param {string}   targetRole  - The role to check for
  * @returns {boolean}
  */
-export const hasRole = (roles, targetRole) => {
-  if (!roles || !targetRole) return false
+export const hasRole = (userOrRoles, targetRole) => {
+  if (!userOrRoles || !targetRole) return false
+  const roles = Array.isArray(userOrRoles) ? userOrRoles : getUserRoles(userOrRoles)
   if (roles.includes(ROLES.ADMIN)) return true
   return roles.includes(targetRole)
 }

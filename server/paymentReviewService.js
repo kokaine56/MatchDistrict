@@ -114,12 +114,14 @@ export function checkReviewerPermissions(user, tournament, action = 'view') {
     return { authorized: true };
   }
   // Organizer: can view, approve, reject, releaseSlot strictly on their own tournament
+  const userIds = [String(user.id || '')];
+  if (user.uid) userIds.push(String(user.uid));
   const isOwner = tournament && (
-    tournament.orgId === user.id ||
-    tournament.org_id === user.id ||
-    tournament.tournament_org_id === user.id ||
-    tournament.tournament_org_id_alt === user.id ||
-    String(tournament.organizer_id) === String(user.id)
+    userIds.includes(String(tournament.orgId || '')) ||
+    userIds.includes(String(tournament.org_id || '')) ||
+    userIds.includes(String(tournament.tournament_org_id || '')) ||
+    userIds.includes(String(tournament.tournament_org_id_alt || '')) ||
+    userIds.includes(String(tournament.organizer_id || ''))
   );
   if (isOwner) {
     if (action === 'reopen') {
@@ -185,8 +187,10 @@ export async function listQueue(pool, user, options = {}) {
 
   if (!isAdmin && !isVerifier) {
     // Scoped strictly to tournaments owned by organizer
-    scopeParams.push(user.id);
-    scopeSql += ` AND (t."orgId" = $${scopeParams.length} OR t.org_id = $${scopeParams.length})`;
+    const userIds = [String(user.id || '')];
+    if (user.uid && !userIds.includes(String(user.uid))) userIds.push(String(user.uid));
+    scopeParams.push(userIds);
+    scopeSql += ` AND (t."orgId"::varchar = ANY($${scopeParams.length}::varchar[]) OR t.org_id::varchar = ANY($${scopeParams.length}::varchar[]))`;
   }
 
   if (tournamentId) {

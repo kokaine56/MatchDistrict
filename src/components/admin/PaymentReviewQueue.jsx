@@ -76,7 +76,6 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
     else setRefreshing(true);
     try {
       const token = await getAuthToken();
-      if (!token) return;
 
       const params = new URLSearchParams({
         tab: activeTab,
@@ -89,8 +88,12 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
         params.set('search', search.trim());
       }
 
+      const headers = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        credentials: 'include',
+        headers
       });
       const data = await res.json();
 
@@ -144,8 +147,12 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
       if (tournamentId || tournamentFilter) params.set('tournamentId', tournamentId || tournamentFilter);
       if (search.trim()) params.set('search', search.trim());
 
+      const headers = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        credentials: 'include',
+        headers
       });
       const data = await res.json();
       if (data.success) {
@@ -214,9 +221,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
     try {
       const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue/${regId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ note })
       });
       const data = await res.json();
@@ -259,9 +270,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
     try {
       const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue/${item.id}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ reason: rejectReason, note: rejectNote.trim() })
       });
       const data = await res.json();
@@ -304,9 +319,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
     try {
       const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue/${item.id}/reopen`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ reason: reopenReason.trim() })
       });
       const data = await res.json();
@@ -341,9 +360,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
 
     try {
       const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(`/api/admin/payments/review-queue/${item.id}/release-slot`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ note: releaseNote.trim() })
       });
       const data = await res.json();
@@ -370,9 +393,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
     setBulkLoading(true);
     try {
       const token = await getAuthToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch('/api/admin/payments/review-queue/bulk-approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
+        headers,
         body: JSON.stringify({ registrationIds: ids })
       });
       const data = await res.json();
