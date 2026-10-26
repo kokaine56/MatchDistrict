@@ -11,7 +11,7 @@ import QRCode from 'qrcode';
 import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
-import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings } from './server/leaderboardService.js';
+import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings, editTeamLeaderboardPoints } from './server/leaderboardService.js';
 import { calculateTournamentPlan } from './server/tournamentPlanner.js';
 import { generateTournamentRoadmap } from './server/roadmapGenerator.js';
 import { normalizeRoadmapConfig, validateRoadmapConfig, distributeDistrictSizes, computeDistrictCount, defaultTeamsAdvancing, isValidTime, releaseTimeFor } from './server/roadmapConfig.js';
@@ -6970,6 +6970,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           if (nextRnd.rows.length > 0) targetRoundId = nextRnd.rows[0].id;
         }
 
+        if (!targetRoundId && sourceRoundId) {
+          const srcRnd = await pool.query(
+            'SELECT round_number FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
+            [sourceRoundId, tId]
+          );
+          if (srcRnd.rows.length > 0) {
+            const nextRnd = await pool.query(
+              'SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number > $2 ORDER BY round_number ASC LIMIT 1',
+              [tId, srcRnd.rows[0].round_number]
+            );
+            if (nextRnd.rows.length > 0) targetRoundId = nextRnd.rows[0].id;
+          }
+        }
+
         if (!targetRoundId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Target round ID is required.' }));
@@ -6978,6 +6992,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (teamIds.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Please select at least one team to advance.' }));
+        }
+
+        // Capacity check: If target round or source round has configured advancement limit
+        const trCapCheck = await pool.query(
+          'SELECT id, name, round_number, teams_advancing FROM tournament_rounds WHERE id = $1 AND tournament_id = $2',
+          [targetRoundId, tId]
+        );
+        if (trCapCheck.rows.length > 0 && trCapCheck.rows[0].teams_advancing) {
+          const maxCapacity = parseInt(trCapCheck.rows[0].teams_advancing, 10);
+          if (maxCapacity > 0 && teamIds.length > maxCapacity && !allowUnverified) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: false,
+              error: 'CAPACITY_EXCEEDED',
+              message: `Selected teams (${teamIds.length}) exceed target round capacity (${maxCapacity}). Please adjust your selection.`,
+            }));
+          }
         }
 
         const client = await pool.connect();
@@ -13076,7 +13107,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
-  // ── PUBLIC: Tournament Leaderboard (read-only standings) ──────────────────
+  // ── PUBLIC / ORGANIZER: Tournament Leaderboard (standings with publication controls) ──
   const leaderboardUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/leaderboard(?:\?(.*))?$/);
   if (leaderboardUrlMatch && req.method === 'GET') {
     const tournId = decodeURIComponent(leaderboardUrlMatch[1]);
@@ -13086,6 +13117,22 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     (async () => {
       try {
+        const tournRes = await pool.query(
+          'SELECT id, "orgId", status, finalized_at, COALESCE(leaderboard_published, false) as leaderboard_published, leaderboard_published_at FROM tournaments WHERE id = $1',
+          [tournId]
+        );
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const authUser = getAuthUser(req);
+        let isOrganizer = false;
+        if (authUser) {
+          const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+          isOrganizer = access.authorized;
+        }
+
         if (roundId) {
           // If roundId is specified, fetch detailed round standings
           let effectiveRoundId = roundId;
@@ -13097,9 +13144,28 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             if (rRes.rows.length > 0) effectiveRoundId = rRes.rows[0].id;
           }
           const detailed = await getDetailedRoundStandings(pool, tournId, effectiveRoundId);
+          const isPublished = Boolean(detailed.round?.leaderboard_published);
+
+          // If unpublished and user is not an organizer, return friendly draft notice
+          if (!isPublished && !isOrganizer) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: true,
+              is_published: false,
+              published_at: null,
+              standings: [],
+              districts: [],
+              has_districts: detailed.hasDistricts,
+              total_teams: 0,
+              message: 'Standings will be published soon once verified by tournament organizers.',
+            }));
+          }
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({
             success: true,
+            is_published: isPublished,
+            published_at: detailed.round?.leaderboard_published_at || null,
             round: detailed.round,
             standings: detailed.overallStandings,
             districts: detailed.districts,
@@ -13109,14 +13175,282 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         // Default overall tournament leaderboard
+        const isOverallPublished = Boolean(tournRes.rows[0].leaderboard_published);
+        if (!isOverallPublished && !isOrganizer) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: true,
+            is_published: false,
+            published_at: null,
+            standings: [],
+            message: 'Tournament standings will be published soon once verified by organizers.',
+          }));
+        }
+
         const standings = await calculateRankings(pool, tournId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: true, standings }));
+        return res.end(JSON.stringify({
+          success: true,
+          is_published: isOverallPublished,
+          published_at: tournRes.rows[0].leaderboard_published_at || null,
+          standings,
+        }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: err.message }));
       }
     })();
+    return;
+  }
+
+  // ── ORGANIZER: Publish / Unpublish Leaderboard ──────────────────────────────
+  const publishUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/(?:rounds\/([^/]+)\/publish(?:-leaderboard)?|leaderboard\/publish)$/);
+  if (publishUrlMatch && req.method === 'POST') {
+    const tournId = decodeURIComponent(publishUrlMatch[1]);
+    const routeRoundId = publishUrlMatch[2] ? decodeURIComponent(publishUrlMatch[2]) : null;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+
+        const tournRes = await pool.query('SELECT "orgId", status, finalized_at FROM tournaments WHERE id = $1', [tournId]);
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+        }
+
+        let data = {};
+        try {
+          data = JSON.parse(body || '{}');
+        } catch {
+          // Empty body defaults to publish: true
+        }
+        const publishState = data.published !== false && data.publish !== false;
+        const targetRoundId = routeRoundId || data.round_id || data.roundId || null;
+
+        if (targetRoundId && targetRoundId !== 'overall') {
+          let effRoundId = targetRoundId;
+          if (/^\d+$/.test(targetRoundId)) {
+            const rRes = await pool.query('SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2', [tournId, parseInt(targetRoundId, 10)]);
+            if (rRes.rows.length > 0) effRoundId = rRes.rows[0].id;
+          }
+          await pool.query(
+            `UPDATE tournament_rounds
+             SET leaderboard_published = $1,
+                 leaderboard_published_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+             WHERE id = $2 AND tournament_id = $3`,
+            [publishState, effRoundId, tournId]
+          );
+        } else {
+          // Overall tournament leaderboard publication
+          await pool.query(
+            `UPDATE tournaments
+             SET leaderboard_published = $1,
+                 leaderboard_published_at = CASE WHEN $1 = true THEN NOW() ELSE NULL END
+             WHERE id = $2`,
+            [publishState, tournId]
+          );
+        }
+
+        await pool.query(
+          `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, details)
+           VALUES (gen_random_uuid()::varchar, $1, $2, 'publication', 'leaderboard', $3, $4)`,
+          [
+            authUser.id,
+            publishState ? 'publish_leaderboard' : 'unpublish_leaderboard',
+            tournId,
+            JSON.stringify({ round_id: targetRoundId, published: publishState, timestamp: new Date() }),
+          ]
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          published: publishState,
+          round_id: targetRoundId,
+          message: publishState ? 'Leaderboard published successfully.' : 'Leaderboard unpublished (returned to draft).',
+        }));
+      } catch (err) {
+        console.error('Error toggling leaderboard publication:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'PUBLISH_ERROR', message: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── ORGANIZER: Batch District Score Saving ────────────────────────────────
+  const saveDistrictScoresUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/(?:rounds\/([^/]+)\/)?districts\/([^/]+)\/(?:save-scores|scores)$/);
+  if (saveDistrictScoresUrlMatch && req.method === 'POST') {
+    const tournId = decodeURIComponent(saveDistrictScoresUrlMatch[1]);
+    const routeRoundId = saveDistrictScoresUrlMatch[2] ? decodeURIComponent(saveDistrictScoresUrlMatch[2]) : null;
+    const districtId = decodeURIComponent(saveDistrictScoresUrlMatch[3]);
+
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+
+        const tournRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tournId]);
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+        }
+
+        if (tournRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Tournament is finalized; scores are locked.' }));
+        }
+
+        let data = {};
+        try {
+          data = JSON.parse(body || '{}');
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Invalid JSON payload.' }));
+        }
+
+        const teamScores = Array.isArray(data.team_scores || data.scores) ? (data.team_scores || data.scores) : [];
+        const effectiveRoundId = routeRoundId || data.round_id || data.roundId || null;
+
+        let savedCount = 0;
+        for (const item of teamScores) {
+          if (!item || !item.team_id) continue;
+          await editTeamLeaderboardPoints(pool, {
+            tournamentId: tournId,
+            teamId: item.team_id,
+            placement_points: item.placement_points ?? item.placementPoints ?? 0,
+            kill_points: item.kill_points ?? item.killPoints ?? item.total_kills ?? item.kills ?? 0,
+            total_kills: item.total_kills ?? item.totalKills ?? item.kills ?? 0,
+            wwcd_count: item.wwcd_count ?? item.wwcdCount ?? (item.wwcd ? 1 : 0),
+            matches_played: item.matches_played ?? item.matchesPlayed ?? 1,
+            round_id: effectiveRoundId,
+            actorId: authUser.id,
+          });
+          savedCount++;
+        }
+
+        // Mark the district status as saved in tournament_groups and tournament_registration_groups
+        await pool.query(
+          `UPDATE tournament_groups
+           SET scores_saved = true, scores_saved_at = NOW(), scores_status = 'saved'
+           WHERE id = $1 AND tournament_id = $2`,
+          [districtId, tournId]
+        );
+        await pool.query(
+          `UPDATE tournament_registration_groups
+           SET scores_saved = true, scores_saved_at = NOW(), scores_status = 'saved'
+           WHERE id = $1 AND tournament_id = $2`,
+          [districtId, tournId]
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          district_id: districtId,
+          saved_count: savedCount,
+          scores_status: 'saved',
+          scores_saved_at: new Date().toISOString(),
+          message: `Successfully saved scores for ${savedCount} teams in district.`,
+        }));
+      } catch (err) {
+        console.error('Error saving district scores:', err);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'DISTRICT_SAVE_ERROR', message: err.message }));
+      }
+    });
+    return;
+  }
+
+  // ── ORGANIZER: Edit Team Leaderboard Points ───────────────────────────────
+  const editScoreUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/(?:teams\/([^/]+)\/points|leaderboard\/edit-score)$/);
+  if (editScoreUrlMatch && req.method === 'POST') {
+    const tournId = decodeURIComponent(editScoreUrlMatch[1]);
+    const routeTeamId = editScoreUrlMatch[2] ? decodeURIComponent(editScoreUrlMatch[2]) : null;
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+
+        const tournRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tournId]);
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+        }
+
+        if (tournRes.rows[0].finalized_at) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Tournament is finalized; scores are locked.' }));
+        }
+
+        let data = {};
+        try {
+          data = JSON.parse(body || '{}');
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Invalid JSON payload.' }));
+        }
+
+        const targetTeamId = routeTeamId || data.team_id || data.teamId;
+        if (!targetTeamId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Team ID is required.' }));
+        }
+
+        const result = await editTeamLeaderboardPoints(pool, {
+          tournamentId: tournId,
+          teamId: targetTeamId,
+          placement_points: data.placement_points ?? data.placementPoints ?? data.total_placement_points,
+          kill_points: data.kill_points ?? data.killPoints ?? data.total_kill_points,
+          total_kills: data.total_kills ?? data.totalKills ?? data.kills,
+          wwcd_count: data.wwcd_count ?? data.wwcdCount ?? data.wwcd,
+          matches_played: data.matches_played ?? data.matchesPlayed,
+          round_id: data.round_id || data.roundId || null,
+          actorId: authUser.id,
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, message: 'Team points updated successfully.', ...result }));
+      } catch (err) {
+        console.error('Error editing team points:', err);
+        const status = err.message.includes('not found') ? 404 : 400;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'SCORE_UPDATE_ERROR', message: err.message }));
+      }
+    });
     return;
   }
 

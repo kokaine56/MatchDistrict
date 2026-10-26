@@ -618,6 +618,9 @@ export async function runSchemaMigrations(clientOrPool) {
         UNIQUE (tournament_id, group_index)
       );
       CREATE INDEX IF NOT EXISTS idx_registration_groups_tournament ON tournament_registration_groups(tournament_id);
+      ALTER TABLE tournament_registration_groups ADD COLUMN IF NOT EXISTS scores_saved BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_registration_groups ADD COLUMN IF NOT EXISTS scores_saved_at TIMESTAMPTZ;
+      ALTER TABLE tournament_registration_groups ADD COLUMN IF NOT EXISTS scores_status VARCHAR(30) DEFAULT 'unsaved';
 
       CREATE TABLE IF NOT EXISTS registration_sessions (
         id VARCHAR(50) PRIMARY KEY,
@@ -858,6 +861,10 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "date" VARCHAR(30);
       ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS "time" VARCHAR(10);
       ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS map VARCHAR(255);
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS leaderboard_published BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_rounds ADD COLUMN IF NOT EXISTS leaderboard_published_at TIMESTAMPTZ;
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS leaderboard_published BOOLEAN DEFAULT false;
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS leaderboard_published_at TIMESTAMPTZ;
 
       CREATE TABLE IF NOT EXISTS tournament_days (
         id VARCHAR(50) PRIMARY KEY,
@@ -896,6 +903,9 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
       ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS display_order INTEGER;
       ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS round_id VARCHAR(50);
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS scores_saved BOOLEAN DEFAULT false;
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS scores_saved_at TIMESTAMPTZ;
+      ALTER TABLE tournament_groups ADD COLUMN IF NOT EXISTS scores_status VARCHAR(30) DEFAULT 'unsaved';
       CREATE INDEX IF NOT EXISTS idx_tournament_groups_day ON tournament_groups(day_id);
 
       CREATE TABLE IF NOT EXISTS tournament_rooms (

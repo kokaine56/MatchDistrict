@@ -43,8 +43,17 @@ export function progressionError(code, message) {
 }
 
 export function resolveQualificationCutoff(value) {
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  if (value == null) return 0;
+  const direct = parseInt(value, 10);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  if (typeof value === 'string') {
+    const match = value.match(/\d+/);
+    if (match) {
+      const parsed = parseInt(match[0], 10);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 0;
 }
 
 export function selectQualifiedTeams(standings = [], cutoff = 0) {
@@ -295,7 +304,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 1. Get round info
   const roundRes = await client.query(
-    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match, round_type FROM tournament_rounds WHERE id = $1',
+    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match, round_type, COALESCE(leaderboard_published, false) as leaderboard_published, leaderboard_published_at FROM tournament_rounds WHERE id = $1',
     [roundId]
   );
   const round = roundRes.rows[0] || null;
@@ -305,7 +314,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
     'SELECT id, round_number FROM tournament_rounds WHERE tournament_id = $1 ORDER BY round_number ASC LIMIT 1',
     [tournamentId]
   );
-  const isFirstRound = firstRndRes.rows.length > 0 && firstRndRes.rows[0].id === roundId;
+  const isFirstRound = firstRndRes.rows.length > 0 && (firstRndRes.rows[0].id === roundId || Number(round?.round_number) === 1);
 
   // 2. Fetch matches in this round to identify groups/districts
   const matchRes = await client.query(
@@ -367,7 +376,8 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 5. Configured districts for THIS round from tournament_groups
   const roundGroupsRes = await client.query(
-    `SELECT id, group_name, sequence, display_order, district_id
+    `SELECT id, group_name, sequence, display_order, district_id,
+            COALESCE(scores_saved, false) as scores_saved, scores_saved_at, COALESCE(scores_status, 'unsaved') as scores_status
      FROM tournament_groups
      WHERE round_id = $1 AND tournament_id = $2
      ORDER BY COALESCE(display_order, sequence, 0) ASC, sequence ASC, id ASC`,
@@ -378,7 +388,8 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   if (isFirstRound && configuredDistricts.length === 0) {
     // Fallback to tournament_registration_groups ONLY for Round 1
     const regGroupsRes = await client.query(
-      `SELECT id, name AS group_name, group_index AS sequence, capacity
+      `SELECT id, name AS group_name, group_index AS sequence, capacity,
+              COALESCE(scores_saved, false) as scores_saved, scores_saved_at, COALESCE(scores_status, 'unsaved') as scores_status
        FROM tournament_registration_groups
        WHERE tournament_id = $1
        ORDER BY group_index ASC`,
@@ -392,6 +403,9 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         display_order: d.sequence,
         district_id: d.id,
         capacity: d.capacity || 16,
+        scores_saved: d.scores_saved,
+        scores_saved_at: d.scores_saved_at,
+        scores_status: d.scores_status,
       }));
     }
   }
@@ -595,6 +609,9 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         name: d.group_name || d.name,
         group_index: d.sequence || d.group_index || 1,
         capacity: d.capacity || 16,
+        scores_saved: Boolean(d.scores_saved),
+        scores_saved_at: d.scores_saved_at || null,
+        scores_status: d.scores_status || (d.scores_saved ? 'saved' : 'unsaved'),
         teams: [],
       });
     }
@@ -617,18 +634,9 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         t.district_name = matchedDist.name;
         matchedDist.teams.push(t);
       } else {
+        t.is_unassigned = true;
         unassignedTeams.push(t);
       }
-    }
-
-    if (isFirstRound && unassignedTeams.length > 0 && districtMap.size > 0) {
-      const distList = Array.from(districtMap.values());
-      unassignedTeams.forEach((t, i) => {
-        const targetDist = distList[i % distList.length];
-        t.district_id = targetDist.id;
-        t.district_name = targetDist.name;
-        targetDist.teams.push(t);
-      });
     }
 
     districts = Array.from(districtMap.values()).map((d) => {
@@ -771,7 +779,36 @@ export async function advanceTeamsManually(client, {
       throw progressionError(PROGRESSION_ERR.INVALID_INPUT, 'Target round must follow source round in round sequence.');
     }
 
-    // 4a. Every team must have played the source round
+    // 4a. Every team must have played/participated in the source round
+    const teamsInfoRes = await client.query(
+      `SELECT t.id, t.registration_id, t.team_name, r.id as reg_id, r.group_id as reg_group_id, r.status as reg_status
+       FROM tournament_teams t
+       LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
+       WHERE t.tournament_id = $1`,
+      [tournamentId]
+    );
+    const teamNameMap = new Map();
+    const teamCanonicalIdMap = new Map();
+    for (const row of teamsInfoRes.rows) {
+      teamNameMap.set(row.id, row.team_name);
+      teamCanonicalIdMap.set(row.id, row.id);
+      if (row.registration_id) {
+        teamNameMap.set(row.registration_id, row.team_name);
+        teamCanonicalIdMap.set(row.registration_id, row.id);
+      }
+      if (row.reg_id) {
+        teamNameMap.set(row.reg_id, row.team_name);
+        teamCanonicalIdMap.set(row.reg_id, row.id);
+      }
+    }
+
+    // Determine if sourceRound is Round 1 (or lowest round number)
+    const firstRndRes = await client.query(
+      'SELECT id, round_number FROM tournament_rounds WHERE tournament_id = $1 ORDER BY round_number ASC LIMIT 1',
+      [tournamentId]
+    );
+    const isFirstRound = firstRndRes.rows.length > 0 && (firstRndRes.rows[0].id === sourceRoundId || Number(sourceRound.round_number) === 1);
+
     const playedRes = await client.query(`
       SELECT DISTINCT tournament_team_id AS team_id
       FROM tournament_match_assignments
@@ -782,14 +819,45 @@ export async function advanceTeamsManually(client, {
       FROM tournament_match_results mr
       JOIN tournament_matches m ON mr.match_id = m.id
       WHERE m.round_id = $2 AND m.tournament_id = $1
+      UNION
+      SELECT DISTINCT lb.team_id
+      FROM tournament_leaderboard lb
+      WHERE lb.tournament_id = $1 AND (lb.matches_played > 0 OR lb.total_points > 0 OR lb.total_kills > 0)
     `, [tournamentId, sourceRoundId]);
 
-    const playedTeamSet = new Set(playedRes.rows.map((r) => r.team_id));
+    const playedTeamSet = new Set();
+    for (const r of playedRes.rows) {
+      if (r.team_id) {
+        playedTeamSet.add(r.team_id);
+        const canon = teamCanonicalIdMap.get(r.team_id);
+        if (canon) playedTeamSet.add(canon);
+      }
+    }
+
+    // For Round 1, include teams with verified registrations (assigned to districts or tournament roster)
+    if (isFirstRound) {
+      const VERIFIED_STATUSES = ['approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
+      const round1PoolRes = await client.query(`
+        SELECT t.id, t.registration_id, r.group_id
+        FROM tournament_teams t
+        JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
+        WHERE t.tournament_id = $1 AND r.status = ANY($2::text[])
+      `, [tournamentId, VERIFIED_STATUSES]);
+
+      for (const r of round1PoolRes.rows) {
+        playedTeamSet.add(r.id);
+        if (r.registration_id) playedTeamSet.add(r.registration_id);
+      }
+    }
+
     for (const tId of uniqueTeamIds) {
-      if (!playedTeamSet.has(tId)) {
+      const canonicalId = teamCanonicalIdMap.get(tId) || tId;
+      const teamName = teamNameMap.get(tId) || teamNameMap.get(canonicalId) || `Team ${tId}`;
+      if (!playedTeamSet.has(tId) && !playedTeamSet.has(canonicalId)) {
+        console.warn(`[advanceTeamsManually] Participation check failed: teamId=${tId}, canonicalId=${canonicalId}, teamName="${teamName}", sourceRound="${sourceRound.name || sourceRound.round_number}"`);
         throw progressionError(
           PROGRESSION_ERR.TEAM_DID_NOT_PLAY_SOURCE_ROUND,
-          `Team "${tId}" did not play in source round "${sourceRound.name || sourceRound.round_number}" and cannot be advanced.`
+          `Team "${teamName}" did not play in source round "${sourceRound.name || sourceRound.round_number}" and cannot be advanced.`
         );
       }
     }
@@ -820,9 +888,10 @@ export async function advanceTeamsManually(client, {
   }
 
   // 5. Check for disqualified teams among advancing candidates
+  const canonicalCandidateIds = uniqueTeamIds.map((t) => teamCanonicalIdMap.get(t) || t);
   const dqCheck = await client.query(
     'SELECT id, team_name, status FROM tournament_teams WHERE id = ANY($1::text[]) AND tournament_id = $2',
-    [uniqueTeamIds, tournamentId]
+    [canonicalCandidateIds, tournamentId]
   );
   for (const teamRow of dqCheck.rows) {
     if (teamRow.status === 'disqualified') {
@@ -928,7 +997,8 @@ export async function advanceTeamsManually(client, {
   const advancedTeams = [];
 
   for (let i = 0; i < orderedTeamIds.length; i++) {
-    const teamId = orderedTeamIds[i];
+    const rawTeamId = orderedTeamIds[i];
+    const teamId = (teamCanonicalIdMap && teamCanonicalIdMap.get(rawTeamId)) || rawTeamId;
     let assignedGroupId = null;
 
     if (manualPlacementMap.has(teamId)) {
