@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { X, Save, AlertCircle, CheckCircle2, Trophy, Target, Loader2 } from 'lucide-react';
+import { Save, AlertCircle, CheckCircle2, Trophy, Target, Loader2 } from 'lucide-react';
 import { getAuthToken } from '../../utils/getAuthToken';
+import BottomSheetModal from '../BottomSheetModal.jsx';
 
 export default function TeamScoreEditModal({
   isOpen,
@@ -34,11 +35,8 @@ function TeamScoreEditModalInner({
   const [placementPoints, setPlacementPoints] = useState(
     team.total_placement_points != null ? String(team.total_placement_points) : '0'
   );
-  const [killPoints, setKillPoints] = useState(
-    team.total_kill_points != null ? String(team.total_kill_points) : '0'
-  );
   const [totalKills, setTotalKills] = useState(
-    team.total_kills != null ? String(team.total_kills) : '0'
+    team.total_kills != null ? String(team.total_kills) : (team.total_kill_points != null ? String(team.total_kill_points) : '0')
   );
   const [matchesPlayed, setMatchesPlayed] = useState(
     team.matches_played != null ? String(team.matches_played) : '1'
@@ -51,9 +49,9 @@ function TeamScoreEditModalInner({
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
 
-  // Auto-derived total points: placement_points + kill_points
+  // Auto-derived total points: placement_points + total_kills (Decision 1)
   const pNum = parseInt(placementPoints, 10);
-  const kNum = parseInt(killPoints, 10);
+  const kNum = parseInt(totalKills, 10);
   const calculatedTotal = (isNaN(pNum) ? 0 : pNum) + (isNaN(kNum) ? 0 : kNum);
 
   const handleSubmit = async (e) => {
@@ -68,13 +66,7 @@ function TeamScoreEditModalInner({
       return;
     }
 
-    const kVal = Number(killPoints);
-    if (!Number.isInteger(kVal) || kVal < 0 || kVal > 1000000) {
-      setError('Kill points must be a whole number between 0 and 1,000,000.');
-      return;
-    }
-
-    const killsVal = totalKills === '' ? kVal : Number(totalKills);
+    const killsVal = totalKills === '' ? 0 : Number(totalKills);
     if (!Number.isInteger(killsVal) || killsVal < 0 || killsVal > 1000000) {
       setError('Total kills must be a whole number between 0 and 1,000,000.');
       return;
@@ -97,13 +89,14 @@ function TeamScoreEditModalInner({
       const token = await getAuthToken();
       const res = await fetch(`/api/tournaments/${tournamentId}/teams/${team.team_id || team.id}/points`, {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           placement_points: pVal,
-          kill_points: kVal,
+          kill_points: killsVal,
           total_kills: killsVal,
           matches_played: mpVal,
           wwcd_count: wwcdVal,
@@ -128,194 +121,160 @@ function TeamScoreEditModalInner({
     }
   };
 
+  const modalActions = (
+    <div className="flex items-center justify-end gap-3 w-full">
+      <button
+        type="button"
+        onClick={onClose}
+        disabled={saving}
+        className="px-4 py-2 rounded-full text-xs font-bold text-on-surface-variant hover:text-on-surface bg-surface-container hover:bg-surface-container-high border border-outline-variant/20 transition-colors disabled:opacity-50 cursor-pointer w-auto"
+      >
+        Cancel
+      </button>
+      <button
+        type="submit"
+        form="team-score-edit-form"
+        disabled={saving}
+        className="flex items-center gap-2 px-5 py-2 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md cursor-pointer w-auto"
+      >
+        {saving ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Saving...</span>
+          </>
+        ) : (
+          <>
+            <Save className="w-4 h-4" />
+            <span>Save Points</span>
+          </>
+        )}
+      </button>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-lg bg-surface-container-low border border-outline-variant/30 rounded-2xl shadow-2xl overflow-hidden my-8">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-outline-variant/20 bg-surface-container-highest/20">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary">
-              <Trophy className="w-5 h-5" />
+    <BottomSheetModal
+      isOpen={true}
+      onClose={onClose}
+      title="Edit Team Score"
+      icon={<Trophy className="w-5 h-5 text-primary" />}
+      actions={modalActions}
+      maxWidth="max-w-lg"
+    >
+      <form id="team-score-edit-form" onSubmit={handleSubmit} className="space-y-4 py-2">
+        <p className="text-xs text-on-surface-variant">
+          Team: <span className="font-bold text-on-surface">{team.team_name}</span> &bull; Captain: {team.leader_name || 'Captain'}
+        </p>
+
+        {/* Error Banner */}
+        {error && (
+          <div className="p-3.5 rounded-xl bg-error/10 border border-error/30 text-error text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Success Banner */}
+        {successMsg && (
+          <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>{successMsg}</span>
+          </div>
+        )}
+
+        {/* Derived Total Points Banner */}
+        <div className="p-4 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-primary">
+              Authoritative Total Points
             </div>
-            <div>
-              <h3 className="text-base sm:text-lg font-black text-on-surface">
-                Edit Team Score
-              </h3>
-              <p className="text-xs text-on-surface-variant">
-                Team: <span className="font-bold text-on-surface">{team.team_name}</span> &bull; Captain: {team.leader_name || 'Captain'}
-              </p>
+            <div className="text-[11px] text-on-surface-variant mt-0.5">
+              Placement Points + Total Kills
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="text-2xl font-black text-primary font-mono">
+            {calculatedTotal} PTS
+          </div>
         </div>
 
-        {/* Body Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          
-          {/* Error Banner */}
-          {error && (
-            <div className="p-3.5 rounded-xl bg-error/10 border border-error/30 text-error text-xs flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          )}
-
-          {/* Success Banner */}
-          {successMsg && (
-            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-start gap-2.5">
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{successMsg}</span>
-            </div>
-          )}
-
-          {/* Derived Total Points Banner */}
-          <div className="p-4 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-between">
-            <div>
-              <div className="text-[11px] font-bold uppercase tracking-wider text-primary">
-                Authoritative Total Points
-              </div>
-              <div className="text-[11px] text-on-surface-variant mt-0.5">
-                Automatically calculated: Placement Pts + Kill Pts
-              </div>
-            </div>
-            <div className="text-2xl font-black text-primary font-mono">
-              {calculatedTotal} PTS
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            
-            {/* Placement Points */}
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">
-                Placement Points <span className="text-error">*</span>
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                value={placementPoints}
-                onChange={(e) => setPlacementPoints(e.target.value)}
-                required
-                disabled={saving}
-                placeholder="e.g. 15"
-                className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
-              />
-            </div>
-
-            {/* Kill Points */}
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">
-                Kill Points <span className="text-error">*</span>
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                value={killPoints}
-                onChange={(e) => setKillPoints(e.target.value)}
-                required
-                disabled={saving}
-                placeholder="e.g. 8"
-                className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
-              />
-            </div>
-
-            {/* Total Kills */}
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1 flex items-center gap-1">
-                <Target className="w-3.5 h-3.5 text-rose-500" />
-                <span>Total Kills</span>
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                value={totalKills}
-                onChange={(e) => setTotalKills(e.target.value)}
-                disabled={saving}
-                placeholder="e.g. 8"
-                className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
-              />
-            </div>
-
-            {/* WWCD Count */}
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1 flex items-center gap-1">
-                <Trophy className="w-3.5 h-3.5 text-yellow-500" />
-                <span>WWCD Wins</span>
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                value={wwcdCount}
-                onChange={(e) => setWwcdCount(e.target.value)}
-                disabled={saving}
-                placeholder="0 or 1+"
-                className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
-              />
-            </div>
-
-            {/* Matches Played */}
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-bold text-on-surface mb-1">
-                Matches Played
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="1000000"
-                value={matchesPlayed}
-                onChange={(e) => setMatchesPlayed(e.target.value)}
-                disabled={saving}
-                placeholder="1"
-                className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
-              />
-              <p className="text-[10px] text-on-surface-variant mt-1">
-                * Leaderboard rankings will automatically recalculate upon saving according to tournament tie-break rules.
-              </p>
-            </div>
-          </div>
-
-          {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-outline-variant/20">
-            <button
-              type="button"
-              onClick={onClose}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Placement Points */}
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1">
+              Placement Points <span className="text-error">*</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              value={placementPoints}
+              onChange={(e) => setPlacementPoints(e.target.value)}
+              required
               disabled={saving}
-              className="px-4 py-2 text-xs font-bold text-on-surface-variant hover:text-on-surface bg-surface-container hover:bg-surface-container-high rounded-xl border border-outline-variant/20 transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="flex items-center gap-2 px-5 py-2 text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all shadow-md cursor-pointer"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Saving Points...
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  Save Points
-                </>
-              )}
-            </button>
+              placeholder="e.g. 15"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
+            />
           </div>
-        </form>
-      </div>
-    </div>
+
+          {/* Total Kills (Kills and kill points are same input, counted once) */}
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1 flex items-center gap-1">
+              <Target className="w-3.5 h-3.5 text-rose-500" />
+              <span>Total Kills <span className="text-error">*</span></span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              value={totalKills}
+              onChange={(e) => setTotalKills(e.target.value)}
+              required
+              disabled={saving}
+              placeholder="e.g. 8"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
+            />
+          </div>
+
+          {/* WWCD Count */}
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1 flex items-center gap-1">
+              <Trophy className="w-3.5 h-3.5 text-yellow-500" />
+              <span>WWCD Wins</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              value={wwcdCount}
+              onChange={(e) => setWwcdCount(e.target.value)}
+              disabled={saving}
+              placeholder="0 or 1+"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
+            />
+          </div>
+
+          {/* Matches Played */}
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1">
+              Matches Played
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="1000000"
+              value={matchesPlayed}
+              onChange={(e) => setMatchesPlayed(e.target.value)}
+              disabled={saving}
+              placeholder="1"
+              className="w-full px-3 py-2 bg-surface-container border border-outline-variant/30 rounded-xl text-on-surface text-sm font-bold focus:outline-none focus:border-primary transition"
+            />
+          </div>
+        </div>
+
+        <p className="text-[10px] text-on-surface-variant">
+          * Leaderboard rankings will automatically recalculate upon saving according to tournament tie-break rules.
+        </p>
+      </form>
+    </BottomSheetModal>
   );
 }

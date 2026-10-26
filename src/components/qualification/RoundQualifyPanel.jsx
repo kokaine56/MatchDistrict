@@ -804,17 +804,18 @@ export default function RoundQualifyPanel({
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-error/10 text-error border border-error/20">
                                 Disqualified
                               </span>
-                            ) : isSelected ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                            ) : team.is_advanced ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center justify-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
                                 Qualified
                               </span>
-                            ) : team.is_advanced ? (
+                            ) : isSelected ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
-                                Allocated
+                                Selected
                               </span>
                             ) : (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-high text-on-surface-variant border border-outline-variant/30">
-                                Eliminated
+                                {isGrandFinal ? 'Ranked' : 'Active'}
                               </span>
                             )}
                           </td>

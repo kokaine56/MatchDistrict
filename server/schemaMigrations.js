@@ -77,6 +77,9 @@ export const SCHEMA_TABLES = Object.freeze([
   'notices',
   'white_label_settings',
   'profiles',
+  'tournament_district_save_states',
+  'tournament_qualification_decisions',
+  'tournament_leaderboard_snapshots',
 ]);
 
 function splitSqlStatements(sql) {
@@ -1460,6 +1463,56 @@ export async function runSchemaMigrations(clientOrPool) {
       );
 
       ALTER TABLE profiles ADD COLUMN IF NOT EXISTS username VARCHAR(32);
+
+      -- 8b. Leaderboard & Qualification Additive Tables (Idempotent)
+      CREATE TABLE IF NOT EXISTS tournament_district_save_states (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        round_id VARCHAR(64) NOT NULL,
+        district_id VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'saved',
+        version INT NOT NULL DEFAULT 1,
+        saved_by VARCHAR(64),
+        saved_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB,
+        UNIQUE(tournament_id, round_id, district_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_district_save_states_lookup ON tournament_district_save_states(tournament_id, round_id, district_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_qualification_decisions (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        source_round_id VARCHAR(64) NOT NULL,
+        target_round_id VARCHAR(64) NOT NULL,
+        team_id VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'confirmed',
+        method VARCHAR(32) NOT NULL DEFAULT 'per_district',
+        district_id VARCHAR(64),
+        rank_at_qualification INT,
+        points_at_qualification NUMERIC(10, 2),
+        override_count INT,
+        is_provisional BOOLEAN DEFAULT false,
+        tie_resolution_note TEXT,
+        qualified_by VARCHAR(64),
+        qualified_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB,
+        UNIQUE(tournament_id, source_round_id, target_round_id, team_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_qual_decisions_lookup ON tournament_qualification_decisions(tournament_id, source_round_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_leaderboard_snapshots (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        round_id VARCHAR(64),
+        version INT NOT NULL DEFAULT 1,
+        content_hash VARCHAR(64) NOT NULL,
+        snapshot_data JSONB NOT NULL,
+        published_by VARCHAR(64),
+        published_at TIMESTAMPTZ DEFAULT NOW(),
+        is_active BOOLEAN DEFAULT true,
+        UNIQUE(tournament_id, round_id, version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lb_snapshots_active ON tournament_leaderboard_snapshots(tournament_id, round_id, is_active);
 
     `);
 

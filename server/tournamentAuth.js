@@ -77,3 +77,86 @@ export function checkTournamentOrganizerAccess(authUser, tournament) {
 
   return { authorized: true, statusCode: 200 };
 }
+
+/**
+ * Server-side guard helper that checks organizer/admin access OR authorized staff permissions.
+ *
+ * @param {object|null|undefined} authUser
+ * @param {object|null|undefined} tournament
+ * @param {object|null|undefined} pool
+ * @param {string} [requiredPermission='score_entry']
+ * @returns {Promise<{ authorized: boolean, statusCode: number, error?: string, message?: string, isStaff?: boolean }>}
+ */
+export async function checkTournamentOrganizerOrStaffAccess(authUser, tournament, pool, requiredPermission = 'score_entry') {
+  if (!authUser || typeof authUser !== 'object') {
+    return {
+      authorized: false,
+      statusCode: 401,
+      error: 'UNAUTHORIZED',
+      message: 'Authentication required.',
+    };
+  }
+
+  // 1. Check owner or platform admin
+  if (isTournamentOrganizer(authUser, tournament)) {
+    return { authorized: true, statusCode: 200, isStaff: false };
+  }
+
+  // 2. Check organizer staff members table if pool provided
+  const rawOrgId =
+    tournament?.orgId ??
+    tournament?.organizer_id ??
+    tournament?.organizerId ??
+    tournament?.org_id ??
+    tournament?.created_by;
+
+  if (pool && rawOrgId && (authUser.email || authUser.id)) {
+    try {
+      const staffRes = await pool.query(
+        `SELECT role, admin_role, permissions, status
+         FROM staff_members
+         WHERE organizer_id = $1::varchar
+           AND (LOWER(email) = LOWER($2::varchar) OR id = $3::varchar)
+           AND status = 'active'`,
+        [String(rawOrgId).trim(), authUser.email || '', authUser.id || '']
+      );
+
+      if (staffRes.rows.length > 0) {
+        const staff = staffRes.rows[0];
+        const adminRole = (staff.admin_role || staff.role || '').toLowerCase();
+        if (adminRole === 'admin' || adminRole === 'co-host' || adminRole === 'manager') {
+          return { authorized: true, statusCode: 200, isStaff: true };
+        }
+
+        let perms = [];
+        try {
+          perms = typeof staff.permissions === 'string' ? JSON.parse(staff.permissions) : (staff.permissions || []);
+        } catch {
+          perms = [];
+        }
+
+        const validScorePerms = [
+          'manage_tournaments',
+          'edit_scores',
+          'manage_scores',
+          'scoring',
+          'score_entry',
+          requiredPermission,
+        ];
+
+        if (perms.some((p) => validScorePerms.includes(p))) {
+          return { authorized: true, statusCode: 200, isStaff: true };
+        }
+      }
+    } catch {
+      // Non-blocking fallback
+    }
+  }
+
+  return {
+    authorized: false,
+    statusCode: 403,
+    error: 'FORBIDDEN',
+    message: 'Access denied. Only tournament organizers, administrators, or authorized scoring staff may perform this action.',
+  };
+}
