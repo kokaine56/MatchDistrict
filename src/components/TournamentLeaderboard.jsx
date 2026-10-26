@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Trophy,
   Medal,
@@ -19,6 +19,8 @@ import {
   EyeOff,
   Loader2,
   RefreshCw,
+  Plus,
+  X,
 } from 'lucide-react';
 import { formatDateIST12h } from '../utils/timeFormat.js';
 import RoundQualifyPanel from './qualification/RoundQualifyPanel.jsx';
@@ -42,6 +44,8 @@ export default function TournamentLeaderboard({
 
   // Roadmap Rounds list
   const [availableRounds, setAvailableRounds] = useState([]);
+  const [roundsError, setRoundsError] = useState(false);
+  const [roundsRefreshTrigger, setRoundsRefreshTrigger] = useState(0);
   // Currently viewed round: 'overall' | roundId
   const [selectedViewRound, setSelectedViewRound] = useState('overall');
   // Currently selected district filter in standings view: 'all' | districtId
@@ -57,6 +61,14 @@ export default function TournamentLeaderboard({
   const [publishing, setPublishing] = useState(false);
   const [savingDistrict, setSavingDistrict] = useState(false);
   const [districtSaveError, setDistrictSaveError] = useState(null);
+
+  // Score Editing Mode & Match Selection (Specs B2, B3)
+  const [isEditingScores, setIsEditingScores] = useState(false);
+  const [selectedMatchId, setSelectedMatchId] = useState(null);
+  const [matchDraftScores, setMatchDraftScores] = useState({});
+  const [addingMatch, setAddingMatch] = useState(false);
+  // District to re-select after a save/add-match refresh (the standings reload otherwise resets the filter to 'all')
+  const pendingRestoreDistrictRef = useRef(null);
 
   // Organizer mode: 'standings' | 'qualify'
   const [organizerTab, setOrganizerTab] = useState('standings');
@@ -85,19 +97,25 @@ export default function TournamentLeaderboard({
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         const data = await res.json();
-        if (!ignore && data.success && Array.isArray(data.rounds) && data.rounds.length > 0) {
+        if (!res.ok || !data.success || !Array.isArray(data.rounds)) {
+          throw new Error('Could not load roadmap stages');
+        }
+        if (!ignore) {
           setAvailableRounds(data.rounds);
-          setSelectedQualifyRoundId((curr) => curr || data.rounds[0].id);
+          if (data.rounds.length > 0) {
+            setSelectedQualifyRoundId((curr) => curr || data.rounds[0].id);
+          }
+          setRoundsError(false);
         }
       } catch {
-        // Non-blocking fallback
+        if (!ignore) setRoundsError(true);
       }
     };
     loadRounds();
     return () => {
       ignore = true;
     };
-  }, [tournamentId, refreshTrigger]);
+  }, [tournamentId, refreshTrigger, roundsRefreshTrigger]);
 
   // Fetch standings for selected view round (keeps previous data to prevent flicker)
   useEffect(() => {
@@ -118,7 +136,7 @@ export default function TournamentLeaderboard({
         });
         const data = await res.json();
         if (!ignore) {
-          if (!data.success) throw new Error(data.error || 'Failed to load leaderboard');
+          if (!data.success) throw new Error(data.message || data.error || 'Failed to load leaderboard');
           setStandings(data.standings || []);
           setRoundDistricts(data.districts || []);
           setHasRoundDistricts(Boolean(data.has_districts && data.districts && data.districts.length > 0));
@@ -126,7 +144,8 @@ export default function TournamentLeaderboard({
           setPublicationState(data.publication_state || (data.is_published ? 'published' : 'draft'));
           setPublishedVersion(data.version || data.published_version || null);
           setPublishedAt(data.published_at || null);
-          setSelectedDistrictId('all');
+          setSelectedDistrictId(pendingRestoreDistrictRef.current || 'all');
+          pendingRestoreDistrictRef.current = null;
           setSelectedTeamIds([]);
         }
       } catch (err) {
@@ -141,44 +160,24 @@ export default function TournamentLeaderboard({
     };
   }, [tournamentId, selectedViewRound, refreshTrigger]);
 
-  // Local draft scores preserved across district switching
-  const [draftScores, setDraftScores] = useState({});
+  // Reset editing mode when switching round or district view
+  useEffect(() => {
+    setIsEditingScores(false);
+    setSelectedMatchId(null);
+  }, [selectedDistrictId, selectedViewRound]);
 
-  const getTeamScore = (team) => {
-    const draft = draftScores[team.team_id];
-    const placePts = draft?.placement_points != null ? Number(draft.placement_points) : (team?.total_placement_points != null ? Number(team.total_placement_points) : null);
-    const kills = draft?.total_kills != null ? Number(draft.total_kills) : (team?.total_kills != null ? Number(team.total_kills) : null);
-    const wwcd = draft?.wwcd_count != null ? Number(draft.wwcd_count) : (team?.wwcd_count != null ? Number(team.wwcd_count) : null);
-    const played = draft?.matches_played != null ? Number(draft.matches_played) : (team?.matches_played != null ? Number(team.matches_played) : null);
-
-    const hasAnyDraft = Boolean(draft);
-    const calculatedTotal = (placePts ?? 0) + (kills ?? 0);
-
-    return {
-      placePts: placePts ?? 0,
-      kills: kills ?? 0,
-      wwcd: wwcd ?? 0,
-      played: played ?? 0,
-      totalPts: hasAnyDraft ? calculatedTotal : (team?.total_points != null ? Number(team.total_points) : null),
-      isEdited: hasAnyDraft,
-      isUnscored: Boolean(team?.no_scores_yet && !hasAnyDraft),
-    };
-  };
-
-  const updateDraftScore = (teamId, field, val) => {
-    setDraftScores((prev) => {
-      const existing = prev[teamId] || {};
-      const team = standings.find((t) => t.team_id === teamId);
-      return {
-        ...prev,
-        [teamId]: {
-          placement_points: field === 'placement_points' ? val : (existing.placement_points != null ? existing.placement_points : (team?.total_placement_points || 0)),
-          total_kills: field === 'total_kills' ? val : (existing.total_kills != null ? existing.total_kills : (team?.total_kills || 0)),
-          wwcd_count: field === 'wwcd_count' ? val : (existing.wwcd_count != null ? existing.wwcd_count : (team?.wwcd_count || 0)),
-          matches_played: field === 'matches_played' ? val : (existing.matches_played != null ? existing.matches_played : (team?.matches_played || 1)),
-        },
-      };
-    });
+  // Placement scoring table (Spec A2: 1:10, 2:6, 3:5, 4:4, 5:3, 6:2, 7-8:1, 9+:0)
+  const getPlacementPoints = (placement) => {
+    if (!placement) return 0;
+    const p = Number(placement);
+    if (p === 1) return 10;
+    if (p === 2) return 6;
+    if (p === 3) return 5;
+    if (p === 4) return 4;
+    if (p === 5) return 3;
+    if (p === 6) return 2;
+    if (p === 7 || p === 8) return 1;
+    return 0;
   };
 
   // Filter standings: In overall view, NEVER filter by district. In round views, filter strictly to the authoritative district.
@@ -203,6 +202,168 @@ export default function TournamentLeaderboard({
     });
   }, [standings, selectedDistrictId, isOverallView, roundDistricts]);
 
+  // Current active district object
+  const currentActiveDistrict = useMemo(() => {
+    if (selectedDistrictId === 'all') return null;
+    return roundDistricts.find((d) => d.id === selectedDistrictId || d.district_id === selectedDistrictId) || null;
+  }, [roundDistricts, selectedDistrictId]);
+
+  // District matches for Match Selector (Spec B3)
+  const districtMatches = useMemo(() => {
+    if (!currentActiveDistrict) return [];
+    if (Array.isArray(currentActiveDistrict.matches) && currentActiveDistrict.matches.length > 0) {
+      return currentActiveDistrict.matches;
+    }
+    return [{
+      id: `MAT-${currentActiveDistrict.id}-1`,
+      match_id: `MAT-${currentActiveDistrict.id}-1`,
+      match_number: 1,
+      group_id: currentActiveDistrict.id,
+      status: 'PENDING',
+      results: {},
+    }];
+  }, [currentActiveDistrict]);
+
+  // Currently active match in match selector
+  const activeMatch = useMemo(() => {
+    if (!districtMatches || districtMatches.length === 0) return null;
+    if (selectedMatchId) {
+      const found = districtMatches.find((m) => m.id === selectedMatchId || m.match_id === selectedMatchId);
+      if (found) return found;
+    }
+    return districtMatches[0];
+  }, [districtMatches, selectedMatchId]);
+
+  const effectiveSelectedMatchId = activeMatch?.id || null;
+
+  // Slot-ordered teams for Editing Mode (Spec B2: strictly original assigned slot order)
+  const slotOrderedTeams = useMemo(() => {
+    if (!displayedStandings || displayedStandings.length === 0) return [];
+    return [...displayedStandings].sort((a, b) => {
+      const aSlot = a.slot_number != null ? Number(a.slot_number) : 99999;
+      const bSlot = b.slot_number != null ? Number(b.slot_number) : 99999;
+      if (aSlot !== bSlot) return aSlot - bSlot;
+      return (a.team_name || '').localeCompare(b.team_name || '');
+    });
+  }, [displayedStandings]);
+
+  // Resolve match score for a team in the active match
+  const getMatchScoreForTeam = (teamId) => {
+    const matchId = effectiveSelectedMatchId;
+    const draft = matchId ? matchDraftScores[matchId]?.[teamId] : null;
+    const saved = matchId && activeMatch?.results ? activeMatch.results[teamId] : null;
+
+    let placement = '';
+    let kills = '';
+
+    if (draft && draft.placement !== undefined) {
+      placement = draft.placement;
+    } else if (saved && saved.placement != null) {
+      placement = saved.placement;
+    }
+
+    if (draft && draft.kills !== undefined) {
+      kills = draft.kills;
+    } else if (saved && saved.kills != null) {
+      kills = saved.kills;
+    }
+
+    const pNum = placement !== '' && placement != null ? Number(placement) : null;
+    const kNum = kills !== '' && kills != null ? Number(kills) : (kills === 0 ? 0 : null);
+    const killPts = kNum != null ? kNum * 1 : 0;
+    const placePts = pNum != null ? getPlacementPoints(pNum) : 0;
+    const wwcd = pNum === 1 ? 1 : 0;
+    const totalPts = (pNum != null || kNum != null) ? (killPts + placePts) : null;
+
+    return {
+      placement,
+      kills,
+      pNum,
+      kNum: kNum != null ? kNum : 0,
+      killPts,
+      placePts,
+      wwcd,
+      totalPts,
+      hasEntry: pNum != null || kNum != null,
+      isDraft: Boolean(draft),
+    };
+  };
+
+  const updateMatchScore = (teamId, field, value) => {
+    const matchId = effectiveSelectedMatchId;
+    if (!matchId) return;
+    setMatchDraftScores((prev) => {
+      const matchDrafts = prev[matchId] || {};
+      const existing = matchDrafts[teamId] || {};
+      const currentSaved = activeMatch?.results?.[teamId] || {};
+
+      const basePlacement = existing.placement !== undefined ? existing.placement : (currentSaved.placement ?? '');
+      const baseKills = existing.kills !== undefined ? existing.kills : (currentSaved.kills ?? '');
+
+      return {
+        ...prev,
+        [matchId]: {
+          ...matchDrafts,
+          [teamId]: {
+            placement: field === 'placement' ? value : basePlacement,
+            kills: field === 'kills' ? value : baseKills,
+          },
+        },
+      };
+    });
+  };
+
+  // Real-time client validation in Editing Mode (Spec B4)
+  const editingValidation = useMemo(() => {
+    if (!isEditingScores || !effectiveSelectedMatchId || !currentActiveDistrict) {
+      return { isValid: true, errors: [], duplicatePlacements: new Set(), invalidPlacements: new Set(), invalidKills: new Set() };
+    }
+    const capacity = currentActiveDistrict.capacity || 16;
+    const errors = [];
+    const placementCounts = new Map();
+    const duplicatePlacements = new Set();
+    const invalidPlacements = new Set();
+    const invalidKills = new Set();
+
+    for (const team of slotOrderedTeams) {
+      const score = getMatchScoreForTeam(team.team_id);
+      if (score.placement !== '' && score.placement != null) {
+        const p = Number(score.placement);
+        if (!Number.isInteger(p) || p < 1 || p > capacity) {
+          invalidPlacements.add(team.team_id);
+          errors.push(`Team "${team.team_name}": Finish position ${score.placement} must be a whole number between 1 and ${capacity}.`);
+        } else {
+          const count = (placementCounts.get(p) || 0) + 1;
+          placementCounts.set(p, count);
+          if (count > 1) {
+            duplicatePlacements.add(p);
+          }
+        }
+      }
+
+      if (score.kills !== '' && score.kills != null) {
+        const k = Number(score.kills);
+        if (!Number.isInteger(k) || k < 0) {
+          invalidKills.add(team.team_id);
+          errors.push(`Team "${team.team_name}": Kills cannot be negative.`);
+        }
+      }
+    }
+
+    if (duplicatePlacements.size > 0) {
+      const dupList = Array.from(duplicatePlacements).sort((a, b) => a - b).join(', ');
+      errors.push(`Duplicate finish position(s) detected: Position #${dupList} is assigned to more than one team.`);
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      duplicatePlacements,
+      invalidPlacements,
+      invalidKills,
+    };
+  }, [isEditingScores, effectiveSelectedMatchId, currentActiveDistrict, slotOrderedTeams, matchDraftScores, activeMatch]);
+
   // Derive source and target round from the tournament roadmap
   const { currentSourceRound, nextTargetRound } = useMemo(() => {
     if (availableRounds.length === 0) return { currentSourceRound: null, nextTargetRound: null };
@@ -223,16 +384,14 @@ export default function TournamentLeaderboard({
   const targetCapacity = nextTargetRound?.teams_advancing || currentSourceRound?.teams_advancing || null;
   const isOverCapacity = targetCapacity != null && selectedTeamIds.length > targetCapacity;
 
-  const currentActiveDistrict = useMemo(() => {
-    if (selectedDistrictId === 'all') return null;
-    return roundDistricts.find((d) => d.id === selectedDistrictId || d.district_id === selectedDistrictId) || null;
-  }, [roundDistricts, selectedDistrictId]);
-
-  // Check if draft modifications exist for the current active district
+  // Unsaved edits (kept distinct from persisted scores): any draft entry in any match of the active district
   const districtHasDraft = useMemo(() => {
-    if (!displayedStandings || displayedStandings.length === 0) return false;
-    return displayedStandings.some((t) => Boolean(draftScores[t.team_id]));
-  }, [displayedStandings, draftScores]);
+    if (!isEditingScores || !districtMatches || districtMatches.length === 0) return false;
+    return districtMatches.some((m) => {
+      const drafts = matchDraftScores[m.id];
+      return drafts && Object.keys(drafts).length > 0;
+    });
+  }, [isEditingScores, districtMatches, matchDraftScores]);
 
   // District Save Status: 'saved' | 'modified' | 'error' | 'unsaved'
   const districtSaveStatus = useMemo(() => {
@@ -313,23 +472,36 @@ export default function TournamentLeaderboard({
     }
   };
 
-  // Organizer: Save all scores in currently viewed district with optimistic version check
-  const handleSaveDistrictScores = async () => {
-    if (!currentActiveDistrict || savingDistrict) return;
+  // Organizer: Save the active match's kills + finish positions for the district (Spec B4).
+  // Only rows with a finish position are sent; empty inputs are never treated as 0 or a valid position.
+  const handleSaveMatchScores = async () => {
+    if (!currentActiveDistrict || !effectiveSelectedMatchId || savingDistrict) return;
+    if (!editingValidation.isValid) return;
     setSavingDistrict(true);
     setDistrictSaveError(null);
     try {
       const token = localStorage.getItem('token') || '';
-      const teamScores = displayedStandings.map((t) => {
-        const score = getTeamScore(t);
-        return {
+      const teamScores = [];
+      for (const t of slotOrderedTeams) {
+        const score = getMatchScoreForTeam(t.team_id);
+        const hasPlacement = score.placement !== '' && score.placement != null;
+        const hasKills = score.kills !== '' && score.kills != null;
+        if (!hasPlacement) {
+          if (hasKills) {
+            throw new Error(`Team "${t.team_name}": enter a finish position along with kills.`);
+          }
+          continue;
+        }
+        teamScores.push({
           team_id: t.team_id,
-          placement_points: score.placePts,
-          total_kills: score.kills,
-          wwcd_count: score.wwcd,
-          matches_played: score.played > 0 ? score.played : 1,
-        };
-      });
+          team_name: t.team_name,
+          placement: Number(score.placement),
+          kills: hasKills ? Number(score.kills) : 0,
+        });
+      }
+      if (teamScores.length === 0) {
+        throw new Error('Enter at least one finish position before saving.');
+      }
 
       const res = await fetch(
         `/api/tournaments/${tournamentId}/rounds/${selectedViewRound}/districts/${currentActiveDistrict.id}/save-scores`,
@@ -341,35 +513,66 @@ export default function TournamentLeaderboard({
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
-            expected_version: currentActiveDistrict.version ?? currentActiveDistrict.scores_version ?? 0,
+            match_id: effectiveSelectedMatchId,
+            expected_version: currentActiveDistrict.version ?? currentActiveDistrict.scores_version ?? null,
             team_scores: teamScores,
           }),
         }
       );
       const data = await res.json();
       if (!data.success) {
-        if (res.status === 409) {
-          throw new Error(data.message || 'Another organizer saved scores for this district. Please refresh to see the latest version.');
-        }
-        throw new Error(data.message || 'Failed to save district scores');
+        throw new Error(data.message || 'Failed to save match scores');
       }
-      showToastMessage(`Scores for ${currentActiveDistrict.name} successfully saved!`);
+      const savedMatchNumber = activeMatch?.match_number || 1;
+      const savedDistrictId = currentActiveDistrict.id;
+      const savedMatchId = effectiveSelectedMatchId;
+      showToastMessage(`Match ${savedMatchNumber} scores for ${currentActiveDistrict.name} saved!`);
 
-      // Clear draft overrides for teams in this saved district
-      setDraftScores((prev) => {
+      // Clear only this match's unsaved drafts; other matches keep their own drafts.
+      setMatchDraftScores((prev) => {
         const next = { ...prev };
-        for (const t of displayedStandings) {
-          delete next[t.team_id];
-        }
+        delete next[savedMatchId];
         return next;
       });
 
+      pendingRestoreDistrictRef.current = savedDistrictId;
       triggerRefresh();
     } catch (err) {
       setDistrictSaveError(err.message);
       showToastMessage(`Error: ${err.message}`);
     } finally {
       setSavingDistrict(false);
+    }
+  };
+
+  // Organizer: add the next match (Match N+1) to the active district (Spec B3)
+  const handleAddDistrictMatch = async () => {
+    if (!currentActiveDistrict || addingMatch || isOverallView) return;
+    setAddingMatch(true);
+    try {
+      const token = localStorage.getItem('token') || '';
+      const res = await fetch(
+        `/api/tournaments/${tournamentId}/rounds/${selectedViewRound}/districts/${currentActiveDistrict.id}/matches`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || 'Failed to add match');
+      showToastMessage(data.message || 'Match added.');
+      setSelectedMatchId(data.match?.id || null);
+      pendingRestoreDistrictRef.current = currentActiveDistrict.id;
+      triggerRefresh();
+    } catch (err) {
+      showToastMessage(`Error: ${err.message}`);
+    } finally {
+      setAddingMatch(false);
     }
   };
 
@@ -561,6 +764,19 @@ export default function TournamentLeaderboard({
         </div>
       )}
 
+      {roundsError && (
+        <div role="alert" className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-700 dark:text-amber-300 text-xs font-bold flex flex-wrap items-center justify-between gap-3">
+          <span>Roadmap stages could not be loaded. Round standings and qualification controls may be unavailable.</span>
+          <button
+            type="button"
+            onClick={() => setRoundsRefreshTrigger((current) => current + 1)}
+            className="px-3 py-1.5 rounded-full border border-amber-500/40 hover:bg-amber-500/10 transition-colors"
+          >
+            Retry stages
+          </button>
+        </div>
+      )}
+
       {/* ── Render Organizer Qualify Panel when tab is selected ── */}
       {isOrganizer && organizerTab === 'qualify' ? (
         <RoundQualifyPanel
@@ -677,84 +893,170 @@ export default function TournamentLeaderboard({
 
           {/* ── District Scoring & Independent Save Bar (spec 3.2: Unsaved / Saved / Modified / Error) ── */}
           {isOrganizer && !isOverallView && selectedDistrictId !== 'all' && currentActiveDistrict && (
-            <div className="p-3.5 bg-surface-container-low border border-primary/25 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-sm animate-in fade-in duration-150">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Compass className="w-4 h-4 text-primary shrink-0" />
-                <span className="text-xs font-black text-on-surface">
-                  {currentActiveDistrict.name}:
-                </span>
-
-                {/* State Pill: Saved / Modified / Error / Unsaved */}
-                {districtSaveStatus === 'saved' ? (
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>Saved {currentActiveDistrict.scores_saved_at ? formatDateIST12h(currentActiveDistrict.scores_saved_at) : ''} (v{currentActiveDistrict.scores_version || 1})</span>
-                  </span>
-                ) : districtSaveStatus === 'modified' ? (
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" />
-                    <span>Modified - unsaved changes</span>
-                  </span>
-                ) : districtSaveStatus === 'error' ? (
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" />
-                      <span>Save Failed</span>
+            isEditingScores ? (
+              /* ── Score Editing Mode District Header (Specs B2, B3) ── */
+              <div className="p-4 bg-surface-container-low border-2 border-primary/40 rounded-2xl flex flex-col gap-3 shadow-md animate-in fade-in duration-150">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-primary text-on-primary uppercase tracking-wider flex items-center gap-1.5 shadow-xs">
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Score Editing Mode</span>
                     </span>
+                    <span className="text-sm font-black text-on-surface">
+                      {currentActiveDistrict.name}
+                    </span>
+                    <span className="text-xs text-on-surface-variant font-medium">
+                      &bull; Assigned Slot Order &bull; Capacity: {currentActiveDistrict.capacity || 16}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={handleSaveDistrictScores}
-                      className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-error/20 hover:bg-error/30 text-error cursor-pointer w-auto"
+                      onClick={() => setIsEditingScores(false)}
+                      className="px-3.5 py-1.5 rounded-full text-xs font-bold text-on-surface-variant hover:text-on-surface bg-surface-container hover:bg-surface-container-highest border border-outline-variant/30 transition-all flex items-center gap-1.5 cursor-pointer w-auto"
                     >
-                      Retry
+                      <X className="w-3.5 h-3.5" />
+                      <span>Cancel / Exit</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveMatchScores}
+                      disabled={savingDistrict || !editingValidation.isValid}
+                      className="px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all shadow-md flex items-center gap-1.5 cursor-pointer w-auto"
+                    >
+                      {savingDistrict ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                      <span>Save Match Scores</span>
                     </button>
                   </div>
-                ) : (
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
-                    Unsaved
-                  </span>
-                )}
+                </div>
 
-                <span className="text-[11px] font-bold text-on-surface-variant">
-                  ({displayedStandings.length} / {currentActiveDistrict.capacity || 16} assigned teams)
-                </span>
-                {displayedStandings.length < (currentActiveDistrict.capacity || 16) && (
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                    {(currentActiveDistrict.capacity || 16) - displayedStandings.length} slot(s) unfilled
-                  </span>
+                {/* Match Selector (Spec B3) */}
+                <div className="flex items-center gap-2 pt-2 border-t border-outline-variant/15 flex-wrap">
+                  <span className="text-xs font-bold text-on-surface-variant mr-1">Match:</span>
+                  {districtMatches.map((m) => {
+                    const isMatchActive = m.id === effectiveSelectedMatchId || m.match_id === effectiveSelectedMatchId;
+                    const matchNum = m.match_number || 1;
+                    const hasScores = (m.result_count && m.result_count > 0) || (m.results && Object.keys(m.results).length > 0);
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setSelectedMatchId(m.id)}
+                        className={`px-3 py-1 rounded-full text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 w-auto ${
+                          isMatchActive
+                            ? 'bg-primary text-on-primary shadow-xs'
+                            : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border border-outline-variant/20'
+                        }`}
+                      >
+                        <span>Match {matchNum}</span>
+                        {hasScores && (
+                          <span className={`w-1.5 h-1.5 rounded-full ${isMatchActive ? 'bg-white' : 'bg-emerald-500'}`} title="Has saved scores" />
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {isOrganizer && (
+                    <button
+                      type="button"
+                      onClick={handleAddDistrictMatch}
+                      disabled={addingMatch}
+                      className="px-3 py-1 rounded-full text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 border border-primary/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
+                      title="Add next match to this district"
+                    >
+                      {addingMatch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      <span>Add Match</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Validation Warnings Banner (Spec B4) */}
+                {!editingValidation.isValid && (
+                  <div className="p-2.5 rounded-xl bg-error/15 border border-error/30 text-error text-xs font-bold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{editingValidation.errors[0]}</span>
+                  </div>
                 )}
               </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={handleSaveDistrictScores}
-                  disabled={savingDistrict || displayedStandings.length === 0}
-                  className="w-auto px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  {savingDistrict ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  <span>Save District Scores</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!nextTargetRound) {
-                      showToastMessage('Championship Stage: Grand Finals is the terminal round; no subsequent round exists.');
-                      return;
-                    }
-                    setRoadmapQualifyOpen(true);
-                  }}
-                  className="w-auto px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-emerald-600 hover:bg-emerald-500 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
-                  title="Roadmap-based qualification to next stage"
-                >
-                  <Trophy className="w-3.5 h-3.5 text-amber-300" />
-                  <span>
-                    Qualify to Next Round ({`${currentSourceRound?.name || `Round ${currentSourceRound?.round_number || 1}`}, ${currentActiveDistrict?.name || 'District'}`})
+            ) : (
+              /* ── Normal Mode District Header ── */
+              <div className="p-3.5 bg-surface-container-low border border-primary/25 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-sm animate-in fade-in duration-150">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Compass className="w-4 h-4 text-primary shrink-0" />
+                  <span className="text-xs font-black text-on-surface">
+                    {currentActiveDistrict.name}:
                   </span>
-                </button>
+
+                  {/* State Pill: Saved / Modified / Error / Unsaved */}
+                  {districtSaveStatus === 'saved' ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      <span>Saved {currentActiveDistrict.scores_saved_at ? formatDateIST12h(currentActiveDistrict.scores_saved_at) : ''} (v{currentActiveDistrict.scores_version || 1})</span>
+                    </span>
+                  ) : districtSaveStatus === 'modified' ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>Modified - unsaved changes</span>
+                    </span>
+                  ) : districtSaveStatus === 'error' ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        <span>Save Failed</span>
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
+                      Unsaved
+                    </span>
+                  )}
+
+                  <span className="text-[11px] font-bold text-on-surface-variant">
+                    ({displayedStandings.length} / {currentActiveDistrict.capacity || 16} assigned teams)
+                  </span>
+                  {displayedStandings.length < (currentActiveDistrict.capacity || 16) && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                      {(currentActiveDistrict.capacity || 16) - displayedStandings.length} slot(s) unfilled
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Edit Scores Button for Organizers (Spec B2) */}
+                  {isOrganizer && (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingScores(true)}
+                      className="w-auto px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Switch to slot-ordered match score editing view"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Edit Scores</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!nextTargetRound) {
+                        showToastMessage('Championship Stage: Grand Finals is the terminal round; no subsequent round exists.');
+                        return;
+                      }
+                      setRoadmapQualifyOpen(true);
+                    }}
+                    className="w-auto px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-emerald-600 hover:bg-emerald-500 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                    title="Roadmap-based qualification to next stage"
+                  >
+                    <Trophy className="w-3.5 h-3.5 text-amber-300" />
+                    <span>
+                      Qualify to Next Round ({`${currentSourceRound?.name || `Round ${currentSourceRound?.round_number || 1}`}, ${currentActiveDistrict?.name || 'District'}`})
+                    </span>
+                  </button>
+                </div>
               </div>
-            </div>
+            )
           )}
 
           {/* ── Active Qualification Action Bar (When organizer selects teams) ── */}
@@ -919,295 +1221,367 @@ export default function TournamentLeaderboard({
                 )}
               </div>
 
-              {/* ── Leaderboard Table ── */}
+              {/* ── Leaderboard Table (Specs B1, B2) ── */}
               <div className="bg-surface-container-low border border-outline-variant/30 rounded-2xl overflow-hidden shadow-lg">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse whitespace-nowrap text-sm">
-                    <thead>
-                      <tr className="bg-surface-container-highest/60 text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/15">
-                        {/* Checkbox Header for Organizer Selection */}
-                        {isOrganizer && (
-                          <th className="px-4 py-3.5 text-center w-10">
-                            <input
-                              type="checkbox"
-                              checked={isAllSelected}
-                              onChange={toggleSelectAll}
-                              title="Select all eligible teams"
-                              className="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant bg-surface-container cursor-pointer"
-                            />
-                          </th>
-                        )}
-                        <th className="px-5 py-3.5 font-bold text-center w-16">Rank</th>
-                        <th className="px-5 py-3.5 font-bold">Team</th>
-                        {/* District Column: ONLY rendered when NOT overall view and in All Districts tab */}
-                        {!isOverallView && hasRoundDistricts && selectedDistrictId === 'all' && (
-                          <th className="px-5 py-3.5 font-bold text-center">District</th>
-                        )}
-                        <th className="px-5 py-3.5 font-bold text-center">Played</th>
-                        <th className="px-5 py-3.5 font-bold text-center">Placement Points</th>
-                        <th className="px-5 py-3.5 font-bold text-center">Total Kills</th>
-                        <th className="px-5 py-3.5 font-bold text-center">WWCDs</th>
-                        <th className="px-5 py-3.5 font-black text-right text-on-surface">Total Points</th>
-                        {isOrganizer && <th className="px-5 py-3.5 font-bold text-center">Status / Actions</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-outline-variant/10 font-medium">
-                      {displayedStandings.map((team, idx) => {
-                        const rankNumber = isOverallView ? (team.rank ?? idx + 1) : (team.district_rank ?? team.rank ?? idx + 1);
-                        const isTop1 = rankNumber === 1;
-                        const isTop2 = rankNumber === 2;
-                        const isTop3 = rankNumber === 3;
-                        const isSelected = selectedTeamIds.includes(team.team_id);
-                        const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
-                        const teamScore = getTeamScore(team);
-                        const isDistrictScoringRow = isOrganizer && !isOverallView && selectedDistrictId !== 'all';
+                  {isEditingScores && isOrganizer && !isOverallView && selectedDistrictId !== 'all' ? (
+                    /* ══════════════════════════════════════════════════════════
+                       EDITING MODE: Assigned Slot Order (Spec B2)
+                       Organizer enters ONLY Finish Position & Kills.
+                       All derived fields are previewed automatically.
+                       ══════════════════════════════════════════════════════════ */
+                    <table className="w-full text-left border-collapse whitespace-nowrap text-sm">
+                      <thead>
+                        <tr className="bg-surface-container-highest/60 text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/15">
+                          <th className="px-5 py-3.5 font-bold text-center w-24">Slot</th>
+                          <th className="px-5 py-3.5 font-bold">Team Name</th>
+                          <th className="px-5 py-3.5 font-bold text-center w-32">Finish Position</th>
+                          <th className="px-5 py-3.5 font-bold text-center w-28">Kills</th>
+                          <th className="px-5 py-3.5 font-bold text-center">Kill Pts</th>
+                          <th className="px-5 py-3.5 font-bold text-center">Place Pts</th>
+                          <th className="px-5 py-3.5 font-bold text-center">WWCD</th>
+                          <th className="px-5 py-3.5 font-black text-right text-on-surface">Total Pts</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-outline-variant/10 font-medium">
+                        {slotOrderedTeams.map((team, idx) => {
+                          const slotNum = team.slot_number != null ? team.slot_number : (idx + 1);
+                          const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
+                          const score = getMatchScoreForTeam(team.team_id);
+                          const hasDup = score.pNum != null && editingValidation.duplicatePlacements.has(score.pNum);
+                          const hasInvalidP = editingValidation.invalidPlacements.has(team.team_id);
+                          const hasInvalidK = editingValidation.invalidKills.has(team.team_id);
 
-                        return (
-                          <tr
-                            key={team.team_id || idx}
-                            className={`transition-colors ${
-                              isSelected
-                                ? 'bg-primary/[0.08] border-l-4 border-l-primary'
-                                : isTop1
-                                ? 'bg-yellow-500/[0.04] border-l-2 border-l-yellow-500 hover:bg-surface-container-high/40'
-                                : isTop2
-                                ? 'bg-slate-400/[0.04] border-l-2 border-l-slate-400 hover:bg-surface-container-high/40'
-                                : isTop3
-                                ? 'bg-amber-600/[0.04] border-l-2 border-l-amber-600 hover:bg-surface-container-high/40'
-                                : 'hover:bg-surface-container-high/40'
-                            }`}
-                          >
-                            {/* Checkbox Cell for Organizer Selection */}
-                            {isOrganizer && (
-                              <td className="px-4 py-3.5 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleSelectTeam(team.team_id)}
-                                  disabled={isDisqualified}
-                                  className="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant bg-surface-container cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-                                />
+                          return (
+                            <tr
+                              key={team.team_id || idx}
+                              className="hover:bg-surface-container-high/40 transition-colors"
+                            >
+                              {/* Slot Number */}
+                              <td className="px-5 py-3.5 text-center font-bold text-primary font-mono">
+                                Slot {slotNum}
                               </td>
-                            )}
 
-                            {/* Rank */}
-                            <td className="px-5 py-3.5 text-center">
-                              {teamScore.isUnscored ? (
-                                <span className="text-on-surface-variant/50 font-bold">-</span>
-                              ) : isTop1 ? (
-                                <Crown className="w-5 h-5 text-yellow-500 mx-auto" />
-                              ) : isTop2 ? (
-                                <Medal className="w-5 h-5 text-slate-400 mx-auto" />
-                              ) : isTop3 ? (
-                                <Medal className="w-5 h-5 text-amber-600 mx-auto" />
-                              ) : (
-                                <span className="text-on-surface-variant font-bold">#{rankNumber}</span>
-                              )}
-                            </td>
-
-                            {/* Team */}
-                            <td className="px-5 py-3.5">
-                              <div className="flex items-center gap-2">
+                              {/* Team Name */}
+                              <td className="px-5 py-3.5">
                                 <div className={`font-black text-on-surface ${isDisqualified ? 'line-through opacity-60' : ''}`}>
                                   {team.team_name}
                                 </div>
-                                {isDisqualified && (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30">
-                                    DQ
-                                  </span>
-                                )}
-                                {(team.tie_broken || team.district_tie_broken || (displayedStandings.filter((s) => Number(s.total_points) === Number(team.total_points)).length > 1 && !teamScore.isUnscored)) && (
-                                  <span
-                                    className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
-                                    title="Rank resolved by authoritative tie-break rules"
-                                  >
-                                    Tie-break
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-on-surface-variant mt-0.5">
-                                Captain: {team.leader_name || team.captain_name || 'Captain'}
-                              </div>
-                            </td>
-
-                            {/* District: ONLY shown in round-specific All Districts view */}
-                            {!isOverallView && hasRoundDistricts && selectedDistrictId === 'all' && (
-                              <td className="px-5 py-3.5 text-center text-xs text-on-surface-variant font-medium">
-                                {team.assigned_group_name || team.district_name || '-'}
+                                <div className="text-[11px] text-on-surface-variant mt-0.5">
+                                  Captain: {team.leader_name || team.captain_name || 'Captain'}
+                                </div>
                               </td>
-                            )}
 
-                            {/* Played */}
-                            <td className="px-5 py-3.5 text-center text-on-surface-variant">
-                              {teamScore.isUnscored ? '-' : (teamScore.played || 0)}
-                            </td>
+                              {/* Finish Position Input */}
+                              <td className="px-5 py-3.5 text-center">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={currentActiveDistrict.capacity || 16}
+                                  value={score.placement}
+                                  onChange={(e) => updateMatchScore(team.team_id, 'placement', e.target.value)}
+                                  placeholder="Pos"
+                                  disabled={isDisqualified}
+                                  className={`w-20 px-2 py-1 text-center font-bold bg-surface-container rounded-lg text-on-surface focus:outline-none text-xs ${
+                                    hasDup || hasInvalidP
+                                      ? 'border-2 border-red-500 bg-red-500/10 focus:border-red-500 text-red-500'
+                                      : 'border border-outline-variant/40 focus:border-primary'
+                                  }`}
+                                  title={`Finish position (1 to ${currentActiveDistrict.capacity || 16})`}
+                                />
+                              </td>
 
-                            {/* Placement Points */}
-                            {isDistrictScoringRow ? (
-                              <td className="px-3 py-2 text-center">
+                              {/* Kills Input */}
+                              <td className="px-5 py-3.5 text-center">
                                 <input
                                   type="number"
                                   min="0"
-                                  max="1000"
-                                  value={teamScore.placePts}
-                                  onChange={(e) => updateDraftScore(team.team_id, 'placement_points', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                  className="w-16 px-2 py-1 text-center font-bold bg-surface-container border border-outline-variant/40 rounded-lg text-on-surface focus:outline-none focus:border-primary text-xs"
-                                  title="Placement Points"
+                                  value={score.kills}
+                                  onChange={(e) => updateMatchScore(team.team_id, 'kills', e.target.value)}
+                                  placeholder="0"
+                                  disabled={isDisqualified}
+                                  className={`w-16 px-2 py-1 text-center font-bold bg-surface-container rounded-lg focus:outline-none text-xs ${
+                                    hasInvalidK
+                                      ? 'border-2 border-red-500 bg-red-500/10 text-red-500'
+                                      : 'border border-outline-variant/40 text-rose-500 focus:border-rose-500'
+                                  }`}
+                                  title="Total kills in this match"
                                 />
                               </td>
-                            ) : (
-                              <td className="px-5 py-3.5 text-center text-on-surface-variant">
-                                {teamScore.isUnscored ? '-' : teamScore.placePts}
-                              </td>
-                            )}
 
-                            {/* Total Kills */}
-                            {isDistrictScoringRow ? (
-                              <td className="px-3 py-2 text-center">
-                                <div className="flex items-center justify-center gap-1">
-                                  <Target className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                              {/* Kill Points (Calculated) */}
+                              <td className="px-5 py-3.5 text-center font-bold text-rose-500 font-mono">
+                                {score.hasEntry ? score.killPts : '-'}
+                              </td>
+
+                              {/* Placement Points (Calculated) */}
+                              <td className="px-5 py-3.5 text-center font-bold text-on-surface-variant font-mono">
+                                {score.pNum != null ? score.placePts : '-'}
+                              </td>
+
+                              {/* WWCD (Calculated) */}
+                              <td className="px-5 py-3.5 text-center">
+                                {score.pNum == null ? (
+                                  <span className="text-on-surface-variant/40">-</span>
+                                ) : score.wwcd > 0 ? (
+                                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/40">
+                                    🏆 1
+                                  </span>
+                                ) : (
+                                  <span className="text-on-surface-variant/60 font-medium text-xs">0</span>
+                                )}
+                              </td>
+
+                              {/* Total Points (Calculated) */}
+                              <td className="px-5 py-3.5 text-right font-mono font-black text-base text-primary">
+                                {score.totalPts != null ? score.totalPts : '-'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    /* ══════════════════════════════════════════════════════════
+                       NORMAL MODE: Ranking Order (Spec B1)
+                       Columns in exact order:
+                       1. Rank
+                       2. Team Name
+                       3. Kill Points
+                       4. Placement Points
+                       5. WWCDs
+                       6. Total Points
+                       ══════════════════════════════════════════════════════════ */
+                    <table className="w-full text-left border-collapse whitespace-nowrap text-sm">
+                      <thead>
+                        <tr className="bg-surface-container-highest/60 text-on-surface-variant text-xs uppercase tracking-wider border-b border-outline-variant/15">
+                          {/* Checkbox Header for Organizer Selection */}
+                          {isOrganizer && (
+                            <th className="px-4 py-3.5 text-center w-10">
+                              <input
+                                type="checkbox"
+                                checked={isAllSelected}
+                                onChange={toggleSelectAll}
+                                title="Select all eligible teams"
+                                className="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant bg-surface-container cursor-pointer"
+                              />
+                            </th>
+                          )}
+                          <th className="px-5 py-3.5 font-bold text-center w-16">Rank</th>
+                          <th className="px-5 py-3.5 font-bold">Team Name</th>
+                          <th className="px-5 py-3.5 font-bold text-center">Kill Points</th>
+                          <th className="px-5 py-3.5 font-bold text-center">Placement Points</th>
+                          <th className="px-5 py-3.5 font-bold text-center">WWCDs</th>
+                          <th className="px-5 py-3.5 font-black text-right text-on-surface">Total Points</th>
+                          {isOrganizer && <th className="px-5 py-3.5 font-bold text-center">Status / Actions</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-outline-variant/10 font-medium">
+                        {displayedStandings.map((team, idx) => {
+                          const rankNumber = isOverallView ? (team.rank ?? idx + 1) : (team.district_rank ?? team.rank ?? idx + 1);
+                          const isTop1 = rankNumber === 1;
+                          const isTop2 = rankNumber === 2;
+                          const isTop3 = rankNumber === 3;
+                          const isSelected = selectedTeamIds.includes(team.team_id);
+                          const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
+                          const isUnscored = Boolean(team.no_scores_yet || (team.total_points == null && team.matches_played === 0));
+
+                          const killPoints = team.total_kill_points != null
+                            ? Number(team.total_kill_points)
+                            : (team.total_kills != null ? Number(team.total_kills) * 1 : 0);
+                          const placementPoints = team.total_placement_points != null
+                            ? Number(team.total_placement_points)
+                            : 0;
+                          const wwcdCount = team.wwcd_count != null
+                            ? Number(team.wwcd_count)
+                            : 0;
+                          const totalPoints = team.total_points != null
+                            ? Number(team.total_points)
+                            : (killPoints + placementPoints);
+
+                          return (
+                            <tr
+                              key={team.team_id || idx}
+                              className={`transition-colors ${
+                                isSelected
+                                  ? 'bg-primary/[0.08] border-l-4 border-l-primary'
+                                  : isTop1
+                                  ? 'bg-yellow-500/[0.04] border-l-2 border-l-yellow-500 hover:bg-surface-container-high/40'
+                                  : isTop2
+                                  ? 'bg-slate-400/[0.04] border-l-2 border-l-slate-400 hover:bg-surface-container-high/40'
+                                  : isTop3
+                                  ? 'bg-amber-600/[0.04] border-l-2 border-l-amber-600 hover:bg-surface-container-high/40'
+                                  : 'hover:bg-surface-container-high/40'
+                              }`}
+                            >
+                              {/* Checkbox Cell for Organizer Selection */}
+                              {isOrganizer && (
+                                <td className="px-4 py-3.5 text-center">
                                   <input
-                                    type="number"
-                                    min="0"
-                                    max="1000"
-                                    value={teamScore.kills}
-                                    onChange={(e) => updateDraftScore(team.team_id, 'total_kills', Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                    className="w-16 px-2 py-1 text-center font-bold bg-surface-container border border-outline-variant/40 rounded-lg text-rose-500 focus:outline-none focus:border-rose-500 text-xs"
-                                    title="Total Kills"
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelectTeam(team.team_id)}
+                                    disabled={isDisqualified}
+                                    className="w-4 h-4 rounded text-primary focus:ring-primary border-outline-variant bg-surface-container cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                                   />
+                                </td>
+                              )}
+
+                              {/* 1. Rank */}
+                              <td className="px-5 py-3.5 text-center">
+                                {isUnscored ? (
+                                  <span className="text-on-surface-variant/50 font-bold">-</span>
+                                ) : isTop1 ? (
+                                  <Crown className="w-5 h-5 text-yellow-500 mx-auto" />
+                                ) : isTop2 ? (
+                                  <Medal className="w-5 h-5 text-slate-400 mx-auto" />
+                                ) : isTop3 ? (
+                                  <Medal className="w-5 h-5 text-amber-600 mx-auto" />
+                                ) : (
+                                  <span className="text-on-surface-variant font-bold">#{rankNumber}</span>
+                                )}
+                              </td>
+
+                              {/* 2. Team Name */}
+                              <td className="px-5 py-3.5">
+                                <div className="flex items-center gap-2">
+                                  <div className={`font-black text-on-surface ${isDisqualified ? 'line-through opacity-60' : ''}`}>
+                                    {team.team_name}
+                                  </div>
+                                  {isDisqualified && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30">
+                                      DQ
+                                    </span>
+                                  )}
+                                  {(team.tie_broken || team.district_tie_broken || (displayedStandings.filter((s) => Number(s.total_points) === Number(team.total_points)).length > 1 && !isUnscored)) && (
+                                    <span
+                                      className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                      title="Rank resolved by authoritative tie-break rules"
+                                    >
+                                      Tie-break
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-on-surface-variant mt-0.5 flex items-center gap-2 flex-wrap">
+                                  <span>Captain: {team.leader_name || team.captain_name || 'Captain'}</span>
+                                  {!isOverallView && selectedDistrictId === 'all' && (
+                                    <span className="px-1.5 py-0.2 rounded bg-surface-container-high text-on-surface-variant font-medium">
+                                      {team.assigned_group_name || team.district_name || 'District'}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
-                            ) : (
+
+                              {/* 3. Kill Points */}
                               <td className="px-5 py-3.5 text-center">
-                                {teamScore.isUnscored ? (
+                                {isUnscored ? (
                                   <span className="text-on-surface-variant/50">-</span>
                                 ) : (
                                   <div className="flex items-center justify-center gap-1 text-rose-500 font-bold">
                                     <Target className="w-3.5 h-3.5" />
-                                    <span>{teamScore.kills}</span>
+                                    <span>{killPoints}</span>
                                   </div>
                                 )}
                               </td>
-                            )}
 
-                            {/* WWCDs */}
-                            {isDistrictScoringRow ? (
-                              <td className="px-3 py-2 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => updateDraftScore(team.team_id, 'wwcd_count', teamScore.wwcd > 0 ? 0 : 1)}
-                                  className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer w-auto ${
-                                    teamScore.wwcd > 0
-                                      ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/40 shadow-xs'
-                                      : 'bg-surface-container text-on-surface-variant hover:text-on-surface border border-outline-variant/20'
-                                  }`}
-                                  title="Toggle WWCD"
-                                >
-                                  {teamScore.wwcd > 0 ? `🏆 ${teamScore.wwcd}` : 'No'}
-                                </button>
+                              {/* 4. Placement Points */}
+                              <td className="px-5 py-3.5 text-center font-bold text-on-surface-variant">
+                                {isUnscored ? '-' : placementPoints}
                               </td>
-                            ) : (
+
+                              {/* 5. WWCDs (Integer count, never Yes/No - Spec A4) */}
                               <td className="px-5 py-3.5 text-center">
-                                {teamScore.isUnscored ? (
+                                {isUnscored ? (
                                   <span className="text-on-surface-variant/50">-</span>
-                                ) : teamScore.wwcd > 0 ? (
-                                  <span className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded-full font-bold text-xs">
-                                    {teamScore.wwcd}
+                                ) : wwcdCount > 0 ? (
+                                  <span className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-2.5 py-0.5 rounded-full font-bold text-xs inline-flex items-center gap-1">
+                                    🏆 {wwcdCount}
                                   </span>
                                 ) : (
-                                  <span className="text-on-surface-variant/40">-</span>
+                                  <span className="text-on-surface-variant/60 font-medium text-xs">0</span>
                                 )}
                               </td>
-                            )}
 
-                            {/* Total Points */}
-                            <td className="px-5 py-3.5 text-right">
-                              {teamScore.isUnscored ? (
-                                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
-                                  No scores yet
-                                </span>
-                              ) : (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  {teamScore.isEdited && (
-                                    <span className="text-[9px] uppercase tracking-wider font-black px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                                      Draft
-                                    </span>
-                                  )}
-                                  <span className={`text-base font-black font-mono ${isDisqualified ? 'line-through opacity-50 text-on-surface-variant' : 'text-primary'}`}>
-                                    {teamScore.totalPts}
+                              {/* 6. Total Points */}
+                              <td className="px-5 py-3.5 text-right font-mono font-black text-base text-primary">
+                                {isUnscored ? (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
+                                    No scores yet
                                   </span>
-                                </div>
-                              )}
-                            </td>
-
-                            {/* Organizer Actions */}
-                            {isOrganizer && (
-                              <td className="px-5 py-3.5 text-center">
-                                <div className="flex items-center justify-center gap-1.5 sm:gap-2">
-                                  {isDisqualified ? (
-                                    <>
-                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30">
-                                        Disqualified
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={() => setDisqualifyModalTeam(team)}
-                                        title="Reinstate team"
-                                        className="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
-                                      >
-                                        <RotateCcw className="w-3 h-3" />
-                                        <span>Reinstate</span>
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      {/* Status Pill: CheckCircle2 ONLY when confirmed qualified in DB; neutral Selected pill when selected */}
-                                      {team.is_advanced || team.advanced ? (
-                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                                          <CheckCircle2 className="w-3 h-3" />
-                                          <span>Qualified</span>
-                                        </span>
-                                      ) : isSelected ? (
-                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
-                                          Selected
-                                        </span>
-                                      ) : (
-                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-high text-on-surface-variant border border-outline-variant/30">
-                                          Active
-                                        </span>
-                                      )}
-
-                                      {/* Edit Points Action Button */}
-                                      <button
-                                        type="button"
-                                        onClick={() => setEditingScoreTeam(team)}
-                                        title="Edit team leaderboard points"
-                                        className="px-3 py-1 rounded-full text-[11px] font-bold bg-primary/10 text-primary hover:bg-primary/20 border border-primary/25 transition-all flex items-center gap-1 cursor-pointer shadow-xs w-auto"
-                                      >
-                                        <Edit2 className="w-3 h-3" />
-                                        <span>Edit Score</span>
-                                      </button>
-
-                                      {/* Disqualify Button */}
-                                      <button
-                                        type="button"
-                                        onClick={() => setDisqualifyModalTeam(team)}
-                                        title="Disqualify team"
-                                        className="px-3 py-1 rounded-full text-[11px] font-bold bg-error/10 text-error hover:bg-error/20 border border-error/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
-                                      >
-                                        <Ban className="w-3 h-3" />
-                                        <span>DQ</span>
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
+                                ) : (
+                                  totalPoints
+                                )}
                               </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+
+                              {/* Organizer Actions */}
+                              {isOrganizer && (
+                                <td className="px-5 py-3.5 text-center">
+                                  <div className="flex items-center justify-center gap-1.5 sm:gap-2">
+                                    {isDisqualified ? (
+                                      <>
+                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error/15 text-error border border-error/30">
+                                          Disqualified
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setDisqualifyModalTeam(team)}
+                                          title="Reinstate team"
+                                          className="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
+                                        >
+                                          <RotateCcw className="w-3 h-3" />
+                                          <span>Reinstate</span>
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        {/* Status Pill */}
+                                        {team.is_advanced || team.advanced ? (
+                                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            <span>Qualified</span>
+                                          </span>
+                                        ) : isSelected ? (
+                                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary border border-primary/20">
+                                            Selected
+                                          </span>
+                                        ) : (
+                                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-high text-on-surface-variant border border-outline-variant/30">
+                                            Active
+                                          </span>
+                                        )}
+
+                                        {/* Edit Points Action Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingScoreTeam(team)}
+                                          title="Edit team leaderboard points"
+                                          className="px-3 py-1 rounded-full text-[11px] font-bold bg-primary/10 text-primary hover:bg-primary/20 border border-primary/25 transition-all flex items-center gap-1 cursor-pointer shadow-xs w-auto"
+                                        >
+                                          <Edit2 className="w-3 h-3" />
+                                          <span>Edit Score</span>
+                                        </button>
+
+                                        {/* Disqualify Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setDisqualifyModalTeam(team)}
+                                          title="Disqualify team"
+                                          className="px-3 py-1 rounded-full text-[11px] font-bold bg-error/10 text-error hover:bg-error/20 border border-error/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
+                                        >
+                                          <Ban className="w-3 h-3" />
+                                          <span>DQ</span>
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
 
                 <div className="px-5 py-3 border-t border-outline-variant/15 bg-surface-container-highest/30 text-[11px] text-on-surface-variant flex flex-wrap items-center justify-between gap-2">

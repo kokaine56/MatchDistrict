@@ -12,16 +12,16 @@ export default function TeamDisqualifyModal({
   tournamentId,
   onSuccess,
 }) {
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [serverWarning, setServerWarning] = useState(null);
+
   if (!isOpen || !team) return null;
 
   const isCurrentlyDq = team.status === 'disqualified' || team.is_disqualified;
   const targetAction = isCurrentlyDq ? 'reinstate' : 'disqualify';
   const targetStatus = isCurrentlyDq ? 'verified' : 'disqualified';
-
-  const [reason, setReason] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [serverWarning, setServerWarning] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

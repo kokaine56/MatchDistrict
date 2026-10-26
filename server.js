@@ -13387,8 +13387,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           standings,
         }));
       } catch (err) {
+        const ref = makeErrorRef();
+        logErrorWithRef(
+          ref,
+          'GET /api/tournaments/:id/leaderboard',
+          err,
+          roundId ? 'load_round_standings' : 'load_overall_standings'
+        );
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: err.message }));
+        return res.end(JSON.stringify({
+          success: false,
+          error: 'SERVER_ERROR',
+          ref,
+          message: `Could not load leaderboard. Please try again. (Ref: ${ref})`,
+        }));
       }
     })();
     return;
@@ -13618,6 +13630,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             tournamentId: tournId,
             roundId: effectiveRoundId,
             districtId: districtId,
+            matchId: data.match_id || data.matchId || null,
             teamScores,
             expectedVersion,
             actorId: authUser.id,
@@ -13629,6 +13642,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return res.end(JSON.stringify({
             success: true,
             district_id: districtId,
+            match_id: data.match_id || data.matchId || null,
             saved_count: result.saved_count,
             version: result.version,
             scores_status: 'saved',
@@ -13664,6 +13678,72 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
     });
     return;
+  }
+
+  // ── ORGANIZER: Add Match to District ─────────────────────────────────────
+  const addDistrictMatchMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/([^/]+)\/districts\/([^/]+)\/matches$/);
+  if (addDistrictMatchMatch && req.method === 'POST') {
+    const tournId = decodeURIComponent(addDistrictMatchMatch[1]);
+    const routeRoundId = decodeURIComponent(addDistrictMatchMatch[2]);
+    const districtId = decodeURIComponent(addDistrictMatchMatch[3]);
+
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+      }
+
+      const tournRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tournId]);
+      if (tournRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+
+      const access = await checkTournamentOrganizerOrStaffAccess(authUser, tournRes.rows[0], pool, 'score_entry');
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+      }
+
+      if (tournRes.rows[0].finalized_at) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Tournament is finalized; matches are locked.' }));
+      }
+
+      // Find highest match number in this district
+      const maxRes = await pool.query(`
+        SELECT COALESCE(MAX(match_number), 0)::int as max_num
+        FROM tournament_matches
+        WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND (group_id = $3::varchar OR district_id = $3::varchar)
+      `, [tournId, routeRoundId, districtId]);
+
+      const nextMatchNum = (Number(maxRes.rows[0]?.max_num) || 0) + 1;
+      const newMatchId = 'MAT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+
+      await pool.query(`
+        INSERT INTO tournament_matches (id, tournament_id, round_id, group_id, district_id, match_number, status, origin)
+        VALUES ($1, $2, $3, $4, $4, $5, 'PENDING', 'manual_add')
+      `, [newMatchId, tournId, routeRoundId, districtId, nextMatchNum]);
+
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        match: {
+          id: newMatchId,
+          match_id: newMatchId,
+          match_number: nextMatchNum,
+          group_id: districtId,
+          status: 'PENDING',
+        },
+        message: `Match ${nextMatchNum} created successfully for district.`,
+      }));
+    } catch (err) {
+      const ref = makeErrorRef();
+      logErrorWithRef(ref, 'POST /districts/:id/matches', err, 'add_district_match');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: 'CREATE_MATCH_ERROR', message: `Failed to add match. Please try again. (Ref: ${ref})` }));
+    }
   }
 
   // ── ORGANIZER: Edit Team Leaderboard Points ───────────────────────────────

@@ -28,9 +28,10 @@ export function validateScore(value, label = 'Score') {
 export const DEFAULT_SCORING_RULES = Object.freeze({
   kill_points_multiplier: 1,
   placement_points_map: {
-    '1': 15, '2': 12, '3': 10, '4': 8, '5': 6, '6': 4, '7': 2, '8': 1, '9': 1,
-    '10': 1, '11': 1, '12': 1, '13': 0, '14': 0, '15': 0, '16': 0, '17': 0,
-    '18': 0, '19': 0, '20': 0,
+    '1': 10, '2': 6, '3': 5, '4': 4, '5': 3, '6': 2, '7': 1, '8': 1,
+    '9': 0, '10': 0, '11': 0, '12': 0, '13': 0, '14': 0, '15': 0, '16': 0,
+    '17': 0, '18': 0, '19': 0, '20': 0,
+    '21': 0, '22': 0, '23': 0, '24': 0, '25': 0,
   },
   wwcd_bonus: 0,
 });
@@ -65,6 +66,8 @@ export async function getTournamentScoringRules(clientOrPool, tournamentId) {
 /**
  * Calculates match points for a single team's result based on scoring rules.
  * Rule: total points = placement points + total kills x kill multiplier (default 1).
+ * Placement scoring table:
+ *  1: 10, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2, 7-8: 1, 9+: 0
  */
 export function calculateMatchPoints(kills, placement, scoringRules = {}) {
   const killMultiplier = Number(scoringRules.kill_points_multiplier ?? scoringRules.kill_multiplier ?? 1);
@@ -72,8 +75,22 @@ export function calculateMatchPoints(kills, placement, scoringRules = {}) {
   const kill_points = Number(kills || 0) * effectiveMultiplier;
 
   let placement_points = 0;
-  if (scoringRules.placement_points_map && scoringRules.placement_points_map[String(placement)] != null) {
-    placement_points = Number(scoringRules.placement_points_map[String(placement)]);
+  if (placement != null && placement !== '') {
+    const pStr = String(placement);
+    const pMap = scoringRules.placement_points_map || DEFAULT_SCORING_RULES.placement_points_map;
+    if (pMap && pMap[pStr] != null) {
+      placement_points = Number(pMap[pStr]);
+    } else {
+      const pNum = Number(placement);
+      if (pNum === 1) placement_points = 10;
+      else if (pNum === 2) placement_points = 6;
+      else if (pNum === 3) placement_points = 5;
+      else if (pNum === 4) placement_points = 4;
+      else if (pNum === 5) placement_points = 3;
+      else if (pNum === 6) placement_points = 2;
+      else if (pNum === 7 || pNum === 8) placement_points = 1;
+      else placement_points = 0;
+    }
   }
 
   const wwcd = Number(placement) === 1;
@@ -803,6 +820,7 @@ export async function saveDistrictScores(client, {
   tournamentId,
   roundId,
   districtId,
+  matchId = null,
   teamScores = [],
   expectedVersion = null,
   actorId = null,
@@ -865,31 +883,75 @@ export async function saveDistrictScores(client, {
   const killMultiplier = Number(scoringRules.kill_points_multiplier ?? scoringRules.kill_multiplier ?? 1);
   const effectiveMultiplier = Number.isFinite(killMultiplier) && killMultiplier >= 0 ? killMultiplier : 1;
 
+  // 3. Resolve target match for this district/round
+  let targetMatchId = matchId;
+  if (!targetMatchId && roundId) {
+    const mRes = await client.query(`
+      SELECT id FROM tournament_matches
+      WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND (group_id = $3::varchar OR district_id = $3::varchar)
+      ORDER BY match_number ASC LIMIT 1
+    `, [tournamentId, roundId, districtId]);
+
+    if (mRes.rows.length > 0) {
+      targetMatchId = mRes.rows[0].id;
+    } else {
+      targetMatchId = 'MAT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+      await client.query(`
+        INSERT INTO tournament_matches (id, tournament_id, round_id, group_id, district_id, match_number, status, origin)
+        VALUES ($1, $2, $3, $4, $4, 1, 'PENDING', 'score_entry')
+        ON CONFLICT (id) DO NOTHING
+      `, [targetMatchId, tournamentId, roundId, districtId]);
+    }
+  }
+
+  // 4. Resolve district capacity for position validation
+  let matchCapacity = 16;
+  try {
+    const capRes = await client.query(`
+      SELECT capacity FROM tournament_groups WHERE (id = $1::varchar OR district_id = $1::varchar) AND tournament_id = $2::varchar
+      UNION
+      SELECT capacity FROM tournament_registration_groups WHERE id = $1::varchar AND tournament_id = $2::varchar
+      LIMIT 1
+    `, [districtId, tournamentId]);
+    if (capRes.rows.length > 0 && capRes.rows[0].capacity) {
+      matchCapacity = Math.max(Number(capRes.rows[0].capacity) || 16, teamScores.length);
+    } else {
+      matchCapacity = Math.max(16, teamScores.length);
+    }
+  } catch {
+    matchCapacity = Math.max(16, teamScores.length);
+  }
+
+  // 5. Pre-validate duplicate finish positions and negative kills
+  const seenPlacements = new Set();
+  for (const item of teamScores) {
+    if (!item || !item.team_id) continue;
+    const placementVal = item.placement ?? item.finish_position ?? item.position;
+    if (placementVal !== '' && placementVal != null) {
+      const p = Number(placementVal);
+      if (!Number.isInteger(p) || p < 1 || p > matchCapacity) {
+        throw new Error(`Invalid finish position "${placementVal}" for team "${item.team_name || item.team_id}". Position must be a whole number between 1 and ${matchCapacity}.`);
+      }
+      if (seenPlacements.has(p)) {
+        throw new Error(`Duplicate finish position: position #${p} is assigned to more than one team.`);
+      }
+      seenPlacements.add(p);
+    }
+
+    const killsVal = item.kills ?? item.total_kills;
+    if (killsVal !== '' && killsVal != null) {
+      const k = Number(killsVal);
+      if (!Number.isInteger(k) || k < 0) {
+        throw new Error(`Invalid kills for team "${item.team_name || item.team_id}": kills cannot be negative.`);
+      }
+    }
+  }
+
   let savedCount = 0;
 
   for (const item of teamScores) {
     if (!item || !item.team_id) continue;
     const teamId = item.team_id;
-
-    // Validate scores
-    const pCheck = validateScore(item.placement_points ?? item.placementPoints ?? 0, 'Placement points');
-    if (!pCheck.valid) throw new Error(pCheck.error);
-
-    const kCheck = validateScore(item.total_kills ?? item.totalKills ?? item.kills ?? 0, 'Total kills');
-    if (!kCheck.valid) throw new Error(kCheck.error);
-
-    const wwcdCheck = validateScore(item.wwcd_count ?? item.wwcdCount ?? (item.wwcd ? 1 : 0), 'WWCD count');
-    if (!wwcdCheck.valid) throw new Error(wwcdCheck.error);
-
-    const mpCheck = validateScore(item.matches_played ?? item.matchesPlayed ?? 1, 'Matches played');
-    if (!mpCheck.valid) throw new Error(mpCheck.error);
-
-    const finalPlacementPts = pCheck.value;
-    const finalKills = kCheck.value;
-    const finalKillPts = finalKills * effectiveMultiplier;
-    const finalWwcd = wwcdCheck.value;
-    const finalMatchesPlayed = mpCheck.value;
-    const finalTotalPoints = finalPlacementPts + finalKillPts;
 
     // Ensure team exists in tournament_teams
     let teamRes = await client.query(
@@ -933,66 +995,105 @@ export async function saveDistrictScores(client, {
     );
     const prevData = prevLbRes.rows[0] || null;
 
-    // Update match results if round is specified
-    let updatedMatchResult = false;
-    if (roundId) {
-      const mrRes = await client.query(`
-        SELECT mr.id, mr.match_id
-        FROM tournament_match_results mr
-        JOIN tournament_matches m ON mr.match_id = m.id
-        WHERE mr.tournament_id = $1::varchar AND mr.team_id = $2::varchar AND m.round_id = $3::varchar
-        ORDER BY mr.updated_at DESC LIMIT 1 FOR UPDATE
-      `, [tournamentId, resolvedTeamId, roundId]);
+    const rawPlacement = item.placement ?? item.finish_position ?? item.position;
+    const hasPlacementInput = rawPlacement !== '' && rawPlacement != null;
 
-      if (mrRes.rows.length > 0) {
-        const matchResultId = mrRes.rows[0].id;
-        await client.query(`
-          UPDATE tournament_match_results
-          SET placement_points = $1::int, kill_points = $2::int, kills = $3::int, total_points = $4::int,
-              wwcd = $5::boolean, status = 'verified', verified_by = $6::varchar, updated_at = NOW()
-          WHERE id = $7::varchar
-        `, [finalPlacementPts, finalKillPts, finalKills, finalTotalPoints, finalWwcd > 0, actorId, matchResultId]);
+    if (hasPlacementInput && targetMatchId) {
+      // ── Per-Match Scoring ──
+      const placement = Number(rawPlacement);
+      const kills = item.kills != null && item.kills !== '' ? Number(item.kills) : (Number(item.total_kills) || 0);
+      const pts = calculateMatchPoints(kills, placement, scoringRules);
 
+      const resultId = 'RES-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+
+      await client.query(`
+        INSERT INTO tournament_match_results (
+          id, tournament_id, match_id, team_id, placement, kills,
+          kill_points, placement_points, wwcd, total_points, status,
+          submitted_by, verified_by, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'verified', $11, $11, NOW())
+        ON CONFLICT (match_id, team_id) DO UPDATE SET
+          placement = EXCLUDED.placement,
+          kills = EXCLUDED.kills,
+          kill_points = EXCLUDED.kill_points,
+          placement_points = EXCLUDED.placement_points,
+          wwcd = EXCLUDED.wwcd,
+          total_points = EXCLUDED.total_points,
+          status = 'verified',
+          submitted_by = EXCLUDED.submitted_by,
+          verified_by = EXCLUDED.verified_by,
+          updated_at = NOW()
+      `, [
+        resultId, tournamentId, targetMatchId, resolvedTeamId,
+        placement, kills, pts.kill_points, pts.placement_points, pts.wwcd, pts.total_points, actorId
+      ]);
+
+      // Ensure assignment exists in tournament_match_assignments
+      try {
         await client.query(`
-          INSERT INTO tournament_match_results_audit (id, result_id, action, previous_data, new_data, actor_id, timestamp)
-          VALUES (gen_random_uuid()::varchar, $1::varchar, 'update', $2::text, $3::text, $4::varchar, NOW())
-        `, [
-          matchResultId,
-          prevData ? JSON.stringify(prevData) : null,
-          JSON.stringify({ placement_points: finalPlacementPts, kill_points: finalKillPts, total_points: finalTotalPoints }),
-          actorId,
-        ]);
-        updatedMatchResult = true;
+          INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, group_id, status, source)
+          VALUES ('ASG-' || gen_random_uuid()::varchar, $1, $2, $3, $4, 'allocated', 'score_entry')
+          ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET group_id = COALESCE(tournament_match_assignments.group_id, EXCLUDED.group_id)
+        `, [tournamentId, resolvedTeamId, targetMatchId, districtId]);
+      } catch {
+        // Tolerant if table constraint differs
       }
-    }
 
-    // Direct upsert to tournament_leaderboard
-    await client.query(`
-      INSERT INTO tournament_leaderboard (
-        id, tournament_id, team_id, matches_played, total_kills,
-        total_kill_points, total_placement_points, total_points,
-        wwcd_count, updated_at
-      ) VALUES (
-        gen_random_uuid()::varchar, $1::varchar, $2::varchar, $3::int, $4::int,
-        $5::int, $6::int, $7::int, $8::int, NOW()
-      ) ON CONFLICT (tournament_id, team_id) DO UPDATE SET
-        matches_played = EXCLUDED.matches_played,
-        total_kills = EXCLUDED.total_kills,
-        total_kill_points = EXCLUDED.total_kill_points,
-        total_placement_points = EXCLUDED.total_placement_points,
-        total_points = EXCLUDED.total_points,
-        wwcd_count = EXCLUDED.wwcd_count,
-        updated_at = NOW()
-    `, [
-      tournamentId,
-      resolvedTeamId,
-      finalMatchesPlayed,
-      finalKills,
-      finalKillPts,
-      finalPlacementPts,
-      finalTotalPoints,
-      finalWwcd,
-    ]);
+      // Audit trail
+      await client.query(`
+        INSERT INTO tournament_match_results_audit (id, result_id, action, previous_data, new_data, actor_id, timestamp)
+        VALUES (gen_random_uuid()::varchar, $1::varchar, 'upsert', $2::text, $3::text, $4::varchar, NOW())
+      `, [
+        resultId,
+        prevData ? JSON.stringify(prevData) : null,
+        JSON.stringify({ placement, kills, kill_points: pts.kill_points, placement_points: pts.placement_points, wwcd: pts.wwcd, total_points: pts.total_points }),
+        actorId,
+      ]);
+
+      // Re-aggregate cumulative statistics for this team from verified match results
+      await updateTeamLeaderboard(client, tournamentId, resolvedTeamId);
+    } else {
+      // ── Legacy / Direct Aggregated Score Fallback ──
+      const pCheck = validateScore(item.placement_points ?? item.placementPoints ?? 0, 'Placement points');
+      if (!pCheck.valid) throw new Error(pCheck.error);
+
+      const kCheck = validateScore(item.total_kills ?? item.totalKills ?? item.kills ?? 0, 'Total kills');
+      if (!kCheck.valid) throw new Error(kCheck.error);
+
+      const wwcdCheck = validateScore(item.wwcd_count ?? item.wwcdCount ?? (item.wwcd ? 1 : 0), 'WWCD count');
+      if (!wwcdCheck.valid) throw new Error(wwcdCheck.error);
+
+      const mpCheck = validateScore(item.matches_played ?? item.matchesPlayed ?? 1, 'Matches played');
+      if (!mpCheck.valid) throw new Error(mpCheck.error);
+
+      const finalPlacementPts = pCheck.value;
+      const finalKills = kCheck.value;
+      const finalKillPts = finalKills * effectiveMultiplier;
+      const finalWwcd = wwcdCheck.value;
+      const finalMatchesPlayed = mpCheck.value;
+      const finalTotalPoints = finalPlacementPts + finalKillPts;
+
+      await client.query(`
+        INSERT INTO tournament_leaderboard (
+          id, tournament_id, team_id, matches_played, total_kills,
+          total_kill_points, total_placement_points, total_points,
+          wwcd_count, updated_at
+        ) VALUES (
+          gen_random_uuid()::varchar, $1::varchar, $2::varchar, $3::int, $4::int,
+          $5::int, $6::int, $7::int, $8::int, NOW()
+        ) ON CONFLICT (tournament_id, team_id) DO UPDATE SET
+          matches_played = EXCLUDED.matches_played,
+          total_kills = EXCLUDED.total_kills,
+          total_kill_points = EXCLUDED.total_kill_points,
+          total_placement_points = EXCLUDED.total_placement_points,
+          total_points = EXCLUDED.total_points,
+          wwcd_count = EXCLUDED.wwcd_count,
+          updated_at = NOW()
+      `, [
+        tournamentId, resolvedTeamId, finalMatchesPlayed, finalKills,
+        finalKillPts, finalPlacementPts, finalTotalPoints, finalWwcd
+      ]);
+    }
 
     // Audit log
     await client.query(`
@@ -1003,18 +1104,12 @@ export async function saveDistrictScores(client, {
       resolvedTeamId,
       JSON.stringify({
         tournament_id: tournamentId,
+        match_id: targetMatchId || null,
         team_id: resolvedTeamId,
         team_name: teamName,
         round_id: roundId || null,
         district_id: districtId,
         previous: prevData,
-        updated: {
-          total_points: finalTotalPoints,
-          placement_points: finalPlacementPts,
-          total_kills: finalKills,
-          wwcd_count: finalWwcd,
-          matches_played: finalMatchesPlayed,
-        },
       }),
     ]);
 

@@ -448,14 +448,14 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       district_name: t.district_name || null,
       original_district_id: t.district_id || t.group_id || null,
       original_district_name: t.district_name || null,
-      total_kills: t.total_kills != null ? t.total_kills : 0,
-      total_kill_points: t.total_kill_points != null ? t.total_kill_points : 0,
-      total_placement_points: t.total_placement_points != null ? t.total_placement_points : 0,
-      total_points: t.total_points != null ? t.total_points : 0,
-      wwcd_count: t.wwcd_count != null ? t.wwcd_count : 0,
-      best_placement: t.best_placement,
-      matches_played: t.matches_played || 0,
-      has_results: Boolean(t.has_saved_scores),
+      total_kills: 0,
+      total_kill_points: 0,
+      total_placement_points: 0,
+      total_points: 0,
+      wwcd_count: 0,
+      best_placement: null,
+      matches_played: 0,
+      has_results: false,
       is_assigned: Boolean(t.group_id || t.district_id),
       status: t.status,
       is_disqualified: Boolean(t.is_disqualified),
@@ -709,15 +709,42 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         t.district_tie_broken = t.tie_broken;
         t.district_is_true_tie = t.is_true_tie;
       });
-      d.matches = distMatches.map((m) => ({
-        id: m.id,
-        match_id: m.id,
-        match_number: m.match_number,
-        group_id: m.group_id,
-        group_name: d.name,
-        status: m.status,
-        result_count: resultsRows.filter((r) => r.match_id === m.id).length,
-      }));
+      const effectiveMatches = distMatches.length > 0 ? distMatches : [
+        {
+          id: `MAT-${d.id}-1`,
+          match_number: 1,
+          group_id: d.id,
+          district_id: d.id,
+          status: 'PENDING',
+        },
+      ];
+
+      d.matches = effectiveMatches.map((m) => {
+        const mResults = resultsRows.filter((r) => r.match_id === m.id);
+        const resultsMap = {};
+        for (const mr of mResults) {
+          const cId = teamCanonicalIdMap.get(mr.team_id) || mr.team_id;
+          resultsMap[cId] = {
+            team_id: cId,
+            placement: mr.best_placement ?? mr.placement,
+            kills: mr.total_kills ?? mr.kills ?? 0,
+            kill_points: mr.total_kill_points ?? mr.kill_points ?? 0,
+            placement_points: mr.total_placement_points ?? mr.placement_points ?? 0,
+            wwcd: Boolean(mr.wwcd_count > 0 || mr.wwcd),
+            total_points: mr.total_points ?? 0,
+          };
+        }
+        return {
+          id: m.id,
+          match_id: m.id,
+          match_number: m.match_number || 1,
+          group_id: m.group_id,
+          group_name: d.name,
+          status: m.status || 'PENDING',
+          result_count: mResults.length,
+          results: resultsMap,
+        };
+      });
       return d;
     });
   }
