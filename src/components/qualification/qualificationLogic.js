@@ -121,13 +121,14 @@ export function derivePlannedSelection(summary, mode = null) {
   if (!summary) return [];
 
   const plannedRule = summary.planned_rule || {};
-  const activeMode = mode || plannedRule.advancement_type || 'per_district';
+  const hasDistricts = Array.isArray(summary.districts) && summary.districts.length > 0;
+  const activeMode = (mode === 'per_district' && !hasDistricts) ? 'overall' : (mode || plannedRule.advancement_type || (hasDistricts ? 'per_district' : 'overall'));
   const disqualifiedSet = new Set(summary.disqualified_team_ids || []);
 
-  if (activeMode === 'per_district') {
+  if (activeMode === 'per_district' && hasDistricts) {
     const topPerDist = Number(plannedRule.teams_advancing_per_district) || 2;
     const selected = [];
-    const districts = Array.isArray(summary.districts) ? summary.districts : [];
+    const districts = summary.districts;
 
     for (const dist of districts) {
       const eligibleTeams = (dist.teams || []).filter(
@@ -171,12 +172,12 @@ export function derivePlannedSelection(summary, mode = null) {
 export function getPlannedCount(summary, mode) {
   if (!summary) return 0;
   const plannedRule = summary.planned_rule || {};
-  const activeMode = mode || plannedRule.advancement_type || 'per_district';
+  const hasDistricts = Array.isArray(summary.districts) && summary.districts.length > 0;
+  const activeMode = (mode === 'per_district' && !hasDistricts) ? 'overall' : (mode || plannedRule.advancement_type || (hasDistricts ? 'per_district' : 'overall'));
 
-  if (activeMode === 'per_district') {
+  if (activeMode === 'per_district' && hasDistricts) {
     const topPerDist = Number(plannedRule.teams_advancing_per_district) || 2;
-    const districtCount = Array.isArray(summary.districts) ? summary.districts.length : 0;
-    return districtCount * topPerDist;
+    return summary.districts.length * topPerDist;
   }
 
   return Number(plannedRule.teams_advancing) || 16;

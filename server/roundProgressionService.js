@@ -295,10 +295,17 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 1. Get round info
   const roundRes = await client.query(
-    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match FROM tournament_rounds WHERE id = $1',
+    'SELECT id, round_number, name, status, teams_advancing, advancement_type, teams_advancing_per_district, teams_advancing_per_match, round_type FROM tournament_rounds WHERE id = $1',
     [roundId]
   );
   const round = roundRes.rows[0] || null;
+
+  // Determine if this is the first configured round for the tournament
+  const firstRndRes = await client.query(
+    'SELECT id, round_number FROM tournament_rounds WHERE tournament_id = $1 ORDER BY round_number ASC LIMIT 1',
+    [tournamentId]
+  );
+  const isFirstRound = firstRndRes.rows.length > 0 && firstRndRes.rows[0].id === roundId;
 
   // 2. Fetch matches in this round to identify groups/districts
   const matchRes = await client.query(
@@ -343,30 +350,51 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   let roundAssignments = [];
   if (matchIds.length > 0) {
     const assignRes = await client.query(
-      `SELECT a.tournament_team_id, a.match_id, a.group_id, t.team_name, u.name as leader_name, g.group_name, g.id AS district_id
+      `SELECT a.tournament_team_id, a.match_id, a.group_id, a.status AS assignment_status,
+              t.team_name, u.name as leader_name, g.group_name, g.id AS district_id,
+              r.id AS registration_id, r.slot_number, r.group_id AS orig_reg_group_id, r.group_name AS orig_reg_group_name
        FROM tournament_match_assignments a
        JOIN tournament_matches m ON m.id = a.match_id
-       LEFT JOIN tournament_groups g ON g.id = a.group_id OR g.id = m.group_id
-       LEFT JOIN tournament_teams t ON t.id = a.tournament_team_id
+       JOIN tournament_teams t ON t.id = a.tournament_team_id
        LEFT JOIN users u ON u.id = t.leader_user_id
+       LEFT JOIN tournament_groups g ON g.id = COALESCE(a.group_id, m.group_id)
+       LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
        WHERE m.round_id = $1 AND a.tournament_id = $2`,
       [roundId, tournamentId]
     );
     roundAssignments = assignRes.rows;
   }
 
-  // 5. Fetch verified registrations for tournament
-  const VERIFIED_STATUSES = ['approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
-  const regsRes = await client.query(
-    `SELECT r.id as registration_id, r.team_name, r.captain as leader_name, r.slot_number, r.group_id, r.group_name,
-            t.id as team_id
-     FROM tournament_registrations r
-     LEFT JOIN tournament_teams t ON (t.registration_id = r.id OR (t.tournament_id = r.tournament_id AND LOWER(t.team_name) = LOWER(r.team_name)))
-     WHERE r.tournament_id = $1 AND r.status = ANY($2::text[])
-     ORDER BY r.slot_number ASC NULLS LAST, r.created_at ASC`,
-    [tournamentId, VERIFIED_STATUSES]
+  // 5. Configured districts for THIS round from tournament_groups
+  const roundGroupsRes = await client.query(
+    `SELECT id, group_name, sequence, display_order, district_id
+     FROM tournament_groups
+     WHERE round_id = $1 AND tournament_id = $2
+     ORDER BY COALESCE(display_order, sequence, 0) ASC, sequence ASC, id ASC`,
+    [roundId, tournamentId]
   );
-  const registrations = regsRes.rows;
+  let configuredDistricts = roundGroupsRes.rows;
+
+  if (isFirstRound && configuredDistricts.length === 0) {
+    // Fallback to tournament_registration_groups ONLY for Round 1
+    const regGroupsRes = await client.query(
+      `SELECT id, name AS group_name, group_index AS sequence, capacity
+       FROM tournament_registration_groups
+       WHERE tournament_id = $1
+       ORDER BY group_index ASC`,
+      [tournamentId]
+    );
+    if (regGroupsRes.rows.length > 0) {
+      configuredDistricts = regGroupsRes.rows.map((d) => ({
+        id: d.id,
+        group_name: d.group_name,
+        sequence: d.sequence,
+        display_order: d.sequence,
+        district_id: d.id,
+        capacity: d.capacity || 16,
+      }));
+    }
+  }
 
   // 6. Check which teams are already advanced to ANY subsequent round
   const advancedTeamSet = new Set();
@@ -386,44 +414,34 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
     for (const row of nextAssign.rows) advancedTeamSet.add(row.tournament_team_id);
   }
 
-  // 7. Aggregate stats per team
+  // 7. Aggregate stats per team for THIS round
   const teamStatsMap = new Map();
-  for (const reg of registrations) {
-    const key = reg.team_id || reg.registration_id;
-    teamStatsMap.set(key, {
-      team_id: reg.team_id || reg.registration_id,
-      registration_id: reg.registration_id,
-      team_name: reg.team_name,
-      leader_name: reg.leader_name || 'Captain',
-      slot_number: reg.slot_number,
-      group_id: reg.group_id || null,
-      district_name: reg.group_name || null,
-      total_kills: 0,
-      total_kill_points: 0,
-      total_placement_points: 0,
-      total_points: 0,
-      wwcd_count: 0,
-      best_placement: null,
-      matches_played: 0,
-      has_results: false,
-    });
-  }
 
-  for (const asgn of roundAssignments) {
-    const key = asgn.tournament_team_id;
-    if (key && teamStatsMap.has(key)) {
-      const existing = teamStatsMap.get(key);
-      if (!existing.district_name && asgn.group_name) existing.district_name = asgn.group_name;
-      if (!existing.group_id && asgn.group_id) existing.group_id = asgn.group_id;
-    } else if (key) {
+  if (isFirstRound) {
+    // Round 1 pool: Verified registrations for tournament + assignments
+    const VERIFIED_STATUSES = ['approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
+    const regsRes = await client.query(
+      `SELECT r.id as registration_id, r.team_name, r.captain as leader_name, r.slot_number, r.group_id, r.group_name,
+              t.id as team_id
+       FROM tournament_registrations r
+       LEFT JOIN tournament_teams t ON (t.registration_id = r.id OR (t.tournament_id = r.tournament_id AND LOWER(t.team_name) = LOWER(r.team_name)))
+       WHERE r.tournament_id = $1 AND r.status = ANY($2::text[])
+       ORDER BY r.slot_number ASC NULLS LAST, r.created_at ASC`,
+      [tournamentId, VERIFIED_STATUSES]
+    );
+
+    for (const reg of regsRes.rows) {
+      const key = reg.team_id || reg.registration_id;
       teamStatsMap.set(key, {
-        team_id: key,
-        registration_id: null,
-        team_name: asgn.team_name || (key ? `Team ${String(key).slice(-4)}` : 'Team'),
-        leader_name: asgn.leader_name || 'Captain',
-        slot_number: null,
-        group_id: asgn.group_id || null,
-        district_name: asgn.group_name || null,
+        team_id: reg.team_id || reg.registration_id,
+        registration_id: reg.registration_id,
+        team_name: reg.team_name,
+        leader_name: reg.leader_name || 'Captain',
+        slot_number: reg.slot_number,
+        group_id: reg.group_id || null,
+        district_name: reg.group_name || null,
+        original_district_id: reg.group_id || null,
+        original_district_name: reg.group_name || null,
         total_kills: 0,
         total_kill_points: 0,
         total_placement_points: 0,
@@ -432,7 +450,75 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         best_placement: null,
         matches_played: 0,
         has_results: false,
+        is_assigned: false,
       });
+    }
+
+    for (const asgn of roundAssignments) {
+      const key = asgn.tournament_team_id;
+      if (key && teamStatsMap.has(key)) {
+        const existing = teamStatsMap.get(key);
+        existing.is_assigned = true;
+        if (asgn.group_id) existing.group_id = asgn.group_id;
+        if (asgn.group_name) existing.district_name = asgn.group_name;
+      } else if (key) {
+        teamStatsMap.set(key, {
+          team_id: key,
+          registration_id: asgn.registration_id || null,
+          team_name: asgn.team_name || (key ? `Team ${String(key).slice(-4)}` : 'Team'),
+          leader_name: asgn.leader_name || 'Captain',
+          slot_number: asgn.slot_number || null,
+          group_id: asgn.group_id || null,
+          district_name: asgn.group_name || null,
+          original_district_id: asgn.orig_reg_group_id || asgn.group_id || null,
+          original_district_name: asgn.orig_reg_group_name || asgn.group_name || null,
+          total_kills: 0,
+          total_kill_points: 0,
+          total_placement_points: 0,
+          total_points: 0,
+          wwcd_count: 0,
+          best_placement: null,
+          matches_played: 0,
+          has_results: false,
+          is_assigned: true,
+        });
+      }
+    }
+  } else {
+    // Subsequent Rounds (Round 2+, Grand Final):
+    // Eligible team pool is ONLY teams advanced/assigned to this round or with results in this round.
+    // They do NOT inherit Round 1 district groupings.
+    for (const asgn of roundAssignments) {
+      const key = asgn.tournament_team_id;
+      if (!key) continue;
+      if (!teamStatsMap.has(key)) {
+        teamStatsMap.set(key, {
+          team_id: key,
+          registration_id: asgn.registration_id || null,
+          team_name: asgn.team_name || (key ? `Team ${String(key).slice(-4)}` : 'Team'),
+          leader_name: asgn.leader_name || 'Captain',
+          slot_number: asgn.slot_number || null,
+          group_id: asgn.group_id || null,
+          district_name: asgn.group_name || null,
+          original_district_id: asgn.orig_reg_group_id || null,
+          original_district_name: asgn.orig_reg_group_name || null,
+          total_kills: 0,
+          total_kill_points: 0,
+          total_placement_points: 0,
+          total_points: 0,
+          wwcd_count: 0,
+          best_placement: null,
+          matches_played: 0,
+          has_results: false,
+          is_assigned: true,
+        });
+      } else {
+        const existing = teamStatsMap.get(key);
+        if (!existing.group_id && asgn.group_id) {
+          existing.group_id = asgn.group_id;
+          existing.district_name = asgn.group_name;
+        }
+      }
     }
   }
 
@@ -448,6 +534,8 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         slot_number: null,
         group_id: null,
         district_name: null,
+        original_district_id: null,
+        original_district_name: null,
         total_kills: 0,
         total_kill_points: 0,
         total_placement_points: 0,
@@ -456,6 +544,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         best_placement: null,
         matches_played: 0,
         has_results: false,
+        is_assigned: true,
       };
       teamStatsMap.set(key, entry);
     }
@@ -493,77 +582,87 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   const allTeams = sortAndRank(rawAllTeams);
   allTeams.forEach((t) => {
     t.advanced = advancedTeamSet.has(t.team_id);
+    t.is_advanced = advancedTeamSet.has(t.team_id);
   });
 
-  // Fetch districts from tournament_registration_groups
-  const districtRows = await client.query(
-    'SELECT id, name, group_index, capacity FROM tournament_registration_groups WHERE tournament_id = $1 ORDER BY group_index ASC',
-    [tournamentId]
-  );
+  // Build districts if configured for this round
+  let districts = [];
+  if (configuredDistricts.length > 0) {
+    const districtMap = new Map();
+    for (const d of configuredDistricts) {
+      districtMap.set(d.id, {
+        id: d.id,
+        name: d.group_name || d.name,
+        group_index: d.sequence || d.group_index || 1,
+        capacity: d.capacity || 16,
+        teams: [],
+      });
+    }
 
-  const districtMap = new Map();
-  for (const d of districtRows.rows) {
-    districtMap.set(d.id, {
-      id: d.id,
-      name: d.name,
-      group_index: d.group_index,
-      capacity: d.capacity || 16,
-      teams: [],
-    });
-  }
-
-  const unassignedTeams = [];
-  for (const t of allTeams) {
-    let matchedDist = null;
-    if (t.group_id && districtMap.has(t.group_id)) {
-      matchedDist = districtMap.get(t.group_id);
-    } else if (t.district_name) {
-      for (const d of districtMap.values()) {
-        if (d.name.toLowerCase() === t.district_name.toLowerCase()) {
-          matchedDist = d;
-          break;
+    const unassignedTeams = [];
+    for (const t of allTeams) {
+      let matchedDist = null;
+      if (t.group_id && districtMap.has(t.group_id)) {
+        matchedDist = districtMap.get(t.group_id);
+      } else if (t.district_name) {
+        for (const d of districtMap.values()) {
+          if (d.name.toLowerCase() === t.district_name.toLowerCase()) {
+            matchedDist = d;
+            break;
+          }
         }
       }
+      if (matchedDist) {
+        t.district_id = matchedDist.id;
+        t.district_name = matchedDist.name;
+        matchedDist.teams.push(t);
+      } else {
+        unassignedTeams.push(t);
+      }
     }
-    if (matchedDist) {
-      t.district_id = matchedDist.id;
-      t.district_name = matchedDist.name;
-      matchedDist.teams.push(t);
-    } else {
-      unassignedTeams.push(t);
-    }
-  }
 
-  if (unassignedTeams.length > 0 && districtMap.size > 0) {
-    const distList = Array.from(districtMap.values());
-    unassignedTeams.forEach((t, i) => {
-      const targetDist = distList[i % distList.length];
-      t.district_id = targetDist.id;
-      t.district_name = targetDist.name;
-      targetDist.teams.push(t);
+    if (isFirstRound && unassignedTeams.length > 0 && districtMap.size > 0) {
+      const distList = Array.from(districtMap.values());
+      unassignedTeams.forEach((t, i) => {
+        const targetDist = distList[i % distList.length];
+        t.district_id = targetDist.id;
+        t.district_name = targetDist.name;
+        targetDist.teams.push(t);
+      });
+    }
+
+    districts = Array.from(districtMap.values()).map((d) => {
+      const distMatches = matches.filter((m) => m.group_id === d.id || m.district_id === d.id);
+      const distVerifiedMatches = distMatches.filter((m) => verifiedMatchIds.has(m.id));
+      const distLastMatch = distVerifiedMatches.length > 0 ? distVerifiedMatches[distVerifiedMatches.length - 1] : roundLastMatch;
+      const districtTeamsToRank = d.teams.map((t) => ({
+        ...t,
+        last_match_placement: distLastMatch ? (matchTeamPlacement.get(`${distLastMatch.id}:${t.team_id}`) ?? null) : null,
+      }));
+      d.teams = sortAndRank(districtTeamsToRank);
+      d.teams.forEach((t) => {
+        t.district_rank = t.rank;
+        t.district_tie_broken = t.tie_broken;
+        t.district_is_true_tie = t.is_true_tie;
+      });
+      d.matches = distMatches.map((m) => ({
+        id: m.id,
+        match_id: m.id,
+        match_number: m.match_number,
+        group_id: m.group_id,
+        group_name: d.name,
+        status: m.status,
+        result_count: resultsRows.filter((r) => r.match_id === m.id).length,
+      }));
+      return d;
     });
   }
-
-  const districts = Array.from(districtMap.values()).map((d) => {
-    const distMatches = verifiedMatches.filter((m) => m.group_id === d.id || m.district_id === d.id);
-    const distLastMatch = distMatches.length > 0 ? distMatches[distMatches.length - 1] : roundLastMatch;
-    const districtTeamsToRank = d.teams.map((t) => ({
-      ...t,
-      last_match_placement: distLastMatch ? (matchTeamPlacement.get(`${distLastMatch.id}:${t.team_id}`) ?? null) : null,
-    }));
-    d.teams = sortAndRank(districtTeamsToRank);
-    d.teams.forEach((t) => {
-      t.district_rank = t.rank;
-      t.district_tie_broken = t.tie_broken;
-      t.district_is_true_tie = t.is_true_tie;
-    });
-    return d;
-  });
 
   return {
     round,
     overallStandings: allTeams,
     districts,
+    hasDistricts: districts.length > 0,
     totalTeams: allTeams.length,
     advancedCount: allTeams.filter((t) => t.advanced).length,
   };
@@ -1036,16 +1135,17 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
   }
 
   // 6. Planned rule & suggested advancing teams (Grand Finals has no advancement rule)
+  const hasDistricts = Boolean(detailed.districts && detailed.districts.length > 0);
   const plannedRule = isGrandFinal ? null : {
-    advancement_type: sourceRound.advancement_type || 'per_district',
-    teams_advancing_per_district: sourceRound.teams_advancing_per_district != null ? Number(sourceRound.teams_advancing_per_district) : null,
+    advancement_type: hasDistricts ? (sourceRound.advancement_type || 'per_district') : 'overall',
+    teams_advancing_per_district: hasDistricts && sourceRound.teams_advancing_per_district != null ? Number(sourceRound.teams_advancing_per_district) : null,
     teams_advancing: sourceRound.teams_advancing != null ? Number(sourceRound.teams_advancing) : null,
     teams_advancing_per_match: sourceRound.teams_advancing_per_match != null ? Number(sourceRound.teams_advancing_per_match) : null,
   };
 
   const suggestedTeamIds = [];
   if (!isGrandFinal && plannedRule) {
-    if (plannedRule.advancement_type === 'per_district') {
+    if (plannedRule.advancement_type === 'per_district' && hasDistricts) {
       const topPerDist = plannedRule.teams_advancing_per_district || 2;
       for (const d of detailed.districts) {
         const eligible = d.teams.filter((t) => !t.is_disqualified);
@@ -1082,6 +1182,7 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
       name: sourceRound.name,
       status: sourceRound.status,
       round_type: sourceRound.round_type,
+      has_districts: hasDistricts,
     },
     target_round: targetRound && !isGrandFinal ? {
       id: targetRound.id,
@@ -1094,11 +1195,22 @@ export async function getRoundAdvancementSummary(client, tournamentId, sourceRou
     target_has_results: targetHasResults,
     standings: detailed.overallStandings,
     districts: detailed.districts,
+    has_districts: hasDistricts,
     total_teams: detailed.totalTeams,
     planned_rule: plannedRule,
     suggested_advancing_team_ids: suggestedTeamIds,
     disqualified_team_ids: Array.from(dqSet),
     results_complete: resultsComplete,
+    matches: sourceMatches.map((m) => ({
+      id: m.id,
+      match_id: m.id,
+      match_number: m.match_number,
+      group_id: m.group_id,
+      group_name: m.group_name || `District ${m.match_number}`,
+      status: m.status,
+      result_count: Number(m.result_count),
+      is_verified: Number(m.result_count) > 0 || m.status === 'COMPLETED',
+    })),
     unverified_match_ids: unverifiedMatches.map((m) => m.id),
     unverified_matches: unverifiedMatches.map((m) => ({
       id: m.id,

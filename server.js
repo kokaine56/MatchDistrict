@@ -13077,17 +13077,46 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   }
 
   // ── PUBLIC: Tournament Leaderboard (read-only standings) ──────────────────
-  if (req.url.startsWith('/api/tournaments/') && req.url.endsWith('/leaderboard') && req.method === 'GET') {
-    const parts = req.url.split('/');
-    const tournId = parts[3];
-    try {
-      const standings = await calculateRankings(pool, tournId);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, standings }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
-    }
+  const leaderboardUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/leaderboard(?:\?(.*))?$/);
+  if (leaderboardUrlMatch && req.method === 'GET') {
+    const tournId = decodeURIComponent(leaderboardUrlMatch[1]);
+    const queryString = leaderboardUrlMatch[2] || '';
+    const params = new URLSearchParams(queryString);
+    const roundId = params.get('roundId') || params.get('round');
+
+    (async () => {
+      try {
+        if (roundId) {
+          // If roundId is specified, fetch detailed round standings
+          let effectiveRoundId = roundId;
+          if (/^\d+$/.test(roundId)) {
+            const rRes = await pool.query(
+              'SELECT id FROM tournament_rounds WHERE tournament_id = $1 AND round_number = $2',
+              [tournId, parseInt(roundId, 10)]
+            );
+            if (rRes.rows.length > 0) effectiveRoundId = rRes.rows[0].id;
+          }
+          const detailed = await getDetailedRoundStandings(pool, tournId, effectiveRoundId);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: true,
+            round: detailed.round,
+            standings: detailed.overallStandings,
+            districts: detailed.districts,
+            has_districts: detailed.hasDistricts,
+            total_teams: detailed.totalTeams,
+          }));
+        }
+
+        // Default overall tournament leaderboard
+        const standings = await calculateRankings(pool, tournId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, standings }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    })();
     return;
   }
 
