@@ -28,6 +28,57 @@ export function isValidUpiUtr(utr) {
   return /^\d{12}$/.test(norm);
 }
 
+export const SUPPORTED_PAYMENT_APPS = [
+  'google_pay',
+  'phonepe',
+  'paytm',
+  'bhim',
+  'amazon_pay',
+  'cred',
+  'whatsapp_pay',
+  'mobikwik',
+  'other'
+];
+
+export const PAYMENT_APP_LABELS = {
+  google_pay: 'Google Pay',
+  phonepe: 'PhonePe',
+  paytm: 'Paytm',
+  bhim: 'BHIM',
+  amazon_pay: 'Amazon Pay',
+  cred: 'CRED',
+  whatsapp_pay: 'WhatsApp Pay',
+  mobikwik: 'MobiKwik',
+  other: 'Other UPI App'
+};
+
+export function normalizePaymentApp(val) {
+  if (!val || typeof val !== 'string') return null;
+  const s = val.toLowerCase().trim();
+  if (['google_pay', 'google pay', 'gpay'].includes(s)) return 'google_pay';
+  if (['phonepe', 'phone pe'].includes(s)) return 'phonepe';
+  if (['paytm'].includes(s)) return 'paytm';
+  if (['bhim'].includes(s)) return 'bhim';
+  if (['amazon_pay', 'amazon pay'].includes(s)) return 'amazon_pay';
+  if (['cred'].includes(s)) return 'cred';
+  if (['whatsapp_pay', 'whatsapp pay', 'whatsapp'].includes(s)) return 'whatsapp_pay';
+  if (['mobikwik', 'mobi kwik'].includes(s)) return 'mobikwik';
+  if (['other', 'other upi app', 'other app', 'upi'].includes(s)) return 'other';
+  return s;
+}
+
+export function isValidPaymentApp(val) {
+  if (!val || typeof val !== 'string') return false;
+  const norm = normalizePaymentApp(val);
+  return SUPPORTED_PAYMENT_APPS.includes(norm);
+}
+
+export function formatPaymentApp(val) {
+  if (!val) return 'UPI';
+  const norm = normalizePaymentApp(val);
+  return PAYMENT_APP_LABELS[norm] || val;
+}
+
 /**
  * Converts a numeric or currency value into integer paise.
  */
@@ -430,7 +481,7 @@ export async function listQueue(pool, user, options = {}) {
       amount_paid: row.amount_paid != null ? parseFloat(row.amount_paid).toFixed(2) : null,
       raw_utr: rawUtr,
       normalized_utr: normUtr,
-      payment_app: row.ps_payment_app || row.reg_payment_app || 'UPI',
+      payment_app: formatPaymentApp(row.ps_payment_app || row.reg_payment_app),
       proof_url: proofUrl,
       rejection_reason: row.rejection_reason || null,
       admin_notes: row.admin_notes || null,
@@ -590,7 +641,7 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
     amount_paid: row.amount_paid != null ? parseFloat(row.amount_paid).toFixed(2) : null,
     raw_utr: rawUtr,
     normalized_utr: normUtr,
-    payment_app: row.ps_payment_app || row.reg_payment_app || 'UPI',
+    payment_app: formatPaymentApp(row.ps_payment_app || row.reg_payment_app),
     proof_url: proofUrl,
     rejection_reason: row.rejection_reason || null,
     admin_notes: row.admin_notes || null,

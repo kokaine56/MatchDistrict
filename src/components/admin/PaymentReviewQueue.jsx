@@ -13,6 +13,19 @@ const REJECTION_REASONS = [
   { code: 'other', label: 'Other issue (custom note required)' }
 ];
 
+const PAYMENT_APP_LABELS = {
+  google_pay: 'Google Pay',
+  phonepe: 'PhonePe',
+  paytm: 'Paytm',
+  bhim: 'BHIM',
+  amazon_pay: 'Amazon Pay',
+  cred: 'CRED',
+  whatsapp_pay: 'WhatsApp Pay',
+  mobikwik: 'MobiKwik',
+  other: 'Other UPI App',
+};
+const formatPaymentApp = (val) => PAYMENT_APP_LABELS[(val || '').toLowerCase()] || val || 'UPI / Other';
+
 export default function PaymentReviewQueue({ role = 'admin', tournamentId = null, className = '' }) {
   const [activeTab, setActiveTab] = useState('pending_review');
   const [counts, setCounts] = useState({ pending_review: 0, awaiting_payment: 0, approved: 0, rejected: 0 });
@@ -666,7 +679,7 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                     )}
                     {item.payment_app && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-surface-variant/40 text-on-surface-variant">
-                        via {item.payment_app}
+                        via {formatPaymentApp(item.payment_app)}
                       </span>
                     )}
                   </div>
@@ -900,7 +913,7 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-on-surface-variant">Payment App:</span>
-                      <strong className="text-on-background">{selectedItem.payment_app || 'UPI / Other'}</strong>
+                      <strong className="text-on-background">{formatPaymentApp(selectedItem.payment_app)}</strong>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-on-surface-variant">Amount Due:</span>

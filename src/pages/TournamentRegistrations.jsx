@@ -4,6 +4,19 @@ import { getAuthToken } from '../utils/getAuthToken'
 import { formatDateTime } from '../utils/timeFormat'
 import PaymentReviewQueue from '../components/admin/PaymentReviewQueue.jsx'
 
+const PAYMENT_APP_LABELS = {
+  google_pay: 'Google Pay',
+  phonepe: 'PhonePe',
+  paytm: 'Paytm',
+  bhim: 'BHIM',
+  amazon_pay: 'Amazon Pay',
+  cred: 'CRED',
+  whatsapp_pay: 'WhatsApp Pay',
+  mobikwik: 'MobiKwik',
+  other: 'Other UPI App',
+}
+const formatPaymentApp = (val) => PAYMENT_APP_LABELS[(val || '').toLowerCase()] || val || 'UPI'
+
 export default function TournamentRegistrations() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -433,7 +446,7 @@ export default function TournamentRegistrations() {
                         {reg.transaction_id && (
                           <div className="flex items-center gap-4 flex-wrap text-[10px] text-on-surface-variant bg-surface/40 rounded-lg px-3 py-2">
                             <span>UTR: <strong className="font-mono text-on-background">{reg.transaction_id}</strong></span>
-                            {reg.payment_app && <span>App: <strong className="text-on-background">{reg.payment_app}</strong></span>}
+                            {reg.payment_app && <span>App: <strong className="text-on-background">{formatPaymentApp(reg.payment_app)}</strong></span>}
                           </div>
                         )}
 

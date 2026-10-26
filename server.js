@@ -75,9 +75,11 @@ import {
   reject as reviewReject,
   reopen as reviewReopen,
   releaseSlot as reviewReleaseSlot,
-  bulkApprove as reviewBulkApprove,
   isValidUpiUtr,
-  normalizeUtr
+  normalizeUtr,
+  normalizePaymentApp,
+  isValidPaymentApp,
+  formatPaymentApp
 } from './server/paymentReviewService.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
 import { createAccountSecurity } from './server/accountSecurity.js';
@@ -12389,10 +12391,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const entryFeeAmount = parseInt(tournament.entry_fee_amount) || 0;
         const isPaid = entryFeeAmount > 0;
 
+        const normPaymentApp = normalizePaymentApp(payload?.payment_app);
         if (isPaid && (
           !payload?.screenshot_url ||
           !payload?.utr_number ||
-          !['Google Pay', 'PhonePe', 'Paytm', 'BHIM', 'Other'].includes(payload?.payment_app)
+          !isValidPaymentApp(payload?.payment_app)
         )) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -12486,6 +12489,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
               targetRegId = existing.id;
               isUpdatingExisting = true;
             }
+          } else {
+            // Re-registering after rejection or cancellation: reuse the existing registration row
+            targetRegId = existing.id;
+            isUpdatingExisting = true;
           }
         }
         if (payload && payload.screenshot_url && !isAllowedStorageUrl(payload.screenshot_url)) {
@@ -12497,7 +12504,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
         // Validate 12-digit reference when UPI is used
         if (isPaid && payload && payload.utr_number) {
-          const isUpi = !payload.payment_app || ['gpay', 'phonepe', 'paytm', 'bhim', 'upi'].includes((payload.payment_app || '').toLowerCase()) || Boolean(payload.utr_number);
+          const isUpi = Boolean(payload.utr_number) || !payload.payment_app || ['google_pay', 'phonepe', 'paytm', 'bhim', 'amazon_pay', 'cred', 'whatsapp_pay', 'mobikwik', 'other', 'upi', 'gpay'].includes((payload.payment_app || '').toLowerCase());
           if (isUpi && !isValidUpiUtr(payload.utr_number)) {
             await client.query('ROLLBACK');
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -12518,11 +12525,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             `UPDATE tournament_registrations
              SET team_name = $1::varchar, captain = $2::varchar, captain_uid = $3::varchar, members = $4::text,
                  status = $5::varchar, email = $6::varchar, phone = $7::varchar, screenshot_url = $8::text,
-                 transaction_id = $9::varchar, payment_app = $10::varchar, amount_due = COALESCE(amount_due, $11::numeric), updated_at = CURRENT_TIMESTAMP
+                 transaction_id = $9::varchar, payment_app = $10::varchar, amount_due = COALESCE(amount_due, $11::numeric),
+                 rejection_reason = NULL, rejected_at = NULL, updated_at = CURRENT_TIMESTAMP
              WHERE id = $12::varchar RETURNING *`,
             [formData.team_name, formData.captain, formData.captain_uid || null, membersStr,
              status, formData.email || null, formData.phone || null,
-             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null,
+             payload.screenshot_url || null, payload.utr_number || null, normPaymentApp || 'other',
              assignedAmountDue, regId]
           );
         } else {
@@ -12532,23 +12540,39 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
              VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::text, $8::varchar, $9::varchar, $10::varchar, $11::varchar, 1, $12::text, $13::varchar, $14::varchar, $15::numeric) RETURNING *`,
             [regId, session.tournament_id, authUser.id, formData.team_name, formData.captain, formData.captain_uid || null,
              membersStr, status, formData.email || null, formData.phone || null, idempotencyKey || null,
-             payload.screenshot_url || null, payload.utr_number || null, payload.payment_app || null, assignedAmountDue]
+             payload.screenshot_url || null, payload.utr_number || null, normPaymentApp || 'other', assignedAmountDue]
           );
         }
 
         let paymentRecord = null;
 
         if (isPaid && payload.screenshot_url) {
-          // Create payment submission record
-          const payId = 'PAY-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
-          const payIdempKey = idempotencyKey ? 'PAY-' + idempotencyKey : null;
-
-          await client.query(
-            `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status, idempotency_key)
-             VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::numeric, $6::text, $7::varchar, $8::varchar, 'pending_admin_review', $9::varchar)`,
-            [payId, regId, session.tournament_id, authUser.id, amountToPay,
-             payload.screenshot_url, payload.utr_number || null, payload.payment_app || null, payIdempKey]
+          // Check if payment submission already exists for this registration to avoid duplicate records
+          const existingPayRes = await client.query(
+            `SELECT id FROM payment_submissions WHERE registration_id = $1::varchar LIMIT 1`,
+            [regId]
           );
+          let payId;
+          if (existingPayRes.rows.length > 0) {
+            payId = existingPayRes.rows[0].id;
+            await client.query(
+              `UPDATE payment_submissions
+               SET amount = $1::numeric, proof_url = $2::text, utr_number = $3::varchar, payment_app = $4::varchar,
+                   payment_status = 'pending_admin_review', admin_notes = NULL, reviewed_by = NULL, reviewed_at = NULL,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $5::varchar`,
+              [amountToPay, payload.screenshot_url, payload.utr_number || null, normPaymentApp || 'other', payId]
+            );
+          } else {
+            payId = 'PAY-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
+            const payIdempKey = idempotencyKey ? 'PAY-' + idempotencyKey : null;
+            await client.query(
+              `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status, idempotency_key)
+               VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::numeric, $6::text, $7::varchar, $8::varchar, 'pending_admin_review', $9::varchar)`,
+              [payId, regId, session.tournament_id, authUser.id, amountToPay,
+               payload.screenshot_url, payload.utr_number || null, normPaymentApp || 'other', payIdempKey]
+            );
+          }
 
           // Link payment to registration
           await client.query(
@@ -12887,9 +12911,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
+        const normPutApp = normalizePaymentApp(bodyData.payment_app);
         // Validate 12-digit reference when UPI is used
         if (bodyData.transaction_id) {
-          const isUpi = !bodyData.payment_app || ['gpay', 'phonepe', 'paytm', 'bhim', 'upi'].includes((bodyData.payment_app || '').toLowerCase());
+          const isUpi = Boolean(bodyData.transaction_id) || !bodyData.payment_app || ['google_pay', 'phonepe', 'paytm', 'bhim', 'amazon_pay', 'cred', 'whatsapp_pay', 'mobikwik', 'other', 'upi', 'gpay'].includes((bodyData.payment_app || '').toLowerCase());
           if (isUpi && !isValidUpiUtr(bodyData.transaction_id)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: false, error: 'INVALID_UTR', message: 'A valid 12-digit UPI reference (UTR) is required.' }));
@@ -12924,7 +12949,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
            SET status = 'pending', transaction_id = $1::varchar, payment_app = $2::varchar, screenshot_url = $3::text,
                rejection_reason = NULL, rejected_at = NULL, updated_at = CURRENT_TIMESTAMP
            WHERE id = $4::varchar RETURNING *`,
-          [bodyData.transaction_id || null, bodyData.payment_app || null, bodyData.screenshot_url, regId]
+          [bodyData.transaction_id || null, normPutApp || 'other', bodyData.screenshot_url, regId]
         );
 
         // Update or insert payment_submissions
@@ -12934,14 +12959,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
              SET payment_status = 'pending_admin_review', proof_url = $1::text, utr_number = $2::varchar,
                  payment_app = $3::varchar, admin_notes = NULL, reviewed_by = NULL, reviewed_at = NULL, updated_at = CURRENT_TIMESTAMP
              WHERE id = $4::varchar`,
-            [bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null, reg.payment_id]
+            [bodyData.screenshot_url, bodyData.transaction_id || null, normPutApp || 'other', reg.payment_id]
           );
         } else {
           const payId = 'PAY-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
           await pool.query(
             `INSERT INTO payment_submissions (id, registration_id, tournament_id, user_id, amount, proof_url, utr_number, payment_app, payment_status)
              VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::numeric, $6::text, $7::varchar, $8::varchar, 'pending_admin_review')`,
-            [payId, regId, tournamentId, authUser.id, reg.amount_due || 0, bodyData.screenshot_url, bodyData.transaction_id || null, bodyData.payment_app || null]
+            [payId, regId, tournamentId, authUser.id, reg.amount_due || 0, bodyData.screenshot_url, bodyData.transaction_id || null, normPutApp || 'other']
           );
           await pool.query('UPDATE tournament_registrations SET payment_id = $1::varchar WHERE id = $2::varchar', [payId, regId]);
         }

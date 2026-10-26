@@ -115,36 +115,213 @@ const FieldError = ({ id, message }) =>
     <p id={id} role="alert" className="text-red-400 text-xs mt-1">{toMessage(message)}</p>
   ) : null
 
-function PaymentAppIcon({ name }) {
+const UPI_APPS = [
+  { id: 'google_pay', name: 'Google Pay', label: 'Google Pay' },
+  { id: 'phonepe', name: 'PhonePe', label: 'PhonePe' },
+  { id: 'paytm', name: 'Paytm', label: 'Paytm' },
+  { id: 'bhim', name: 'BHIM', label: 'BHIM' },
+  { id: 'amazon_pay', name: 'Amazon Pay', label: 'Amazon Pay' },
+  { id: 'cred', name: 'CRED', label: 'CRED' },
+  { id: 'whatsapp_pay', name: 'WhatsApp Pay', label: 'WhatsApp Pay' },
+  { id: 'mobikwik', name: 'MobiKwik', label: 'MobiKwik' },
+  { id: 'other', name: 'Other UPI App', label: 'Other UPI App' },
+]
+
+function getPaymentAppLabel(appIdOrName) {
+  if (!appIdOrName) return 'Select payment app'
+  const found = UPI_APPS.find(
+    a => a.id.toLowerCase() === appIdOrName.toLowerCase() ||
+         a.name.toLowerCase() === appIdOrName.toLowerCase() ||
+         a.label.toLowerCase() === appIdOrName.toLowerCase()
+  )
+  return found ? found.label : appIdOrName
+}
+
+function PaymentAppIcon({ id, name, className = 'w-6 h-6' }) {
+  const key = (id || name || '').toLowerCase()
+  if (key === 'google_pay' || key === 'google pay' || key === 'gpay') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
+        <path d="M35.5 24.5c0-1.2-.1-2.1-.4-3.1H24v5.4h6.5a5.6 5.6 0 0 1-2.4 3.7l4.2 3.2c2.1-2 3.2-5 3.2-9.2Z" fill="#4285F4" />
+        <path d="M24 36c3.2 0 5.9-1.1 7.9-3l-4.2-3.2c-1.1.7-2.3 1.1-3.7 1.1-2.9 0-5.3-2-6.2-4.7l-4.3 3.3A11.9 11.9 0 0 0 24 36Z" fill="#34A853" />
+        <path d="M17.8 26.2a7.2 7.2 0 0 1 0-4.5l-4.3-3.3a12 12 0 0 0 0 11.1l4.3-3.3Z" fill="#FBBC05" />
+        <path d="M24 17c1.8 0 3.4.6 4.7 1.9l3.5-3.5A11.5 11.5 0 0 0 24 12a11.9 11.9 0 0 0-10.5 6.4l4.3 3.3c.9-2.7 3.3-4.7 6.2-4.7Z" fill="#EA4335" />
+      </svg>
+    )
+  }
+  if (key === 'phonepe' || key === 'phone pe') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#5F259F" />
+        <path d="M18 14h15v5H23v4h7v5h-7v7h-5V14Z" fill="white" />
+      </svg>
+    )
+  }
+  if (key === 'paytm') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+        <text x="24" y="30" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="15" fontWeight="700">
+          <tspan fill="#002970">pay</tspan><tspan fill="#00BAF2">tm</tspan>
+        </text>
+      </svg>
+    )
+  }
+  if (key === 'bhim') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#FFF5E9" />
+        <path d="M12 16h24" stroke="#F58220" strokeWidth="4" strokeLinecap="round" />
+        <path d="M12 24h24" stroke="#263A80" strokeWidth="4" strokeLinecap="round" />
+        <path d="M12 32h24" stroke="#138808" strokeWidth="4" strokeLinecap="round" />
+      </svg>
+    )
+  }
+  if (key === 'amazon_pay' || key === 'amazon pay') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#232F3E" />
+        <path d="M14 28c4 4 16 4 20 0" stroke="#FF9900" strokeWidth="3" strokeLinecap="round" />
+        <path d="M32 25l3 3-4 1" stroke="#FF9900" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="#FF9900" />
+      </svg>
+    )
+  }
+  if (key === 'cred') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
+        <rect x="4" y="4" width="40" height="40" rx="10" fill="#0F1015" />
+        <path d="M14 14h20v20H14V14Z" stroke="#FFFFFF" strokeWidth="3" />
+        <path d="M20 20h8v8h-8V20Z" fill="#FFFFFF" />
+      </svg>
+    )
+  }
+  if (key === 'whatsapp_pay' || key === 'whatsapp pay' || key === 'whatsapp') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#25D366" />
+        <path d="M34 23.5c0 5.2-4.3 9.5-9.5 9.5-1.6 0-3.1-.4-4.5-1.1L14 33.5l1.7-5.8C14.9 26.3 14.5 24.9 14.5 23.5c0-5.2 4.3-9.5 9.5-9.5s10 4.3 10 9.5Z" fill="#FFFFFF" />
+      </svg>
+    )
+  }
+  if (key === 'mobikwik' || key === 'mobi kwik') {
+    return (
+      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
+        <circle cx="24" cy="24" r="22" fill="#0079C1" />
+        <path d="M15 31V17l9 9 9-9v14" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
   return (
-    <span className="w-12 h-12 rounded-xl bg-white flex items-center justify-center shadow-sm" aria-hidden="true">
-      {name === 'Google Pay' ? (
-        <svg viewBox="0 0 48 48" className="w-8 h-8" fill="none">
-          <path d="M35.5 24.5c0-1.2-.1-2.1-.4-3.1H24v5.4h6.5a5.6 5.6 0 0 1-2.4 3.7l4.2 3.2c2.1-2 3.2-5 3.2-9.2Z" fill="#4285F4" />
-          <path d="M24 36c3.2 0 5.9-1.1 7.9-3l-4.2-3.2c-1.1.7-2.3 1.1-3.7 1.1-2.9 0-5.3-2-6.2-4.7l-4.3 3.3A11.9 11.9 0 0 0 24 36Z" fill="#34A853" />
-          <path d="M17.8 26.2a7.2 7.2 0 0 1 0-4.5l-4.3-3.3a12 12 0 0 0 0 11.1l4.3-3.3Z" fill="#FBBC05" />
-          <path d="M24 17c1.8 0 3.4.6 4.7 1.9l3.5-3.5A11.5 11.5 0 0 0 24 12a11.9 11.9 0 0 0-10.5 6.4l4.3 3.3c.9-2.7 3.3-4.7 6.2-4.7Z" fill="#EA4335" />
+    <svg viewBox="0 0 24 24" className={`${className} text-white/70`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <line x1="2" y1="10" x2="22" y2="10" />
+    </svg>
+  )
+}
+
+function PaymentAppDropdown({ value, onChange, error }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    function handleOutside(e) {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleOutside)
+    document.addEventListener('touchstart', handleOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleOutside)
+      document.removeEventListener('touchstart', handleOutside)
+    }
+  }, [])
+
+  const selectedApp = UPI_APPS.find(
+    a => a.id.toLowerCase() === (value || '').toLowerCase() ||
+         a.name.toLowerCase() === (value || '').toLowerCase()
+  )
+
+  return (
+    <div ref={containerRef} className="relative">
+      <label id="upi-app-select-label" className="block text-xs font-semibold text-white/60 mb-1.5">
+        Which UPI app did you use to pay? <span className="text-rose-400">*</span>
+      </label>
+      <button
+        type="button"
+        id="upi-app-dropdown-btn"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-labelledby="upi-app-select-label upi-app-dropdown-btn"
+        onClick={() => setIsOpen(prev => !prev)}
+        className={`w-full bg-white/5 border ${
+          error ? 'border-rose-500/70 bg-rose-500/5' : isOpen ? 'border-primary/60 ring-2 ring-primary/20' : 'border-white/10'
+        } rounded-xl px-4 py-3 text-sm flex items-center justify-between text-left transition-all hover:border-white/20 focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer`}
+      >
+        <span className="flex items-center gap-3 min-w-0">
+          {selectedApp ? (
+            <>
+              <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 p-1">
+                <PaymentAppIcon id={selectedApp.id} className="w-5 h-5 shrink-0" />
+              </span>
+              <span className="text-white font-medium truncate">{selectedApp.label}</span>
+            </>
+          ) : (
+            <span className="text-white/40">Select payment app</span>
+          )}
+        </span>
+        <svg
+          className={`w-4 h-4 text-white/50 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180 text-white' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
-      ) : name === 'PhonePe' ? (
-        <svg viewBox="0 0 48 48" className="w-9 h-9">
-          <circle cx="24" cy="24" r="22" fill="#5F259F" />
-          <path d="M18 14h15v5H23v4h7v5h-7v7h-5V14Z" fill="white" />
-        </svg>
-      ) : name === 'Paytm' ? (
-        <svg viewBox="0 0 48 48" className="w-10 h-8">
-          <text x="24" y="30" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="15" fontWeight="700">
-            <tspan fill="#002970">pay</tspan><tspan fill="#00BAF2">tm</tspan>
-          </text>
-        </svg>
-      ) : (
-        <svg viewBox="0 0 48 48" className="w-9 h-9">
-          <circle cx="24" cy="24" r="22" fill="#FFF5E9" />
-          <path d="M12 16h24" stroke="#F58220" strokeWidth="4" strokeLinecap="round" />
-          <path d="M12 24h24" stroke="#263A80" strokeWidth="4" strokeLinecap="round" />
-          <path d="M12 32h24" stroke="#138808" strokeWidth="4" strokeLinecap="round" />
-        </svg>
+      </button>
+
+      {isOpen && (
+        <div
+          role="listbox"
+          aria-labelledby="upi-app-select-label"
+          className="absolute left-0 right-0 top-full mt-1.5 bg-[#12131C] border border-white/15 rounded-xl shadow-2xl py-1.5 z-40 max-h-60 overflow-y-auto backdrop-blur-xl"
+        >
+          {UPI_APPS.map((app) => {
+            const isSelected = selectedApp?.id === app.id
+            return (
+              <button
+                key={app.id}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => {
+                  onChange(app.id)
+                  setIsOpen(false)
+                }}
+                className={`w-full px-4 py-2.5 flex items-center justify-between gap-3 text-sm transition-colors text-left cursor-pointer ${
+                  isSelected
+                    ? 'bg-primary/20 text-white font-semibold'
+                    : 'text-white/80 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0 p-1">
+                    <PaymentAppIcon id={app.id} className="w-5 h-5 shrink-0" />
+                  </span>
+                  <span className="truncate">{app.label}</span>
+                </div>
+                {isSelected && (
+                  <svg className="w-4 h-4 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </button>
+            )
+          })}
+        </div>
       )}
-    </span>
+
+      {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
+    </div>
   )
 }
 
@@ -629,6 +806,9 @@ function RegistrationPage({ onNavigate }) {
 
   const validatePayment = () => {
     const errs = {}
+    if (!payment.app) {
+      errs.app = 'Which UPI app did you use to pay? Selection is required.'
+    }
     const trimmedUtr = payment.transactionId.trim()
     if (!trimmedUtr) {
       errs.transactionId = 'Transaction ID / UTR is required'
@@ -641,8 +821,10 @@ function RegistrationPage({ onNavigate }) {
   }
 
   const isPaymentFormValid =
+    Boolean(payment.app) &&
     /^\d{12}$/.test(payment.transactionId.trim()) &&
     Boolean(payment.screenshotFile) &&
+    !paymentErrors.app &&
     !paymentErrors.screenshot
 
   const totalPlayers = 1 + form.players.filter(p => p.ign.trim() && p.uid.trim()).length
@@ -760,6 +942,137 @@ function RegistrationPage({ onNavigate }) {
     )
   }
 
+  const handleConfirmPaymentSubmission = async (e) => {
+    if (e?.preventDefault) e.preventDefault()
+    if (e?.stopPropagation) e.stopPropagation()
+    if (e?.nativeEvent && !e.nativeEvent.isTrusted) return
+    if (paymentSubmitting || paymentSubmittedRef.current) return
+    paymentSubmittedRef.current = true
+    setPaymentSubmitting(true)
+    setServerError('')
+
+    try {
+      const token = await getAuthToken()
+      let screenshotUrl = null
+      try {
+        const fileToUpload = await downscaleScreenshot(payment.screenshotFile)
+        screenshotUrl = await uploadImage(fileToUpload)
+      } catch (uploadErr) {
+        let errorMsg = 'Could not upload the screenshot. Your entries are still here; please try again.'
+        if (uploadErr?.status === 413 || uploadErr?.code === 'FILE_TOO_LARGE') {
+          errorMsg = 'The selected file is too large (maximum allowed size is 10 MB).'
+        } else if (uploadErr?.status === 415 || uploadErr?.code === 'INVALID_FILE_TYPE') {
+          errorMsg = 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.'
+        } else if (uploadErr?.status === 429 || uploadErr?.code === 'RATE_LIMIT_EXCEEDED') {
+          const waitTime = uploadErr?.retryAfter || 60
+          errorMsg = `Too many uploads. Please wait ${waitTime} seconds and try again.`
+        } else if (uploadErr?.ref) {
+          errorMsg = `Could not upload the screenshot. Your entries are still here; please try again. (Ref: ${uploadErr.ref})`
+        } else if (uploadErr?.message && !uploadErr?.message.includes('fetch') && !uploadErr?.message.includes('network')) {
+          errorMsg = uploadErr.message
+        }
+        setServerError(errorMsg)
+        paymentSubmittedRef.current = false
+        setPaymentSubmitting(false)
+        setShowConfirmModal(false)
+        return
+      }
+
+      let res
+      let data
+      const headers = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      if (sessionId) {
+        try {
+          res = await fetch(`/api/sessions/${sessionId}/complete`, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({
+              utr_number: payment.transactionId.trim(),
+              payment_app: payment.app || 'other',
+              screenshot_url: screenshotUrl,
+            }),
+          })
+          data = await res.json()
+        } catch {
+          setServerError('Could not reach the server. Your entries are still here; check your connection and try again.')
+          paymentSubmittedRef.current = false
+          setPaymentSubmitting(false)
+          setShowConfirmModal(false)
+          return
+        }
+      } else if (rejectedReg?.id) {
+        try {
+          res = await fetch(`/api/tournaments/${id}/register/${rejectedReg.id}/payment`, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({
+              transaction_id: payment.transactionId.trim(),
+              payment_app: payment.app || 'other',
+              screenshot_url: screenshotUrl,
+            }),
+          })
+          data = await res.json()
+        } catch {
+          setServerError('Could not reach the server. Your entries are still here; check your connection and try again.')
+          paymentSubmittedRef.current = false
+          setPaymentSubmitting(false)
+          setShowConfirmModal(false)
+          return
+        }
+      } else {
+        setServerError('Registration session not found. Please restart registration.')
+        paymentSubmittedRef.current = false
+        setPaymentSubmitting(false)
+        setShowConfirmModal(false)
+        return
+      }
+
+      if (!data || typeof data !== 'object') {
+        setServerError('The server did not confirm the payment proof. Your entries are still here; please try again.')
+        paymentSubmittedRef.current = false
+        setPaymentSubmitting(false)
+        setShowConfirmModal(false)
+        return
+      }
+
+      const existingProofSaved = data.already_registered &&
+        Boolean(data.registration?.payment_id && data.registration?.screenshot_url)
+      const newlySavedProof = data.success &&
+        Boolean((data.payment?.id || data.registration?.id) && (data.registration?.screenshot_url || data.registration?.transaction_id))
+
+      if (res?.ok && (existingProofSaved || newlySavedProof || data.success)) {
+        const nowIST = new Date().toLocaleTimeString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }).toUpperCase()
+        setSubmittedTimeIST(nowIST)
+        if (data.registration) setRegisteredTeam(data.registration)
+        if (data.amount_to_pay) setAmountToPay(data.amount_to_pay)
+        if (data.predicted_group) setPredictedGroup(data.predicted_group)
+        setShowConfirmModal(false)
+        setStep('success')
+        return
+      } else {
+        const refCode = data.ref ? ` (Ref: ${data.ref})` : ''
+        setServerError((data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.') + refCode)
+        paymentSubmittedRef.current = false
+        setPaymentSubmitting(false)
+        setShowConfirmModal(false)
+      }
+    } catch (unexpectedErr) {
+      setServerError('Could not submit the payment. Your entries are still here; please try again.')
+      paymentSubmittedRef.current = false
+      setPaymentSubmitting(false)
+      setShowConfirmModal(false)
+    }
+  }
+
   if (step === 'payment') {
     const upiLink = `upi://pay?pa=matchdistrict@upi&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
 
@@ -772,24 +1085,28 @@ function RegistrationPage({ onNavigate }) {
     // Desktop: hide all app icons (only QR and copy fields remain).
     const allUpiApps = [
       {
+        id: 'google_pay',
         name: 'Google Pay',
         package: 'com.google.android.apps.nbu.paisa.user',
         ringColor: 'ring-[#4285F4]',
         iosScheme: null,
       },
       {
+        id: 'phonepe',
         name: 'PhonePe',
         package: 'com.phonepe.app',
         ringColor: 'ring-[#5f259f]',
         iosScheme: 'phonepe://',
       },
       {
+        id: 'paytm',
         name: 'Paytm',
         package: 'net.one97.paytm',
         ringColor: 'ring-[#00baf2]',
         iosScheme: 'paytmmp://',
       },
       {
+        id: 'bhim',
         name: 'BHIM',
         package: 'in.org.npci.upiapp',
         ringColor: 'ring-[#128807]',
@@ -804,7 +1121,7 @@ function RegistrationPage({ onNavigate }) {
     })
 
     const handleAppClick = (app) => {
-      setPayment(prev => ({ ...prev, app: app.name }))
+      setPayment(prev => ({ ...prev, app: app.id }))
       setPaymentErrors(prev => ({ ...prev, app: '' }))
 
       let targetUrl = ''
@@ -949,16 +1266,16 @@ function RegistrationPage({ onNavigate }) {
                     <div className={`grid gap-4 ${upiApps.length === 2 ? 'grid-cols-2 max-w-xs mx-auto' : 'grid-cols-4'}`}>
                       {upiApps.map(app => (
                         <button
-                          key={app.name}
+                          key={app.id || app.name}
                           type="button"
                           onClick={() => handleAppClick(app)}
                           className={`flex flex-col items-center gap-2 py-2 rounded-xl transition-all duration-200 ${
-                            payment.app === app.name
+                            payment.app === app.id
                               ? `ring-2 ${app.ringColor} bg-white/5 scale-105`
                               : 'opacity-70 hover:opacity-100 hover:scale-105'
                           }`}
                         >
-                          <PaymentAppIcon name={app.name} />
+                          <PaymentAppIcon id={app.id} name={app.name} />
                           <span className="min-w-0 w-full text-center text-[10px] leading-tight font-semibold text-white/70 tracking-wide">{app.name}</span>
                         </button>
                       ))}
@@ -972,6 +1289,18 @@ function RegistrationPage({ onNavigate }) {
             {/* Payment Proof Details */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Submit Payment Proof</h2>
+
+              {/* UPI Payment Application Dropdown */}
+              <PaymentAppDropdown
+                value={payment.app}
+                onChange={(appId) => {
+                  setPayment(prev => ({ ...prev, app: appId }))
+                  if (paymentErrors.app) {
+                    setPaymentErrors(prev => ({ ...prev, app: '' }))
+                  }
+                }}
+                error={paymentErrors.app}
+              />
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -1107,140 +1436,120 @@ function RegistrationPage({ onNavigate }) {
         {/* Confirmation Modal */}
         {showConfirmModal && (
           <>
-            <div className="fixed inset-0 bg-black/60 z-40" onClick={() => setShowConfirmModal(false)} />
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 transition-opacity"
+              onClick={() => {
+                if (!paymentSubmitting) setShowConfirmModal(false)
+              }}
+              aria-hidden="true"
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
               <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="bg-white border border-slate-200 rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4"
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="confirm-modal-title"
+                className="bg-[#10121A] border border-white/15 rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4 my-auto relative"
               >
+                {/* Header */}
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-primary text-2xl shrink-0">info</span>
-                    <h3 className="text-lg font-bold text-slate-900">Submit for Verification?</h3>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary shrink-0">
+                      <span className="material-symbols-outlined text-xl">verified_user</span>
+                    </div>
+                    <div>
+                      <h3 id="confirm-modal-title" className="text-base sm:text-lg font-black text-white leading-tight">
+                        Confirm Payment Submission
+                      </h3>
+                      <p className="text-[11px] text-white/50">Review your payment details</p>
+                    </div>
                   </div>
                   <button
                     type="button"
+                    disabled={paymentSubmitting}
                     onClick={() => setShowConfirmModal(false)}
-                    aria-label="Close confirmation"
-                    className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                    aria-label="Close dialog"
+                    className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    <span className="material-symbols-outlined text-base">close</span>
+                    <span className="material-symbols-outlined text-lg">close</span>
                   </button>
                 </div>
-                <p className="text-sm text-slate-600">
-                  Your payment proof and details will be sent for admin verification.
-                </p>
-                <div className="flex gap-3 pt-2">
+
+                {/* Notice message */}
+                <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-3 flex items-start gap-2.5">
+                  <span className="material-symbols-outlined text-amber-400 text-base shrink-0 mt-0.5">info</span>
+                  <p className="text-xs text-amber-200/90 leading-relaxed">
+                    Please confirm that you have completed the payment and that the transaction reference and screenshot are correct. Submitting payment proof does not guarantee payment verification.
+                  </p>
+                </div>
+
+                {/* Summary Table */}
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3.5 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
+                    <span className="text-white/50">Tournament</span>
+                    <span className="font-semibold text-white text-right truncate max-w-[200px]" title={tourney.title}>
+                      {tourney.title}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
+                    <span className="text-white/50">Entry Fee</span>
+                    <span className="font-bold text-emerald-400">
+                      {entryDisplay || (entryFee ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
+                    <span className="text-white/50">Payment App</span>
+                    <div className="inline-flex items-center gap-2 font-medium text-white">
+                      <span className="w-5 h-5 rounded bg-white/10 flex items-center justify-center p-0.5 shrink-0">
+                        <PaymentAppIcon id={payment.app} className="w-3.5 h-3.5" />
+                      </span>
+                      <span>{getPaymentAppLabel(payment.app)}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-2">
+                    <span className="text-white/50">UTR / Reference</span>
+                    <span className="font-mono font-bold text-emerald-300 tracking-wider">
+                      {payment.transactionId.trim()}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-white/50">Payment Screenshot</span>
+                    <div className="inline-flex items-center gap-2">
+                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">check_circle</span>
+                        Attached
+                      </span>
+                      {payment.screenshotPreview && (
+                        <img
+                          src={payment.screenshotPreview}
+                          alt="Screenshot preview"
+                          className="w-7 h-7 object-cover rounded border border-white/20"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-3 pt-2">
                   <button
                     type="button"
+                    disabled={paymentSubmitting}
                     onClick={() => setShowConfirmModal(false)}
-                    className="flex-1 bg-white border border-slate-300 text-slate-800 font-bold py-3 rounded-xl hover:bg-slate-50 transition-colors"
+                    className="flex-1 py-3 px-4 bg-white/5 hover:bg-white/10 border border-white/10 text-white/80 hover:text-white font-semibold rounded-xl transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    Cancel
+                    Go Back
                   </button>
                   <button
                     type="button"
                     disabled={paymentSubmitting || paymentSubmittedRef.current}
-                    onClick={async (e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!e.nativeEvent.isTrusted) return
-                      if (paymentSubmitting || paymentSubmittedRef.current) return
-                      paymentSubmittedRef.current = true
-                      setShowConfirmModal(false)
-                      setPaymentSubmitting(true)
-                      try {
-                        const token = await getAuthToken()
-                        let screenshotUrl = null
-                        try {
-                          const fileToUpload = await downscaleScreenshot(payment.screenshotFile)
-                          screenshotUrl = await uploadImage(fileToUpload)
-                        } catch (uploadErr) {
-                          let errorMsg = 'Could not upload the screenshot. Your UTR and selected file are still here; please try again.'
-                          if (uploadErr?.status === 413 || uploadErr?.code === 'FILE_TOO_LARGE') {
-                            errorMsg = 'The selected file is too large (maximum allowed size is 10 MB).'
-                          } else if (uploadErr?.status === 415 || uploadErr?.code === 'INVALID_FILE_TYPE') {
-                            errorMsg = 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.'
-                          } else if (uploadErr?.status === 429 || uploadErr?.code === 'RATE_LIMIT_EXCEEDED') {
-                            const waitTime = uploadErr?.retryAfter || 60
-                            errorMsg = `Too many uploads. Please wait ${waitTime} seconds and try again.`
-                          } else if (uploadErr?.ref) {
-                            errorMsg = `Could not upload the screenshot. Your UTR and selected file are still here; please try again. (Ref: ${uploadErr.ref})`
-                          } else if (uploadErr?.message && !uploadErr?.message.includes('fetch') && !uploadErr?.message.includes('network')) {
-                            errorMsg = uploadErr.message
-                          }
-                          setServerError(errorMsg)
-                          paymentSubmittedRef.current = false
-                          return
-                        }
-
-                        let res
-                        const headers = { 'Content-Type': 'application/json' }
-                        if (token) headers['Authorization'] = `Bearer ${token}`
-                        try {
-                          res = await fetch(`/api/sessions/${sessionId}/complete`, {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers,
-                            body: JSON.stringify({
-                              utr_number: payment.transactionId.trim(),
-                              payment_app: payment.app || 'UPI',
-                              screenshot_url: screenshotUrl,
-                            }),
-                          })
-                        } catch {
-                          setServerError('Could not reach the server. Your UTR and screenshot are still here; check your connection and try again.')
-                          paymentSubmittedRef.current = false
-                          return
-                        }
-
-                        let data
-                        try {
-                          data = await res.json()
-                        } catch {
-                          setServerError('The server returned an unreadable response. Your UTR and screenshot are still here; please try again.')
-                          paymentSubmittedRef.current = false
-                          return
-                        }
-
-                        if (!data || typeof data !== 'object') {
-                          setServerError('The server did not confirm the payment proof. Your UTR and screenshot are still here; please try again.')
-                          paymentSubmittedRef.current = false
-                          return
-                        }
-
-                        const existingProofSaved = data.already_registered &&
-                          Boolean(data.registration?.payment_id && data.registration?.screenshot_url)
-                        const newlySavedProof = data.success &&
-                          Boolean(data.payment?.id && data.registration?.screenshot_url)
-
-                        if (res.ok && (existingProofSaved || newlySavedProof)) {
-                          const nowIST = new Date().toLocaleTimeString('en-IN', {
-                            timeZone: 'Asia/Kolkata',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            hour12: true
-                          }).toUpperCase()
-                          setSubmittedTimeIST(nowIST)
-                          setRegisteredTeam(data.registration)
-                          if (data.amount_to_pay) setAmountToPay(data.amount_to_pay)
-                          if (data.predicted_group) setPredictedGroup(data.predicted_group)
-                          setStep('success')
-                          return
-                        } else {
-                          const refCode = data.ref ? ` (Ref: ${data.ref})` : ''
-                          setServerError((data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.') + refCode)
-                          paymentSubmittedRef.current = false
-                        }
-                      } catch (unexpectedErr) {
-                        setServerError('Could not submit the payment. Your UTR and screenshot are still here; please try again.')
-                        paymentSubmittedRef.current = false
-                      } finally {
-                        setPaymentSubmitting(false)
-                      }
-                    }}
-                    className="flex-1 bg-primary text-white font-bold py-3 rounded-xl hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    onClick={handleConfirmPaymentSubmission}
+                    className="flex-1 py-3 px-4 bg-primary hover:bg-primary/90 text-white font-bold rounded-xl transition-all text-sm shadow-lg shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                   >
                     {paymentSubmitting ? (
                       <>
@@ -1248,7 +1557,7 @@ function RegistrationPage({ onNavigate }) {
                         <span>Submitting...</span>
                       </>
                     ) : (
-                      <span>Confirm</span>
+                      <span>Confirm &amp; Submit</span>
                     )}
                   </button>
                 </div>

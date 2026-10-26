@@ -230,23 +230,28 @@ export function getRegistrationButtonState(reg, lifecycle) {
 
   // ── 2. Registration rejected / no registration — fall back to lifecycle CTA ─
   const lifecycleCta = getCTAButtonConfig(lifecycle)
-  // But if rejected, show red state regardless of lifecycle
+  // But if rejected, show distinct red state regardless of lifecycle
   if (['rejected', 'payment_rejected'].includes(rawStatus)) {
-    const reason = reg && reg.rejection_reason ? ` — ${reg.rejection_reason}` : ''
+    const rawReason = reg && reg.rejection_reason ? reg.rejection_reason : ''
+    const cleanReason = rawReason.replace(/^Payment verification failed\.?\s*(Note:\s*)?/i, '').trim() || rawReason
     return {
-      text: `Payment Rejected — Re-upload${reason}`,
-      icon: 'x',
+      text: 'Register Again',
+      icon: 'refresh',
       disabled: false,
       action: 'join',
-      styleClass: 'bg-red-500 hover:bg-red-600 text-white shadow-[0_4px_12px_rgba(239,68,68,0.3)] text-xs',
-      rejectionReason: reg && reg.rejection_reason
+      styleClass: 'bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white shadow-[0_4px_12px_rgba(225,29,72,0.3)]',
+      rejectionReason: cleanReason,
+      isRejected: true,
+      rawStatus
     }
   }
   return {
     ...lifecycleCta,
     icon: null,
     action: lifecycleCta.disabled ? null : 'join',
-    rejectionReason: null
+    rejectionReason: null,
+    isRejected: false,
+    rawStatus
   }
 }
 

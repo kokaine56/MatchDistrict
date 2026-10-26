@@ -1198,13 +1198,58 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
 
               {/* Action Area */}
-              <div className="flex items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-white/10">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-white/10">
                 {(() => {
                   // Use the viewer's own registration row (from /my-registration) to drive the CTA.
                   // Fall back to myRoster (organizer-tab enriched data) if the dedicated fetch hasn't run yet.
                   const regSource = myRegistration || myRoster || null;
                   const lifecycle = getTournamentLifecycleStatus(tourney, new Date());
                   const btnState = getRegistrationButtonState(regSource, lifecycle);
+
+                  // Distinct rejected-payment UI separating status message from the action
+                  if (btnState.isRejected) {
+                    return (
+                      <div className="w-full bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <div className="w-9 h-9 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center shrink-0 mt-0.5 text-rose-400">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="text-sm font-bold text-rose-300">Payment Rejected</div>
+                            <p className="text-xs text-rose-200/90 leading-relaxed">
+                              Payment verification failed.{btnState.rejectionReason ? ` Reason: ${btnState.rejectionReason}` : ''}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isNavigatingToRegister}
+                          onClick={() => {
+                            if (isNavigatingToRegister) return;
+                            setIsNavigatingToRegister(true);
+                            navigate(`/tournaments/${tourney.id}/register`);
+                          }}
+                          className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-bold text-sm shadow-md hover:shadow-lg transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-75 disabled:cursor-wait shrink-0 min-h-[44px]"
+                        >
+                          {isNavigatingToRegister ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              <span>Loading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              <span>Register Again</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  }
 
                   // Icon helper
                   const BtnIcon = ({ icon }) => {
@@ -1241,38 +1286,40 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   }
 
                   return (
-                    <button
-                      disabled={btnState.disabled || isNavigatingToRegister}
-                      onClick={() => {
-                        if (btnState.disabled || isNavigatingToRegister || !btnState.action) return;
-                        setIsNavigatingToRegister(true);
-                        navigate(`/tournaments/${tourney.id}/register`);
-                      }}
-                      className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${finalClass} ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
-                    >
-                      {isNavigatingToRegister ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                          <span>Loading...</span>
-                        </>
-                      ) : (
-                        <>
-                          <BtnIcon icon={btnState.icon} />
-                          <span>{btnState.text}</span>
-                        </>
+                    <>
+                      <button
+                        disabled={btnState.disabled || isNavigatingToRegister}
+                        onClick={() => {
+                          if (btnState.disabled || isNavigatingToRegister || !btnState.action) return;
+                          setIsNavigatingToRegister(true);
+                          navigate(`/tournaments/${tourney.id}/register`);
+                        }}
+                        className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${finalClass} ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
+                      >
+                        {isNavigatingToRegister ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            <span>Loading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <BtnIcon icon={btnState.icon} />
+                            <span>{btnState.text}</span>
+                          </>
+                        )}
+                      </button>
+                      {getGameLogo(tourney.game) && (
+                        <img 
+                          src={getGameLogo(tourney.game)} 
+                          alt={tourney.game} 
+                          className={`shrink-0 rounded-xl overflow-hidden border object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ${
+                            isGoldTheme ? 'border-[#FFC107]/40 shadow-md' : 'border-slate-200'
+                          }`}
+                        />
                       )}
-                    </button>
+                    </>
                   );
                 })()}
-                {getGameLogo(tourney.game) && (
-                  <img 
-                    src={getGameLogo(tourney.game)} 
-                    alt={tourney.game} 
-                    className={`shrink-0 rounded-xl overflow-hidden border object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ${
-                      isGoldTheme ? 'border-[#FFC107]/40 shadow-md' : 'border-slate-200'
-                    }`}
-                  />
-                )}
               </div>
 
             </div>
