@@ -3,6 +3,7 @@
 //
 // Single authoritative source of truth for tournament standings.
 // ─────────────────────────────────────────────────────────────
+import crypto from 'crypto';
 
 export const LEADERBOARD_MAX_SCORE = 1000000;
 
@@ -349,23 +350,45 @@ export async function editTeamLeaderboardPoints(pool, {
       throw new Error('Tournament is finalized; point adjustments are locked.');
     }
 
-    // Verify team exists and is not disqualified
-    const teamRes = await client.query(
-      'SELECT id, team_name, status FROM tournament_teams WHERE id = $1 AND tournament_id = $2 FOR UPDATE',
+    // Verify team exists and is not disqualified (check by id OR registration_id)
+    let teamRes = await client.query(
+      'SELECT id, team_name, status, registration_id FROM tournament_teams WHERE (id = $1 OR registration_id = $1) AND tournament_id = $2 FOR UPDATE',
       [teamId, tournamentId]
     );
-    if (teamRes.rows.length === 0) {
-      throw new Error('Team not found in this tournament.');
+    let resolvedTeamId = teamId;
+    let teamName = '';
+    if (teamRes.rows.length > 0) {
+      resolvedTeamId = teamRes.rows[0].id;
+      teamName = teamRes.rows[0].team_name;
+      if (teamRes.rows[0].status === 'disqualified') {
+        throw new Error('Cannot edit scores for a disqualified team.');
+      }
+    } else {
+      // Check if teamId is an eligible registration in tournament_registrations
+      const regRes = await client.query(
+        'SELECT id, team_name, user_id, status FROM tournament_registrations WHERE id = $1 AND tournament_id = $2',
+        [teamId, tournamentId]
+      );
+      if (regRes.rows.length === 0) {
+        throw new Error('Team not found in this tournament.');
+      }
+      const regRow = regRes.rows[0];
+      teamName = regRow.team_name;
+      const newTeamId = 'TEAM-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(3).toString('hex');
+      const insTeam = await client.query(
+        `INSERT INTO tournament_teams (id, tournament_id, registration_id, team_name, leader_user_id, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'verified', NOW(), NOW())
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [newTeamId, tournamentId, regRow.id, regRow.team_name, regRow.user_id]
+      );
+      resolvedTeamId = insTeam.rows[0]?.id || newTeamId;
     }
-    if (teamRes.rows[0].status === 'disqualified') {
-      throw new Error('Cannot edit scores for a disqualified team.');
-    }
-    const teamName = teamRes.rows[0].team_name;
 
     // Fetch previous leaderboard row for audit
     const prevLbRes = await client.query(
       'SELECT * FROM tournament_leaderboard WHERE tournament_id = $1 AND team_id = $2',
-      [tournamentId, teamId]
+      [tournamentId, resolvedTeamId]
     );
     const prevData = prevLbRes.rows[0] || null;
 
@@ -378,7 +401,7 @@ export async function editTeamLeaderboardPoints(pool, {
          JOIN tournament_matches m ON mr.match_id = m.id
          WHERE mr.tournament_id = $1 AND mr.team_id = $2 AND m.round_id = $3
          ORDER BY mr.updated_at DESC LIMIT 1 FOR UPDATE`,
-        [tournamentId, teamId, round_id]
+        [tournamentId, resolvedTeamId, round_id]
       );
       if (mrRes.rows.length > 0) {
         const matchResultId = mrRes.rows[0].id;
@@ -399,7 +422,7 @@ export async function editTeamLeaderboardPoints(pool, {
             actorId,
           ]
         );
-        await updateTeamLeaderboard(client, tournamentId, teamId);
+        await updateTeamLeaderboard(client, tournamentId, resolvedTeamId);
         updatedMatchResult = true;
       }
     } else {
@@ -407,7 +430,7 @@ export async function editTeamLeaderboardPoints(pool, {
         `SELECT COUNT(*)::int as cnt, MIN(id) as single_id
          FROM tournament_match_results
          WHERE tournament_id = $1 AND team_id = $2`,
-        [tournamentId, teamId]
+        [tournamentId, resolvedTeamId]
       );
       if (countRes.rows[0].cnt === 1) {
         const matchResultId = countRes.rows[0].single_id;
@@ -428,7 +451,7 @@ export async function editTeamLeaderboardPoints(pool, {
             actorId,
           ]
         );
-        await updateTeamLeaderboard(client, tournamentId, teamId);
+        await updateTeamLeaderboard(client, tournamentId, resolvedTeamId);
         updatedMatchResult = true;
       }
     }
@@ -452,7 +475,7 @@ export async function editTeamLeaderboardPoints(pool, {
            updated_at = NOW()`,
         [
           tournamentId,
-          teamId,
+          resolvedTeamId,
           finalMatchesPlayed,
           finalKills,
           finalKillPts,

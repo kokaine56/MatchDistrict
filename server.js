@@ -13356,7 +13356,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         await pool.query(
           `UPDATE tournament_groups
            SET scores_saved = true, scores_saved_at = NOW(), scores_status = 'saved'
-           WHERE id = $1 AND tournament_id = $2`,
+           WHERE (id = $1 OR district_id = $1) AND tournament_id = $2`,
           [districtId, tournId]
         );
         await pool.query(

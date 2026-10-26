@@ -127,14 +127,59 @@ export default function TournamentLeaderboard({
     };
   }, [tournamentId, selectedViewRound, refreshTrigger]);
 
+  // Local draft scores preserved across district switching
+  const [draftScores, setDraftScores] = useState({});
+
+  const getTeamScore = (team) => {
+    const draft = draftScores[team.team_id];
+    const placePts = draft?.placement_points != null ? Number(draft.placement_points) : (Number(team.total_placement_points) || 0);
+    const kills = draft?.total_kills != null ? Number(draft.total_kills) : (Number(team.total_kills) || 0);
+    const wwcd = draft?.wwcd_count != null ? Number(draft.wwcd_count) : (Number(team.wwcd_count) || 0);
+    const played = draft?.matches_played != null ? Number(draft.matches_played) : (Number(team.matches_played) || 0);
+    const totalPts = placePts + kills;
+    return {
+      placePts,
+      kills,
+      wwcd,
+      played,
+      totalPts,
+      isEdited: Boolean(draft),
+    };
+  };
+
+  const updateDraftScore = (teamId, field, val) => {
+    setDraftScores((prev) => {
+      const existing = prev[teamId] || {};
+      const team = standings.find((t) => t.team_id === teamId);
+      return {
+        ...prev,
+        [teamId]: {
+          placement_points: field === 'placement_points' ? val : (existing.placement_points != null ? existing.placement_points : (team?.total_placement_points || 0)),
+          total_kills: field === 'total_kills' ? val : (existing.total_kills != null ? existing.total_kills : (team?.total_kills || 0)),
+          wwcd_count: field === 'wwcd_count' ? val : (existing.wwcd_count != null ? existing.wwcd_count : (team?.wwcd_count || 0)),
+          matches_played: field === 'matches_played' ? val : (existing.matches_played != null ? existing.matches_played : (team?.matches_played || 1)),
+        },
+      };
+    });
+  };
+
   // Filter standings: In overall view, NEVER filter by district. In round views, filter if a district tab is active.
   const displayedStandings = useMemo(() => {
     if (!standings) return [];
     if (isOverallView || selectedDistrictId === 'all') return standings;
-    return standings.filter(
-      (t) => t.group_id === selectedDistrictId || t.district_id === selectedDistrictId
+    const currentDist = roundDistricts.find(
+      (d) => d.id === selectedDistrictId || d.district_id === selectedDistrictId
     );
-  }, [standings, selectedDistrictId, isOverallView]);
+    return standings.filter((t) => {
+      if (t.group_id === selectedDistrictId || t.district_id === selectedDistrictId) return true;
+      if (currentDist) {
+        if (currentDist.district_id && (t.group_id === currentDist.district_id || t.district_id === currentDist.district_id)) return true;
+        if (t.district_name && currentDist.name && t.district_name.toLowerCase() === currentDist.name.toLowerCase()) return true;
+        if (t.district_sequence != null && currentDist.sequence != null && Number(t.district_sequence) === Number(currentDist.sequence)) return true;
+      }
+      return false;
+    });
+  }, [standings, selectedDistrictId, isOverallView, roundDistricts]);
 
   // Derive source and target round from the tournament roadmap
   const { currentSourceRound, nextTargetRound } = useMemo(() => {
@@ -158,7 +203,7 @@ export default function TournamentLeaderboard({
 
   const currentActiveDistrict = useMemo(() => {
     if (selectedDistrictId === 'all') return null;
-    return roundDistricts.find((d) => d.id === selectedDistrictId) || null;
+    return roundDistricts.find((d) => d.id === selectedDistrictId || d.district_id === selectedDistrictId) || null;
   }, [roundDistricts, selectedDistrictId]);
 
   // Toggle selection for an individual team
@@ -234,14 +279,17 @@ export default function TournamentLeaderboard({
     setSavingDistrict(true);
     try {
       const token = localStorage.getItem('token') || '';
-      const teamScores = displayedStandings.map((t) => ({
-        team_id: t.team_id,
-        placement_points: Number(t.total_placement_points) || 0,
-        kill_points: Number(t.total_kills) || 0,
-        total_kills: Number(t.total_kills) || 0,
-        wwcd_count: Number(t.wwcd_count) || 0,
-        matches_played: Number(t.matches_played) || 1,
-      }));
+      const teamScores = displayedStandings.map((t) => {
+        const score = getTeamScore(t);
+        return {
+          team_id: t.team_id,
+          placement_points: score.placePts,
+          kill_points: score.kills,
+          total_kills: score.kills,
+          wwcd_count: score.wwcd,
+          matches_played: score.played > 0 ? score.played : 1,
+        };
+      });
 
       const res = await fetch(
         `/api/tournaments/${tournamentId}/rounds/${selectedViewRound}/districts/${currentActiveDistrict.id}/save-scores`,
@@ -257,6 +305,16 @@ export default function TournamentLeaderboard({
       const data = await res.json();
       if (!data.success) throw new Error(data.message || 'Failed to save district scores');
       showToastMessage(`Scores for ${currentActiveDistrict.name} successfully saved!`);
+
+      // Clear draft overrides for teams in this saved district
+      setDraftScores((prev) => {
+        const next = { ...prev };
+        for (const t of displayedStandings) {
+          delete next[t.team_id];
+        }
+        return next;
+      });
+
       triggerRefresh();
     } catch (err) {
       showToastMessage(`Error: ${err.message}`);
@@ -451,7 +509,7 @@ export default function TournamentLeaderboard({
                   </button>
 
                   {roundDistricts.map((dist) => {
-                    const isDistActive = selectedDistrictId === dist.id;
+                    const isDistActive = selectedDistrictId === dist.id || selectedDistrictId === dist.district_id;
                     const count = dist.teams?.length || 0;
                     const isSaved = dist.scores_saved || dist.scores_status === 'saved';
                     return (
@@ -600,13 +658,21 @@ export default function TournamentLeaderboard({
               </p>
             </div>
           ) : displayedStandings.length === 0 ? (
-            <div className="p-12 text-center border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-low">
-              <Trophy className="w-16 h-16 mx-auto mb-4 text-on-surface-variant/30" />
-              <h3 className="text-lg font-black text-on-surface mb-2">No Results Yet</h3>
-              <p className="text-on-surface-variant text-xs max-w-sm mx-auto">
-                {isOverallView
-                  ? 'Tournament standings will update automatically once match results are verified by the organizers.'
-                  : 'No match results recorded for this stage yet. Results will appear here once verified.'}
+            <div className="p-12 text-center border border-dashed border-outline-variant/30 rounded-2xl bg-surface-container-low space-y-3">
+              <div className="w-12 h-12 rounded-full bg-surface-container-highest flex items-center justify-center mx-auto text-on-surface-variant/40">
+                <Users className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-black text-on-surface">
+                {!isOverallView && currentActiveDistrict
+                  ? `No Teams Assigned to ${currentActiveDistrict.name}`
+                  : 'No Standings Available'}
+              </h3>
+              <p className="text-xs text-on-surface-variant max-w-md mx-auto">
+                {!isOverallView && currentActiveDistrict
+                  ? standings.some((t) => t.is_unassigned)
+                    ? 'Registered teams exist for this round but have not yet been assigned to this district.'
+                    : 'No eligible teams are currently allocated to this district.'
+                  : 'Standings will update automatically once match results or scoring entries are verified by the organizers.'}
               </p>
             </div>
           ) : (
@@ -719,6 +785,8 @@ export default function TournamentLeaderboard({
                         const isTop3 = rankNumber === 3;
                         const isSelected = selectedTeamIds.includes(team.team_id);
                         const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
+                        const teamScore = getTeamScore(team);
+                        const isDistrictScoringRow = isOrganizer && !isOverallView && selectedDistrictId !== 'all';
 
                         return (
                           <tr
@@ -788,38 +856,93 @@ export default function TournamentLeaderboard({
 
                             {/* Played */}
                             <td className="px-5 py-3.5 text-center text-on-surface-variant">
-                              {team.matches_played || 0}
+                              {teamScore.played || 0}
                             </td>
 
                             {/* Place Pts */}
-                            <td className="px-5 py-3.5 text-center text-on-surface-variant">
-                              {team.total_placement_points || 0}
-                            </td>
+                            {isDistrictScoringRow ? (
+                              <td className="px-3 py-2 text-center">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="1000"
+                                  value={teamScore.placePts}
+                                  onChange={(e) => updateDraftScore(team.team_id, 'placement_points', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                  className="w-16 px-2 py-1 text-center font-bold bg-surface-container border border-outline-variant/40 rounded-lg text-on-surface focus:outline-none focus:border-primary text-xs"
+                                  title="Placement Points"
+                                />
+                              </td>
+                            ) : (
+                              <td className="px-5 py-3.5 text-center text-on-surface-variant">
+                                {teamScore.placePts}
+                              </td>
+                            )}
 
                             {/* Total Kills */}
-                            <td className="px-5 py-3.5 text-center">
-                              <div className="flex items-center justify-center gap-1 text-rose-500 font-bold">
-                                <Target className="w-3.5 h-3.5" />
-                                <span>{team.total_kills || 0}</span>
-                              </div>
-                            </td>
+                            {isDistrictScoringRow ? (
+                              <td className="px-3 py-2 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <Target className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="1000"
+                                    value={teamScore.kills}
+                                    onChange={(e) => updateDraftScore(team.team_id, 'total_kills', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                    className="w-16 px-2 py-1 text-center font-bold bg-surface-container border border-outline-variant/40 rounded-lg text-rose-500 focus:outline-none focus:border-rose-500 text-xs"
+                                    title="Total Kills"
+                                  />
+                                </div>
+                              </td>
+                            ) : (
+                              <td className="px-5 py-3.5 text-center">
+                                <div className="flex items-center justify-center gap-1 text-rose-500 font-bold">
+                                  <Target className="w-3.5 h-3.5" />
+                                  <span>{teamScore.kills}</span>
+                                </div>
+                              </td>
+                            )}
 
                             {/* WWCD */}
-                            <td className="px-5 py-3.5 text-center">
-                              {team.wwcd_count > 0 ? (
-                                <span className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded font-bold text-xs">
-                                  {team.wwcd_count}
-                                </span>
-                              ) : (
-                                <span className="text-on-surface-variant/40">-</span>
-                              )}
-                            </td>
+                            {isDistrictScoringRow ? (
+                              <td className="px-3 py-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => updateDraftScore(team.team_id, 'wwcd_count', teamScore.wwcd > 0 ? 0 : 1)}
+                                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                    teamScore.wwcd > 0
+                                      ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/40 shadow-xs'
+                                      : 'bg-surface-container text-on-surface-variant hover:text-on-surface border border-outline-variant/20'
+                                  }`}
+                                  title="Toggle WWCD"
+                                >
+                                  {teamScore.wwcd > 0 ? `🏆 ${teamScore.wwcd}` : 'No'}
+                                </button>
+                              </td>
+                            ) : (
+                              <td className="px-5 py-3.5 text-center">
+                                {teamScore.wwcd > 0 ? (
+                                  <span className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded font-bold text-xs">
+                                    {teamScore.wwcd}
+                                  </span>
+                                ) : (
+                                  <span className="text-on-surface-variant/40">-</span>
+                                )}
+                              </td>
+                            )}
 
                             {/* Total Points */}
                             <td className="px-5 py-3.5 text-right">
-                              <span className="text-base font-black text-primary font-mono">
-                                {team.total_points || 0}
-                              </span>
+                              <div className="flex items-center justify-end gap-1.5">
+                                {teamScore.isEdited && (
+                                  <span className="text-[9px] uppercase tracking-wider font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                                    Draft
+                                  </span>
+                                )}
+                                <span className="text-base font-black text-primary font-mono">
+                                  {teamScore.totalPts}
+                                </span>
+                              </div>
                             </td>
 
                             {/* Organizer Actions */}

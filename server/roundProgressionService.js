@@ -468,6 +468,39 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       });
     }
 
+    // Also include any tournament_teams for this tournament not already in teamStatsMap
+    const teamsRes = await client.query(
+      `SELECT t.id as team_id, t.registration_id, t.team_name, u.name as leader_name, t.status as team_status
+       FROM tournament_teams t
+       LEFT JOIN users u ON u.id = t.leader_user_id
+       WHERE t.tournament_id = $1 AND t.status != 'disqualified'`,
+      [tournamentId]
+    );
+    for (const tm of teamsRes.rows) {
+      if (!teamStatsMap.has(tm.team_id) && (!tm.registration_id || !teamStatsMap.has(tm.registration_id))) {
+        teamStatsMap.set(tm.team_id, {
+          team_id: tm.team_id,
+          registration_id: tm.registration_id || null,
+          team_name: tm.team_name,
+          leader_name: tm.leader_name || 'Captain',
+          slot_number: null,
+          group_id: null,
+          district_name: null,
+          original_district_id: null,
+          original_district_name: null,
+          total_kills: 0,
+          total_kill_points: 0,
+          total_placement_points: 0,
+          total_points: 0,
+          wwcd_count: 0,
+          best_placement: null,
+          matches_played: 0,
+          has_results: false,
+          is_assigned: false,
+        });
+      }
+    }
+
     for (const asgn of roundAssignments) {
       const key = asgn.tournament_team_id;
       if (key && teamStatsMap.has(key)) {
@@ -575,6 +608,33 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
     entry.has_results = true;
   }
 
+  // Also load saved points from tournament_leaderboard for any teams with saved organizer scores
+  try {
+    const savedLbRes = await client.query(
+      `SELECT team_id, matches_played, total_kills, total_kill_points, total_placement_points, total_points, wwcd_count
+       FROM tournament_leaderboard
+       WHERE tournament_id = $1`,
+      [tournamentId]
+    );
+    for (const lb of savedLbRes.rows) {
+      const entry = teamStatsMap.get(lb.team_id);
+      if (entry && !entry.has_results) {
+        // Only override if not already populated from verified match results
+        entry.total_kills = Number(lb.total_kills) || 0;
+        entry.total_kill_points = Number(lb.total_kill_points) || 0;
+        entry.total_placement_points = Number(lb.total_placement_points) || 0;
+        entry.total_points = Number(lb.total_points) || (entry.total_placement_points + entry.total_kills);
+        entry.wwcd_count = Number(lb.wwcd_count) || 0;
+        entry.matches_played = Number(lb.matches_played) || 0;
+        if (entry.matches_played > 0 || entry.total_points > 0) {
+          entry.has_results = true;
+        }
+      }
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+
   // Build lookup of team placement in each verified match
   const matchTeamPlacement = new Map();
   for (const res of resultsRows) {
@@ -602,36 +662,113 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   // Build districts if configured for this round
   let districts = [];
   if (configuredDistricts.length > 0) {
-    const districtMap = new Map();
-    for (const d of configuredDistricts) {
-      districtMap.set(d.id, {
-        id: d.id,
-        name: d.group_name || d.name,
-        group_index: d.sequence || d.group_index || 1,
-        capacity: d.capacity || 16,
-        scores_saved: Boolean(d.scores_saved),
-        scores_saved_at: d.scores_saved_at || null,
-        scores_status: d.scores_status || (d.scores_saved ? 'saved' : 'unsaved'),
-        teams: [],
-      });
+    // Fetch registration groups to cross-reference legacy / Round 1 assignments
+    let regGroupMap = new Map();
+    try {
+      const regGroupsRes = await client.query(
+        `SELECT id, name, group_index, capacity
+         FROM tournament_registration_groups
+         WHERE tournament_id = $1
+         ORDER BY group_index ASC`,
+        [tournamentId]
+      );
+      for (const rg of regGroupsRes.rows) {
+        regGroupMap.set(rg.id, rg);
+      }
+    } catch {
+      // ignore
+    }
+
+    const districtList = configuredDistricts.map((d) => ({
+      id: d.id,
+      district_id: d.district_id || d.id,
+      name: d.group_name || d.name,
+      group_index: d.sequence || d.group_index || 1,
+      sequence: d.sequence || d.group_index || 1,
+      capacity: d.capacity || 16,
+      scores_saved: Boolean(d.scores_saved),
+      scores_saved_at: d.scores_saved_at || null,
+      scores_status: d.scores_status || (d.scores_saved ? 'saved' : 'unsaved'),
+      teams: [],
+    }));
+
+    const distById = new Map();
+    const distByDistrictId = new Map();
+    const distByName = new Map();
+    const distBySequence = new Map();
+    const distByRegGroupName = new Map();
+
+    for (const distObj of districtList) {
+      if (distObj.id) distById.set(distObj.id, distObj);
+      if (distObj.district_id) distByDistrictId.set(distObj.district_id, distObj);
+      if (distObj.name) distByName.set(distObj.name.toLowerCase().trim(), distObj);
+      if (distObj.sequence != null) distBySequence.set(Number(distObj.sequence), distObj);
+
+      // Cross-link with registration groups
+      if (distObj.district_id && regGroupMap.has(distObj.district_id)) {
+        const rg = regGroupMap.get(distObj.district_id);
+        if (rg.name) distByRegGroupName.set(rg.name.toLowerCase().trim(), distObj);
+        if (rg.group_index != null) distBySequence.set(Number(rg.group_index), distObj);
+      } else if (distObj.sequence != null) {
+        for (const rg of regGroupMap.values()) {
+          if (Number(rg.group_index) === Number(distObj.sequence)) {
+            if (rg.name) distByRegGroupName.set(rg.name.toLowerCase().trim(), distObj);
+            distByDistrictId.set(rg.id, distObj);
+            break;
+          }
+        }
+      }
     }
 
     const unassignedTeams = [];
     for (const t of allTeams) {
       let matchedDist = null;
-      if (t.group_id && districtMap.has(t.group_id)) {
-        matchedDist = districtMap.get(t.group_id);
-      } else if (t.district_name) {
-        for (const d of districtMap.values()) {
-          if (d.name.toLowerCase() === t.district_name.toLowerCase()) {
-            matchedDist = d;
-            break;
+
+      // 1. Direct ID match on group_id or original_district_id
+      if (t.group_id) {
+        matchedDist = distById.get(t.group_id) || distByDistrictId.get(t.group_id);
+      }
+      if (!matchedDist && t.original_district_id) {
+        matchedDist = distById.get(t.original_district_id) || distByDistrictId.get(t.original_district_id);
+      }
+
+      // 2. Cross-reference registration group ID
+      if (!matchedDist && t.group_id && regGroupMap.has(t.group_id)) {
+        const rg = regGroupMap.get(t.group_id);
+        matchedDist = distBySequence.get(Number(rg.group_index)) || (rg.name ? distByRegGroupName.get(rg.name.toLowerCase().trim()) : null);
+      }
+
+      // 3. Name or single letter match (e.g. 'A' -> 1, 'District 1' -> 1)
+      if (!matchedDist && (t.district_name || t.original_district_name)) {
+        const candidateName = (t.district_name || t.original_district_name || '').toLowerCase().trim();
+        matchedDist = distByName.get(candidateName) || distByRegGroupName.get(candidateName);
+        if (!matchedDist) {
+          if (candidateName.length === 1 && /[a-z]/i.test(candidateName)) {
+            const letterSeq = candidateName.toUpperCase().charCodeAt(0) - 64;
+            matchedDist = distBySequence.get(letterSeq);
+          } else {
+            const numMatch = candidateName.match(/(?:district|group|d)?\s*(\d+)/i);
+            if (numMatch) {
+              matchedDist = distBySequence.get(parseInt(numMatch[1], 10));
+            }
           }
         }
       }
+
+      // 4. Slot number mapping for Round 1
+      if (!matchedDist && isFirstRound && t.slot_number && Number(t.slot_number) > 0) {
+        const slotNum = Number(t.slot_number);
+        const defaultCap = districtList[0]?.capacity || 16;
+        const targetSeq = Math.floor((slotNum - 1) / defaultCap) + 1;
+        matchedDist = distBySequence.get(targetSeq);
+      }
+
       if (matchedDist) {
         t.district_id = matchedDist.id;
+        t.group_id = matchedDist.id;
         t.district_name = matchedDist.name;
+        t.district_sequence = matchedDist.sequence;
+        t.is_unassigned = false;
         matchedDist.teams.push(t);
       } else {
         t.is_unassigned = true;
@@ -639,7 +776,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       }
     }
 
-    districts = Array.from(districtMap.values()).map((d) => {
+    districts = districtList.map((d) => {
       const distMatches = matches.filter((m) => m.group_id === d.id || m.district_id === d.id);
       const distVerifiedMatches = distMatches.filter((m) => verifiedMatchIds.has(m.id));
       const distLastMatch = distVerifiedMatches.length > 0 ? distVerifiedMatches[distVerifiedMatches.length - 1] : roundLastMatch;
@@ -763,6 +900,29 @@ export async function advanceTeamsManually(client, {
   }
   const targetRound = targetRoundRes.rows[0];
 
+  // Map tournament teams and registrations for canonical ID resolution and friendly names
+  const teamsInfoRes = await client.query(
+    `SELECT t.id, t.registration_id, t.team_name, r.id as reg_id, r.group_id as reg_group_id, r.status as reg_status
+     FROM tournament_teams t
+     LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
+     WHERE t.tournament_id = $1`,
+    [tournamentId]
+  );
+  const teamNameMap = new Map();
+  const teamCanonicalIdMap = new Map();
+  for (const row of teamsInfoRes.rows) {
+    teamNameMap.set(row.id, row.team_name);
+    teamCanonicalIdMap.set(row.id, row.id);
+    if (row.registration_id) {
+      teamNameMap.set(row.registration_id, row.team_name);
+      teamCanonicalIdMap.set(row.registration_id, row.id);
+    }
+    if (row.reg_id) {
+      teamNameMap.set(row.reg_id, row.team_name);
+      teamCanonicalIdMap.set(row.reg_id, row.id);
+    }
+  }
+
   // 4. Source round validation (if provided)
   let sourceRound = null;
   if (sourceRoundId) {
@@ -780,27 +940,6 @@ export async function advanceTeamsManually(client, {
     }
 
     // 4a. Every team must have played/participated in the source round
-    const teamsInfoRes = await client.query(
-      `SELECT t.id, t.registration_id, t.team_name, r.id as reg_id, r.group_id as reg_group_id, r.status as reg_status
-       FROM tournament_teams t
-       LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
-       WHERE t.tournament_id = $1`,
-      [tournamentId]
-    );
-    const teamNameMap = new Map();
-    const teamCanonicalIdMap = new Map();
-    for (const row of teamsInfoRes.rows) {
-      teamNameMap.set(row.id, row.team_name);
-      teamCanonicalIdMap.set(row.id, row.id);
-      if (row.registration_id) {
-        teamNameMap.set(row.registration_id, row.team_name);
-        teamCanonicalIdMap.set(row.registration_id, row.id);
-      }
-      if (row.reg_id) {
-        teamNameMap.set(row.reg_id, row.team_name);
-        teamCanonicalIdMap.set(row.reg_id, row.id);
-      }
-    }
 
     // Determine if sourceRound is Round 1 (or lowest round number)
     const firstRndRes = await client.query(
