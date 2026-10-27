@@ -6,6 +6,7 @@ import { Resend } from 'resend';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { startSlotManagerWorker, reconcileTournamentSlots } from './workers/slotManagerWorker.js';
+import { startDiscordBotWorker } from './workers/discordBotWorker.js';
 import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
@@ -418,6 +419,7 @@ const REQUIRED_ENV_KEYS = ['DATABASE_URL', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'JWT
 for (const key of REQUIRED_ENV_KEYS) {
   console.log(`[ENV] ${key}: ${process.env[key] ? 'present' : 'missing'}`);
 }
+console.log(`[ENV] DISCORD_BOT_TOKEN: ${process.env.DISCORD_BOT_TOKEN ? 'present' : 'missing'}`);
 
 const PORT = process.env.PORT || 10000;
 
@@ -13823,6 +13825,45 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
+  // --- GET PUBLIC UNIFIED REGISTERED TEAMS ---
+  if (req.url.startsWith('/api/tournaments/') && (req.url.endsWith('/registered-teams') || req.url.endsWith('/public-teams')) && req.method === 'GET') {
+    const parts = req.url.split('/');
+    const id = parts[3];
+    try {
+      const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+      const regsRes = await pool.query(
+        `SELECT team_name, captain, status, created_at
+         FROM tournament_registrations
+         WHERE tournament_id = $1
+           AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))
+         ORDER BY created_at ASC`,
+        [id, EXCLUDED_STATUSES]
+      );
+
+      const seen = new Set();
+      const teams = [];
+      for (const r of regsRes.rows) {
+        const rawName = (r.team_name || '').trim();
+        if (!rawName) continue;
+        const lower = rawName.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        teams.push({
+          teamName: rawName,
+          teamLeader: (r.captain || 'Anonymous').trim(),
+        });
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: teams.length, teams }));
+      return;
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+      return;
+    }
+  }
+
   // --- GET TOURNAMENT SLOTS DETAIL ---
   if (req.url.startsWith('/api/tournaments/') && req.url.endsWith('/slots') && req.method === 'GET') {
     const parts = req.url.split('/');
@@ -19943,6 +19984,9 @@ function startMonitoringWorker() {
 }
 
 (async () => {
+  // Start Discord Welcome Bot immediately in parallel with server initialization
+  startDiscordBotWorker();
+
   try {
     await initDb();
   } catch (startupError) {
@@ -19956,7 +20000,8 @@ function startMonitoringWorker() {
   startMonitoringWorker();
   accountSecurity.startNotificationCleanup();
   accountSecurity.startAbuseCleanup();
-  server.listen(PORT, '0.0.0.0', () => {    console.log(`\n🚀 [MATCH DISTRICT PRODUCTION SERVER] Running on http://localhost:${PORT}`);
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🚀 [MATCH DISTRICT PRODUCTION SERVER] Running on http://localhost:${PORT}`);
     console.log(`🌐 Network: http://127.0.0.1:${PORT} (listening on all interfaces 0.0.0.0)`);
     console.log(`📦 Serving static frontend from ./dist`);
     console.log(`🔑 API Endpoints active (OTP, JWT Auth, Supabase DB)\n`);

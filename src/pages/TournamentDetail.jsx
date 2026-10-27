@@ -15,11 +15,8 @@ import VerificationBadge from '../components/VerificationBadge.jsx';
 import { DEFAULT_CATEGORIES } from '../components/tournament-creation/steps/Step7Rules.jsx';
 import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
-import GroupSlotGrid from '../components/GroupSlotGrid.jsx';
+import RegisteredTeamsList from '../components/RegisteredTeamsList.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
-
-import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
-import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder.jsx';
 import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
 import { computeSquadCapacity } from '../utils/squadRegistration.js';
 import { isSystemAdmin } from '../utils/iamRoles.js';
@@ -1401,7 +1398,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               {[
                 { id: 'overview', label: 'Overview' },
                 { id: 'prize', label: 'Prize Pool' },
-                { id: 'roadmap', label: 'Roadmap' },
                 ...(currentUser ? [{ id: 'my_team', label: 'My Team' }] : []),
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
@@ -1736,18 +1732,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
               )
             )}
-            {activeTab === 'roadmap' && (
-              <div className="w-full">
-                <TournamentRoadmapBuilder
-                  key={tourney?.id}
-                  tournamentId={tourney?.id}
-                  tournamentTitle={tourney?.title}
-                  isOrganizer={isTournamentOwner}
-                  registrationCloseDate={tourney?.registrationCloseDate || tourney?.registration_close_date}
-
-                />
-              </div>
-            )}
             {activeTab === 'my_team' && currentUser && (
               <TournamentTeamHub
                 tournamentId={tourney.id}
@@ -1813,9 +1797,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
             )}
             {activeTab === 'teams' && (
-              <GroupSlotGrid
+              <RegisteredTeamsList
+                tournamentId={tourney?.id || tournamentId}
                 slotsData={slotsData}
-                matchType={tourney?.match_type}
+                isGoldTheme={isGoldTheme}
               />
             )}
             {activeTab === 'sponsors' && (

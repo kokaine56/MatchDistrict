@@ -5,11 +5,8 @@ import { useUser } from '../UserContext'
 import { getAuthToken } from '../utils/getAuthToken'
 import { normalizeTournamentRow } from '../utils/api'
 import { hasOrganizerRights, isSystemAdmin } from '../utils/iamRoles.js'
-import { isTournamentOrganizer } from '../utils/tournamentAuth.js'
-import { formatDate } from '../utils/timeFormat'
 import TournamentPlanningConfigEditor from '../components/TournamentPlanningConfigEditor'
 import TournamentPlanningResultCard from '../components/TournamentPlanningResultCard'
-import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder'
 import AllocationManagement from '../components/AllocationManagement'
 
 const TABS = ['All Tournaments', 'Drafts', 'Published', 'Completed', 'Archived']
@@ -97,7 +94,6 @@ export default function TournamentManagement({ onNavigate }) {
   const [regActionLoading, setRegActionLoading] = useState(null)
   const [planningConfigTournament, setPlanningConfigTournament] = useState(null)
   const [planningResultTournament, setPlanningResultTournament] = useState(null)
-  const [roadmapTournament, setRoadmapTournament] = useState(null)
   const [allocationTournament, setAllocationTournament] = useState(null)
   const [prizeAwardsTournament, setPrizeAwardsTournament] = useState(null)
   const [prizeAwards, setPrizeAwards] = useState([])
@@ -396,9 +392,6 @@ export default function TournamentManagement({ onNavigate }) {
         case 'planning-result':
           setPlanningResultTournament(t)
           break
-        case 'roadmap':
-          setRoadmapTournament(t)
-          break
       }
     } catch (err) {
       showToast('Action failed: ' + err.message, 'error')
@@ -682,8 +675,7 @@ export default function TournamentManagement({ onNavigate }) {
                                         )}
                                         {t.status !== 'archived' && t.status !== 'completed' && (
                                           <>
-                                            <MenuButton icon="map" label="Roadmap" onClick={() => { setMenuOpenId(null); handleAction('roadmap', t) }} />
-                                            <MenuButton icon="calendar" label="Roadmap Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
+                                            <MenuButton icon="calendar" label="Capacity Planning" onClick={() => { setMenuOpenId(null); handleAction('planning-config', t) }} />
                                             <MenuButton icon="clipboard" label="View Planning Result" onClick={() => { setMenuOpenId(null); handleAction('planning-result', t) }} />
                                             <MenuButton icon="calendar" label="Allocation Management" onClick={() => { setMenuOpenId(null); handleAction('allocations', t) }} />
                                           </>
@@ -961,24 +953,6 @@ export default function TournamentManagement({ onNavigate }) {
             onApproved={() => {
               showToast('Capacity plan approved successfully.')
               fetchTournaments() // optionally refresh
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-    {/* Roadmap Builder Modal */}
-      <AnimatePresence>
-        {roadmapTournament && (
-          <TournamentRoadmapBuilder
-            key={roadmapTournament.id}
-            tournamentId={roadmapTournament.id}
-            tournamentTitle={roadmapTournament.title}
-            isOrganizer={isTournamentOrganizer(currentUser, roadmapTournament)}
-            registrationCloseDate={roadmapTournament.registrationCloseDate || roadmapTournament.registration_close_date}
-            onClose={() => setRoadmapTournament(null)}
-            onApproved={() => {
-              showToast('Roadmap approved successfully.')
-              fetchTournaments()
             }}
           />
         )}
