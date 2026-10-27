@@ -101,6 +101,34 @@ During development with auto-reload:
 npm run dev
 ```
 
+### Running with Docker
+
+The Discord bot can be built and deployed independently using its dedicated Dockerfile (`Dockerfile.discord` or `discord.dockerfile`):
+
+#### Build and run from repository root:
+```bash
+# Build the image using Dockerfile.discord (or discord.dockerfile)
+docker build -f Dockerfile.discord -t matchdistrict-discord-bot .
+
+# Run the container with your bot token
+docker run -d \
+  --name matchdistrict-discord-bot \
+  -e DISCORD_BOT_TOKEN="your_bot_token_here" \
+  --restart unless-stopped \
+  matchdistrict-discord-bot
+```
+
+#### Build and run from `bot/discord/`:
+```bash
+cd bot/discord
+docker build -t matchdistrict-discord-bot .
+docker run -d \
+  --name matchdistrict-discord-bot \
+  -e DISCORD_BOT_TOKEN="your_bot_token_here" \
+  --restart unless-stopped \
+  matchdistrict-discord-bot
+```
+
 ---
 
 ## Troubleshooting

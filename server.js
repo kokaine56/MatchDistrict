@@ -19984,8 +19984,10 @@ function startMonitoringWorker() {
 }
 
 (async () => {
-  // Start Discord Welcome Bot immediately in parallel with server initialization
-  startDiscordBotWorker();
+  // Start Discord Welcome Bot only if not explicitly disabled
+  if (process.env.DISABLE_DISCORD_BOT !== 'true') {
+    startDiscordBotWorker();
+  }
 
   try {
     await initDb();

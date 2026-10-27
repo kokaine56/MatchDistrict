@@ -7,8 +7,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const FALLBACK_DISCORD_TOKEN = 'MTU2NDYyNTc0OTU2NTI1MTcxNQ.G0RI3J.gV4ZgTH7vqhek8lEMmp3lQY57JXgAY82N-qY24';
-
 let botProcess = null;
 let restartTimeout = null;
 let restartAttempts = 0;
@@ -16,7 +14,7 @@ let isShuttingDown = false;
 const MAX_RESTART_ATTEMPTS = 10;
 
 /**
- * Resolves the Discord Bot Token from environment, candidate .env files, or fallback.
+ * Resolves the Discord Bot Token from environment or candidate .env files.
  * @returns {string}
  */
 function resolveDiscordToken() {
@@ -50,11 +48,6 @@ function resolveDiscordToken() {
     }
   }
 
-  if (FALLBACK_DISCORD_TOKEN) {
-    process.env.DISCORD_BOT_TOKEN = FALLBACK_DISCORD_TOKEN;
-    return FALLBACK_DISCORD_TOKEN;
-  }
-
   return '';
 }
 
@@ -65,6 +58,10 @@ function resolveDiscordToken() {
  * @returns {import('child_process').ChildProcess|null}
  */
 export function startDiscordBotWorker() {
+  if (process.env.DISABLE_DISCORD_BOT === 'true') {
+    return null;
+  }
+
   if (botProcess && !botProcess.killed) {
     return botProcess;
   }
@@ -79,7 +76,6 @@ export function startDiscordBotWorker() {
   const botDir = path.resolve(__dirname, '../bot/discord');
 
   if (!fs.existsSync(botScriptPath)) {
-    console.warn(`⚠️ [DISCORD BOT] Bot entry file not found at: ${botScriptPath}`);
     return null;
   }
 

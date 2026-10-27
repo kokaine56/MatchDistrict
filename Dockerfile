@@ -16,14 +16,12 @@ ARG SUPABASE_URL
 ARG SUPABASE_ANON_KEY
 ARG ADMIN_EMAIL
 ARG ADMIN_PASSWORD
-ARG DISCORD_BOT_TOKEN="MTU2NDYyNTc0OTU2NTI1MTcxNQ.G0RI3J.gV4ZgTH7vqhek8lEMmp3lQY57JXgAY82N-qY24"
 
 # Vite requires these at build time to embed them in the bundle
 ENV SUPABASE_URL=$SUPABASE_URL
 ENV SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
 ENV ADMIN_EMAIL=$ADMIN_EMAIL
 ENV ADMIN_PASSWORD=$ADMIN_PASSWORD
-ENV DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN
 ENV NODE_ENV=production
 
 # Copy application source
@@ -48,27 +46,21 @@ COPY --from=build /app/workers ./workers
 COPY --from=build /app/server ./server
 COPY --from=build /app/src/utils/iamRoles.js ./src/utils/iamRoles.js
 COPY --from=build /app/server.js ./server.js
-COPY --from=build /app/bot ./bot
 
-# Install bot production dependencies for Discord Welcome Bot
-RUN cd bot/discord && npm install --omit=dev --ignore-scripts && npm cache clean --force
-
-# Runtime environment
+# Runtime environment (website only)
 ENV NODE_ENV=production
 ENV PORT=10000
+ENV DISABLE_DISCORD_BOT=true
 
 ENV RESEND_API_KEY=""
 ENV RESEND_FROM_EMAIL="Match District <auth@matchdistrict.in>"
-
-# Discord Welcome Bot token configuration (supports Render dashboard injection with production fallback)
-ARG DISCORD_BOT_TOKEN="MTU2NDYyNTc0OTU2NTI1MTcxNQ.G0RI3J.gV4ZgTH7vqhek8lEMmp3lQY57JXgAY82N-qY24"
-ENV DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN
 
 EXPOSE 10000
 
 # Use tini as init for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]
 
-# Start the server (auto-launches website and Discord Welcome Bot)
+# Start the website server
 CMD ["node", "server.js"]
+
 

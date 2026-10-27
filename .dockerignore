@@ -1,9 +1,12 @@
 node_modules
+**/node_modules
 dist
 .git
 .gitignore
 .env
-Dockerfile
+.env.*
+Dockerfile*
+*.dockerfile
 .dockerignore
 README.md
 blueprints
