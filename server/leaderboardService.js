@@ -316,46 +316,6 @@ export function sortAndRank(rows = [], scoringRules = {}) {
  * @param {Object} scoringRules - Tournament scoring rules
  * @returns {{ hasTie: boolean, cutoffScore: number | null, tiedTeams: Array<Object> }}
  */
-export function detectCutoffTies(standings = [], cutoffCount = 0, scoringRules = {}) {
-  if (!Array.isArray(standings) || cutoffCount <= 0 || cutoffCount >= standings.length) {
-    return { hasTie: false, cutoffScore: null, tiedTeams: [] };
-  }
-
-  const eligible = standings.filter((t) => !t.is_disqualified);
-  if (cutoffCount <= 0 || cutoffCount >= eligible.length) {
-    return { hasTie: false, cutoffScore: null, tiedTeams: [] };
-  }
-
-  const lastInside = eligible[cutoffCount - 1];
-  const firstOutside = eligible[cutoffCount];
-
-  if (!lastInside || !firstOutside) {
-    return { hasTie: false, cutoffScore: null, tiedTeams: [] };
-  }
-
-  const cmp = compareTeams(lastInside, firstOutside, scoringRules);
-  const cutoffPoints = Number(lastInside.total_points ?? lastInside.points) || 0;
-
-  if (cmp === 0) {
-    const tiedTeams = eligible.filter((t) => compareTeams(t, lastInside, scoringRules) === 0);
-    return {
-      hasTie: true,
-      cutoffScore: cutoffPoints,
-      tiedTeams,
-    };
-  }
-
-  return { hasTie: false, cutoffScore: cutoffPoints, tiedTeams: [] };
-}
-
-/**
- * Ensures all approved registrations in tournament_registrations have a canonical record in tournament_teams.
- * Resolves canonical ID map mapping both registration_id and team_id to tournament_teams.id.
- *
- * @param {object} client - pg pool or client
- * @param {string} tournamentId
- * @returns {Promise<{ teamCanonicalIdMap: Map<string, string>, teamNameMap: Map<string, string>, captainNameMap: Map<string, string> }>}
- */
 export async function ensureCanonicalTeams(client, tournamentId) {
   const APPROVED_REG_STATUSES = ['approved', 'confirmed', 'verified_by_host', 'VERIFIED_BY_HOST', 'verified'];
 
@@ -375,6 +335,9 @@ export async function ensureCanonicalTeams(client, tournamentId) {
     LEFT JOIN users u ON u.id = r.user_id
     WHERE r.tournament_id = $1::varchar
       AND LOWER(r.status) = ANY($2::text[])
+      AND COALESCE(r.is_test, FALSE) = FALSE
+      AND r.id NOT LIKE 'REG-TEST-%'
+      AND COALESCE(r.user_id, '') NOT LIKE 'USR-TEST-%'
       AND NOT EXISTS (
         SELECT 1 FROM tournament_teams tt
         WHERE tt.tournament_id = r.tournament_id
@@ -395,6 +358,9 @@ export async function ensureCanonicalTeams(client, tournamentId) {
       AND tt.registration_id IS NULL
       AND LOWER(TRIM(tt.team_name)) = LOWER(TRIM(r.team_name))
       AND LOWER(r.status) = ANY($2::text[])
+      AND COALESCE(r.is_test, FALSE) = FALSE
+      AND r.id NOT LIKE 'REG-TEST-%'
+      AND COALESCE(r.user_id, '') NOT LIKE 'USR-TEST-%'
   `, [tournamentId, APPROVED_REG_STATUSES]);
 
   const teamsRes = await client.query(`
@@ -403,6 +369,9 @@ export async function ensureCanonicalTeams(client, tournamentId) {
     LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(TRIM(r.team_name)) = LOWER(TRIM(t.team_name))))
     LEFT JOIN users u ON u.id = t.leader_user_id
     WHERE t.tournament_id = $1::varchar
+      AND t.id NOT LIKE 'TEAM-REG-TEST-%'
+      AND COALESCE(t.leader_user_id, '') NOT LIKE 'USR-TEST-%'
+      AND COALESCE(r.is_test, FALSE) = FALSE
   `, [tournamentId]);
 
   const teamCanonicalIdMap = new Map();
@@ -586,6 +555,11 @@ export async function getEligibleTournamentTeams(client, tournamentId, { roundId
       JOIN tournament_teams t ON (t.registration_id = r.id OR (t.tournament_id = r.tournament_id AND LOWER(t.team_name) = LOWER(r.team_name)))
       WHERE r.tournament_id = $1::varchar
         AND LOWER(r.status) = ANY($2::text[])
+        AND COALESCE(r.is_test, FALSE) = FALSE
+        AND r.id NOT LIKE 'REG-TEST-%'
+        AND COALESCE(r.user_id, '') NOT LIKE 'USR-TEST-%'
+        AND t.id NOT LIKE 'TEAM-REG-TEST-%'
+        AND COALESCE(t.leader_user_id, '') NOT LIKE 'USR-TEST-%'
       ORDER BY r.slot_number ASC NULLS LAST, r.created_at ASC
     `;
     const regRes = await client.query(regSql, [tournamentId, APPROVED_REG_STATUSES]);
@@ -667,6 +641,9 @@ export async function getEligibleTournamentTeams(client, tournamentId, { roundId
       LEFT JOIN tournament_registrations r ON (r.id = t.registration_id OR (r.tournament_id = t.tournament_id AND LOWER(r.team_name) = LOWER(t.team_name)))
       LEFT JOIN tournament_groups g ON g.id = COALESCE(a.group_id, m.group_id)
       WHERE m.round_id = $1::varchar AND a.tournament_id = $2::varchar
+        AND COALESCE(r.is_test, FALSE) = FALSE
+        AND t.id NOT LIKE 'TEAM-REG-TEST-%'
+        AND COALESCE(t.leader_user_id, '') NOT LIKE 'USR-TEST-%'
     `, [roundId, tournamentId]);
 
     for (const r of asgnRes.rows) {
@@ -779,388 +756,6 @@ export async function getEligibleTournamentTeams(client, tournamentId, { roundId
  * @param {string} districtId
  * @returns {Promise<{ version: number, status: string, saved_at: string|null, saved_by: string|null }>}
  */
-export async function getDistrictSaveState(client, tournamentId, roundId, districtId) {
-  try {
-    const res = await client.query(`
-      SELECT version, status, saved_at, saved_by
-      FROM tournament_district_save_states
-      WHERE tournament_id = $1::varchar
-        AND round_id = $2::varchar
-        AND district_id = $3::varchar
-    `, [tournamentId, roundId, districtId]);
-
-    if (res.rows.length > 0) {
-      return {
-        version: Number(res.rows[0].version) || 1,
-        status: res.rows[0].status || 'saved',
-        saved_at: res.rows[0].saved_at ? res.rows[0].saved_at.toISOString() : null,
-        saved_by: res.rows[0].saved_by || null,
-      };
-    }
-  } catch {
-    // Non-blocking fallback if unmigrated
-  }
-
-  return {
-    version: 0,
-    status: 'unsaved',
-    saved_at: null,
-    saved_by: null,
-  };
-}
-
-/**
- * Saves all teams of a district in ONE transaction with expected-version checks (Decision 3).
- * Returns 409 Conflict if expected version does not match.
- *
- * @param {object} client - pg pool client with transaction control
- * @param {object} params
- */
-export async function saveDistrictScores(client, {
-  tournamentId,
-  roundId,
-  districtId,
-  matchId = null,
-  teamScores = [],
-  expectedVersion = null,
-  actorId = null,
-  scoringRules = {},
-}) {
-  if (!tournamentId || !districtId) {
-    throw new Error('Tournament ID and District ID are required.');
-  }
-
-  // 1. Lock tournament and verify not finalized
-  const tournRes = await client.query(
-    'SELECT id, finalized_at FROM tournaments WHERE id = $1::varchar FOR UPDATE',
-    [tournamentId]
-  );
-  if (tournRes.rows.length === 0) {
-    throw new Error('Tournament not found.');
-  }
-  if (tournRes.rows[0].finalized_at) {
-    const err = new Error('Tournament is finalized; score entry is locked.');
-    err.statusCode = 409;
-    err.code = 'TOURNAMENT_FINALIZED';
-    throw err;
-  }
-
-  // 2. Fetch or initialize district save state record with row lock
-  let currentVersion = 0;
-  let saveStateRow = null;
-  try {
-    const stateRes = await client.query(`
-      SELECT id, version, status, saved_at
-      FROM tournament_district_save_states
-      WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND district_id = $3::varchar
-      FOR UPDATE
-    `, [tournamentId, roundId || 'default', districtId]);
-
-    if (stateRes.rows.length > 0) {
-      saveStateRow = stateRes.rows[0];
-      currentVersion = Number(saveStateRow.version) || 1;
-    }
-  } catch {
-    // Tolerant if table not yet created
-  }
-
-  // Expected-version check (Decision 3: returns 409 Conflict if someone else saved first)
-  if (expectedVersion != null && currentVersion > 0) {
-    const expNum = Number(expectedVersion);
-    if (expNum !== currentVersion) {
-      const conflictErr = new Error(
-        `This district was modified by another organizer (server version ${currentVersion}, expected ${expNum}). Please reload the latest scores before saving.`
-      );
-      conflictErr.statusCode = 409;
-      conflictErr.code = 'DISTRICT_VERSION_CONFLICT';
-      conflictErr.current_version = currentVersion;
-      conflictErr.expected_version = expNum;
-      throw conflictErr;
-    }
-  }
-
-  const newVersion = currentVersion + 1;
-  const killMultiplier = Number(scoringRules.kill_points_multiplier ?? scoringRules.kill_multiplier ?? 1);
-  const effectiveMultiplier = Number.isFinite(killMultiplier) && killMultiplier >= 0 ? killMultiplier : 1;
-
-  // 3. Resolve target match for this district/round
-  let targetMatchId = matchId;
-  if (!targetMatchId && roundId) {
-    const mRes = await client.query(`
-      SELECT id FROM tournament_matches
-      WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND (group_id = $3::varchar OR district_id = $3::varchar)
-      ORDER BY match_number ASC LIMIT 1
-    `, [tournamentId, roundId, districtId]);
-
-    if (mRes.rows.length > 0) {
-      targetMatchId = mRes.rows[0].id;
-    } else {
-      targetMatchId = 'MAT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-      await client.query(`
-        INSERT INTO tournament_matches (id, tournament_id, round_id, group_id, district_id, match_number, status, origin)
-        VALUES ($1, $2, $3, $4, $4, 1, 'PENDING', 'score_entry')
-        ON CONFLICT (id) DO NOTHING
-      `, [targetMatchId, tournamentId, roundId, districtId]);
-    }
-  }
-
-  // 4. Resolve district capacity for position validation
-  let matchCapacity = 16;
-  try {
-    const capRes = await client.query(`
-      SELECT capacity FROM tournament_groups WHERE (id = $1::varchar OR district_id = $1::varchar) AND tournament_id = $2::varchar
-      UNION
-      SELECT capacity FROM tournament_registration_groups WHERE id = $1::varchar AND tournament_id = $2::varchar
-      LIMIT 1
-    `, [districtId, tournamentId]);
-    if (capRes.rows.length > 0 && capRes.rows[0].capacity) {
-      matchCapacity = Math.max(Number(capRes.rows[0].capacity) || 16, teamScores.length);
-    } else {
-      matchCapacity = Math.max(16, teamScores.length);
-    }
-  } catch {
-    matchCapacity = Math.max(16, teamScores.length);
-  }
-
-  // 5. Pre-validate duplicate finish positions and negative kills
-  const seenPlacements = new Set();
-  for (const item of teamScores) {
-    if (!item || !item.team_id) continue;
-    const placementVal = item.placement ?? item.finish_position ?? item.position;
-    if (placementVal !== '' && placementVal != null) {
-      const p = Number(placementVal);
-      if (!Number.isInteger(p) || p < 1 || p > matchCapacity) {
-        throw new Error(`Invalid finish position "${placementVal}" for team "${item.team_name || item.team_id}". Position must be a whole number between 1 and ${matchCapacity}.`);
-      }
-      if (seenPlacements.has(p)) {
-        throw new Error(`Duplicate finish position: position #${p} is assigned to more than one team.`);
-      }
-      seenPlacements.add(p);
-    }
-
-    const killsVal = item.kills ?? item.total_kills;
-    if (killsVal !== '' && killsVal != null) {
-      const k = Number(killsVal);
-      if (!Number.isInteger(k) || k < 0) {
-        throw new Error(`Invalid kills for team "${item.team_name || item.team_id}": kills cannot be negative.`);
-      }
-    }
-  }
-
-  let savedCount = 0;
-
-  for (const item of teamScores) {
-    if (!item || !item.team_id) continue;
-    const teamId = item.team_id;
-
-    // Ensure team exists in tournament_teams
-    let teamRes = await client.query(
-      'SELECT id, team_name, status FROM tournament_teams WHERE (id = $1::varchar OR registration_id = $1::varchar) AND tournament_id = $2::varchar FOR UPDATE',
-      [teamId, tournamentId]
-    );
-
-    let resolvedTeamId = teamId;
-    let teamName = '';
-    if (teamRes.rows.length > 0) {
-      resolvedTeamId = teamRes.rows[0].id;
-      teamName = teamRes.rows[0].team_name;
-      if (teamRes.rows[0].status === 'disqualified') {
-        throw new Error(`Cannot edit scores for disqualified team "${teamName}".`);
-      }
-    } else {
-      const regRes = await client.query(
-        'SELECT id, team_name, user_id, status FROM tournament_registrations WHERE id = $1::varchar AND tournament_id = $2::varchar',
-        [teamId, tournamentId]
-      );
-      if (regRes.rows.length === 0) {
-        throw new Error(`Team "${teamId}" not found in this tournament.`);
-      }
-      const regRow = regRes.rows[0];
-      teamName = regRow.team_name;
-      const hashPart = crypto.createHash('md5').update(regRow.id + tournamentId).digest('hex').substring(0, 6);
-      const newTeamId = 'TEAM-' + regRow.id.substring(0, 8) + '-' + hashPart;
-      const insTeam = await client.query(`
-        INSERT INTO tournament_teams (id, tournament_id, registration_id, team_name, leader_user_id, status, created_at, updated_at)
-        VALUES ($1::varchar, $2::varchar, $3::varchar, $4::varchar, COALESCE($5::varchar, (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)), 'verified', NOW(), NOW())
-        ON CONFLICT (tournament_id, team_name) DO UPDATE SET updated_at = NOW()
-        RETURNING id
-      `, [newTeamId, tournamentId, regRow.id, regRow.team_name, regRow.user_id || actorId]);
-      resolvedTeamId = insTeam.rows[0]?.id || newTeamId;
-    }
-
-    // Previous data for audit
-    const prevLbRes = await client.query(
-      'SELECT * FROM tournament_leaderboard WHERE tournament_id = $1::varchar AND team_id = $2::varchar',
-      [tournamentId, resolvedTeamId]
-    );
-    const prevData = prevLbRes.rows[0] || null;
-
-    const rawPlacement = item.placement ?? item.finish_position ?? item.position;
-    const hasPlacementInput = rawPlacement !== '' && rawPlacement != null;
-
-    if (hasPlacementInput && targetMatchId) {
-      // ── Per-Match Scoring ──
-      const placement = Number(rawPlacement);
-      const kills = item.kills != null && item.kills !== '' ? Number(item.kills) : (Number(item.total_kills) || 0);
-      const pts = calculateMatchPoints(kills, placement, scoringRules);
-
-      const resultId = 'RES-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-
-      await client.query(`
-        INSERT INTO tournament_match_results (
-          id, tournament_id, match_id, team_id, placement, kills,
-          kill_points, placement_points, wwcd, total_points, status,
-          submitted_by, verified_by, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'verified', $11, $11, NOW())
-        ON CONFLICT (match_id, team_id) DO UPDATE SET
-          placement = EXCLUDED.placement,
-          kills = EXCLUDED.kills,
-          kill_points = EXCLUDED.kill_points,
-          placement_points = EXCLUDED.placement_points,
-          wwcd = EXCLUDED.wwcd,
-          total_points = EXCLUDED.total_points,
-          status = 'verified',
-          submitted_by = EXCLUDED.submitted_by,
-          verified_by = EXCLUDED.verified_by,
-          updated_at = NOW()
-      `, [
-        resultId, tournamentId, targetMatchId, resolvedTeamId,
-        placement, kills, pts.kill_points, pts.placement_points, pts.wwcd, pts.total_points, actorId
-      ]);
-
-      // Ensure assignment exists in tournament_match_assignments
-      try {
-        await client.query(`
-          INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, group_id, status, source)
-          VALUES ('ASG-' || gen_random_uuid()::varchar, $1, $2, $3, $4, 'allocated', 'score_entry')
-          ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET group_id = COALESCE(tournament_match_assignments.group_id, EXCLUDED.group_id)
-        `, [tournamentId, resolvedTeamId, targetMatchId, districtId]);
-      } catch {
-        // Tolerant if table constraint differs
-      }
-
-      // Audit trail
-      await client.query(`
-        INSERT INTO tournament_match_results_audit (id, result_id, action, previous_data, new_data, actor_id, timestamp)
-        VALUES (gen_random_uuid()::varchar, $1::varchar, 'upsert', $2::text, $3::text, $4::varchar, NOW())
-      `, [
-        resultId,
-        prevData ? JSON.stringify(prevData) : null,
-        JSON.stringify({ placement, kills, kill_points: pts.kill_points, placement_points: pts.placement_points, wwcd: pts.wwcd, total_points: pts.total_points }),
-        actorId,
-      ]);
-
-      // Re-aggregate cumulative statistics for this team from verified match results
-      await updateTeamLeaderboard(client, tournamentId, resolvedTeamId);
-    } else {
-      // ── Legacy / Direct Aggregated Score Fallback ──
-      const pCheck = validateScore(item.placement_points ?? item.placementPoints ?? 0, 'Placement points');
-      if (!pCheck.valid) throw new Error(pCheck.error);
-
-      const kCheck = validateScore(item.total_kills ?? item.totalKills ?? item.kills ?? 0, 'Total kills');
-      if (!kCheck.valid) throw new Error(kCheck.error);
-
-      const wwcdCheck = validateScore(item.wwcd_count ?? item.wwcdCount ?? (item.wwcd ? 1 : 0), 'WWCD count');
-      if (!wwcdCheck.valid) throw new Error(wwcdCheck.error);
-
-      const mpCheck = validateScore(item.matches_played ?? item.matchesPlayed ?? 1, 'Matches played');
-      if (!mpCheck.valid) throw new Error(mpCheck.error);
-
-      const finalPlacementPts = pCheck.value;
-      const finalKills = kCheck.value;
-      const finalKillPts = finalKills * effectiveMultiplier;
-      const finalWwcd = wwcdCheck.value;
-      const finalMatchesPlayed = mpCheck.value;
-      const finalTotalPoints = finalPlacementPts + finalKillPts;
-
-      await client.query(`
-        INSERT INTO tournament_leaderboard (
-          id, tournament_id, team_id, matches_played, total_kills,
-          total_kill_points, total_placement_points, total_points,
-          wwcd_count, updated_at
-        ) VALUES (
-          gen_random_uuid()::varchar, $1::varchar, $2::varchar, $3::int, $4::int,
-          $5::int, $6::int, $7::int, $8::int, NOW()
-        ) ON CONFLICT (tournament_id, team_id) DO UPDATE SET
-          matches_played = EXCLUDED.matches_played,
-          total_kills = EXCLUDED.total_kills,
-          total_kill_points = EXCLUDED.total_kill_points,
-          total_placement_points = EXCLUDED.total_placement_points,
-          total_points = EXCLUDED.total_points,
-          wwcd_count = EXCLUDED.wwcd_count,
-          updated_at = NOW()
-      `, [
-        tournamentId, resolvedTeamId, finalMatchesPlayed, finalKills,
-        finalKillPts, finalPlacementPts, finalTotalPoints, finalWwcd
-      ]);
-    }
-
-    // Audit log
-    await client.query(`
-      INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, details)
-      VALUES (gen_random_uuid()::varchar, $1::varchar, 'save_district_score', 'scoring', 'team', $2::varchar, $3::text)
-    `, [
-      actorId,
-      resolvedTeamId,
-      JSON.stringify({
-        tournament_id: tournamentId,
-        match_id: targetMatchId || null,
-        team_id: resolvedTeamId,
-        team_name: teamName,
-        round_id: roundId || null,
-        district_id: districtId,
-        previous: prevData,
-      }),
-    ]);
-
-    savedCount++;
-  }
-
-  // 3. Persist district save state in tournament_district_save_states
-  try {
-    await client.query(`
-      INSERT INTO tournament_district_save_states (
-        id, tournament_id, round_id, district_id, status, version, saved_by, saved_at
-      ) VALUES (
-        'DSS-' || gen_random_uuid()::varchar, $1::varchar, $2::varchar, $3::varchar, 'saved', $4::int, $5::varchar, NOW()
-      ) ON CONFLICT (tournament_id, round_id, district_id) DO UPDATE SET
-        status = 'saved',
-        version = EXCLUDED.version,
-        saved_by = EXCLUDED.saved_by,
-        saved_at = NOW()
-    `, [tournamentId, roundId || 'default', districtId, newVersion, actorId]);
-  } catch {
-    // Non-blocking fallback if unmigrated
-  }
-
-  // Also update legacy groups tables for backwards compatibility
-  await client.query(`
-    UPDATE tournament_groups
-    SET scores_saved = true, scores_saved_at = NOW(), scores_status = 'saved'
-    WHERE (id = $1::varchar OR district_id = $1::varchar) AND tournament_id = $2::varchar
-  `, [districtId, tournamentId]);
-
-  await client.query(`
-    UPDATE tournament_registration_groups
-    SET scores_saved = true, scores_saved_at = NOW(), scores_status = 'saved'
-    WHERE id = $1::varchar AND tournament_id = $2::varchar
-  `, [districtId, tournamentId]);
-
-  return {
-    success: true,
-    tournament_id: tournamentId,
-    round_id: roundId,
-    district_id: districtId,
-    saved_count: savedCount,
-    version: newVersion,
-    scores_status: 'saved',
-    scores_saved_at: new Date().toISOString(),
-  };
-}
-
-/**
- * Fetch overall tournament standings using the single authoritative ranking engine.
- */
 export async function calculateRankings(pool, tournamentId) {
   const eligibleTeams = await getEligibleTournamentTeams(pool, tournamentId, { roundId: null, isFirstRound: false });
   return sortAndRank(eligibleTeams);
@@ -1169,47 +764,3 @@ export async function calculateRankings(pool, tournamentId) {
 /**
  * Allows authorized administrators and tournament organizers to enter or edit a team's points individually.
  */
-export async function editTeamLeaderboardPoints(pool, {
-  tournamentId,
-  teamId,
-  placement_points,
-  kill_points,
-  total_kills,
-  wwcd_count,
-  matches_played,
-  round_id = null,
-  actorId = null,
-} = {}) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await saveDistrictScores(client, {
-      tournamentId,
-      roundId: round_id || 'default',
-      districtId: 'individual-edit',
-      teamScores: [
-        {
-          team_id: teamId,
-          placement_points,
-          total_kills: total_kills != null ? total_kills : kill_points,
-          wwcd_count,
-          matches_played,
-        },
-      ],
-      expectedVersion: null,
-      actorId,
-    });
-    await client.query('COMMIT');
-    return {
-      success: true,
-      tournament_id: tournamentId,
-      team_id: teamId,
-      ...result,
-    };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
-}

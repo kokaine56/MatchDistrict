@@ -9,7 +9,8 @@ import { getAuthToken } from '../utils/getAuthToken.js'
 import { subscriptionApi } from '../services/subscriptionApi.js'
 import ActivityFeed from '../components/ActivityFeed'
 import { formatDate, formatDateTime } from '../utils/timeFormat'
-import { injectDummyRegistrations } from '../utils/testInjector'
+import { injectDummyRegistrations, getTestInjectionSummary, deleteTestInjectionData } from '../utils/testInjector'
+import BottomSheetModal from '../components/BottomSheetModal.jsx'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 import DangerZoneSettings from '../components/admin/DangerZoneSettings.jsx'
@@ -66,6 +67,11 @@ export default function AdminDashboard({ onNavigate }) {
   const [injectTournamentId, setInjectTournamentId] = useState('')
   const [injectSlotCount, setInjectSlotCount] = useState(1000)
   const [isInjecting, setIsInjecting] = useState(false)
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+  const [deleteSummary, setDeleteSummary] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [isDeletingTestData, setIsDeletingTestData] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
 
   // Search state for users
   const [userSearchQuery, setUserSearchQuery] = useState('')
@@ -420,6 +426,66 @@ export default function AdminDashboard({ onNavigate }) {
     }
   }
 
+  // Handle Test Injection Data Cleanup
+  const handleOpenDeleteModal = async (targetId = null) => {
+    const rawId = typeof targetId === 'string' && targetId ? targetId : injectTournamentId
+    const tId = (rawId || '').trim()
+    if (!tId) {
+      triggerToast('Please select or enter a Tournament ID first.')
+      return
+    }
+    setInjectTournamentId(tId)
+    setDeleteError(null)
+    setDeleteSummary(null)
+    setIsDeleteModalOpen(true)
+    setSummaryLoading(true)
+
+    const result = await getTestInjectionSummary(tId)
+    setSummaryLoading(false)
+    if (result.success) {
+      setDeleteSummary(result.summary)
+    } else {
+      setDeleteError(result.error || 'Failed to inspect test injection data.')
+    }
+  }
+
+  const handleConfirmDeleteTestData = async () => {
+    const tId = injectTournamentId.trim()
+    if (!tId) return
+
+    setIsDeletingTestData(true)
+    setDeleteError(null)
+    const result = await deleteTestInjectionData(tId)
+    setIsDeletingTestData(false)
+
+    if (result.success) {
+      const deleted = result.deleted || {}
+      const matchRecords = (deleted.matchAssignments ?? 0) + (deleted.matchResults ?? 0)
+      const standingsRecords = (deleted.qualificationDecisions ?? 0)
+        + (deleted.qualifiedTeams ?? 0)
+        + (deleted.leaderboardRows ?? 0)
+        + (deleted.finalStandings ?? 0)
+        + (deleted.prizeAwards ?? 0)
+      triggerToast(
+        `Removed ${deleted.registrations ?? 0} registrations, ${deleted.teams ?? 0} teams, ${matchRecords} match records, and ${standingsRecords} qualification/standings records from ${result.tournamentId}. Payment records were preserved.`
+      )
+      setIsDeleteModalOpen(false)
+      setDeleteSummary(null)
+      fetchTournaments()
+      if (activeTournament && (
+        activeTournament.id === tId ||
+        activeTournament.id.toLowerCase() === tId.toLowerCase() ||
+        (result.tournamentId && activeTournament.id.toLowerCase() === result.tournamentId.toLowerCase())
+      )) {
+        fetchRegistrations(activeTournament.id)
+        setActiveTournament(prev => prev ? { ...prev, slotsFilled: result.slotsFilled ?? prev.slotsFilled } : prev)
+      }
+    } else {
+      setDeleteError(result.error || 'Failed to delete test injection data.')
+      triggerToast(`Deletion failed: ${result.error}`)
+    }
+  }
+
   // Handle User Deletion
   const handleDeleteUser = async () => {
     if (!deleteUserId) return
@@ -750,11 +816,19 @@ export default function AdminDashboard({ onNavigate }) {
                     <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Tournament ID</label>
                     <input
                       type="text"
+                      list="admin-inject-tournaments-list"
                       value={injectTournamentId}
                       onChange={(e) => setInjectTournamentId(e.target.value)}
-                      placeholder="e.g. TRN-XXXX"
+                      placeholder="e.g. TRN-XXXX or select below"
                       className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
                     />
+                    <datalist id="admin-inject-tournaments-list">
+                      {tournamentsList.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.title ? `${t.title} (${t.id})` : t.id}
+                        </option>
+                      ))}
+                    </datalist>
                   </div>
                   <div className="w-full sm:w-28 space-y-1">
                     <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Slots</label>
@@ -767,20 +841,33 @@ export default function AdminDashboard({ onNavigate }) {
                       className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
                     />
                   </div>
-                  <button
-                    onClick={handleInjectSlots}
-                    disabled={isInjecting || !injectTournamentId.trim()}
-                    className="px-5 py-2.5 min-h-[44px] bg-amber-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0"
-                  >
-                    {isInjecting ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Injecting...
-                      </span>
-                    ) : (
-                      `Inject ${injectSlotCount.toLocaleString()} Slots`
-                    )}
-                  </button>
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleInjectSlots}
+                      disabled={isInjecting || !injectTournamentId.trim()}
+                      className="px-5 py-2.5 min-h-[44px] bg-amber-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0"
+                    >
+                      {isInjecting ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          Injecting...
+                        </span>
+                      ) : (
+                        `Inject ${injectSlotCount.toLocaleString()} Slots`
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenDeleteModal}
+                      disabled={!injectTournamentId.trim() || isInjecting}
+                      className="px-4 py-2.5 min-h-[44px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 flex items-center justify-center gap-1.5"
+                      title="Safely review and delete test injection data for this tournament only"
+                    >
+                      <span className="material-symbols-outlined text-sm">delete_sweep</span>
+                      <span>Delete Test Injection Data</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -939,6 +1026,7 @@ export default function AdminDashboard({ onNavigate }) {
               onBack={() => { setActiveTournament(null); setRegistrationData([]); }}
               onConfirm={handleConfirmRegistration}
               onReject={handleRejectRegistration}
+              onDeleteTestData={handleOpenDeleteModal}
             />
           ) : (
             <>
@@ -1003,7 +1091,7 @@ export default function AdminDashboard({ onNavigate }) {
                           <tr 
                             key={t.id} 
                             className="border-b border-slate-200 dark:border-white/5 hover:bg-slate-100/30 dark:hover:bg-white/[0.01] transition-colors cursor-pointer"
-                            onClick={() => { setActiveTournament(t); fetchRegistrations(t.id); }}
+                            onClick={() => { setActiveTournament(t); setInjectTournamentId(t.id); fetchRegistrations(t.id); }}
                           >
                             <td className="p-3 sm:p-4">
                               <div className="leading-tight">
@@ -1364,6 +1452,173 @@ function SubscriptionPaymentsTab({ triggerToast }) {
           </div>
         </div>
       )}
+      {/* Tournament-Specific Test Injection Data Cleanup Modal */}
+      <BottomSheetModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          if (!isDeletingTestData) {
+            setIsDeleteModalOpen(false)
+            setDeleteSummary(null)
+            setDeleteError(null)
+          }
+        }}
+        title="Delete Test Injection Data"
+        icon="delete_sweep"
+        maxWidth="max-w-lg"
+        actions={
+          <div className="flex items-center justify-end gap-3 w-full">
+            <button
+              type="button"
+              onClick={() => {
+                setIsDeleteModalOpen(false)
+                setDeleteSummary(null)
+                setDeleteError(null)
+              }}
+              disabled={isDeletingTestData}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-on-surface-variant hover:bg-surface-container active:scale-95 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteTestData}
+              disabled={isDeletingTestData || summaryLoading || !deleteSummary || !deleteSummary.canDelete}
+              className="px-5 py-2 min-h-[40px] bg-rose-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shadow-md shadow-rose-600/20 flex items-center gap-2"
+            >
+              {isDeletingTestData ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                <>
+                  <span className="material-symbols-outlined text-sm">delete_forever</span>
+                  <span>Confirm Deletion</span>
+                </>
+              )}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4 text-xs">
+          {/* Target Tournament Badge */}
+          <div className="p-3.5 rounded-xl border border-outline-variant/40 bg-surface-container-low/60 space-y-1">
+            <div className="text-[10px] uppercase font-bold text-on-surface-variant/70 tracking-wider">Target Tournament</div>
+            <div className="font-bold text-sm text-on-background flex items-center justify-between gap-2">
+              <span className="truncate">
+                {deleteSummary?.tournamentTitle || tournamentsList.find(t => t.id === injectTournamentId.trim())?.title || 'Selected Tournament'}
+              </span>
+              <span className="font-mono text-xs px-2 py-0.5 rounded bg-surface-container-high text-primary border border-primary/20 shrink-0">
+                {injectTournamentId.trim()}
+              </span>
+            </div>
+          </div>
+
+          {/* Warning Banner */}
+          <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-[11px] uppercase tracking-wide text-amber-700 dark:text-amber-400">
+              <span className="material-symbols-outlined text-base">warning</span>
+              <span>Scoped Deletion Warning</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              This will permanently remove test-injected data belonging to the selected tournament. Real registrations and data belonging to other tournaments will not be deleted.
+            </p>
+          </div>
+
+          {summaryLoading && (
+            <div className="py-8 flex flex-col items-center justify-center gap-2 text-on-surface-variant">
+              <span className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              <span className="text-[11px]">Auditing tournament records and dependencies...</span>
+            </div>
+          )}
+
+          {deleteError && (
+            <div className="p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[11px]">
+              {deleteError}
+            </div>
+          )}
+
+          {!summaryLoading && deleteSummary && (
+            <div className="space-y-3">
+              <div className="text-[10px] uppercase font-bold text-on-surface-variant/70 tracking-wider">
+                Expected Deletion Impact
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-rose-600 dark:text-rose-400">Test Registrations</div>
+                  <div className="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {deleteSummary.provenTestRegistrations.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-rose-600 dark:text-rose-400">Test Teams</div>
+                  <div className="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {deleteSummary.testTeams.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-rose-600 dark:text-rose-400">Match Allocations</div>
+                  <div className="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {deleteSummary.matchAssignments.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-rose-600 dark:text-rose-400">Match Results</div>
+                  <div className="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {deleteSummary.matchResults.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-rose-600 dark:text-rose-400">Qualifications</div>
+                  <div className="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono mt-0.5">
+                    {(deleteSummary.qualificationDecisions + deleteSummary.qualifiedTeams).toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-emerald-600 dark:text-emerald-400">Other Registrations Protected</div>
+                  <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                    {deleteSummary.otherRegistrationsProtected.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-emerald-600 dark:text-emerald-400">Payment Submissions Preserved</div>
+                  <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                    {deleteSummary.paymentSubmissions.toLocaleString()}
+                  </div>
+                </div>
+                <div className="p-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04]">
+                  <div className="text-[9px] uppercase font-bold text-emerald-600 dark:text-emerald-400">Prize Payments Preserved</div>
+                  <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                    {deleteSummary.prizePayments.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {deleteSummary.blockedByPaymentRecords && (
+                <div className="p-2.5 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-[10px]">
+                  Cleanup is blocked because payment records are linked to the test-marked data. Payment evidence will be preserved; resolve those records manually before retrying.
+                </div>
+              )}
+
+              {deleteSummary.ambiguousRegistrations > 0 && (
+                <div className="p-2.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] flex items-start gap-1.5">
+                  <span className="material-symbols-outlined text-sm shrink-0 mt-0.5">verified_user</span>
+                  <span>
+                    <strong>{deleteSummary.ambiguousRegistrations}</strong> registration(s) have test-like team names but lack reliable test provenance. They are protected and will remain untouched.
+                  </span>
+                </div>
+              )}
+
+              {!deleteSummary.canDelete && !deleteSummary.blockedByPaymentRecords && (
+                <div className="p-3 rounded-xl border border-outline-variant/40 bg-surface-container-low text-center text-on-surface-variant text-[11px]">
+                  No test-injected data with reliable provenance was found. Unmarked or ambiguous records will remain untouched.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </BottomSheetModal>
+
     </div>
   );
 }
@@ -1375,7 +1630,8 @@ function RegistrationManager({
   loading,
   onBack,
   onConfirm,
-  onReject
+  onReject,
+  onDeleteTestData
 }) {
   const [selectedProof, setSelectedProof] = useState(null);
 
@@ -1457,9 +1713,22 @@ function RegistrationManager({
             <span className="material-symbols-outlined text-[16px] text-emerald-500">verified</span>
             Registrations Verification
           </h4>
-          <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-bold uppercase">
-            Total: {registrations.length}
-          </span>
+          <div className="flex items-center gap-2">
+            {onDeleteTestData && registrations.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onDeleteTestData(tournament.id)}
+                className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors flex items-center gap-1"
+                title="Delete test-injected dummy registrations for this tournament"
+              >
+                <span className="material-symbols-outlined text-xs">delete_sweep</span>
+                <span>Delete Test Data</span>
+              </button>
+            )}
+            <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-bold uppercase">
+              Total: {registrations.length}
+            </span>
+          </div>
         </div>
 
         {loading ? (

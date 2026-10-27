@@ -17,7 +17,7 @@ import { formatDate, formatDateTime } from '../utils/timeFormat';
 import SponsorCardItem from '../components/SponsorCardItem.jsx';
 import GroupSlotGrid from '../components/GroupSlotGrid.jsx';
 import { shareTournament } from '../utils/tournamentShare.js';
-import TournamentLeaderboard from '../components/TournamentLeaderboard.jsx';
+
 import TournamentRoadmap from '../components/TournamentRoadmap.jsx';
 import TournamentRoadmapBuilder from '../components/TournamentRoadmapBuilder.jsx';
 import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
@@ -1405,7 +1405,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 ...(currentUser ? [{ id: 'my_team', label: 'My Team' }] : []),
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
-                { id: 'leaderboard', label: 'Leaderboard' },
+
                 { id: 'sponsors', label: 'Sponsors' },
               ].map((tab) => (
                 <button
@@ -1744,7 +1744,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   tournamentTitle={tourney?.title}
                   isOrganizer={isTournamentOwner}
                   registrationCloseDate={tourney?.registrationCloseDate || tourney?.registration_close_date}
-                  onNavigateToLeaderboard={() => setActiveTab('leaderboard')}
+
                 />
               </div>
             )}
@@ -1816,15 +1816,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               <GroupSlotGrid
                 slotsData={slotsData}
                 matchType={tourney?.match_type}
-              />
-            )}
-            {activeTab === 'leaderboard' && (
-              <TournamentLeaderboard
-                tournamentId={tournamentId}
-                isOrganizer={isTournamentOwner}
-                isGoldTheme={isGoldTheme}
-                cardContainerClass={cardContainerClass}
-                cardTitleClass={cardTitleClass}
               />
             )}
             {activeTab === 'sponsors' && (

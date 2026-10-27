@@ -336,7 +336,7 @@ export default function RoadmapRoundsManager({
                     className={`w-full px-3 py-2 rounded-xl text-xs font-bold ${theme.inputBg}`}
                   >
                     <option value="per_district" className="bg-white text-slate-900">Top N Per District</option>
-                    <option value="overall" className="bg-white text-slate-900">Top N Overall Leaderboard</option>
+                    <option value="overall" className="bg-white text-slate-900">Top N Overall</option>
                     <option value="manual" className="bg-white text-slate-900">Manual Organizer Selection</option>
                   </select>
                 </div>

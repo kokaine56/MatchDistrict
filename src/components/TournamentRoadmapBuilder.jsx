@@ -33,7 +33,7 @@ import {
 import { getAuthToken } from "../utils/getAuthToken";
 import { isRoadmapPublished } from "../utils/roadmapStatus";
 import OrganizerRoadmapEditor from "./roadmap/OrganizerRoadmapEditor";
-import RoadmapAdvancementModal from "./roadmap/RoadmapAdvancementModal";
+
 import ParticipantRoadmapViewer from "./roadmap/ParticipantRoadmapViewer";
 import { addCalendarDays } from "../utils/roadmapDays";
 
@@ -119,7 +119,7 @@ export default function TournamentRoadmapBuilder({
   registrationCloseDate = null,
   onClose = null,
   onApproved = null,
-  onNavigateToLeaderboard = null,
+
 }) {
   const [serverIsOrganizer, setServerIsOrganizer] = useState(false);
   const effectiveOrganizer = Boolean(serverIsOrganizer === true && isOrganizer === true);
@@ -218,21 +218,6 @@ export default function TournamentRoadmapBuilder({
   const [customDistrictDayIdx, setCustomDistrictDayIdx] = useState(0);
   const [customDistrictName, setCustomDistrictName] = useState("Grand Finals");
   const [customDistrictCapacity, setCustomDistrictCapacity] = useState(16);
-
-  // Team Qualification & Advancement Modal State
-  const [showAdvancementModal, setShowAdvancementModal] = useState(false);
-  const [advancementSourceRound, setAdvancementSourceRound] = useState(null);
-  const [advancementTargetRoundId, setAdvancementTargetRoundId] = useState("");
-  const [advancementTargetGroupId, setAdvancementTargetGroupId] = useState("");
-  const [advancementStandings, setAdvancementStandings] = useState(null);
-  const [selectedTeamIds, setSelectedTeamIds] = useState(new Set());
-  const [advancementLoading, setAdvancementLoading] = useState(false);
-  const [advancingExecuting, setAdvancingExecuting] = useState(false);
-  const [advancementSearch, setAdvancementSearch] = useState("");
-  const [advancementDistrictFilter, setAdvancementDistrictFilter] = useState("all");
-  const [advancementPreset, setAdvancementPreset] = useState("round_total");
-  const [customTopCount, setCustomTopCount] = useState(16);
-  const [customPerDistrictCount, setCustomPerDistrictCount] = useState(2);
 
   // Fetch districts from database
   const fetchDistricts = useCallback(async () => {
@@ -786,169 +771,6 @@ export default function TournamentRoadmapBuilder({
     setSuccess(`Created and scheduled "${cleanName}" district for Day ${customDistrictDayIdx + 1}!`);
   };
 
-  // Team Qualification & Advancement Modal Handlers
-  const openAdvancementModal = async (sourceRound) => {
-    if (!sourceRound) return;
-    setAdvancementSourceRound(sourceRound);
-    setShowAdvancementModal(true);
-    setAdvancementLoading(true);
-    setError(null);
-
-    // Pick target round: sourceRound.advancement_target_round_id or subsequent round
-    const nextRound =
-      rounds.find((r) => r.id === sourceRound.advancement_target_round_id) ||
-      rounds.find((r) => (r.round_number || 0) > (sourceRound.round_number || 0)) ||
-      null;
-
-    const initialTargetRoundId = nextRound ? nextRound.id : "";
-    setAdvancementTargetRoundId(initialTargetRoundId);
-
-    let initialGroupId = "";
-    if (nextRound && Array.isArray(nextRound.days)) {
-      for (const d of nextRound.days) {
-        if (Array.isArray(d.allocations) && d.allocations.length > 0) {
-          initialGroupId = d.allocations[0].id || d.allocations[0].group_id || d.allocations[0].district_id;
-          break;
-        }
-      }
-    }
-    setAdvancementTargetGroupId(initialGroupId);
-
-    try {
-      const token = await getAuthToken();
-      const roundNum = sourceRound.round_number || 1;
-      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/${roundNum}/standings`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || "Failed to load round standings.");
-      }
-
-      setAdvancementStandings(data);
-
-      const advType = sourceRound.advancement_type || "per_district";
-      const preSelected = new Set();
-
-      if (advType === "per_district" && Array.isArray(data.districts)) {
-        const perDist = Number(sourceRound.teams_advancing_per_district) || 2;
-        data.districts.forEach((d) => {
-          (d.teams || []).slice(0, perDist).forEach((t) => {
-            if (t.team_id) preSelected.add(t.team_id);
-          });
-        });
-        setAdvancementPreset("per_district");
-        setCustomPerDistrictCount(perDist);
-      } else if (Array.isArray(data.standings) || Array.isArray(data.overallStandings)) {
-        const standingsList = data.standings || data.overallStandings;
-        const topCount = Number(sourceRound.teams_advancing) || 16;
-        standingsList.slice(0, topCount).forEach((t) => {
-          if (t.team_id) preSelected.add(t.team_id);
-        });
-        setAdvancementPreset("round_total");
-        setCustomTopCount(topCount);
-      }
-
-      setSelectedTeamIds(preSelected);
-
-      if (!initialGroupId && Array.isArray(data.nextRoundGroups) && data.nextRoundGroups.length > 0) {
-        setAdvancementTargetGroupId(data.nextRoundGroups[0].id);
-      }
-    } catch (err) {
-      console.error("Error loading standings:", err);
-      setError(err.message || "Failed to load standings.");
-    } finally {
-      setAdvancementLoading(false);
-    }
-  };
-
-  const applyPresetOverall = (count) => {
-    const standingsList = advancementStandings?.standings || advancementStandings?.overallStandings;
-    if (!standingsList) return;
-    const n = Math.max(1, Number(count) || 16);
-    const set = new Set();
-    standingsList.slice(0, n).forEach((t) => {
-      if (t.team_id) set.add(t.team_id);
-    });
-    setSelectedTeamIds(set);
-    setAdvancementPreset("round_total");
-  };
-
-  const applyPresetPerDistrict = (count) => {
-    if (!advancementStandings?.districts) return;
-    const n = Math.max(1, Number(count) || 2);
-    const set = new Set();
-    advancementStandings.districts.forEach((d) => {
-      (d.teams || []).slice(0, n).forEach((t) => {
-        if (t.team_id) set.add(t.team_id);
-      });
-    });
-    setSelectedTeamIds(set);
-    setAdvancementPreset("per_district");
-  };
-
-  const toggleSelectTeam = (teamId) => {
-    setSelectedTeamIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamId)) {
-        next.delete(teamId);
-      } else {
-        next.add(teamId);
-      }
-      return next;
-    });
-    setAdvancementPreset("manual");
-  };
-
-  const handleExecuteAdvancement = async () => {
-    if (selectedTeamIds.size === 0) {
-      setError("Please select at least 1 team to advance.");
-      return;
-    }
-    if (!advancementTargetRoundId) {
-      setError("Please select a target round for the advancing teams.");
-      return;
-    }
-
-    setAdvancingExecuting(true);
-    setError(null);
-    try {
-      const token = await getAuthToken();
-      const res = await fetch(`/api/tournaments/${tournamentId}/rounds/advance`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          source_round_id: advancementSourceRound?.id,
-          target_round_id: advancementTargetRoundId,
-          target_group_id: advancementTargetGroupId || undefined,
-          team_ids: Array.from(selectedTeamIds),
-          advancement_type: advancementPreset,
-        }),
-      });
-
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.message || data.error || "Failed to advance teams.");
-      }
-
-      const targetRoundObj = rounds.find((r) => r.id === advancementTargetRoundId);
-      const targetName = targetRoundObj ? targetRoundObj.name : "Next Round";
-
-      setSuccess(`🎉 Successfully qualified and advanced ${data.advanced_count || selectedTeamIds.size} teams to "${targetName}"!`);
-      setShowAdvancementModal(false);
-
-      await fetchDistricts();
-      await fetchRoadmap();
-    } catch (err) {
-      setError(err.message || "Failed to advance teams.");
-    } finally {
-      setAdvancingExecuting(false);
-    }
-  };
-
   const handleDeleteDay = (roundIdx, dayIdx) => {
     setRounds((prev) => {
       const updated = [...prev];
@@ -1441,44 +1263,6 @@ export default function TournamentRoadmapBuilder({
         onDeleteRoadmap={handleConfirmMasterDelete}
         deleting={deletingRoadmap}
       />
-
-      {showAdvancementModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 sm:p-6 max-w-md w-full text-center space-y-4 shadow-2xl">
-            <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center mx-auto text-xl">
-              🏆
-            </div>
-            <h3 className="text-base sm:text-lg font-black text-slate-900">Stage Qualification Moved</h3>
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Team qualification and stage advancement is now managed on the official <strong className="text-slate-900">Leaderboard</strong> tab with verified standings, tie detection, and snake-seeding district placement.
-            </p>
-            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowAdvancementModal(false)}
-                className="w-full sm:flex-1 px-4 py-2.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors min-h-[38px]"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAdvancementModal(false);
-                  if (typeof onNavigateToLeaderboard === 'function') {
-                    onNavigateToLeaderboard();
-                  } else {
-                    const el = document.querySelector('[data-tab="leaderboard"]');
-                    if (el) el.click();
-                  }
-                }}
-                className="w-full sm:flex-1 px-4 py-2.5 text-xs font-black uppercase tracking-wider text-white bg-blue-600 hover:bg-blue-500 rounded-xl transition-all shadow-md shadow-blue-600/25 min-h-[38px]"
-              >
-                Go to Leaderboard
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 

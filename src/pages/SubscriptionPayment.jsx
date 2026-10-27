@@ -558,7 +558,12 @@ export default function SubscriptionPayment() {
             <p className="text-[10px] text-on-surface-variant leading-relaxed">
               Having trouble with payment? Contact our support team for assistance.
             </p>
-            <button className="mt-3 text-[10px] text-primary font-semibold">Contact Support →</button>
+            <button
+              onClick={() => navigate('/help')}
+              className="mt-3 text-[10px] text-primary font-semibold hover:underline cursor-pointer"
+            >
+              Contact Support →
+            </button>
           </div>
 
           {billingCycle === 'yearly' && (

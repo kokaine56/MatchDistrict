@@ -57,6 +57,7 @@ const PAGE_URL_MAP = {
   'tournament-detail':'/tournaments/',   // + id appended
   'about':            '/about',
   'help-support':     '/help',
+  'support':          '/help',
   'privacy-policy':   '/privacypolicy',
   'terms-service':    '/terms',
   'login':            '/login',
@@ -526,6 +527,8 @@ function AppInner() {
                     </PageTransition>
                   </>
                 } />
+
+                <Route path="/support" element={<Navigate to="/help" replace />} />
 
                 <Route path="/privacypolicy" element={
                   <>

@@ -14,7 +14,6 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
   const [members, setMembers] = useState([]);
   const [squad, setSquad] = useState(null);
   const [assignments, setAssignments] = useState([]);
-  const [groupStandings, setGroupStandings] = useState([]);
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -50,7 +49,6 @@ export default function TournamentTeamHub({ tournamentId, tournamentTitle, maxTe
       setMembers(data.members || []);
       setSquad(data.squad || null);
       setAssignments(data.assignments || []);
-      setGroupStandings(data.groupStandings || []);
       setWarnings(data.warnings || []);
       if (data.team) {
         fetchInvitation(data.team.id);
@@ -674,32 +672,6 @@ matchDetails={{
                   />
                 ))}
               </div>
-              {groupStandings.length > 0 && (
-                <div className="p-4 pt-0 space-y-3">
-                  {Array.from(new Map(groupStandings.map((row) => [`${row.round_number}:${row.group_id}`, row])).values()).map((group) => {
-                    const rows = groupStandings.filter((row) => row.group_id === group.group_id && row.round_number === group.round_number);
-                    return (
-                      <section key={`${group.round_number}:${group.group_id}`} className="overflow-hidden rounded-xl border border-white/10">
-                        <header className="flex items-center justify-between bg-white/5 px-4 py-3">
-                          <h4 className="text-sm font-bold text-white">Round {group.round_number} · {group.group_name} standings</h4>
-                          <span className="text-[10px] font-semibold uppercase text-gray-500">Official results</span>
-                        </header>
-                        <div className="divide-y divide-white/5">
-                          {rows.map((row, index) => (
-                            <div key={row.team_id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                              <span className="w-6 text-xs font-bold text-gray-500">{row.rank ?? index + 1}</span>
-                              <span className="min-w-0 flex-1 truncate text-gray-200">{row.team_name}{row.team_id === team.id ? ' · You' : ''}</span>
-                              <span className="text-right text-xs text-gray-400">{row.matches_played} matches</span>
-                              <span className="w-14 text-right font-bold text-emerald-300">{row.total_points} pts</span>
-                              {row.advanced && <span className="rounded bg-indigo-500/15 px-2 py-1 text-[10px] font-bold text-indigo-300">Advanced</span>}
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    );
-                  })}
-                </div>
-              )}
             </div>
           ) : team.status === 'members_complete' ? (
             <div className="bg-[#0A0B10] border border-indigo-500/30 rounded-2xl overflow-hidden self-start shadow-[0_0_15px_rgba(79,70,229,0.1)]">

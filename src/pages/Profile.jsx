@@ -3070,7 +3070,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       {[
                         { id: 'archive', label: 'Archive', icon: 'inventory_2', desc: 'Past tournaments and completed match records' },
                         { id: 'about', label: 'About', icon: 'info', desc: 'Learn more about Match District' },
-                        { id: 'help-support', label: 'Help & Support', icon: 'help_outline', desc: 'Contact support team and FAQs' },
+                        { id: 'help-support', label: 'Help & Support', icon: 'help_outline', desc: 'Official Discord support community and FAQs' },
                         { id: 'terms-service', label: 'Terms & Conditions', icon: 'gavel', desc: 'Usage terms, rules, and player agreements' },
                         { id: 'privacy-policy', label: 'Privacy Policy', icon: 'policy', desc: 'How your data is protected and handled' },
                       ].map((item) => (

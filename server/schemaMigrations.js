@@ -609,11 +609,17 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_id VARCHAR(50);
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS group_name VARCHAR(50);
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS amount_due NUMERIC(10, 2);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS is_test BOOLEAN DEFAULT FALSE;
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS test_batch_id VARCHAR(100);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS injected_by VARCHAR(100);
+      ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS injected_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_status ON tournament_registrations(status);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_idempotency ON tournament_registrations(idempotency_key);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_amount_due ON tournament_registrations(amount_due);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_test ON tournament_registrations(tournament_id, is_test);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_test_batch ON tournament_registrations(test_batch_id);
 
       CREATE TABLE IF NOT EXISTS tournament_registration_groups (
         id VARCHAR(50) PRIMARY KEY,

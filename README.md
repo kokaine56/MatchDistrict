@@ -2,7 +2,7 @@
 
 Match District is an esports tournament discovery and management platform for players, teams, tournament organizers, and administrators in the Indian gaming community.
 
-The platform brings tournament discovery, team registration, payment review, match planning, results, and standings together in one place. Its goal is to make it easier for players to find competitions and for organizers to run them with clear schedules, fair processes, and useful communication.
+The platform brings tournament discovery, team registration, payment review, match planning, and results together in one place. Its goal is to make it easier for players to find competitions and for organizers to run them with clear schedules and useful communication.
 
 ## What Match District offers
 
@@ -51,7 +51,7 @@ Organizers can create tournament listings and manage the details needed to run a
 - Configuring registration and payment information
 - Planning match days, times, and districts
 - Publishing updates for participants
-- Recording match results and managing standings
+- Recording and verifying match results
 - Reviewing tournament registrations and team details
 
 Administrative controls are intended for the tournament’s organizer and site administrators.
@@ -62,30 +62,13 @@ The roadmap is the event’s planned structure before competition begins. It hel
 
 A district represents one lobby of teams. A tournament may have several districts in a round. If the expected number of advancing teams is too large for the final lobby, the roadmap can include additional rounds before the Grand Final.
 
-The roadmap is a plan based on tournament capacity and the configured district size. It is not a live bracket that changes whenever registrations, results, standings, or disqualifications change. Qualification is handled separately after results are available.
+The roadmap is a plan based on tournament capacity and the configured district size. It is not a live bracket that changes when registrations or results change.
 
 Organizers can assign a district to each match, schedule multiple matches on a day, and set the dates and times for each round. Schedule information is presented in Indian Standard Time.
 
-### Record results and follow standings
+### Record match results
 
-Organizers can enter and verify match results. The leaderboard presents team standings using tournament scoring rules.
-
-When teams have equal total points, ranking follows these tie-breakers in order:
-
-1. Total Winner Winner Chicken Dinners (WWCDs)
-2. Total placement points
-3. Total elimination points
-4. Best placement in the most recent match
-
-If teams remain tied after all of these criteria, the organizer makes the final decision.
-
-### Qualify teams for later rounds
-
-After a round’s results are ready, the organizer can use the qualification process to move eligible teams forward. Later rounds regroup qualified teams into new districts based on the number of teams advancing.
-
-Qualification does not rewrite the published pre-tournament roadmap. The roadmap remains the schedule and structure that was planned for the event; qualification records which teams have advanced.
-
-The Grand Final is the last stage. It has no further advancement rule, and the final standings determine the outcome of the tournament.
+Organizers can enter and verify match results.
 
 ### Manage teams and invitations
 
@@ -111,7 +94,7 @@ The platform’s role boundaries are intended to keep organizer controls limited
 
 ### Players and team leaders
 
-Use Match District to explore events, understand their requirements, register a squad, submit payment proof, follow the review status, and check the tournament schedule and standings.
+Use Match District to explore events, understand their requirements, register a squad, submit payment proof, follow the review status, and check the tournament schedule.
 
 ### Teammates
 
@@ -119,7 +102,7 @@ Join a squad through its invitation and connect your account to the correct rost
 
 ### Tournament organizers
 
-Use Match District to publish events, organize registrations, plan rounds and match schedules, communicate event details, record results, and qualify teams.
+Use Match District to publish events, organize registrations, plan rounds and match schedules, communicate event details, and record results.
 
 ### Administrators and payment reviewers
 
@@ -130,14 +113,13 @@ Use the administrative workflows to review submitted payment proof, manage platf
 - **Clear participation status:** Players should understand what they need to do next and whether their registration is awaiting review or approved.
 - **Accountable teams:** Squad members are associated with registered player accounts and roster slots.
 - **Private match credentials:** Room IDs and passwords are shared through a controlled participant flow.
-- **Planned schedules:** The published roadmap communicates the event plan; later results and qualification are tracked separately.
-- **Consistent standings:** Ranking follows published scoring and tie-break rules, with organizers resolving true ties.
+- **Planned schedules:** The published roadmap communicates the event plan and match schedule.
 - **Organizer ownership:** Tournament management controls belong to the organizer and site administrators.
 - **Indian gaming context:** Tournament communication and scheduling are designed for the platform’s Indian market, including IST schedule display.
 
 ## Current scope
 
-Match District focuses on tournament discovery and operations: event pages, registration, manual payment review, team management, roadmaps, match results, leaderboards, and qualification.
+Match District focuses on tournament discovery and operations: event pages, registration, manual payment review, team management, roadmaps, match schedules, and results.
 
 The former PGV companion Android integration has been removed. Payment verification takes place through the website’s manual review process.
 
