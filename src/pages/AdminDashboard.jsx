@@ -9,11 +9,10 @@ import { getAuthToken } from '../utils/getAuthToken.js'
 import { subscriptionApi } from '../services/subscriptionApi.js'
 import ActivityFeed from '../components/ActivityFeed'
 import { formatDate, formatDateTime } from '../utils/timeFormat'
-import { injectDummyRegistrations, getTestInjectionSummary, deleteTestInjectionData } from '../utils/testInjector'
+import { injectDummyRegistrations, getTestInjectionSummary, deleteTestInjectionData, pruneOverflowRegistrations, clearDevTestingData } from '../utils/testInjector'
 import BottomSheetModal from '../components/BottomSheetModal.jsx'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
-import DangerZoneSettings from '../components/admin/DangerZoneSettings.jsx'
 import { ReviewKYCModal } from '../components/admin/ReviewKYCModal.jsx'
 import { UserGovernance } from '../components/admin/UserGovernance.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -61,12 +60,13 @@ export default function AdminDashboard({ onNavigate }) {
   const [kycActionLoading, setKycActionLoading] = useState(false)
   const [deleteUserId, setDeleteUserId] = useState(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [purgeLoading, setPurgeLoading] = useState(false)
+  const [isClearingDevData, setIsClearingDevData] = useState(false)
 
   // Injector state
   const [injectTournamentId, setInjectTournamentId] = useState('')
-  const [injectSlotCount, setInjectSlotCount] = useState(1000)
+  const [injectSlotCount, setInjectSlotCount] = useState(128)
   const [isInjecting, setIsInjecting] = useState(false)
+  const [isPruning, setIsPruning] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [deleteSummary, setDeleteSummary] = useState(null)
   const [summaryLoading, setSummaryLoading] = useState(false)
@@ -80,26 +80,6 @@ export default function AdminDashboard({ onNavigate }) {
   const [activeTournament, setActiveTournament] = useState(null)
   const [registrationData, setRegistrationData] = useState([])
   const [registrationLoading, setRegistrationLoading] = useState(false)
-
-  // Global state reset for database purge
-  const resetGlobalState = useCallback(({ totalUsers, activeArenas, totalLivePrizePools, allTimePrizePool, allTimeCommission, applications }) => {
-    setKycApplications(applications || [])
-    setUsersList([])
-    setTournamentsList([])
-    setFinancials({
-      totalPrizePools: totalLivePrizePools ?? 0,
-      totalOperationalRevenue: 0,
-      activeTourneysCount: activeArenas ?? 0,
-      platformFeePercentage: 10,
-      allTimePrizePool: allTimePrizePool ?? 0,
-      allTimeCommission: allTimeCommission ?? 0,
-      totalHostedArenas: 0,
-      ledger: [],
-      engagementCurve: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      trafficBars: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    })
-    triggerToast('CRITICAL ALARM: Database has been entirely wiped.')
-  }, [])
 
   // Build auth headers using Supabase session token — no localStorage
   const getHeaders = async () => {
@@ -380,29 +360,32 @@ export default function AdminDashboard({ onNavigate }) {
     }
   }
 
-  // Handle User Purge
-  const handleSystemPurge = async () => {
-    const doubleCheck = window.confirm('CRITICAL ACTION: Are you sure you want to purge all test match registrations, tournaments, and sandbox wallets? This action cannot be undone.')
-    if (!doubleCheck) return
+  // Handle Clear Dev Testing Data
+  const handleClearDevData = async () => {
+    const targetTourney = injectTournamentId.trim()
+    const confirmMsg = targetTourney
+      ? `Are you sure you want to delete dev testing data for tournament "${targetTourney}"? Only test registrations and dummy teams will be removed.`
+      : `Are you sure you want to delete ALL dev testing injected data across the platform? Only mock/dummy test records will be deleted without touching real tournaments, players, or wallets.`
 
-    setPurgeLoading(true)
+    if (!window.confirm(confirmMsg)) return
+
+    setIsClearingDevData(true)
     try {
-      const res = await fetch('/api/admin/purge', {
-        method: 'POST',
-        headers: await getHeaders()
-      })
-      const data = await res.json()
-      if (data.success) {
-        triggerToast('System mock data purged to clean state!')
+      const res = await clearDevTestingData(targetTourney || null)
+      if (res.success) {
+        triggerToast(res.message || 'Dev testing data cleared successfully!')
         loadAllAdminData()
+        if (activeTournament) {
+          loadTournamentRegistrations(activeTournament.id)
+        }
       } else {
-        triggerToast(data.error || 'Purge request rejected by server')
+        triggerToast(res.error || 'Failed to clear dev testing data')
       }
     } catch (err) {
-      console.error('Purge endpoint failure:', err)
-      triggerToast('Error connecting to system purge endpoint')
+      console.error('Error clearing dev testing data:', err)
+      triggerToast(err.message || 'Error clearing dev testing data')
     } finally {
-      setPurgeLoading(false)
+      setIsClearingDevData(false)
     }
   }
 
@@ -421,8 +404,35 @@ export default function AdminDashboard({ onNavigate }) {
 
     if (result.success) {
       triggerToast(result.message)
+      loadAllAdminData()
     } else {
       triggerToast(`Injection failed: ${result.error}`)
+    }
+  }
+
+  // Handle Pruning Overflow Registrations
+  const handlePruneOverflow = async (targetId = null) => {
+    const rawId = typeof targetId === 'string' && targetId ? targetId : injectTournamentId
+    const tId = (rawId || '').trim()
+    if (!tId) {
+      triggerToast('Please select or enter a Tournament ID first.')
+      return
+    }
+    const confirmMsg = `Prune all registrations exceeding the tournament slot capacity? This strictly ensures max registrations equals the number of slots.`
+    if (!window.confirm(confirmMsg)) return
+
+    setIsPruning(true)
+    const result = await pruneOverflowRegistrations(tId)
+    setIsPruning(false)
+
+    if (result.success) {
+      triggerToast(result.message)
+      loadAllAdminData()
+      if (activeTournament && activeTournament.id === tId) {
+        handleDrilldownTournament(activeTournament)
+      }
+    } else {
+      triggerToast(`Pruning failed: ${result.error}`)
     }
   }
 
@@ -770,110 +780,165 @@ export default function AdminDashboard({ onNavigate }) {
               </div>
             </div>
 
-            {/* Maintenance Tools */}
-            <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
-              <div>
-                <h3 className="font-headline-md text-xs sm:text-sm font-bold text-slate-900 dark:text-white uppercase flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-rose-500 text-xl">construction</span>
-                  <span>Maintenance &amp; Purge</span>
-                </h3>
-                <p className="font-body-sm text-[10px] sm:text-xs text-slate-700 dark:text-white/50">
-                  Purge test matches and clean database schemas for active production resets.
-                </p>
-              </div>
-
-              <div className="border border-rose-500/10 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-rose-500/[0.02]">
-                <div className="space-y-0.5">
-                  <h4 className="font-headline-md text-xs font-bold text-slate-900 dark:text-white">Flush Sandbox Transactions</h4>
-                  <p className="font-body-sm text-[10px] text-slate-600 dark:text-white/40">Truncate matches, timelines, registers &amp; wallets.</p>
-                </div>
-
-                <button
-                  onClick={handleSystemPurge}
-                  disabled={purgeLoading}
-                  className="px-4 py-2.5 min-h-[44px] bg-rose-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-rose-500/10 hover:bg-rose-600 active:scale-95 transition-all shrink-0 self-start sm:self-center"
-                >
-                  {purgeLoading ? 'Flushing...' : 'Purge DB State'}
-                </button>
-              </div>
-            </div>
-
-            {/* Dev/Testing Tools — Injector */}
+            {/* Dev/Testing Tools — Injector & Cleanup */}
             <div className="glass-card p-5 rounded-2xl border border-amber-500/40 bg-amber-500/[0.03] backdrop-blur-md shadow-sm space-y-4">
-              <div>
-                <h3 className="font-headline-md text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400 uppercase flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-amber-500 text-xl">science</span>
-                  <span>Dev / Testing Tools</span>
-                </h3>
-                <p className="font-body-sm text-[10px] sm:text-xs text-amber-700/70 dark:text-amber-400/50">
-                  Stress-test the slot-filling logic by bulk-injecting dummy registrations.
-                </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-headline-md text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400 uppercase flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-amber-500 text-xl">science</span>
+                    <span>Dev / Testing Tools</span>
+                  </h3>
+                  <p className="font-body-sm text-[10px] sm:text-xs text-amber-700/70 dark:text-amber-400/50">
+                    Inject mock registrations for capacity stress-testing or clear all dev testing dummy data.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 self-start sm:self-auto">
+                  <span className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                    Safe Isolation
+                  </span>
+                </div>
               </div>
 
               <div className="border border-amber-500/20 rounded-xl p-3.5 space-y-3 bg-amber-500/[0.04]">
-                <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-                  <div className="flex-1 space-y-1">
-                    <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Tournament ID</label>
-                    <input
-                      type="text"
-                      list="admin-inject-tournaments-list"
-                      value={injectTournamentId}
-                      onChange={(e) => setInjectTournamentId(e.target.value)}
-                      placeholder="e.g. TRN-XXXX or select below"
-                      className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
-                    />
-                    <datalist id="admin-inject-tournaments-list">
-                      {tournamentsList.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.title ? `${t.title} (${t.id})` : t.id}
-                        </option>
-                      ))}
-                    </datalist>
-                  </div>
-                  <div className="w-full sm:w-28 space-y-1">
-                    <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">Slots</label>
-                    <input
-                      type="number"
-                      value={injectSlotCount}
-                      onChange={(e) => setInjectSlotCount(Math.max(1, Number(e.target.value)))}
-                      min={1}
-                      max={5000}
-                      className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
-                    />
-                  </div>
-                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleInjectSlots}
-                      disabled={isInjecting || !injectTournamentId.trim()}
-                      className="px-5 py-2.5 min-h-[44px] bg-amber-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0"
-                    >
-                      {isInjecting ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                          Injecting...
-                        </span>
-                      ) : (
-                        `Inject ${injectSlotCount.toLocaleString()} Slots`
+                {(() => {
+                  const selectedInjectTourney = tournamentsList.find(t => t.id === injectTournamentId.trim());
+                  const tourneySlotsTotal = selectedInjectTourney ? (parseInt(selectedInjectTourney.slotsTotal, 10) || 128) : 128;
+                  const tourneySlotsFilled = selectedInjectTourney ? (parseInt(selectedInjectTourney.slotsFilled, 10) || 0) : 0;
+                  const isOverflowing = selectedInjectTourney && (tourneySlotsFilled > tourneySlotsTotal);
+
+                  return (
+                    <>
+                      {isOverflowing && (
+                        <div className="p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <div className="font-bold flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                              <span className="material-symbols-outlined text-sm">warning</span>
+                              <span>Registration Overflow Detected ({tourneySlotsFilled} / {tourneySlotsTotal} slots)</span>
+                            </div>
+                            <p className="text-[11px] leading-tight">
+                              This tournament has <strong>{tourneySlotsFilled}</strong> registrations but only <strong>{tourneySlotsTotal}</strong> total slots. Max registrations must equal number of slots.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handlePruneOverflow(injectTournamentId)}
+                            disabled={isPruning}
+                            className="px-3.5 py-1.5 min-h-[36px] bg-rose-600 text-white rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-rose-700 disabled:opacity-50 active:scale-95 transition-all shrink-0 flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-sm">content_cut</span>
+                            <span>{isPruning ? 'Pruning...' : `Prune to ${tourneySlotsTotal} Slots`}</span>
+                          </button>
+                        </div>
                       )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleOpenDeleteModal}
-                      disabled={!injectTournamentId.trim() || isInjecting}
-                      className="px-4 py-2.5 min-h-[44px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 flex items-center justify-center gap-1.5"
-                      title="Safely review and delete test injection data for this tournament only"
-                    >
-                      <span className="material-symbols-outlined text-sm">delete_sweep</span>
-                      <span>Delete Test Injection Data</span>
-                    </button>
-                  </div>
-                </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                              Tournament ID {selectedInjectTourney && `(${selectedInjectTourney.slotsFilled || 0}/${tourneySlotsTotal} Filled)`}
+                            </label>
+                            {injectTournamentId && (
+                              <button
+                                type="button"
+                                onClick={() => setInjectTournamentId('')}
+                                className="text-[9px] text-amber-600/70 hover:text-amber-600 font-bold uppercase cursor-pointer"
+                              >
+                                Clear Selection
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            list="admin-inject-tournaments-list"
+                            value={injectTournamentId}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setInjectTournamentId(val);
+                              const tMatch = tournamentsList.find(t => t.id === val.trim());
+                              if (tMatch) {
+                                const total = parseInt(tMatch.slotsTotal, 10) || 128;
+                                const filled = parseInt(tMatch.slotsFilled, 10) || 0;
+                                const rem = Math.max(0, total - filled);
+                                setInjectSlotCount(rem > 0 ? rem : total);
+                              }
+                            }}
+                            placeholder="Optional: Enter Tournament ID (Leave empty to target all)"
+                            className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                          />
+                          <datalist id="admin-inject-tournaments-list">
+                            {tournamentsList.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.title ? `${t.title} (${t.id}) — ${t.slotsFilled || 0}/${t.slotsTotal || 128} slots` : t.id}
+                              </option>
+                            ))}
+                          </datalist>
+                        </div>
+
+                        <div className="w-full sm:w-36 space-y-1">
+                          <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                            Slots (Max: {tourneySlotsTotal})
+                          </label>
+                          <input
+                            type="number"
+                            value={injectSlotCount}
+                            onChange={(e) => setInjectSlotCount(Math.min(tourneySlotsTotal, Math.max(1, Number(e.target.value))))}
+                            min={1}
+                            max={tourneySlotsTotal}
+                            className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleInjectSlots}
+                            disabled={isInjecting || !injectTournamentId.trim()}
+                            className="px-5 py-2.5 min-h-[44px] bg-amber-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 cursor-pointer"
+                          >
+                            {isInjecting ? (
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                Injecting...
+                              </span>
+                            ) : (
+                              `Inject ${injectSlotCount.toLocaleString()} Slots`
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleClearDevData}
+                            disabled={isClearingDevData || isInjecting}
+                            className="px-4 py-2.5 min-h-[44px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                            title={injectTournamentId.trim() ? `Clear dev testing data for tournament ${injectTournamentId}` : "Clear all dev testing injected data across all tournaments"}
+                          >
+                            {isClearingDevData ? (
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-3.5 h-3.5 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin" />
+                                Clearing Data...
+                              </span>
+                            ) : (
+                              <>
+                                <span className="material-symbols-outlined text-base">delete_sweep</span>
+                                <span>Clear Data</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="text-[10px] text-amber-700/80 dark:text-amber-400/70 flex items-center gap-1.5 pt-1">
+                        <span className="material-symbols-outlined text-xs shrink-0">info</span>
+                        <span>
+                          <strong>Clear Data</strong> removes test-marked registrations and dummy teams without touching real users, tournaments, or transactions.
+                          {injectTournamentId.trim() ? ` Target: tournament ${injectTournamentId}.` : ' Target: all tournaments across platform.'}
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
-
-            {/* Danger Zone — Database Purge */}
-            <DangerZoneSettings resetGlobalState={resetGlobalState} />
 
             {/* Organizer Usage Stats */}
             <div className="glass-card p-5 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-4">
@@ -1027,6 +1092,7 @@ export default function AdminDashboard({ onNavigate }) {
               onConfirm={handleConfirmRegistration}
               onReject={handleRejectRegistration}
               onDeleteTestData={handleOpenDeleteModal}
+              onPruneOverflow={handlePruneOverflow}
             />
           ) : (
             <>
@@ -1631,7 +1697,8 @@ function RegistrationManager({
   onBack,
   onConfirm,
   onReject,
-  onDeleteTestData
+  onDeleteTestData,
+  onPruneOverflow
 }) {
   const [selectedProof, setSelectedProof] = useState(null);
 
@@ -1641,8 +1708,10 @@ function RegistrationManager({
   const confirmedCount = registrations.filter(r => r.status === 'confirmed' || r.status === 'approved' || r.status === 'VERIFIED_BY_HOST').length;
   const pendingCount = registrations.filter(r => r.status === 'pending' || r.status === 'pending_payment' || r.status === 'PENDING_PAYMENT_VERIFICATION').length;
   const rejectedCount = registrations.filter(r => r.status === 'rejected' || r.status === 'PAYMENT_REJECTED').length;
-  const slotsTotal = parseInt(tournament.slotsTotal) || 100;
+  const slotsTotal = parseInt(tournament.slotsTotal || tournament.max_slots || tournament.slots) || 128;
   const progressPct = slotsTotal > 0 ? Math.round((confirmedCount / slotsTotal) * 100) : 0;
+  const isOverflow = registrations.length > slotsTotal;
+  const overflowCount = Math.max(0, registrations.length - slotsTotal);
 
   // Parse team members — supports both `teamMembers` array (mock) and `members` JSON string (server)
   const getTeamMembers = (reg) => {
@@ -1706,6 +1775,31 @@ function RegistrationManager({
         </div>
       </div>
 
+      {/* Registration Overflow Banner */}
+      {isOverflow && (
+        <div className="p-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-rose-700 dark:text-rose-300">
+          <div className="flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-rose-500 text-xl shrink-0 mt-0.5">warning</span>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider">Registration Slot Overflow Detected</div>
+              <p className="text-[11px] text-rose-600/90 dark:text-rose-300/80 mt-0.5">
+                Tournament has <strong>{slotsTotal}</strong> slots, but <strong>{registrations.length}</strong> registrations exist ({overflowCount} excess records). Total registrations should not exceed slot capacity.
+              </p>
+            </div>
+          </div>
+          {onPruneOverflow && (
+            <button
+              type="button"
+              onClick={() => onPruneOverflow(tournament.id)}
+              className="px-3 py-1.5 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-all shadow-md shrink-0 flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-sm">content_cut</span>
+              <span>Prune to {slotsTotal} Slots</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Verification Table */}
       <div className="glass-card border border-outline-variant/30 rounded-2xl bg-surface-container-low/40 overflow-hidden backdrop-blur-md">
         <div className="p-4 border-b border-outline-variant/30 flex items-center justify-between">
@@ -1714,6 +1808,17 @@ function RegistrationManager({
             Registrations Verification
           </h4>
           <div className="flex items-center gap-2">
+            {onPruneOverflow && isOverflow && (
+              <button
+                type="button"
+                onClick={() => onPruneOverflow(tournament.id)}
+                className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                title={`Prune ${overflowCount} excess registrations down to ${slotsTotal}`}
+              >
+                <span className="material-symbols-outlined text-xs">content_cut</span>
+                <span>Prune Overflow ({overflowCount})</span>
+              </button>
+            )}
             {onDeleteTestData && registrations.length > 0 && (
               <button
                 type="button"
@@ -1722,11 +1827,11 @@ function RegistrationManager({
                 title="Delete test-injected dummy registrations for this tournament"
               >
                 <span className="material-symbols-outlined text-xs">delete_sweep</span>
-                <span>Delete Test Data</span>
+                <span>Clear Test Data</span>
               </button>
             )}
-            <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded font-bold uppercase">
-              Total: {registrations.length}
+            <span className={`text-[10px] border px-2 py-0.5 rounded font-bold uppercase ${isOverflow ? 'bg-rose-500/10 text-rose-500 border-rose-500/30' : 'bg-primary/10 text-primary border-primary/20'}`}>
+              Total: {registrations.length} {isOverflow && `(Max: ${slotsTotal})`}
             </span>
           </div>
         </div>

@@ -53,6 +53,7 @@ import { updateTeamQualificationStatus } from './server/teamDisqualificationServ
 import {
   getTournamentTestInjectionSummary,
   deleteTournamentTestInjectionData,
+  deleteAllTestInjectionData,
   hasTestProvenanceColumns
 } from './server/testDataCleanupService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
@@ -16827,7 +16828,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
 
         const tournament = tRes.rows[0];
-        const slotsTotal = parseInt(tournament.slotsTotal, 10) || 100;
+        const slotsTotal = parseInt(tournament.slotsTotal, 10) || 128;
 
         // Query existing registrations to ensure no duplicate slot numbers or IDs
         const existingRegsRes = await pool.query(
@@ -16835,10 +16836,26 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           [tournamentId]
         );
         const existingCount = existingRegsRes.rows.length;
+
+        // STRICT CAP: Max registrations cannot exceed tournament slotsTotal (max reg = number of slots)
+        const remainingSlots = Math.max(0, slotsTotal - existingCount);
+        if (remainingSlots <= 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'TOURNAMENT_FULL',
+            message: `Tournament "${tournament.title || tournamentId}" has reached full capacity (${existingCount}/${slotsTotal} slots). Maximum registrations equals number of slots (${slotsTotal}).`
+          }));
+          return;
+        }
+
+        // Clamp to remaining slots so total registrations never exceed slotsTotal
+        const slotsToInject = Math.min(requestedSlots, remainingSlots);
+
         const occupiedSlots = new Set(
           existingRegsRes.rows
             .map(r => parseInt(r.slot_number, 10))
-            .filter(s => !isNaN(s) && s >= 1)
+            .filter(s => !isNaN(s) && s >= 1 && s <= slotsTotal)
         );
 
         const now = Date.now();
@@ -16849,27 +16866,25 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const testRegistrations = [];
         let candidateSlot = 1;
 
-        for (let i = 0; i < requestedSlots; i++) {
+        for (let i = 0; i < slotsToInject; i++) {
           const teamSeq = existingCount + i + 1;
           const regId = `REG-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
           const userId = `USR-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
           const leaderIgn = `TestLeader_${teamSeq}`;
 
-          // Find next unoccupied slot within capacity
+          // Find next unoccupied slot within capacity (1..slotsTotal)
           while (occupiedSlots.has(candidateSlot) && candidateSlot <= slotsTotal) {
             candidateSlot++;
           }
 
-          let assignedSlot = null;
-          let regStatus = 'approved';
-          if (candidateSlot <= slotsTotal) {
-            assignedSlot = candidateSlot;
-            occupiedSlots.add(candidateSlot);
-            candidateSlot++;
-          } else {
-            // Capacity filled; overflow registrations become waitlisted
-            regStatus = 'waitlisted';
+          if (candidateSlot > slotsTotal) {
+            break; // Strictly enforce: never exceed slotsTotal
           }
+
+          const assignedSlot = candidateSlot;
+          occupiedSlots.add(candidateSlot);
+          candidateSlot++;
+          const regStatus = 'approved';
 
           const members = JSON.stringify([
             { role: 'Leader', ign: leaderIgn, in_game_id: `999${teamSeq}1` },
@@ -17003,8 +17018,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          message: `Successfully injected ${testRegistrations.length} dummy registration${testRegistrations.length === 1 ? '' : 's'}.`,
+          message: `Successfully injected ${testRegistrations.length} registration${testRegistrations.length === 1 ? '' : 's'}. Tournament capacity is now ${existingCount + testRegistrations.length}/${slotsTotal} slots.`,
           injectedCount: testRegistrations.length,
+          slotsTotal,
+          slotsFilled: existingCount + testRegistrations.length,
           batchId,
           tournamentId
         }));
@@ -17014,6 +17031,83 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
       }
     });
+    return;
+  }
+
+  // --- ADMIN: PRUNE OVERFLOW REGISTRATIONS (ENFORCE MAX REG = SLOTS TOTAL) ---
+  const pruneOverflowMatch = urlPath.match(/^\/api\/admin\/tournaments\/([^/]+)\/prune-overflow-registrations$/);
+  if (pruneOverflowMatch && req.method === 'POST') {
+    const tournamentId = decodeURIComponent(pruneOverflowMatch[1]).trim();
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+        return;
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const tRes = await client.query(
+          'SELECT id, title, "slotsTotal", "slotsFilled" FROM tournaments WHERE id = $1',
+          [tournamentId]
+        );
+        if (tRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+
+        const slotsTotal = parseInt(tRes.rows[0].slotsTotal, 10) || 128;
+
+        // Delete test registrations that exceed slotsTotal
+        const excessRes = await client.query(
+          `DELETE FROM tournament_registrations
+           WHERE tournament_id = $1
+             AND (
+               slot_number IS NULL
+               OR slot_number > $2
+               OR id IN (
+                 SELECT id FROM tournament_registrations
+                 WHERE tournament_id = $1
+                 ORDER BY (slot_number IS NULL) ASC, slot_number ASC, created_at ASC
+                 OFFSET $2
+               )
+             )
+           RETURNING id`,
+          [tournamentId, slotsTotal]
+        );
+
+        if (excessRes.rows.length > 0) {
+          const deletedIds = excessRes.rows.map(r => r.id);
+          await client.query(
+            'DELETE FROM tournament_teams WHERE registration_id = ANY($1::text[])',
+            [deletedIds]
+          );
+        }
+
+        await client.query('COMMIT');
+        await reconcileTournamentSlots(pool, tournamentId);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: `Pruned ${excessRes.rowCount} overflow registration(s). Active registrations are now capped at ${slotsTotal}.`,
+          prunedCount: excessRes.rowCount,
+          slotsTotal
+        }));
+      } catch (dbErr) {
+        await client.query('ROLLBACK');
+        throw dbErr;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
     return;
   }
 
@@ -17078,6 +17172,54 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.writeHead(statusCode, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.code || 'SERVER_ERROR', message: err.message }));
     }
+    return;
+  }
+
+  // --- ADMIN: CLEAR DEV TESTING INJECTED DATA (FOR ALL OR SPECIFIC TOURNAMENT) ---
+  if ((urlPath === '/api/admin/dev-testing/clear-data' || urlPath === '/api/admin/clear-test-data') && (req.method === 'POST' || req.method === 'DELETE')) {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Admin access required.' }));
+          return;
+        }
+
+        let parsedBody = {};
+        if (body.trim()) {
+          try { parsedBody = JSON.parse(body); } catch {}
+        }
+
+        const tournamentId = parsedBody.tournamentId?.trim();
+        const adminId = authUser.id || authUser.email;
+        const adminEmail = authUser.email || authUser.id;
+
+        let result;
+        if (tournamentId && tournamentId.toUpperCase() !== 'ALL') {
+          result = await deleteTournamentTestInjectionData(pool, {
+            tournamentId,
+            adminId,
+            adminEmail
+          });
+        } else {
+          result = await deleteAllTestInjectionData(pool, {
+            adminId,
+            adminEmail
+          });
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (err) {
+        console.error('❌ [ADMIN CLEANUP] Failed to clear dev testing data:', err);
+        const statusCode = err.status || 500;
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.code || 'SERVER_ERROR', message: err.message }));
+      }
+    });
     return;
   }
 

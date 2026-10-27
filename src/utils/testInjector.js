@@ -1,6 +1,6 @@
 import { getAuthToken } from './getAuthToken';
 
-export const injectDummyRegistrations = async (tournamentId, targetSlots = 1000) => {
+export const injectDummyRegistrations = async (tournamentId, targetSlots = 128) => {
   try {
     console.log(`Starting injection of ${targetSlots} teams for Tournament: ${tournamentId}`);
 
@@ -101,3 +101,82 @@ export const deleteTestInjectionData = async (tournamentId) => {
     return { success: false, error: error.message };
   }
 };
+
+export const pruneOverflowRegistrations = async (tournamentId) => {
+  try {
+    const token = await getAuthToken();
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`/api/admin/tournaments/${encodeURIComponent(tournamentId)}/prune-overflow-registrations`, {
+      method: 'POST',
+      headers,
+      credentials: 'include'
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.success) {
+      const errMsg = data?.message || data?.error || `HTTP ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    return {
+      success: true,
+      message: data.message,
+      prunedCount: data.prunedCount,
+      slotsTotal: data.slotsTotal
+    };
+
+  } catch (error) {
+    console.error('Failed to prune overflow registrations:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const clearDevTestingData = async (tournamentId = null) => {
+  try {
+    const token = await getAuthToken();
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Confirm-Test-Data-Deletion': 'true'
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const payload = tournamentId && tournamentId.trim() && tournamentId.trim().toUpperCase() !== 'ALL'
+      ? { tournamentId: tournamentId.trim() }
+      : { all: true };
+
+    const response = await fetch('/api/admin/dev-testing/clear-data', {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data?.success) {
+      const errMsg = data?.message || data?.error || `HTTP ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    return {
+      success: true,
+      message: data.message,
+      deleted: data.deleted,
+      affectedTournaments: data.affectedTournaments
+    };
+
+  } catch (error) {
+    console.error('Failed to clear dev testing data:', error);
+    return { success: false, error: error.message };
+  }
+};
+

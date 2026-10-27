@@ -467,3 +467,224 @@ export async function deleteTournamentTestInjectionData(pool, { tournamentId, ad
     slotsFilled: updatedSlotsFilled
   };
 }
+
+/**
+ * Permanently deletes ALL proven test injection data across ALL tournaments.
+ * Runs in a strict single-database transaction respecting all foreign-key relationships.
+ *
+ * @param {object} pool
+ * @param {object} options
+ * @param {string} options.adminId
+ * @param {string} options.adminEmail
+ * @returns {Promise<object>} Global deletion summary result
+ */
+export async function deleteAllTestInjectionData(pool, { adminId, adminEmail }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const hasCols = await hasTestProvenanceColumns(client);
+
+    // 1. Locate all test registrations across the database
+    const testRegsRes = await client.query(`
+      SELECT r.id, r.tournament_id, r.user_id, r.team_name, r.slot_number, r.status
+      FROM tournament_registrations r
+      WHERE (
+        ${hasCols ? 'r.is_test = TRUE OR r.test_batch_id IS NOT NULL OR' : ''}
+        r.id LIKE 'REG-TEST-%'
+        OR r.user_id LIKE 'USR-TEST-%'
+      )
+    `);
+    const testRegs = testRegsRes.rows;
+    const testRegIds = testRegs.map(r => r.id);
+
+    // 2. Locate all test teams across the database
+    const testTeamsRes = await client.query(`
+      SELECT id, tournament_id, registration_id, team_name
+      FROM tournament_teams
+      WHERE (
+        (registration_id IS NOT NULL AND registration_id = ANY($1::text[]))
+        OR leader_user_id LIKE 'USR-TEST-%'
+        OR id LIKE 'TEAM-REG-TEST-%'
+      )
+    `, [testRegIds]);
+    const testTeams = testTeamsRes.rows;
+    const testTeamIds = testTeams.map(t => t.id);
+
+    // Track all affected tournament IDs
+    const affectedTournamentIdSet = new Set();
+    testRegs.forEach(r => { if (r.tournament_id) affectedTournamentIdSet.add(r.tournament_id); });
+    testTeams.forEach(t => { if (t.tournament_id) affectedTournamentIdSet.add(t.tournament_id); });
+    const affectedTournamentIds = Array.from(affectedTournamentIdSet);
+
+    // Ensure no real payment records are linked to test data
+    let linkedPaymentSubmissions = 0;
+    if (testRegIds.length > 0) {
+      const psRes = await client.query(`
+        SELECT COUNT(*)::int AS count
+        FROM payment_submissions
+        WHERE registration_id = ANY($1::text[])
+          OR user_id LIKE 'USR-TEST-%'
+          OR id LIKE 'PAY-TEST-%'
+      `, [testRegIds]);
+      linkedPaymentSubmissions = psRes.rows[0]?.count || 0;
+    }
+    let linkedPrizePayments = 0;
+    if (testTeamIds.length > 0) {
+      const ppRes = await client.query(`
+        SELECT COUNT(*)::int AS count
+        FROM tournament_prize_payments
+        WHERE team_id = ANY($1::text[])
+      `, [testTeamIds]);
+      linkedPrizePayments = ppRes.rows[0]?.count || 0;
+    }
+
+    if (linkedPaymentSubmissions > 0 || linkedPrizePayments > 0) {
+      const err = new Error(
+        `Global cleanup stopped: ${linkedPaymentSubmissions} payment submission(s) and ${linkedPrizePayments} prize payment(s) are linked to test-marked data. Resolve these records manually.`
+      );
+      err.status = 409;
+      err.code = 'TEST_CLEANUP_PAYMENT_RECORDS_PRESENT';
+      throw err;
+    }
+
+    let deletedRegistrations = 0;
+    let deletedTeams = 0;
+    let deletedMatchResults = 0;
+    let deletedMatchAssignments = 0;
+    let deletedQualDecisions = 0;
+    let deletedQualTeams = 0;
+    let deletedLeaderboard = 0;
+    let deletedFinalStandings = 0;
+    let deletedPrizeAwards = 0;
+
+    if (testTeamIds.length > 0) {
+      const qdRes = await client.query('DELETE FROM tournament_qualification_decisions WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedQualDecisions = qdRes.rowCount || 0;
+
+      const qtRes = await client.query('DELETE FROM tournament_qualified_teams WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedQualTeams = qtRes.rowCount || 0;
+
+      const paRes = await client.query('DELETE FROM tournament_prize_awards WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedPrizeAwards = paRes.rowCount || 0;
+
+      const fsRes = await client.query('DELETE FROM tournament_final_standings WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedFinalStandings = fsRes.rowCount || 0;
+
+      const lbRes = await client.query('DELETE FROM tournament_leaderboard WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedLeaderboard = lbRes.rowCount || 0;
+
+      await client.query(`
+        DELETE FROM tournament_match_results_audit
+        WHERE result_id IN (
+          SELECT id FROM tournament_match_results
+          WHERE team_id = ANY($1::text[])
+        )
+      `, [testTeamIds]);
+
+      const mrRes = await client.query('DELETE FROM tournament_match_results WHERE team_id = ANY($1::text[])', [testTeamIds]);
+      deletedMatchResults = mrRes.rowCount || 0;
+
+      const maRes = await client.query('DELETE FROM tournament_match_assignments WHERE tournament_team_id = ANY($1::text[])', [testTeamIds]);
+      deletedMatchAssignments = maRes.rowCount || 0;
+
+      await client.query('DELETE FROM tournament_team_invitations WHERE tournament_team_id = ANY($1::text[])', [testTeamIds]);
+      await client.query('DELETE FROM tournament_team_members WHERE tournament_team_id = ANY($1::text[])', [testTeamIds]);
+
+      const dtRes = await client.query('DELETE FROM tournament_teams WHERE id = ANY($1::text[])', [testTeamIds]);
+      deletedTeams = dtRes.rowCount || 0;
+    }
+
+    if (testRegIds.length > 0) {
+      await client.query(
+        "UPDATE slot_grid SET registration_id = NULL, status = 'empty' WHERE registration_id = ANY($1::text[])",
+        [testRegIds]
+      );
+
+      const delRegsRes = await client.query(`
+        DELETE FROM tournament_registrations
+        WHERE id = ANY($1::text[])
+          OR (
+            ${hasCols ? 'is_test = TRUE OR test_batch_id IS NOT NULL OR' : ''}
+            id LIKE 'REG-TEST-%'
+            OR user_id LIKE 'USR-TEST-%'
+          )
+      `, [testRegIds]);
+      deletedRegistrations = delRegsRes.rowCount || 0;
+    } else {
+      const delRegsRes = await client.query(`
+        DELETE FROM tournament_registrations
+        WHERE (
+          ${hasCols ? 'is_test = TRUE OR test_batch_id IS NOT NULL OR' : ''}
+          id LIKE 'REG-TEST-%'
+          OR user_id LIKE 'USR-TEST-%'
+        )
+      `);
+      deletedRegistrations = delRegsRes.rowCount || 0;
+    }
+
+    // Recalculate slotsFilled for all affected tournaments
+    if (affectedTournamentIds.length > 0) {
+      for (const tId of affectedTournamentIds) {
+        const remRes = await client.query(
+          "SELECT COUNT(*)::int AS count FROM tournament_registrations WHERE tournament_id = $1::varchar AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')",
+          [tId]
+        );
+        const remCount = remRes.rows[0]?.count || 0;
+        await client.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2::varchar', [remCount, tId]);
+      }
+    }
+
+    // Audit log
+    const auditId = `AAL-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const auditDetails = JSON.stringify({
+      action: 'CLEAR_ALL_TEST_INJECTION_DATA',
+      deletedRegistrations,
+      deletedTeams,
+      affectedTournamentsCount: affectedTournamentIds.length,
+      affectedTournaments: affectedTournamentIds,
+      performedBy: adminEmail || adminId,
+      timestamp: new Date().toISOString()
+    });
+
+    await client.query(`
+      INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, details, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    `, [
+      auditId,
+      String(adminId || 'admin').slice(0, 50),
+      'CLEAR_ALL_TEST_INJECTION_DATA',
+      'CLEAR_ALL_TEST_INJECTION_DATA',
+      'system',
+      'all_tournaments',
+      auditDetails
+    ]);
+
+    await client.query('COMMIT');
+    console.log(`🛡️ [ADMIN CLEANUP] Globally removed ${deletedRegistrations} test registration(s) and ${deletedTeams} test team(s) across ${affectedTournamentIds.length} tournament(s) by admin "${adminEmail || adminId}".`);
+
+    return {
+      success: true,
+      message: `Successfully cleared ${deletedRegistrations} test registration(s) and ${deletedTeams} test team(s) across ${affectedTournamentIds.length} tournament(s).`,
+      affectedTournaments: affectedTournamentIds.length,
+      deleted: {
+        registrations: deletedRegistrations,
+        teams: deletedTeams,
+        matchAssignments: deletedMatchAssignments,
+        matchResults: deletedMatchResults,
+        qualificationDecisions: deletedQualDecisions,
+        qualifiedTeams: deletedQualTeams,
+        leaderboardRows: deletedLeaderboard,
+        finalStandings: deletedFinalStandings,
+        prizeAwards: deletedPrizeAwards
+      }
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ [ADMIN CLEANUP] Error deleting all test injection data:', err);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
