@@ -10,7 +10,7 @@
         "preview": "vite preview",
         "migrate:district-ids": "node scripts/migrate-district-ids.js",
         "start": "node server.js",
-        "bot": "node bot/discord/index.js"
+        "bot": "node bot/matchdistrict-manager-discord-bot/index.js"
     },
     "dependencies": {
         "@floating-ui/react": "^0.27.19",

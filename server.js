@@ -6,7 +6,6 @@ import { Resend } from 'resend';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { startSlotManagerWorker, reconcileTournamentSlots } from './workers/slotManagerWorker.js';
-import { startDiscordBotWorker } from './workers/discordBotWorker.js';
 import * as OTPAuth from 'otpauth';
 import QRCode from 'qrcode';
 import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
@@ -419,7 +418,6 @@ const REQUIRED_ENV_KEYS = ['DATABASE_URL', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'JWT
 for (const key of REQUIRED_ENV_KEYS) {
   console.log(`[ENV] ${key}: ${process.env[key] ? 'present' : 'missing'}`);
 }
-console.log(`[ENV] DISCORD_BOT_TOKEN: ${process.env.DISCORD_BOT_TOKEN ? 'present' : 'missing'}`);
 
 const PORT = process.env.PORT || 10000;
 
@@ -19984,11 +19982,6 @@ function startMonitoringWorker() {
 }
 
 (async () => {
-  // Start Discord Welcome Bot only if not explicitly disabled
-  if (process.env.DISABLE_DISCORD_BOT !== 'true') {
-    startDiscordBotWorker();
-  }
-
   try {
     await initDb();
   } catch (startupError) {
