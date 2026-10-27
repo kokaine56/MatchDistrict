@@ -208,11 +208,8 @@ async function gracefulShutdown(signal) {
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-// Auto-start when executed as the main process script
-const isMainModule = process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
-if (isMainModule) {
-  startBot().catch(() => {
-    // If running as standalone script, exit on login error so supervisor knows it failed
-    process.exit(1);
-  });
-}
+// Auto-start bot when this file is executed
+startBot().catch((error) => {
+  console.error('[Discord Bot] ❌ Fatal startup error:', error?.message || error);
+  process.exit(1);
+});

@@ -92,10 +92,18 @@ export function startDiscordBotWorker() {
         ...process.env,
         DISCORD_BOT_TOKEN: token,
       },
-      stdio: ['ignore', 'inherit', 'inherit'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     botProcess = child;
+
+    child.stdout.on('data', (data) => {
+      process.stdout.write(data);
+    });
+
+    child.stderr.on('data', (data) => {
+      process.stderr.write(data);
+    });
 
     child.on('error', (err) => {
       console.error('❌ [DISCORD BOT] Worker process failed to spawn:', err.message);
