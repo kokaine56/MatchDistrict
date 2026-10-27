@@ -11,17 +11,13 @@ COPY package*.json ./
 # Install ALL dependencies (devDeps required for Vite build)
 RUN npm install --ignore-scripts
 
-# Build-time ARGs (injected by Render's environment variables with defaults)
+# Build-time ARGs for Vite frontend bundle
 ARG SUPABASE_URL
 ARG SUPABASE_ANON_KEY
-ARG ADMIN_EMAIL
-ARG ADMIN_PASSWORD
 
-# Vite requires these at build time to embed them in the bundle
+# Vite requires these at build time to embed them in the public client bundle
 ENV SUPABASE_URL=$SUPABASE_URL
 ENV SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY
-ENV ADMIN_EMAIL=$ADMIN_EMAIL
-ENV ADMIN_PASSWORD=$ADMIN_PASSWORD
 ENV NODE_ENV=production
 
 # Copy application source
@@ -52,7 +48,6 @@ ENV NODE_ENV=production
 ENV PORT=10000
 ENV DISABLE_DISCORD_BOT=true
 
-ENV RESEND_API_KEY=""
 ENV RESEND_FROM_EMAIL="Match District <auth@matchdistrict.in>"
 
 EXPOSE 10000
