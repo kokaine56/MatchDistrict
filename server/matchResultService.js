@@ -72,6 +72,89 @@ export function mapPublicMatchResult(row) {
   };
 }
 
+/**
+ * Loads the allocated teams and verified scores for one configured match.
+ * The match row establishes the tournament/round/district scope; assignments
+ * are resolved only through their canonical tournament_team_id and match_id.
+ */
+export async function loadMatchScoreEntryData(client, { tournId, roundId, districtId, matchId } = {}) {
+  if (!client || !tournId || !roundId || !districtId || !matchId) {
+    throw matchResultError(MATCH_RESULT_ERR.INVALID_INPUT, 'Tournament, round, district, and match are required.');
+  }
+
+  const matchRes = await client.query(
+    `SELECT m.id, m.tournament_id, m.round_id, m.group_id, m.district_id,
+            m.match_number, COALESCE(room.capacity, reg_group.capacity) AS configured_capacity
+     FROM tournament_matches m
+     LEFT JOIN tournament_rooms room ON room.id = m.room_id
+     LEFT JOIN tournament_registration_groups reg_group
+       ON reg_group.id = COALESCE(m.group_id, m.district_id)
+     WHERE m.id = $1::varchar AND m.tournament_id = $2::varchar
+       AND m.round_id = $3::varchar
+       AND (m.group_id = $4::varchar OR m.district_id = $4::varchar)
+     LIMIT 1`,
+    [matchId, tournId, roundId, districtId]
+  );
+  if (matchRes.rows.length === 0) {
+    throw matchResultError(MATCH_RESULT_ERR.NOT_FOUND, 'The selected match is not configured for this round and district.', 404);
+  }
+
+  const assignmentsRes = await client.query(
+    `SELECT a.id AS assignment_id, a.tournament_team_id AS team_id,
+            a.slot_number, a.assigned_at,
+            t.team_name, t.status AS team_status,
+            COALESCE(reg.captain, leader.name) AS leader_name,
+            mr.placement, mr.kills
+     FROM tournament_match_assignments a
+     JOIN tournament_teams t
+       ON t.id = a.tournament_team_id AND t.tournament_id = a.tournament_id
+     LEFT JOIN tournament_registrations reg ON reg.id = t.registration_id
+     LEFT JOIN users leader ON leader.id = t.leader_user_id
+     LEFT JOIN tournament_match_results mr
+       ON mr.match_id = a.match_id AND mr.team_id = a.tournament_team_id
+       AND mr.tournament_id = a.tournament_id AND mr.status = 'verified'
+     WHERE a.tournament_id = $1::varchar AND a.match_id = $2::varchar
+       AND a.status = 'allocated'
+     ORDER BY a.slot_number ASC NULLS LAST, a.assigned_at ASC, a.id ASC`,
+    [tournId, matchId]
+  );
+
+  const results = {};
+  const assignedTeams = assignmentsRes.rows.map((row) => {
+    if (row.placement != null && row.kills != null) {
+      results[row.team_id] = {
+        team_id: row.team_id,
+        placement: row.placement,
+        kills: row.kills,
+      };
+    }
+    return {
+      assignment_id: row.assignment_id,
+      team_id: row.team_id,
+      team_name: row.team_name,
+      leader_name: row.leader_name || 'Captain',
+      status: row.team_status,
+      is_disqualified: row.team_status === 'disqualified',
+      slot_number: row.slot_number ?? null,
+      assigned_at: row.assigned_at,
+    };
+  });
+
+  return {
+    match: {
+      id: matchId,
+      round_id: roundId,
+      district_id: districtId,
+      match_number: matchRes.rows[0].match_number,
+      capacity: Number(matchRes.rows[0].configured_capacity) || assignedTeams.length,
+    },
+    assigned_teams: assignedTeams,
+    assignment_count: assignedTeams.length,
+    result_count: Object.keys(results).length,
+    results,
+  };
+}
+
 // Terminal match statuses. No route currently advances tournament_matches.status (it stays
 // 'PENDING'), so this gate is inert today, but it protects future match-lifecycle tooling
 // from accepting late or duplicate result submissions after a match is closed.
@@ -263,7 +346,17 @@ export async function applyMatchResults(client, { tournId, matchId, results, act
   }
 
   // 2. Lock the match row and verify it belongs to the tournament.
-  const matchRes = await client.query('SELECT id, "tournament_id", status FROM tournament_matches WHERE id = $1 FOR UPDATE', [matchId]);
+  const matchRes = await client.query(
+    `SELECT m.id, m."tournament_id", m.status,
+            COALESCE(r.capacity, rg.capacity) AS room_capacity
+     FROM tournament_matches m
+     LEFT JOIN tournament_rooms r ON r.id = m.room_id
+     LEFT JOIN tournament_groups g ON g.id = COALESCE(m.group_id, m.district_id)
+     LEFT JOIN tournament_registration_groups rg ON rg.id = COALESCE(m.group_id, m.district_id)
+     WHERE m.id = $1::varchar
+     FOR UPDATE OF m`,
+    [matchId]
+  );
   if (matchRes.rows.length === 0) {
     throw matchResultError(MATCH_RESULT_ERR.NOT_FOUND, 'Match not found.', 404);
   }
@@ -282,7 +375,7 @@ export async function applyMatchResults(client, { tournId, matchId, results, act
     [matchId, tournId]
   );
   const allocatedIds = new Set(allocRes.rows.map((r) => r.tournament_team_id));
-  const bound = allocatedIds.size;
+  const bound = Number(match.room_capacity) || allocatedIds.size;
 
   // 4. Validate the submission shape.
   const validationErrors = validateResultEntries(results, bound);

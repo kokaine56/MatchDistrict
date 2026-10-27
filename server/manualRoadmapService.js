@@ -133,8 +133,38 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
     [tournamentId]
   );
 
-  // If not yet persisted or incomplete, idempotently populate tournament_registration_groups
+  // If not yet persisted or incomplete/stale, idempotently populate tournament_registration_groups
   if (groupRowsRes.rows.length === 0 || groupRowsRes.rows.length !== expectedDistrictCount) {
+    // If existing rows exceed expectedDistrictCount (e.g. capacity was reduced from 96/100 to 64),
+    // check whether groups with group_index > expectedDistrictCount contain active registrations or match assignments.
+    if (groupRowsRes.rows.length > expectedDistrictCount) {
+      const obsoleteRows = groupRowsRes.rows.filter((r) => r.group_index > expectedDistrictCount);
+      const obsoleteIds = obsoleteRows.map((r) => r.id);
+
+      const assignedCheck = await poolOrClient.query(
+        `SELECT 1 FROM tournament_registrations
+         WHERE tournament_id = $1 AND group_id = ANY($2::text[])
+         LIMIT 1`,
+        [tournamentId, obsoleteIds]
+      ).catch(() => ({ rows: [] }));
+
+      const matchAllocCheck = await poolOrClient.query(
+        `SELECT 1 FROM tournament_match_assignments
+         WHERE tournament_id = $1 AND group_id = ANY($2::text[])
+         LIMIT 1`,
+        [tournamentId, obsoleteIds]
+      ).catch(() => ({ rows: [] }));
+
+      if (assignedCheck.rows.length === 0 && matchAllocCheck.rows.length === 0) {
+        // Safe to prune empty obsolete groups from earlier higher capacity
+        await poolOrClient.query(
+          `DELETE FROM tournament_registration_groups
+           WHERE tournament_id = $1 AND group_index > $2`,
+          [tournamentId, expectedDistrictCount]
+        );
+      }
+    }
+
     const layout = buildGroups(slotsTotal, teamsPerGroup);
     for (const g of layout) {
       const gId = `GRP-${tournamentId.slice(-6)}-${String(g.group_index).padStart(2, '0')}`;
@@ -198,39 +228,57 @@ export async function getTournamentDistricts(poolOrClient, tournamentId) {
     }
   }
 
-  const districts = groupRowsRes.rows.map((row) => {
+  const warnings = [];
+  const validDistricts = [];
+
+  for (const row of groupRowsRes.rows) {
     const l = layoutMap.get(row.group_index) || {};
     const slotStart = l.slotStart ?? (row.group_index - 1) * row.capacity + 1;
     const slotEnd = l.slotEnd ?? row.group_index * row.capacity;
     const matchingRegs = districtRegMap.get(row.id) || [];
+    const isObsoleteConflict = row.group_index > expectedDistrictCount;
+
+    // If an obsolete row has NO matching registrations, filter it out
+    if (isObsoleteConflict && matchingRegs.length === 0) {
+      continue;
+    }
+
+    if (isObsoleteConflict) {
+      warnings.push(
+        `Allocation conflict: District ${row.group_index} (${row.name}) contains ${matchingRegs.length} assigned team(s) but exceeds configured tournament capacity of ${slotsTotal} teams (${expectedDistrictCount} districts). Organizer resolution required.`
+      );
+    }
 
     const displayName = getDistrictDisplayName({
       roundNumber: 1,
       districtNumber: row.group_index,
-      totalDistricts: groupRowsRes.rows.length,
+      totalDistricts: expectedDistrictCount,
       isGrandFinal: false,
     });
-    return {
+
+    validDistricts.push({
       id: row.id,
       group_index: row.group_index,
-      name: displayName,
+      name: isObsoleteConflict ? `${displayName} (Conflict)` : displayName,
       code: `D${row.group_index}`,
       capacity: row.capacity,
       slot_start: slotStart,
       slot_end: slotEnd,
       registered_teams_count: matchingRegs.length,
       team_count: matchingRegs.length,
+      has_conflict: isObsoleteConflict,
       teams: matchingRegs.map((r) => ({
         id: r.id,
         team_name: r.team_name,
         captain: r.captain,
         slot_number: r.slot_number,
       })),
-    };
-  });
+    });
+  }
+
+  const districts = validDistricts;
 
   const totalRegisteredTeams = verifiedRegs.length;
-  const warnings = [];
   const emptyDistricts = districts.filter((d) => d.registered_teams_count === 0);
   if (emptyDistricts.length > 0 && totalRegisteredTeams > 0) {
     warnings.push(`${emptyDistricts.length} district(s) have no verified teams assigned yet.`);

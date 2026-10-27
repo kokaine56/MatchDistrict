@@ -132,18 +132,33 @@ export function getRoundDistricts(round, rIdx = 0, allDistricts = [], options = 
 
   if (rIdx === 0 && !isGrandFinal) {
     // Round 1
+    // Authoritative district count calculation:
+    // 1. Explicit organizer override: round.lobby_capacities or round.district_count
+    // 2. Capacity-driven calculation: ceil(eligibleTeams / lobbyCapacity)
+    // 3. Fallbacks: canonical registration groups (allDistricts) or existing allocations
     let count = 1;
-    if (Array.isArray(allDistricts) && allDistricts.length > 0) {
-      count = allDistricts.length;
-    } else if (options.slotsTotal && Number(options.slotsTotal) > 0) {
-      count = Math.max(1, Math.ceil(Number(options.slotsTotal) / teamsPerGroup));
-    } else if (existingAllocs.length > 0) {
-      count = existingAllocs.length;
+    if (Array.isArray(round.lobby_capacities) && round.lobby_capacities.length > 0) {
+      count = round.lobby_capacities.length;
+    } else if (Number.isFinite(Number(round.district_count)) && Number(round.district_count) > 0) {
+      count = Math.floor(Number(round.district_count));
+    } else {
+      const eligibleTeams = Number(round.teams_in) || Number(options.slotsTotal) || 0;
+      if (eligibleTeams > 0) {
+        count = Math.max(1, Math.ceil(eligibleTeams / teamsPerGroup));
+      } else if (Array.isArray(allDistricts) && allDistricts.length > 0) {
+        count = allDistricts.length;
+      } else if (existingAllocs.length > 0) {
+        count = existingAllocs.length;
+      }
     }
 
     for (let i = 1; i <= count; i++) {
-      const d = allDistricts[i - 1];
-      const existingId = existingAllocs[i - 1]?.id;
+      const d = Array.isArray(allDistricts) ? allDistricts[i - 1] : null;
+      const existingAlloc = existingAllocs.find((ea, eaIdx) => {
+        const dNum = extractDistrictNumber(ea.alloc, eaIdx + 1);
+        return dNum === i;
+      });
+      const existingId = existingAlloc?.id;
       const id = String(existingId || d?.id || d?.district_id || `dist-${i}`);
       const name = getDistrictDisplayName({
         roundNumber: roundNum,
@@ -171,8 +186,11 @@ export function getRoundDistricts(round, rIdx = 0, allDistricts = [], options = 
     }
 
     for (let i = 1; i <= lobbyCount; i++) {
-      const existing = existingAllocs[i - 1];
-      const id = String(existing?.id || `${round.id || 'gf'}-dist-${i}`);
+      const existingAlloc = existingAllocs.find((ea, eaIdx) => {
+        const dNum = extractDistrictNumber(ea.alloc, eaIdx + 1);
+        return dNum === i;
+      });
+      const id = String(existingAlloc?.id || `${round.id || 'gf'}-dist-${i}`);
       const name = getDistrictDisplayName({
         roundNumber: roundNum,
         districtNumber: i,
@@ -204,8 +222,11 @@ export function getRoundDistricts(round, rIdx = 0, allDistricts = [], options = 
     }
 
     for (let i = 1; i <= lobbyCount; i++) {
-      const existing = existingAllocs[i - 1];
-      const id = String(existing?.id || `${round.id || `r${roundNum}`}-dist-${i}`);
+      const existingAlloc = existingAllocs.find((ea, eaIdx) => {
+        const dNum = extractDistrictNumber(ea.alloc, eaIdx + 1);
+        return dNum === i;
+      });
+      const id = String(existingAlloc?.id || `${round.id || `r${roundNum}`}-dist-${i}`);
       const name = getDistrictDisplayName({
         roundNumber: roundNum,
         districtNumber: i,
@@ -225,23 +246,48 @@ export function getRoundDistricts(round, rIdx = 0, allDistricts = [], options = 
     }
   }
 
-  // Include any extra existing allocations not captured yet
+  // Preserve any extra existing allocations ONLY if they legitimately contain
+  // assigned teams, saved scores, or verified results (protecting historical/active data).
+  // Stale, empty, unassigned allocations from earlier configurations are not retained.
   for (let idx = 0; idx < existingAllocs.length; idx++) {
     const ea = existingAllocs[idx];
     if (!seenIds.has(ea.id)) {
-      seenIds.add(ea.id);
-      const dNum = extractDistrictNumber(ea.alloc, result.length + 1);
-      result.push({
-        id: ea.id,
-        name: getDistrictDisplayName({
-          roundNumber: roundNum,
+      const alloc = ea.alloc || {};
+      const hasAssignedTeams = Boolean(
+        alloc.has_assigned_teams ||
+        (alloc.team_count != null && alloc.team_count > 0) ||
+        (alloc.registered_teams_count != null && alloc.registered_teams_count > 0) ||
+        (Array.isArray(alloc.teams) && alloc.teams.length > 0) ||
+        (Array.isArray(alloc.matches) && alloc.matches.some((m) =>
+          (Array.isArray(m.assignments) && m.assignments.length > 0) ||
+          m.has_results ||
+          m.scores_saved
+        ))
+      );
+      const hasScoresOrResults = Boolean(
+        alloc.scores_saved ||
+        alloc.has_results ||
+        alloc.scores_status === 'saved' ||
+        alloc.scores_status === 'verified'
+      );
+      const isExplicitCustom = Boolean(alloc.is_custom && alloc.matches && alloc.matches.length > 0);
+
+      if (hasAssignedTeams || hasScoresOrResults || isExplicitCustom) {
+        seenIds.add(ea.id);
+        const dNum = extractDistrictNumber(alloc, result.length + 1);
+        result.push({
+          id: ea.id,
+          name: getDistrictDisplayName({
+            roundNumber: roundNum,
+            districtNumber: dNum,
+            totalDistricts: Math.max(result.length + 1, 2),
+            isGrandFinal,
+          }),
+          capacity: ea.capacity,
           districtNumber: dNum,
-          totalDistricts: Math.max(result.length + 1, 2),
-          isGrandFinal,
-        }),
-        capacity: ea.capacity,
-        districtNumber: dNum,
-      });
+          has_conflict: hasAssignedTeams && !isExplicitCustom,
+        });
+      }
     }
   }
 

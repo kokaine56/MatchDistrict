@@ -11,7 +11,7 @@ import QRCode from 'qrcode';
 import { encryptSecret, decryptSecret } from './server/cryptoSecrets.js';
 
 import { requireFeature, checkPlanLimits, getOrganizerUsage, PLAN_FEATURES, PLAN_ORDER } from './server/subscriptionMiddleware.js';
-import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings, editTeamLeaderboardPoints, saveDistrictScores, getEligibleTournamentTeams, getDistrictSaveState, getTournamentScoringRules } from './server/leaderboardService.js';
+import { validateScore, calculateMatchPoints, updateTeamLeaderboard, sortAndRank, calculateRankings, getEligibleTournamentTeams, getDistrictSaveState } from './server/leaderboardService.js';
 import { calculateTournamentPlan } from './server/tournamentPlanner.js';
 import { generateTournamentRoadmap } from './server/roadmapGenerator.js';
 import { normalizeRoadmapConfig, validateRoadmapConfig, distributeDistrictSizes, computeDistrictCount, defaultTeamsAdvancing, isValidTime, releaseTimeFor } from './server/roadmapConfig.js';
@@ -57,6 +57,7 @@ import { runSchemaMigrations, runMigrationBatch, SCHEMA_TABLES } from './server/
 import { syncMissingProfiles } from './server/profileSync.js';
 import { generateDistrictId, insertWithDistrictId, migrateDistrictIds } from './server/districtId.js';
 import { createDatabasePool } from './server/db.js';
+import { handleLeaderboardRoutes } from './server/leaderboard/routes.js';
 import { updateTeamQualificationStatus } from './server/teamDisqualificationService.js';
 import { generatePrizeAwards, listPrizeAwards, PrizeAwardError } from './server/prizeAwardService.js';
 import { settlePrizeAward, PrizePayoutError, isValidUpiId } from './server/prizePayoutService.js';
@@ -13253,6 +13254,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
+  // ── LEADERBOARD V2 DISPATCHER ──
+  if (req.url && req.url.includes('/leaderboard')) {
+    const leaderboardV2Handled = await handleLeaderboardRoutes(req, res, pool);
+    if (leaderboardV2Handled) return;
+  }
+
   // ── PUBLIC / ORGANIZER: Tournament Leaderboard (standings with publication controls) ──
   const leaderboardUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/leaderboard(?:\?(.*))?$/);
   if (leaderboardUrlMatch && req.method === 'GET') {
@@ -13574,6 +13581,57 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
+  // ── ORGANIZER: Load one match's score-entry assignments ───────────────────
+  const matchScoreEntryUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/([^/]+)\/districts\/([^/]+)\/matches\/([^/]+)\/score-entry$/);
+  if (matchScoreEntryUrlMatch && req.method === 'GET') {
+    const tournId = decodeURIComponent(matchScoreEntryUrlMatch[1]);
+    const roundId = decodeURIComponent(matchScoreEntryUrlMatch[2]);
+    const districtId = decodeURIComponent(matchScoreEntryUrlMatch[3]);
+    const matchId = decodeURIComponent(matchScoreEntryUrlMatch[4]);
+
+    try {
+      const authUser = getAuthUser(req);
+      if (!authUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+      }
+
+      const tournRes = await pool.query(
+        'SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1::varchar',
+        [tournId]
+      );
+      if (tournRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+      }
+
+      const access = await checkTournamentOrganizerOrStaffAccess(authUser, tournRes.rows[0], pool, 'score_entry');
+      if (!access.authorized) {
+        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+      }
+
+      const { loadMatchScoreEntryData, MatchResultError } = await import('./server/matchResultService.js');
+      const entryData = await loadMatchScoreEntryData(pool, { tournId, roundId, districtId, matchId });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, ...entryData }));
+    } catch (err) {
+      if (err?.name === 'MatchResultError') {
+        res.writeHead(err.status || 400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: err.code, message: err.message }));
+      }
+      const ref = makeErrorRef();
+      logErrorWithRef(ref, 'GET /matches/:matchId/score-entry', err, 'load_match_score_entry');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: false,
+        error: 'MATCH_SCORE_ENTRY_LOAD_ERROR',
+        ref,
+        message: `Could not load this match's allocations. Please retry. (Ref: ${ref})`,
+      }));
+    }
+  }
+
   // ── ORGANIZER: Batch District Score Saving ────────────────────────────────
   const saveDistrictScoresUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/(?:rounds\/([^/]+)\/)?districts\/([^/]+)\/(?:save-scores|scores)$/);
   if (saveDistrictScoresUrlMatch && req.method === 'POST') {
@@ -13619,43 +13677,149 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const teamScores = Array.isArray(data.team_scores || data.scores) ? (data.team_scores || data.scores) : [];
         const effectiveRoundId = routeRoundId || data.round_id || data.roundId || null;
         const expectedVersion = data.expected_version != null ? data.expected_version : (data.expectedVersion != null ? data.expectedVersion : null);
+        const matchId = data.match_id || data.matchId || null;
+        if (!effectiveRoundId || !matchId || teamScores.length === 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_INPUT',
+            message: 'A configured round, match, and at least one complete team result are required.',
+          }));
+        }
+        if (teamScores.some((item) => !item || typeof item !== 'object' || Array.isArray(item))) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_INPUT',
+            message: 'Each score must contain one team result object with kills and finish position.',
+          }));
+        }
 
-        // Fetch tournament scoring rules from authoritative tournament_scoring_rules table
-        const scoringRules = await getTournamentScoringRules(pool, tournId);
-
+        const { applyMatchResults, MatchResultError } = await import('./server/matchResultService.js');
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
-          const result = await saveDistrictScores(client, {
-            tournamentId: tournId,
-            roundId: effectiveRoundId,
-            districtId: districtId,
-            matchId: data.match_id || data.matchId || null,
-            teamScores,
-            expectedVersion,
+          // Match-result writes lock tournament, then match. Keep this route's
+          // additional validation and district save-state lock in that order.
+          await client.query('SELECT id FROM tournaments WHERE id = $1::varchar FOR UPDATE', [tournId]);
+          const matchRes = await client.query(
+            `SELECT id FROM tournament_matches
+             WHERE id = $1::varchar AND tournament_id = $2::varchar AND round_id = $3::varchar
+               AND (group_id = $4::varchar OR district_id = $4::varchar)`,
+            [matchId, tournId, effectiveRoundId, districtId]
+          );
+          if (matchRes.rows.length === 0) {
+            const err = new Error('The selected match is not configured for this round and district.');
+            err.statusCode = 404;
+            err.code = 'MATCH_NOT_FOUND';
+            throw err;
+          }
+
+          const stateRes = await client.query(
+            `SELECT version FROM tournament_district_save_states
+             WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND district_id = $3::varchar
+             FOR UPDATE`,
+            [tournId, effectiveRoundId, districtId]
+          );
+          const currentVersion = Number(stateRes.rows[0]?.version) || 0;
+          const requestedVersion = expectedVersion == null ? null : Number(expectedVersion);
+          if (requestedVersion != null && (!Number.isInteger(requestedVersion) || requestedVersion < 0)) {
+            const err = new Error('The district save version is invalid. Reload the district and try again.');
+            err.statusCode = 400;
+            err.code = 'INVALID_SAVE_VERSION';
+            throw err;
+          }
+          if (requestedVersion != null && requestedVersion !== currentVersion) {
+            const err = new Error('This district changed in another session. Reload the latest scores before saving.');
+            err.statusCode = 409;
+            err.code = 'DISTRICT_VERSION_CONFLICT';
+            err.current_version = currentVersion;
+            throw err;
+          }
+
+          const result = await applyMatchResults(client, {
+            tournId,
+            matchId,
+            results: teamScores.map((item) => ({
+              team_id: item.team_id,
+              placement: item.placement ?? item.finish_position,
+              kills: item.kills ?? item.total_kills,
+            })),
             actorId: authUser.id,
-            scoringRules,
           });
+
+          const completenessRes = await client.query(`
+            SELECT COUNT(*)::int AS match_count,
+                   COUNT(*) FILTER (WHERE allocated_count = 0 OR result_count < allocated_count)::int AS incomplete_count
+            FROM (
+              SELECT m.id,
+                     COUNT(DISTINCT a.tournament_team_id) FILTER (WHERE a.status = 'allocated')::int AS allocated_count,
+                     COUNT(DISTINCT a.tournament_team_id)
+                       FILTER (WHERE a.status = 'allocated' AND mr.status = 'verified')::int AS result_count
+              FROM tournament_matches m
+              LEFT JOIN tournament_match_assignments a
+                ON a.match_id = m.id AND a.tournament_id = m.tournament_id
+              LEFT JOIN tournament_match_results mr
+                ON mr.match_id = m.id AND mr.tournament_id = m.tournament_id
+              WHERE m.tournament_id = $1::varchar AND m.round_id = $2::varchar
+                AND (m.group_id = $3::varchar OR m.district_id = $3::varchar)
+              GROUP BY m.id
+            ) AS match_completeness
+          `, [tournId, effectiveRoundId, districtId]);
+          const matchCount = Number(completenessRes.rows[0]?.match_count) || 0;
+          const incompleteCount = Number(completenessRes.rows[0]?.incomplete_count) || 0;
+          const saveStatus = matchCount > 0 && incompleteCount === 0 ? 'saved' : 'incomplete';
+          const newVersion = currentVersion + 1;
+          const savedAt = new Date().toISOString();
+
+          await client.query(`
+            INSERT INTO tournament_district_save_states
+              (id, tournament_id, round_id, district_id, status, version, saved_by, saved_at)
+            VALUES ('DSS-' || gen_random_uuid()::varchar, $1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::int, $6::varchar, NOW())
+            ON CONFLICT (tournament_id, round_id, district_id) DO UPDATE SET
+              status = EXCLUDED.status,
+              version = EXCLUDED.version,
+              saved_by = EXCLUDED.saved_by,
+              saved_at = NOW()
+          `, [tournId, effectiveRoundId, districtId, saveStatus, newVersion, authUser.id]);
+
+          await client.query(`
+            UPDATE tournament_groups
+            SET scores_saved = $1::boolean, scores_saved_at = NOW(), scores_status = $2::varchar
+            WHERE (id = $3::varchar OR district_id = $3::varchar) AND tournament_id = $4::varchar
+          `, [saveStatus === 'saved', saveStatus, districtId, tournId]);
+          await client.query(`
+            UPDATE tournament_registration_groups
+            SET scores_saved = $1::boolean, scores_saved_at = NOW(), scores_status = $2::varchar
+            WHERE id = $3::varchar AND tournament_id = $4::varchar
+          `, [saveStatus === 'saved', saveStatus, districtId, tournId]);
+
           await client.query('COMMIT');
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({
             success: true,
             district_id: districtId,
-            match_id: data.match_id || data.matchId || null,
-            saved_count: result.saved_count,
-            version: result.version,
-            scores_status: 'saved',
-            scores_saved_at: result.scores_saved_at,
-            message: `Successfully saved scores for ${result.saved_count} teams in district.`,
+            match_id: matchId,
+            saved_count: result.written.length,
+            version: newVersion,
+            scores_status: saveStatus,
+            scores_saved_at: savedAt,
+            message: saveStatus === 'saved'
+              ? `Saved ${result.written.length} match result(s). All configured district matches are complete.`
+              : `Saved ${result.written.length} match result(s). District results remain incomplete until every allocated team in every configured match has a result.`,
           }));
         } catch (txnErr) {
           await client.query('ROLLBACK').catch(() => {});
-          if (txnErr.statusCode === 409 || txnErr.code === 'DISTRICT_VERSION_CONFLICT') {
-            res.writeHead(409, { 'Content-Type': 'application/json' });
+          if (txnErr instanceof MatchResultError) {
+            res.writeHead(txnErr.status || 400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: txnErr.code, message: txnErr.message }));
+          }
+          if (txnErr.statusCode === 400 || txnErr.statusCode === 404 || txnErr.statusCode === 409) {
+            res.writeHead(txnErr.statusCode, { 'Content-Type': 'application/json' });
             return res.end(JSON.stringify({
               success: false,
-              error: 'DISTRICT_VERSION_CONFLICT',
+              error: txnErr.code || 'DISTRICT_VERSION_CONFLICT',
               message: txnErr.message,
               current_version: txnErr.current_version,
             }));
@@ -13675,142 +13839,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             ? err.message
             : `Failed to save district scores. Please try again. (Ref: ${ref})`,
         }));
-      }
-    });
-    return;
-  }
-
-  // ── ORGANIZER: Add Match to District ─────────────────────────────────────
-  const addDistrictMatchMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/rounds\/([^/]+)\/districts\/([^/]+)\/matches$/);
-  if (addDistrictMatchMatch && req.method === 'POST') {
-    const tournId = decodeURIComponent(addDistrictMatchMatch[1]);
-    const routeRoundId = decodeURIComponent(addDistrictMatchMatch[2]);
-    const districtId = decodeURIComponent(addDistrictMatchMatch[3]);
-
-    try {
-      const authUser = getAuthUser(req);
-      if (!authUser) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
-      }
-
-      const tournRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tournId]);
-      if (tournRes.rows.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
-      }
-
-      const access = await checkTournamentOrganizerOrStaffAccess(authUser, tournRes.rows[0], pool, 'score_entry');
-      if (!access.authorized) {
-        res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
-      }
-
-      if (tournRes.rows[0].finalized_at) {
-        res.writeHead(409, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Tournament is finalized; matches are locked.' }));
-      }
-
-      // Find highest match number in this district
-      const maxRes = await pool.query(`
-        SELECT COALESCE(MAX(match_number), 0)::int as max_num
-        FROM tournament_matches
-        WHERE tournament_id = $1::varchar AND round_id = $2::varchar AND (group_id = $3::varchar OR district_id = $3::varchar)
-      `, [tournId, routeRoundId, districtId]);
-
-      const nextMatchNum = (Number(maxRes.rows[0]?.max_num) || 0) + 1;
-      const newMatchId = 'MAT-' + crypto.randomBytes(6).toString('hex').toUpperCase();
-
-      await pool.query(`
-        INSERT INTO tournament_matches (id, tournament_id, round_id, group_id, district_id, match_number, status, origin)
-        VALUES ($1, $2, $3, $4, $4, $5, 'PENDING', 'manual_add')
-      `, [newMatchId, tournId, routeRoundId, districtId, nextMatchNum]);
-
-      res.writeHead(201, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({
-        success: true,
-        match: {
-          id: newMatchId,
-          match_id: newMatchId,
-          match_number: nextMatchNum,
-          group_id: districtId,
-          status: 'PENDING',
-        },
-        message: `Match ${nextMatchNum} created successfully for district.`,
-      }));
-    } catch (err) {
-      const ref = makeErrorRef();
-      logErrorWithRef(ref, 'POST /districts/:id/matches', err, 'add_district_match');
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: false, error: 'CREATE_MATCH_ERROR', message: `Failed to add match. Please try again. (Ref: ${ref})` }));
-    }
-  }
-
-  // ── ORGANIZER: Edit Team Leaderboard Points ───────────────────────────────
-  const editScoreUrlMatch = req.url.match(/^\/api\/tournaments\/([^/]+)\/(?:teams\/([^/]+)\/points|leaderboard\/edit-score)$/);
-  if (editScoreUrlMatch && req.method === 'POST') {
-    const tournId = decodeURIComponent(editScoreUrlMatch[1]);
-    const routeTeamId = editScoreUrlMatch[2] ? decodeURIComponent(editScoreUrlMatch[2]) : null;
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', async () => {
-      try {
-        const authUser = getAuthUser(req);
-        if (!authUser) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
-        }
-
-        const tournRes = await pool.query('SELECT "orgId", roadmap_status, finalized_at, status FROM tournaments WHERE id = $1', [tournId]);
-        if (tournRes.rows.length === 0) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
-        }
-
-        const access = checkTournamentOrganizerAccess(authUser, tournRes.rows[0]);
-        if (!access.authorized) {
-          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
-        }
-
-        if (tournRes.rows[0].finalized_at) {
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'TOURNAMENT_FINALIZED', message: 'Tournament is finalized; scores are locked.' }));
-        }
-
-        let data = {};
-        try {
-          data = JSON.parse(body || '{}');
-        } catch {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Invalid JSON payload.' }));
-        }
-
-        const targetTeamId = routeTeamId || data.team_id || data.teamId;
-        if (!targetTeamId) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ success: false, error: 'INVALID_INPUT', message: 'Team ID is required.' }));
-        }
-
-        const result = await editTeamLeaderboardPoints(pool, {
-          tournamentId: tournId,
-          teamId: targetTeamId,
-          placement_points: data.placement_points ?? data.placementPoints ?? data.total_placement_points,
-          kill_points: data.kill_points ?? data.killPoints ?? data.total_kill_points,
-          total_kills: data.total_kills ?? data.totalKills ?? data.kills,
-          wwcd_count: data.wwcd_count ?? data.wwcdCount ?? data.wwcd,
-          matches_played: data.matches_played ?? data.matchesPlayed,
-          round_id: data.round_id || data.roundId || null,
-          actorId: authUser.id,
-        });
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: true, message: 'Team points updated successfully.', ...result }));
-      } catch (err) {
-        console.error('Error editing team points:', err);
-        const status = err.message.includes('not found') ? 404 : 400;
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: 'SCORE_UPDATE_ERROR', message: err.message }));
       }
     });
     return;

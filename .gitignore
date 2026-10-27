@@ -33,3 +33,15 @@ _trash_review/
 AUDIT_*.md
 schema_live.csv
 OVERVIEW.md
+
+# AI Agent Skills & Customizations
+.agents/skills/
+.agent/skills/
+.agents/workflows/
+.agent/workflows/
+.agents/
+.agent/
+_agents/
+_agent/
+.ua/
+.understand-anything/

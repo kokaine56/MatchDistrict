@@ -239,6 +239,35 @@ export async function assignGroups(client, tournamentId) {
     [tournamentId]
   );
 
+  // Prune any unassigned obsolete groups if capacity decreased
+  const obsoleteGroups = await client.query(
+    `SELECT id, group_index FROM tournament_registration_groups
+     WHERE tournament_id = $1 AND group_index > $2`,
+    [tournamentId, groups.length]
+  );
+  if (obsoleteGroups.rows.length > 0) {
+    const obsoleteIds = obsoleteGroups.rows.map((r) => r.id);
+    const assignedCheck = await client.query(
+      `SELECT 1 FROM tournament_registrations
+       WHERE tournament_id = $1 AND group_id = ANY($2::text[])
+       LIMIT 1`,
+      [tournamentId, obsoleteIds]
+    );
+    const matchAllocCheck = await client.query(
+      `SELECT 1 FROM tournament_match_assignments
+       WHERE tournament_id = $1 AND group_id = ANY($2::text[])
+       LIMIT 1`,
+      [tournamentId, obsoleteIds]
+    );
+    if (assignedCheck.rows.length === 0 && matchAllocCheck.rows.length === 0) {
+      await client.query(
+        `DELETE FROM tournament_registration_groups
+         WHERE tournament_id = $1 AND group_index > $2`,
+        [tournamentId, groups.length]
+      );
+    }
+  }
+
   return { groups, assigned };
 }
 

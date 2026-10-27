@@ -1,9 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Trophy,
-  Medal,
   Target,
-  Crown,
   AlertCircle,
   Users,
   Compass,
@@ -19,13 +17,11 @@ import {
   EyeOff,
   Loader2,
   RefreshCw,
-  Plus,
   X,
 } from 'lucide-react';
 import { formatDateIST12h } from '../utils/timeFormat.js';
 import RoundQualifyPanel from './qualification/RoundQualifyPanel.jsx';
 import TeamDisqualifyModal from './qualification/TeamDisqualifyModal.jsx';
-import TeamScoreEditModal from './leaderboard/TeamScoreEditModal.jsx';
 import QualifyTeamsModal from './leaderboard/QualifyTeamsModal.jsx';
 import RoadmapQualifyModal from './leaderboard/RoadmapQualifyModal.jsx';
 
@@ -66,7 +62,8 @@ export default function TournamentLeaderboard({
   const [isEditingScores, setIsEditingScores] = useState(false);
   const [selectedMatchId, setSelectedMatchId] = useState(null);
   const [matchDraftScores, setMatchDraftScores] = useState({});
-  const [addingMatch, setAddingMatch] = useState(false);
+  const [matchScoreEntryData, setMatchScoreEntryData] = useState({});
+  const [matchScoreEntryReload, setMatchScoreEntryReload] = useState(0);
   // District to re-select after a save/add-match refresh (the standings reload otherwise resets the filter to 'all')
   const pendingRestoreDistrictRef = useRef(null);
 
@@ -75,9 +72,6 @@ export default function TournamentLeaderboard({
   // Selected round for qualification
   const [selectedQualifyRoundId, setSelectedQualifyRoundId] = useState(null);
   const [disqualifyModalTeam, setDisqualifyModalTeam] = useState(null);
-
-  // Point editing modal state
-  const [editingScoreTeam, setEditingScoreTeam] = useState(null);
 
   // Team selection for Manual Qualification
   const [selectedTeamIds, setSelectedTeamIds] = useState([]);
@@ -131,12 +125,21 @@ export default function TournamentLeaderboard({
         }
         const token = localStorage.getItem('token') || '';
         const res = await fetch(url, {
+          cache: 'no-store',
           credentials: 'include',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         const data = await res.json();
         if (!ignore) {
-          if (!data.success) throw new Error(data.message || data.error || 'Failed to load leaderboard');
+          if (!res.ok) {
+            throw new Error(data?.message || data?.error || 'Failed to load leaderboard');
+          }
+          if (!data || typeof data !== 'object' || !data.success || !Array.isArray(data.standings)) {
+            throw new Error(data?.message || data?.error || 'The leaderboard response was incomplete. Retry to reload it.');
+          }
+          if (selectedViewRound !== 'overall' && !Array.isArray(data.districts)) {
+            throw new Error('The round response did not include district and match allocation data. Retry to reload it.');
+          }
           setStandings(data.standings || []);
           setRoundDistricts(data.districts || []);
           setHasRoundDistricts(Boolean(data.has_districts && data.districts && data.districts.length > 0));
@@ -165,20 +168,6 @@ export default function TournamentLeaderboard({
     setIsEditingScores(false);
     setSelectedMatchId(null);
   }, [selectedDistrictId, selectedViewRound]);
-
-  // Placement scoring table (Spec A2: 1:10, 2:6, 3:5, 4:4, 5:3, 6:2, 7-8:1, 9+:0)
-  const getPlacementPoints = (placement) => {
-    if (!placement) return 0;
-    const p = Number(placement);
-    if (p === 1) return 10;
-    if (p === 2) return 6;
-    if (p === 3) return 5;
-    if (p === 4) return 4;
-    if (p === 5) return 3;
-    if (p === 6) return 2;
-    if (p === 7 || p === 8) return 1;
-    return 0;
-  };
 
   // Filter standings: In overall view, NEVER filter by district. In round views, filter strictly to the authoritative district.
   const displayedStandings = useMemo(() => {
@@ -211,17 +200,7 @@ export default function TournamentLeaderboard({
   // District matches for Match Selector (Spec B3)
   const districtMatches = useMemo(() => {
     if (!currentActiveDistrict) return [];
-    if (Array.isArray(currentActiveDistrict.matches) && currentActiveDistrict.matches.length > 0) {
-      return currentActiveDistrict.matches;
-    }
-    return [{
-      id: `MAT-${currentActiveDistrict.id}-1`,
-      match_id: `MAT-${currentActiveDistrict.id}-1`,
-      match_number: 1,
-      group_id: currentActiveDistrict.id,
-      status: 'PENDING',
-      results: {},
-    }];
+    return Array.isArray(currentActiveDistrict.matches) ? currentActiveDistrict.matches : [];
   }, [currentActiveDistrict]);
 
   // Currently active match in match selector
@@ -235,23 +214,109 @@ export default function TournamentLeaderboard({
   }, [districtMatches, selectedMatchId]);
 
   const effectiveSelectedMatchId = activeMatch?.id || null;
+  const activeMatchScoreEntry = effectiveSelectedMatchId
+    ? matchScoreEntryData[effectiveSelectedMatchId] || null
+    : null;
+
+  useEffect(() => {
+    if (!isEditingScores || isOverallView || !currentActiveDistrict || !effectiveSelectedMatchId) return undefined;
+
+    let ignore = false;
+    const matchId = effectiveSelectedMatchId;
+    const districtId = currentActiveDistrict.id;
+    const loadMatchScoreEntry = async () => {
+      setMatchScoreEntryData((previous) => ({ ...previous, [matchId]: { status: 'loading' } }));
+      try {
+        const token = localStorage.getItem('token') || '';
+        const url = `/api/tournaments/${encodeURIComponent(tournamentId)}/rounds/${encodeURIComponent(selectedViewRound)}/districts/${encodeURIComponent(districtId)}/matches/${encodeURIComponent(matchId)}/score-entry`;
+        const res = await fetch(url, {
+          cache: 'no-store',
+          credentials: 'include',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const data = await res.json();
+        if (!res.ok || !data?.success) {
+          const loadError = new Error(data?.message || 'Could not load this match’s team allocations.');
+          loadError.code = data?.error || (res.status === 404 ? 'NOT_FOUND' : 'LOAD_FAILED');
+          throw loadError;
+        }
+        if (
+          data.match?.id !== matchId
+          || !Array.isArray(data.assigned_teams)
+          || !data.results
+          || typeof data.results !== 'object'
+          || Array.isArray(data.results)
+        ) {
+          const responseError = new Error('The match allocation response was incomplete. Retry to reload it.');
+          responseError.code = 'INVALID_RESPONSE';
+          throw responseError;
+        }
+        if (!ignore) {
+          setMatchScoreEntryData((previous) => ({ ...previous, [matchId]: { status: 'loaded', ...data } }));
+        }
+      } catch (loadError) {
+        if (!ignore) {
+          setMatchScoreEntryData((previous) => ({
+            ...previous,
+            [matchId]: {
+              status: loadError.code === 'NOT_FOUND'
+                ? 'invalid_match'
+                : loadError.code === 'INVALID_RESPONSE'
+                  ? 'invalid_response'
+                  : 'error',
+              error: loadError.message,
+            },
+          }));
+        }
+      }
+    };
+
+    loadMatchScoreEntry();
+    return () => { ignore = true; };
+  }, [
+    isEditingScores,
+    isOverallView,
+    tournamentId,
+    selectedViewRound,
+    currentActiveDistrict?.id,
+    effectiveSelectedMatchId,
+    matchScoreEntryReload,
+  ]);
+
+  const retryMatchScoreEntry = () => setMatchScoreEntryReload((current) => current + 1);
+
+  const activeMatchAllocationState = useMemo(() => {
+    if (!currentActiveDistrict || !Array.isArray(currentActiveDistrict.matches)) return 'invalid_configuration';
+    if (districtMatches.length === 0) return 'no_matches';
+    if (!activeMatch) return 'invalid_match';
+    if (!activeMatchScoreEntry) return 'loading';
+    if (activeMatchScoreEntry.status === 'loading') return 'loading';
+    if (activeMatchScoreEntry.status === 'invalid_match') return 'invalid_match';
+    if (activeMatchScoreEntry.status === 'error') return 'error';
+    if (activeMatchScoreEntry.status === 'invalid_response') return 'invalid_allocation_response';
+    if (activeMatchScoreEntry.status !== 'loaded' || !Array.isArray(activeMatchScoreEntry.assigned_teams)) return 'invalid_allocation_response';
+    return activeMatchScoreEntry.assigned_teams.length === 0 ? 'empty' : 'loaded';
+  }, [currentActiveDistrict, districtMatches, activeMatch, activeMatchScoreEntry]);
 
   // Slot-ordered teams for Editing Mode (Spec B2: strictly original assigned slot order)
   const slotOrderedTeams = useMemo(() => {
-    if (!displayedStandings || displayedStandings.length === 0) return [];
-    return [...displayedStandings].sort((a, b) => {
-      const aSlot = a.slot_number != null ? Number(a.slot_number) : 99999;
-      const bSlot = b.slot_number != null ? Number(b.slot_number) : 99999;
+    const assignedTeams = activeMatchScoreEntry?.status === 'loaded'
+      ? activeMatchScoreEntry.assigned_teams
+      : null;
+    if (!Array.isArray(assignedTeams)) return [];
+    return [...assignedTeams].sort((a, b) => {
+      const aSlot = a.slot_number != null ? Number(a.slot_number) : Number.MAX_SAFE_INTEGER;
+      const bSlot = b.slot_number != null ? Number(b.slot_number) : Number.MAX_SAFE_INTEGER;
       if (aSlot !== bSlot) return aSlot - bSlot;
-      return (a.team_name || '').localeCompare(b.team_name || '');
+      return String(a.assignment_id || '').localeCompare(String(b.assignment_id || ''));
     });
-  }, [displayedStandings]);
+  }, [activeMatchScoreEntry]);
 
   // Resolve match score for a team in the active match
   const getMatchScoreForTeam = (teamId) => {
     const matchId = effectiveSelectedMatchId;
     const draft = matchId ? matchDraftScores[matchId]?.[teamId] : null;
-    const saved = matchId && activeMatch?.results ? activeMatch.results[teamId] : null;
+    const saved = matchId && activeMatchScoreEntry?.results ? activeMatchScoreEntry.results[teamId] : null;
 
     let placement = '';
     let kills = '';
@@ -268,24 +333,10 @@ export default function TournamentLeaderboard({
       kills = saved.kills;
     }
 
-    const pNum = placement !== '' && placement != null ? Number(placement) : null;
-    const kNum = kills !== '' && kills != null ? Number(kills) : (kills === 0 ? 0 : null);
-    const killPts = kNum != null ? kNum * 1 : 0;
-    const placePts = pNum != null ? getPlacementPoints(pNum) : 0;
-    const wwcd = pNum === 1 ? 1 : 0;
-    const totalPts = (pNum != null || kNum != null) ? (killPts + placePts) : null;
-
     return {
       placement,
       kills,
-      pNum,
-      kNum: kNum != null ? kNum : 0,
-      killPts,
-      placePts,
-      wwcd,
-      totalPts,
-      hasEntry: pNum != null || kNum != null,
-      isDraft: Boolean(draft),
+      pNum: placement !== '' && placement != null ? Number(placement) : null,
     };
   };
 
@@ -295,7 +346,7 @@ export default function TournamentLeaderboard({
     setMatchDraftScores((prev) => {
       const matchDrafts = prev[matchId] || {};
       const existing = matchDrafts[teamId] || {};
-      const currentSaved = activeMatch?.results?.[teamId] || {};
+      const currentSaved = activeMatchScoreEntry?.results?.[teamId] || {};
 
       const basePlacement = existing.placement !== undefined ? existing.placement : (currentSaved.placement ?? '');
       const baseKills = existing.kills !== undefined ? existing.kills : (currentSaved.kills ?? '');
@@ -318,14 +369,23 @@ export default function TournamentLeaderboard({
     if (!isEditingScores || !effectiveSelectedMatchId || !currentActiveDistrict) {
       return { isValid: true, errors: [], duplicatePlacements: new Set(), invalidPlacements: new Set(), invalidKills: new Set() };
     }
-    const capacity = currentActiveDistrict.capacity || 16;
+    const capacity = Number(activeMatchScoreEntry?.match?.capacity) || Number(activeMatch?.capacity) || Number(currentActiveDistrict.capacity) || slotOrderedTeams.length;
     const errors = [];
     const placementCounts = new Map();
     const duplicatePlacements = new Set();
     const invalidPlacements = new Set();
     const invalidKills = new Set();
+    const invalidSlots = new Set();
+    const seenSlots = new Set();
 
     for (const team of slotOrderedTeams) {
+      const slot = Number(team.slot_number);
+      if (!Number.isInteger(slot) || slot < 1 || seenSlots.has(slot)) {
+        invalidSlots.add(team.team_id);
+        errors.push(`Team "${team.team_name}": this match is missing a valid unique allocated slot.`);
+      } else {
+        seenSlots.add(slot);
+      }
       const score = getMatchScoreForTeam(team.team_id);
       if (score.placement !== '' && score.placement != null) {
         const p = Number(score.placement);
@@ -361,8 +421,9 @@ export default function TournamentLeaderboard({
       duplicatePlacements,
       invalidPlacements,
       invalidKills,
+      invalidSlots,
     };
-  }, [isEditingScores, effectiveSelectedMatchId, currentActiveDistrict, slotOrderedTeams, matchDraftScores, activeMatch]);
+  }, [isEditingScores, effectiveSelectedMatchId, currentActiveDistrict, slotOrderedTeams, matchDraftScores, activeMatch, activeMatchScoreEntry]);
 
   // Derive source and target round from the tournament roadmap
   const { currentSourceRound, nextTargetRound } = useMemo(() => {
@@ -397,6 +458,7 @@ export default function TournamentLeaderboard({
   const districtSaveStatus = useMemo(() => {
     if (districtSaveError) return 'error';
     if (districtHasDraft) return 'modified';
+    if (currentActiveDistrict?.scores_status === 'incomplete') return 'incomplete';
     if (currentActiveDistrict?.scores_saved || currentActiveDistrict?.scores_status === 'saved') return 'saved';
     return 'unsaved';
   }, [districtSaveError, districtHasDraft, currentActiveDistrict]);
@@ -486,9 +548,12 @@ export default function TournamentLeaderboard({
         const score = getMatchScoreForTeam(t.team_id);
         const hasPlacement = score.placement !== '' && score.placement != null;
         const hasKills = score.kills !== '' && score.kills != null;
+        if (hasPlacement !== hasKills) {
+          throw new Error(`Team "${t.team_name}": enter both kills and finish position, or leave both blank.`);
+        }
         if (!hasPlacement) {
-          if (hasKills) {
-            throw new Error(`Team "${t.team_name}": enter a finish position along with kills.`);
+          if (activeMatchScoreEntry?.results?.[t.team_id]) {
+            throw new Error(`Team "${t.team_name}" already has a saved result. Enter corrected kills and finish position; saved match results cannot be cleared.`);
           }
           continue;
         }
@@ -496,7 +561,7 @@ export default function TournamentLeaderboard({
           team_id: t.team_id,
           team_name: t.team_name,
           placement: Number(score.placement),
-          kills: hasKills ? Number(score.kills) : 0,
+          kills: Number(score.kills),
         });
       }
       if (teamScores.length === 0) {
@@ -536,43 +601,13 @@ export default function TournamentLeaderboard({
       });
 
       pendingRestoreDistrictRef.current = savedDistrictId;
+      retryMatchScoreEntry();
       triggerRefresh();
     } catch (err) {
       setDistrictSaveError(err.message);
       showToastMessage(`Error: ${err.message}`);
     } finally {
       setSavingDistrict(false);
-    }
-  };
-
-  // Organizer: add the next match (Match N+1) to the active district (Spec B3)
-  const handleAddDistrictMatch = async () => {
-    if (!currentActiveDistrict || addingMatch || isOverallView) return;
-    setAddingMatch(true);
-    try {
-      const token = localStorage.getItem('token') || '';
-      const res = await fetch(
-        `/api/tournaments/${tournamentId}/rounds/${selectedViewRound}/districts/${currentActiveDistrict.id}/matches`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({}),
-        }
-      );
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message || 'Failed to add match');
-      showToastMessage(data.message || 'Match added.');
-      setSelectedMatchId(data.match?.id || null);
-      pendingRestoreDistrictRef.current = currentActiveDistrict.id;
-      triggerRefresh();
-    } catch (err) {
-      showToastMessage(`Error: ${err.message}`);
-    } finally {
-      setAddingMatch(false);
     }
   };
 
@@ -880,7 +915,7 @@ export default function TournamentLeaderboard({
                             : 'bg-surface-container text-on-surface-variant hover:text-on-surface border border-outline-variant/20'
                         }`}
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full ${isSaved ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${isSaved ? 'bg-emerald-500' : 'bg-amber-400'}`} title={dist.scores_status || (isSaved ? 'saved' : 'unsaved')} />
                         <span>{dist.name}</span>
                         <span className="text-[10px] opacity-70 font-black">({count}{dist.capacity ? `/${dist.capacity}` : ''})</span>
                       </button>
@@ -906,7 +941,7 @@ export default function TournamentLeaderboard({
                       {currentActiveDistrict.name}
                     </span>
                     <span className="text-xs text-on-surface-variant font-medium">
-                      &bull; Assigned Slot Order &bull; Capacity: {currentActiveDistrict.capacity || 16}
+                      &bull; Assigned Slot Order &bull; Capacity: {activeMatchScoreEntry?.match?.capacity || activeMatch?.capacity || currentActiveDistrict.capacity || slotOrderedTeams.length}
                     </span>
                   </div>
 
@@ -923,11 +958,11 @@ export default function TournamentLeaderboard({
                     <button
                       type="button"
                       onClick={handleSaveMatchScores}
-                      disabled={savingDistrict || !editingValidation.isValid}
+                      disabled={savingDistrict || !editingValidation.isValid || activeMatchAllocationState !== 'loaded'}
                       className="px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 disabled:opacity-50 transition-all shadow-md flex items-center gap-1.5 cursor-pointer w-auto"
                     >
                       {savingDistrict ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                      <span>Save Match Scores</span>
+                      <span>Save Scores</span>
                     </button>
                   </div>
                 </div>
@@ -938,7 +973,21 @@ export default function TournamentLeaderboard({
                   {districtMatches.map((m) => {
                     const isMatchActive = m.id === effectiveSelectedMatchId || m.match_id === effectiveSelectedMatchId;
                     const matchNum = m.match_number || 1;
-                    const hasScores = (m.result_count && m.result_count > 0) || (m.results && Object.keys(m.results).length > 0);
+                    const entryData = matchScoreEntryData[m.id];
+                    const resultCount = entryData?.status === 'loaded' ? Number(entryData.result_count) || 0 : Number(m.result_count) || 0;
+                    const assignmentCount = entryData?.status === 'loaded' ? Number(entryData.assignment_count) || 0 : Number(m.assignment_count) || 0;
+                    const hasDraft = Boolean(matchDraftScores[m.id] && Object.keys(matchDraftScores[m.id]).length > 0);
+                    const matchStatus = hasDraft
+                      ? 'Modified'
+                      : entryData?.status === 'loading'
+                        ? 'Loading'
+                      : entryData?.status === 'error' || entryData?.status === 'invalid_match' || entryData?.status === 'invalid_response'
+                          ? 'Error'
+                          : resultCount === 0
+                      ? 'Unsaved'
+                      : assignmentCount > 0 && resultCount >= assignmentCount
+                        ? 'Saved'
+                        : 'Incomplete';
                     return (
                       <button
                         key={m.id}
@@ -951,24 +1000,17 @@ export default function TournamentLeaderboard({
                         }`}
                       >
                         <span>Match {matchNum}</span>
-                        {hasScores && (
-                          <span className={`w-1.5 h-1.5 rounded-full ${isMatchActive ? 'bg-white' : 'bg-emerald-500'}`} title="Has saved scores" />
-                        )}
+                        <span className={`text-[10px] font-bold ${isMatchActive ? 'text-on-primary/80' : matchStatus === 'Saved' ? 'text-emerald-600 dark:text-emerald-400' : matchStatus === 'Modified' ? 'text-primary' : matchStatus === 'Error' ? 'text-error' : 'text-amber-600 dark:text-amber-400'}`}>
+                          {matchStatus}
+                        </span>
                       </button>
                     );
                   })}
 
-                  {isOrganizer && (
-                    <button
-                      type="button"
-                      onClick={handleAddDistrictMatch}
-                      disabled={addingMatch}
-                      className="px-3 py-1 rounded-full text-xs font-bold text-primary hover:text-primary/80 bg-primary/10 hover:bg-primary/20 border border-primary/30 transition-all flex items-center gap-1 cursor-pointer w-auto"
-                      title="Add next match to this district"
-                    >
-                      {addingMatch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                      <span>Add Match</span>
-                    </button>
+                  {districtMatches.length === 0 && (
+                    <span role="status" className="text-xs text-amber-600 dark:text-amber-400">
+                      No configured matches are available for this district.
+                    </span>
                   )}
                 </div>
 
@@ -1007,6 +1049,11 @@ export default function TournamentLeaderboard({
                         <span>Save Failed</span>
                       </span>
                     </div>
+                  ) : districtSaveStatus === 'incomplete' ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>Incomplete results</span>
+                    </span>
                   ) : (
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-surface-container-highest text-on-surface-variant border border-outline-variant/30">
                       Unsaved
@@ -1014,21 +1061,32 @@ export default function TournamentLeaderboard({
                   )}
 
                   <span className="text-[11px] font-bold text-on-surface-variant">
-                    ({displayedStandings.length} / {currentActiveDistrict.capacity || 16} assigned teams)
+                    ({displayedStandings.length} / {currentActiveDistrict.capacity || displayedStandings.length} district teams)
                   </span>
-                  {displayedStandings.length < (currentActiveDistrict.capacity || 16) && (
+                  {currentActiveDistrict.capacity != null && displayedStandings.length < Number(currentActiveDistrict.capacity) && (
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                      {(currentActiveDistrict.capacity || 16) - displayedStandings.length} slot(s) unfilled
+                      {Number(currentActiveDistrict.capacity) - displayedStandings.length} slot(s) unfilled
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap">
+                  {!Array.isArray(currentActiveDistrict.matches) ? (
+                    <span role="status" className="text-xs text-error inline-flex items-center gap-2">
+                      Match configuration is unavailable.
+                      <button type="button" onClick={triggerRefresh} className="underline font-bold">Retry</button>
+                    </span>
+                  ) : currentActiveDistrict.matches.length === 0 ? (
+                    <span role="status" className="text-xs text-amber-700 dark:text-amber-300">
+                      No roadmap matches are configured for this district.
+                    </span>
+                  ) : null}
                   {/* Edit Scores Button for Organizers (Spec B2) */}
                   {isOrganizer && (
                     <button
                       type="button"
                       onClick={() => setIsEditingScores(true)}
+                      disabled={districtMatches.length === 0}
                       className="w-auto px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider text-on-primary bg-primary hover:bg-primary/90 transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
                       title="Switch to slot-ordered match score editing view"
                     >
@@ -1155,80 +1213,13 @@ export default function TournamentLeaderboard({
             </div>
           ) : (
             <>
-              {/* ── Top 3 Podium (Desktop) ── */}
-              <div className="hidden md:flex justify-center items-end gap-6 h-64 mb-10 mt-12">
-                {/* Rank 2 */}
-                {displayedStandings[1] && (
-                  <div
-                    className="w-48 bg-gradient-to-t from-slate-400/20 to-slate-400/5 rounded-t-2xl border border-b-0 border-slate-400/30 flex flex-col items-center justify-start p-4 relative"
-                    style={{ height: '80%' }}
-                  >
-                    <div className="absolute -top-12 bg-surface-container-highest p-2 rounded-full border border-slate-400/40 shadow-md">
-                      <Medal className="w-10 h-10 text-slate-300" />
-                    </div>
-                    <div className="mt-8 text-center">
-                      <div className="font-black text-on-surface text-base truncate w-40">
-                        {displayedStandings[1].team_name}
-                      </div>
-                      <div className="text-sm font-black text-on-surface-variant mt-0.5">
-                        {displayedStandings[1].no_scores_yet ? 'No scores yet' : `${displayedStandings[1].total_points ?? 0} PTS`}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Rank 1 */}
-                {displayedStandings[0] && (
-                  <div
-                    className="w-56 bg-gradient-to-t from-yellow-500/25 to-yellow-500/5 rounded-t-2xl border border-b-0 border-yellow-500/50 flex flex-col items-center justify-start p-4 relative shadow-lg"
-                    style={{ height: '100%' }}
-                  >
-                    <div className="absolute -top-14 bg-surface-container-highest p-3 rounded-full border border-yellow-500/60 shadow-lg">
-                      <Crown className="w-12 h-12 text-yellow-400 drop-shadow-[0_0_10px_rgba(250,204,21,0.4)]" />
-                    </div>
-                    <div className="mt-10 text-center">
-                      <div className="font-black text-yellow-500 text-lg truncate w-48">
-                        {displayedStandings[0].team_name}
-                      </div>
-                      <div className="text-base font-black text-on-surface mt-1">
-                        {displayedStandings[0].no_scores_yet ? 'No scores yet' : `${displayedStandings[0].total_points ?? 0} PTS`}
-                      </div>
-                      <div className="text-[11px] text-yellow-600 dark:text-yellow-400/80 font-bold mt-1.5 uppercase tracking-wider">
-                        {displayedStandings[0].total_kills || 0} Kills &bull; {displayedStandings[0].wwcd_count || 0} WWCD
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Rank 3 */}
-                {displayedStandings[2] && (
-                  <div
-                    className="w-48 bg-gradient-to-t from-amber-600/20 to-amber-600/5 rounded-t-2xl border border-b-0 border-amber-600/30 flex flex-col items-center justify-start p-4 relative"
-                    style={{ height: '70%' }}
-                  >
-                    <div className="absolute -top-12 bg-surface-container-highest p-2 rounded-full border border-amber-600/40 shadow-md">
-                      <Medal className="w-10 h-10 text-amber-600" />
-                    </div>
-                    <div className="mt-8 text-center">
-                      <div className="font-black text-on-surface text-base truncate w-40">
-                        {displayedStandings[2].team_name}
-                      </div>
-                      <div className="text-sm font-black text-on-surface-variant mt-0.5">
-                        {displayedStandings[2].no_scores_yet ? 'No scores yet' : `${displayedStandings[2].total_points ?? 0} PTS`}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* ── Leaderboard Table (Specs B1, B2) ── */}
               <div className="bg-surface-container-low border border-outline-variant/30 rounded-2xl overflow-hidden shadow-lg">
                 <div className="overflow-x-auto">
                   {isEditingScores && isOrganizer && !isOverallView && selectedDistrictId !== 'all' ? (
                     /* ══════════════════════════════════════════════════════════
                        EDITING MODE: Assigned Slot Order (Spec B2)
-                       Organizer enters ONLY Finish Position & Kills.
-                       All derived fields are previewed automatically.
+                       Organizer enters only Finish Position and Kills.
                        ══════════════════════════════════════════════════════════ */
                     <table className="w-full text-left border-collapse whitespace-nowrap text-sm">
                       <thead>
@@ -1237,15 +1228,43 @@ export default function TournamentLeaderboard({
                           <th className="px-5 py-3.5 font-bold">Team Name</th>
                           <th className="px-5 py-3.5 font-bold text-center w-32">Finish Position</th>
                           <th className="px-5 py-3.5 font-bold text-center w-28">Kills</th>
-                          <th className="px-5 py-3.5 font-bold text-center">Kill Pts</th>
-                          <th className="px-5 py-3.5 font-bold text-center">Place Pts</th>
-                          <th className="px-5 py-3.5 font-bold text-center">WWCD</th>
-                          <th className="px-5 py-3.5 font-black text-right text-on-surface">Total Pts</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-outline-variant/10 font-medium">
-                        {slotOrderedTeams.map((team, idx) => {
-                          const slotNum = team.slot_number != null ? team.slot_number : (idx + 1);
+                        {activeMatchAllocationState === 'loading' ? (
+                          <tr>
+                            <td colSpan={4} className="px-5 py-8 text-center text-sm text-on-surface-variant">
+                              <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading match allocations…</span>
+                            </td>
+                          </tr>
+                        ) : activeMatchAllocationState === 'invalid_configuration'
+                          || activeMatchAllocationState === 'invalid_match'
+                          || activeMatchAllocationState === 'invalid_allocation_response'
+                          || activeMatchAllocationState === 'error' ? (
+                          <tr>
+                            <td colSpan={4} className="px-5 py-8 text-center text-sm text-error">
+                              <div className="flex flex-col items-center gap-3">
+                                <span>{activeMatchScoreEntry?.error || 'Match allocation data could not be loaded in the expected format. No scores can be entered until it is reloaded.'}</span>
+                                <button type="button" onClick={retryMatchScoreEntry} className="px-3 py-1 rounded-full text-xs font-bold bg-primary text-on-primary inline-flex items-center gap-1.5">
+                                  <RefreshCw className="w-3.5 h-3.5" />Retry
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : activeMatchAllocationState === 'no_matches' ? (
+                          <tr>
+                            <td colSpan={4} className="px-5 py-8 text-center text-sm text-amber-700 dark:text-amber-300">
+                              No configured matches are available for this district. Score entry is unavailable.
+                            </td>
+                          </tr>
+                        ) : activeMatchAllocationState === 'empty' ? (
+                          <tr>
+                            <td colSpan={4} className="px-5 py-8 text-center text-sm text-amber-700 dark:text-amber-300">
+                              This match has no allocated teams. Score entry is unavailable until the roadmap allocation is corrected.
+                            </td>
+                          </tr>
+                        ) : slotOrderedTeams.map((team) => {
+                          const slotNum = team.slot_number != null ? team.slot_number : null;
                           const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
                           const score = getMatchScoreForTeam(team.team_id);
                           const hasDup = score.pNum != null && editingValidation.duplicatePlacements.has(score.pNum);
@@ -1254,12 +1273,12 @@ export default function TournamentLeaderboard({
 
                           return (
                             <tr
-                              key={team.team_id || idx}
+                              key={team.team_id}
                               className="hover:bg-surface-container-high/40 transition-colors"
                             >
                               {/* Slot Number */}
                               <td className="px-5 py-3.5 text-center font-bold text-primary font-mono">
-                                Slot {slotNum}
+                                {slotNum != null ? `Slot ${slotNum}` : 'Slot unavailable'}
                               </td>
 
                               {/* Team Name */}
@@ -1277,7 +1296,7 @@ export default function TournamentLeaderboard({
                                 <input
                                   type="number"
                                   min="1"
-                                  max={currentActiveDistrict.capacity || 16}
+                                  max={activeMatchScoreEntry?.match?.capacity || activeMatch?.capacity || currentActiveDistrict.capacity || slotOrderedTeams.length}
                                   value={score.placement}
                                   onChange={(e) => updateMatchScore(team.team_id, 'placement', e.target.value)}
                                   placeholder="Pos"
@@ -1287,7 +1306,7 @@ export default function TournamentLeaderboard({
                                       ? 'border-2 border-red-500 bg-red-500/10 focus:border-red-500 text-red-500'
                                       : 'border border-outline-variant/40 focus:border-primary'
                                   }`}
-                                  title={`Finish position (1 to ${currentActiveDistrict.capacity || 16})`}
+                                  title={`Finish position (1 to ${activeMatchScoreEntry?.match?.capacity || activeMatch?.capacity || currentActiveDistrict.capacity || slotOrderedTeams.length})`}
                                 />
                               </td>
 
@@ -1309,33 +1328,6 @@ export default function TournamentLeaderboard({
                                 />
                               </td>
 
-                              {/* Kill Points (Calculated) */}
-                              <td className="px-5 py-3.5 text-center font-bold text-rose-500 font-mono">
-                                {score.hasEntry ? score.killPts : '-'}
-                              </td>
-
-                              {/* Placement Points (Calculated) */}
-                              <td className="px-5 py-3.5 text-center font-bold text-on-surface-variant font-mono">
-                                {score.pNum != null ? score.placePts : '-'}
-                              </td>
-
-                              {/* WWCD (Calculated) */}
-                              <td className="px-5 py-3.5 text-center">
-                                {score.pNum == null ? (
-                                  <span className="text-on-surface-variant/40">-</span>
-                                ) : score.wwcd > 0 ? (
-                                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border border-yellow-500/40">
-                                    🏆 1
-                                  </span>
-                                ) : (
-                                  <span className="text-on-surface-variant/60 font-medium text-xs">0</span>
-                                )}
-                              </td>
-
-                              {/* Total Points (Calculated) */}
-                              <td className="px-5 py-3.5 text-right font-mono font-black text-base text-primary">
-                                {score.totalPts != null ? score.totalPts : '-'}
-                              </td>
                             </tr>
                           );
                         })}
@@ -1379,9 +1371,6 @@ export default function TournamentLeaderboard({
                       <tbody className="divide-y divide-outline-variant/10 font-medium">
                         {displayedStandings.map((team, idx) => {
                           const rankNumber = isOverallView ? (team.rank ?? idx + 1) : (team.district_rank ?? team.rank ?? idx + 1);
-                          const isTop1 = rankNumber === 1;
-                          const isTop2 = rankNumber === 2;
-                          const isTop3 = rankNumber === 3;
                           const isSelected = selectedTeamIds.includes(team.team_id);
                           const isDisqualified = team.status === 'disqualified' || team.is_disqualified;
                           const isUnscored = Boolean(team.no_scores_yet || (team.total_points == null && team.matches_played === 0));
@@ -1402,17 +1391,7 @@ export default function TournamentLeaderboard({
                           return (
                             <tr
                               key={team.team_id || idx}
-                              className={`transition-colors ${
-                                isSelected
-                                  ? 'bg-primary/[0.08] border-l-4 border-l-primary'
-                                  : isTop1
-                                  ? 'bg-yellow-500/[0.04] border-l-2 border-l-yellow-500 hover:bg-surface-container-high/40'
-                                  : isTop2
-                                  ? 'bg-slate-400/[0.04] border-l-2 border-l-slate-400 hover:bg-surface-container-high/40'
-                                  : isTop3
-                                  ? 'bg-amber-600/[0.04] border-l-2 border-l-amber-600 hover:bg-surface-container-high/40'
-                                  : 'hover:bg-surface-container-high/40'
-                              }`}
+                              className={`transition-colors ${isSelected ? 'bg-primary/[0.08] border-l-4 border-l-primary' : 'hover:bg-surface-container-high/40'}`}
                             >
                               {/* Checkbox Cell for Organizer Selection */}
                               {isOrganizer && (
@@ -1431,12 +1410,6 @@ export default function TournamentLeaderboard({
                               <td className="px-5 py-3.5 text-center">
                                 {isUnscored ? (
                                   <span className="text-on-surface-variant/50 font-bold">-</span>
-                                ) : isTop1 ? (
-                                  <Crown className="w-5 h-5 text-yellow-500 mx-auto" />
-                                ) : isTop2 ? (
-                                  <Medal className="w-5 h-5 text-slate-400 mx-auto" />
-                                ) : isTop3 ? (
-                                  <Medal className="w-5 h-5 text-amber-600 mx-auto" />
                                 ) : (
                                   <span className="text-on-surface-variant font-bold">#{rankNumber}</span>
                                 )}
@@ -1550,17 +1523,6 @@ export default function TournamentLeaderboard({
                                           </span>
                                         )}
 
-                                        {/* Edit Points Action Button */}
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingScoreTeam(team)}
-                                          title="Edit team leaderboard points"
-                                          className="px-3 py-1 rounded-full text-[11px] font-bold bg-primary/10 text-primary hover:bg-primary/20 border border-primary/25 transition-all flex items-center gap-1 cursor-pointer shadow-xs w-auto"
-                                        >
-                                          <Edit2 className="w-3 h-3" />
-                                          <span>Edit Score</span>
-                                        </button>
-
                                         {/* Disqualify Button */}
                                         <button
                                           type="button"
@@ -1598,19 +1560,6 @@ export default function TournamentLeaderboard({
           )}
         </>
       )}
-
-      {/* ── Organizer Score Editing Modal ── */}
-      <TeamScoreEditModal
-        isOpen={Boolean(editingScoreTeam)}
-        team={editingScoreTeam}
-        tournamentId={tournamentId}
-        roundId={isOverallView ? null : selectedViewRound}
-        onClose={() => setEditingScoreTeam(null)}
-        onSuccess={() => {
-          triggerRefresh();
-          showToastMessage('Team points successfully updated.');
-        }}
-      />
 
       {/* ── Manual Qualification to Next Round Modal ── */}
       <QualifyTeamsModal

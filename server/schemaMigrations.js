@@ -80,6 +80,11 @@ export const SCHEMA_TABLES = Object.freeze([
   'tournament_district_save_states',
   'tournament_qualification_decisions',
   'tournament_leaderboard_snapshots',
+  'tournament_district_scores',
+  'tournament_qualifications',
+  'tournament_qualified_teams',
+  'tournament_tie_resolutions',
+  'tournament_leaderboard_publications',
 ]);
 
 function splitSqlStatements(sql) {
@@ -1044,14 +1049,38 @@ export async function runSchemaMigrations(clientOrPool) {
         room_id VARCHAR(50) REFERENCES tournament_rooms(id) ON DELETE CASCADE,
         group_id VARCHAR(50) REFERENCES tournament_groups(id) ON DELETE CASCADE,
         day_id VARCHAR(50) REFERENCES tournament_days(id) ON DELETE CASCADE,
+        slot_number INTEGER,
         status VARCHAR(20) DEFAULT 'allocated',
         source VARCHAR(20) DEFAULT 'manual',
         assigned_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(tournament_team_id, match_id)
       );
+      ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS slot_number INTEGER;
+      WITH ranked_match_slots AS (
+        SELECT a.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY a.match_id
+                 ORDER BY
+                   CASE WHEN a.source = 'advancement' THEN a.assigned_at END ASC NULLS LAST,
+                   CASE WHEN a.source <> 'advancement' THEN r.slot_number END ASC NULLS LAST,
+                   a.assigned_at ASC,
+                   a.id ASC
+               )::int AS allocated_slot
+        FROM tournament_match_assignments a
+        LEFT JOIN tournament_teams t ON t.id = a.tournament_team_id
+        LEFT JOIN tournament_registrations r ON r.id = t.registration_id
+        WHERE a.slot_number IS NULL AND a.status = 'allocated'
+      )
+      UPDATE tournament_match_assignments a
+      SET slot_number = ranked_match_slots.allocated_slot
+      FROM ranked_match_slots
+      WHERE a.id = ranked_match_slots.id AND a.slot_number IS NULL;
       CREATE INDEX IF NOT EXISTS idx_match_assignments_team ON tournament_match_assignments(tournament_team_id);
       CREATE INDEX IF NOT EXISTS idx_match_assignments_match ON tournament_match_assignments(match_id);
       CREATE INDEX IF NOT EXISTS idx_match_assignments_room ON tournament_match_assignments(room_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_match_assignments_match_slot
+        ON tournament_match_assignments(match_id, slot_number)
+        WHERE slot_number IS NOT NULL AND status = 'allocated';
     `);
 
     // 6. Scoring, results, leaderboard, standings, prize awards, and prize payments
@@ -1513,6 +1542,87 @@ export async function runSchemaMigrations(clientOrPool) {
         UNIQUE(tournament_id, round_id, version)
       );
       CREATE INDEX IF NOT EXISTS idx_lb_snapshots_active ON tournament_leaderboard_snapshots(tournament_id, round_id, is_active);
+
+      -- 8c. Leaderboard v2 Additive Tables (Idempotent)
+      CREATE TABLE IF NOT EXISTS tournament_district_scores (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        round_id VARCHAR(64) NOT NULL,
+        district_id VARCHAR(64) NOT NULL,
+        version INT NOT NULL DEFAULT 1,
+        saved_by VARCHAR(64),
+        saved_at TIMESTAMPTZ DEFAULT NOW(),
+        matches_saved INT NOT NULL DEFAULT 0,
+        matches_total INT NOT NULL DEFAULT 0,
+        is_complete BOOLEAN NOT NULL DEFAULT false,
+        metadata JSONB,
+        UNIQUE(tournament_id, round_id, district_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_district_scores_lookup ON tournament_district_scores(tournament_id, round_id, district_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_qualifications (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        source_round_id VARCHAR(64) NOT NULL,
+        target_round_id VARCHAR(64) NOT NULL,
+        scope VARCHAR(32) NOT NULL DEFAULT 'all',
+        district_id VARCHAR(64),
+        method VARCHAR(32) NOT NULL DEFAULT 'per_district',
+        count_used INT NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'confirmed',
+        preview_hash VARCHAR(64),
+        confirmed_by VARCHAR(64),
+        confirmed_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB
+      );
+      CREATE INDEX IF NOT EXISTS idx_tournament_qualifications_lookup ON tournament_qualifications(tournament_id, source_round_id, target_round_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_qualified_teams (
+        id VARCHAR(64) PRIMARY KEY,
+        qualification_id VARCHAR(64) NOT NULL REFERENCES tournament_qualifications(id) ON DELETE CASCADE,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        source_round_id VARCHAR(64) NOT NULL,
+        target_round_id VARCHAR(64) NOT NULL,
+        team_id VARCHAR(64) NOT NULL REFERENCES tournament_teams(id) ON DELETE CASCADE,
+        source_district_id VARCHAR(64),
+        rank INT,
+        points_snapshot NUMERIC(10, 2),
+        qualification_via VARCHAR(32) NOT NULL DEFAULT 'rank',
+        confirmed_at TIMESTAMPTZ DEFAULT NOW(),
+        metadata JSONB
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_confirmed_qualified_team ON tournament_qualified_teams(tournament_id, source_round_id, team_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_tie_resolutions (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        round_id VARCHAR(64) NOT NULL,
+        district_id VARCHAR(64),
+        scope VARCHAR(32) NOT NULL DEFAULT 'district',
+        cutoff_rank INT NOT NULL,
+        chosen_teams JSONB NOT NULL DEFAULT '[]'::jsonb,
+        resolved_by VARCHAR(64),
+        resolved_at TIMESTAMPTZ DEFAULT NOW(),
+        note TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_tie_resolutions_lookup ON tournament_tie_resolutions(tournament_id, round_id);
+
+      CREATE TABLE IF NOT EXISTS tournament_leaderboard_publications (
+        id VARCHAR(64) PRIMARY KEY,
+        tournament_id VARCHAR(64) NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+        round_id VARCHAR(64),
+        version INT NOT NULL DEFAULT 1,
+        snapshot_data JSONB NOT NULL,
+        content_hash VARCHAR(64) NOT NULL,
+        published_by VARCHAR(64),
+        published_at TIMESTAMPTZ DEFAULT NOW(),
+        unpublished_at TIMESTAMPTZ,
+        is_active BOOLEAN DEFAULT true,
+        UNIQUE(tournament_id, round_id, version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lb_publications_active ON tournament_leaderboard_publications(tournament_id, round_id, is_active);
+
+      ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS slot_number INTEGER;
 
     `);
 

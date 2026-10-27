@@ -266,15 +266,26 @@ export async function qualifyMatch(client, { tournamentId, matchId, actorId = nu
     const allQualifiers = await processRoundQualifiers(client, tournamentId, match.round_id, round.teams_advancing);
     const targetMatchIds = [match.next_match_id];
     const outcomes = [];
+    const slotRes = await client.query(
+      `SELECT COALESCE(MAX(slot_number), 0)::int AS max_slot
+       FROM tournament_match_assignments
+       WHERE tournament_id = $1::varchar AND match_id = $2::varchar`,
+      [tournamentId, match.next_match_id]
+    );
+    let nextSlot = Number(slotRes.rows[0]?.max_slot) || 0;
 
     for (const team of allQualifiers) {
+      nextSlot += 1;
       for (const targetMatchId of targetMatchIds) {
         const allocId = randomId('ASN-');
         await client.query(
-          `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, status, source)
-             VALUES ($1, $2, $3, $4, 'allocated', $5)
-             ON CONFLICT (tournament_team_id, match_id) DO NOTHING`,
-          [allocId, tournamentId, team.team_id, targetMatchId, ALLOCATION_SOURCES.ADVANCEMENT]
+          `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, slot_number, status, source)
+             VALUES ($1, $2, $3, $4, $5::int, 'allocated', $6)
+             ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET
+               status = 'allocated',
+               source = EXCLUDED.source,
+               slot_number = COALESCE(tournament_match_assignments.slot_number, EXCLUDED.slot_number)`,
+          [allocId, tournamentId, team.team_id, targetMatchId, nextSlot, ALLOCATION_SOURCES.ADVANCEMENT]
         );
       }
       outcomes.push({ teamId: team.team_id, status: 'advanced' });
@@ -319,10 +330,14 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
 
   // 2. Fetch matches in this round to identify groups/districts
   const matchRes = await client.query(
-    `SELECT m.id, m.match_number, m.group_id, m.day_id, d.day_number, g.group_name, g.id AS district_id, g.sequence
+    `SELECT m.id, m.match_number, m.group_id, m.district_id, m.room_id,
+            COALESCE(tr.capacity, rg.capacity) AS match_capacity,
+            m.day_id, d.day_number, g.group_name, g.id AS roadmap_group_id, g.sequence
      FROM tournament_matches m
+     LEFT JOIN tournament_rooms tr ON tr.id = m.room_id
+     LEFT JOIN tournament_groups g ON g.id = COALESCE(m.group_id, m.district_id)
+     LEFT JOIN tournament_registration_groups rg ON rg.id = COALESCE(m.group_id, m.district_id)
      LEFT JOIN tournament_days d ON d.id = m.day_id
-     LEFT JOIN tournament_groups g ON g.id = m.group_id
      WHERE m.round_id = $1 AND m.tournament_id = $2
      ORDER BY COALESCE(d.day_number, 1) ASC, m.match_number ASC, m.id ASC`,
     [roundId, tournamentId]
@@ -360,9 +375,12 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
   let roundAssignments = [];
   if (matchIds.length > 0) {
     const assignRes = await client.query(
-      `SELECT a.tournament_team_id, a.match_id, a.group_id, a.status AS assignment_status,
-              t.team_name, u.name as leader_name, g.group_name, g.id AS district_id,
-              r.id AS registration_id, r.slot_number, r.group_id AS orig_reg_group_id, r.group_name AS orig_reg_group_name
+      `SELECT a.id AS assignment_id, a.tournament_team_id, a.match_id, a.group_id,
+              a.slot_number, a.assigned_at, a.status AS assignment_status,
+              t.team_name, t.status AS team_status, u.name as leader_name,
+              g.group_name, g.id AS district_id,
+              r.id AS registration_id, r.slot_number AS registration_slot_number,
+              r.group_id AS orig_reg_group_id, r.group_name AS orig_reg_group_name
        FROM tournament_match_assignments a
        JOIN tournament_matches m ON m.id = a.match_id
        JOIN tournament_teams t ON t.id = a.tournament_team_id
@@ -404,7 +422,7 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         sequence: d.sequence,
         display_order: d.sequence,
         district_id: d.id,
-        capacity: d.capacity || 16,
+        capacity: d.capacity || null,
         scores_saved: d.scores_saved,
         scores_saved_at: d.scores_saved_at,
         scores_status: d.scores_status,
@@ -592,8 +610,14 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
       configuredDistricts.map(async (d, index) => {
         const nameNumMatch = (d.group_name || d.name || '').match(/District\s*(\d+)/i);
         const canonicalSeq = nameNumMatch ? parseInt(nameNumMatch[1], 10) : (d.sequence || index + 1);
-        const cap = d.capacity || (d.district_id && regGroupMap.get(d.district_id)?.capacity) || 16;
+        const matchCapacities = matches
+          .filter((match) => match.group_id === d.id || match.district_id === d.id || match.group_id === d.district_id || match.district_id === d.district_id)
+          .map((match) => Number(match.match_capacity) || 0)
+          .filter((capacity) => capacity > 0);
+        const cap = d.capacity || (d.district_id && regGroupMap.get(d.district_id)?.capacity)
+          || (matchCapacities.length > 0 ? Math.max(...matchCapacities) : null);
         const saveState = await getDistrictSaveState(client, tournamentId, roundId, d.id);
+        const hasVersionedSaveState = saveState.version > 0;
         const formattedName = getDistrictDisplayName({
           roundNumber: round?.round_number || 1,
           districtNumber: canonicalSeq,
@@ -611,9 +635,9 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
           sequence: canonicalSeq,
           capacity: cap,
           version: saveState.version,
-          scores_saved: saveState.status === 'saved' || Boolean(d.scores_saved),
+          scores_saved: hasVersionedSaveState ? saveState.status === 'saved' : Boolean(d.scores_saved),
           scores_saved_at: saveState.saved_at || d.scores_saved_at || null,
-          scores_status: saveState.status || d.scores_status || (d.scores_saved ? 'saved' : 'unsaved'),
+          scores_status: hasVersionedSaveState ? saveState.status : (d.scores_status || (d.scores_saved ? 'saved' : 'unsaved')),
           teams: [],
         };
       })
@@ -674,14 +698,6 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         }
       }
 
-      // 4. Slot number mapping for Round 1
-      if (!matchedDist && isFirstRound && t.slot_number && Number(t.slot_number) > 0) {
-        const slotNum = Number(t.slot_number);
-        const defaultCap = districtList[0]?.capacity || 16;
-        const targetSeq = Math.floor((slotNum - 1) / defaultCap) + 1;
-        matchedDist = distBySequence.get(targetSeq);
-      }
-
       if (matchedDist) {
         t.district_id = matchedDist.id;
         t.group_id = matchedDist.id;
@@ -696,7 +712,10 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
     }
 
     districts = districtList.map((d) => {
-      const distMatches = matches.filter((m) => m.group_id === d.id || m.district_id === d.id);
+      const distMatches = matches.filter((m) => (
+        m.group_id === d.id || m.district_id === d.id
+        || m.group_id === d.district_id || m.district_id === d.district_id
+      ));
       const distVerifiedMatches = distMatches.filter((m) => verifiedMatchIds.has(m.id));
       const distLastMatch = distVerifiedMatches.length > 0 ? distVerifiedMatches[distVerifiedMatches.length - 1] : roundLastMatch;
       const districtTeamsToRank = d.teams.map((t) => ({
@@ -709,15 +728,8 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
         t.district_tie_broken = t.tie_broken;
         t.district_is_true_tie = t.is_true_tie;
       });
-      const effectiveMatches = distMatches.length > 0 ? distMatches : [
-        {
-          id: `MAT-${d.id}-1`,
-          match_number: 1,
-          group_id: d.id,
-          district_id: d.id,
-          status: 'PENDING',
-        },
-      ];
+      // No synthetic match: score entry must follow the saved roadmap.
+      const effectiveMatches = distMatches;
 
       d.matches = effectiveMatches.map((m) => {
         const mResults = resultsRows.filter((r) => r.match_id === m.id);
@@ -734,6 +746,30 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
             total_points: mr.total_points ?? 0,
           };
         }
+        const assignedTeams = roundAssignments
+          .filter((assignment) => (
+            assignment.match_id === m.id
+            && assignment.assignment_status === 'allocated'
+          ))
+          .map((assignment) => {
+            const teamId = teamCanonicalIdMap.get(assignment.tournament_team_id) || assignment.tournament_team_id;
+            return {
+              assignment_id: assignment.assignment_id,
+              team_id: teamId,
+              team_name: assignment.team_name,
+              leader_name: assignment.leader_name || 'Captain',
+              status: assignment.team_status,
+              is_disqualified: assignment.team_status === 'disqualified',
+              slot_number: assignment.slot_number ?? null,
+              assigned_at: assignment.assigned_at,
+            };
+          })
+          .sort((a, b) => {
+            const aSlot = a.slot_number != null ? Number(a.slot_number) : Number.MAX_SAFE_INTEGER;
+            const bSlot = b.slot_number != null ? Number(b.slot_number) : Number.MAX_SAFE_INTEGER;
+            if (aSlot !== bSlot) return aSlot - bSlot;
+            return String(a.assignment_id || '').localeCompare(String(b.assignment_id || ''));
+          });
         return {
           id: m.id,
           match_id: m.id,
@@ -741,7 +777,10 @@ export async function getDetailedRoundStandings(client, tournamentId, roundId) {
           group_id: m.group_id,
           group_name: d.name,
           status: m.status || 'PENDING',
+          capacity: Number(m.match_capacity) || assignedTeams.length,
           result_count: mResults.length,
+          assignment_count: assignedTeams.length,
+          assigned_teams: assignedTeams,
           results: resultsMap,
         };
       });
@@ -1052,6 +1091,16 @@ export async function advanceTeamsManually(client, {
   // Default: Snake seeding across target districts (or manual placement override)
   const defaultPlacementMap = computeDefaultSnakePlacement(orderedTeamIds, targetGroups);
   const advancedTeams = [];
+  const existingSlotsRes = await client.query(
+    `SELECT COALESCE(a.group_id, m.group_id) AS group_id, MAX(a.slot_number)::int AS max_slot
+     FROM tournament_match_assignments a
+     JOIN tournament_matches m ON m.id = a.match_id
+     WHERE a.tournament_id = $1::varchar AND m.round_id = $2::varchar
+       AND a.status = 'allocated'
+     GROUP BY COALESCE(a.group_id, m.group_id)`,
+    [tournamentId, targetRoundId]
+  );
+  const nextSlotByGroup = new Map(existingSlotsRes.rows.map((row) => [row.group_id || '__round__', Number(row.max_slot) || 0]));
 
   for (let i = 0; i < orderedTeamIds.length; i++) {
     const rawTeamId = orderedTeamIds[i];
@@ -1063,6 +1112,9 @@ export async function advanceTeamsManually(client, {
     } else {
       assignedGroupId = defaultPlacementMap[teamId] || null;
     }
+    const slotGroupId = assignedGroupId || '__round__';
+    const slotNumber = (nextSlotByGroup.get(slotGroupId) || 0) + 1;
+    nextSlotByGroup.set(slotGroupId, slotNumber);
 
     // Determine target matches for this team
     let matchesForTeam = targetMatches;
@@ -1078,11 +1130,12 @@ export async function advanceTeamsManually(client, {
       const allocId = randomId('ASN-');
       await client.query(`
         INSERT INTO tournament_match_assignments
-          (id, tournament_id, tournament_team_id, match_id, group_id, day_id, status, source)
-        VALUES ($1, $2, $3, $4, $5, $6, 'allocated', $7)
+          (id, tournament_id, tournament_team_id, match_id, group_id, day_id, slot_number, status, source)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::int, 'allocated', $8)
         ON CONFLICT (tournament_team_id, match_id) DO UPDATE SET
           status = 'allocated',
           source = EXCLUDED.source,
+          slot_number = COALESCE(tournament_match_assignments.slot_number, EXCLUDED.slot_number),
           group_id = COALESCE(EXCLUDED.group_id, tournament_match_assignments.group_id),
           day_id = COALESCE(EXCLUDED.day_id, tournament_match_assignments.day_id)
       `, [
@@ -1092,6 +1145,7 @@ export async function advanceTeamsManually(client, {
         match.id,
         match.group_id || assignedGroupId || null,
         match.day_id || null,
+        slotNumber,
         ALLOCATION_SOURCES.ADVANCEMENT,
       ]);
     }

@@ -159,47 +159,58 @@ export default function TournamentRoadmapBuilder({
     return computeMinSelectableDate(rawDate);
   }, [meta?.registration_close_date, registrationCloseDate]);
 
-  // Derive effective tournament districts: combines database districts, custom/Grand Finals districts,
-  // existing day allocations, and fallback generated districts if DB is loading or empty.
+  // Derive effective tournament districts: combines canonical database registration districts (for Round 1)
+  // and any explicit custom district allocations in Round 1, preventing other rounds' districts from leaking into Round 1.
   const effectiveDistricts = useMemo(() => {
     const map = new globalThis.Map();
+    const slotsTotalNum = parseInt(meta?.slotsTotal || meta?.total_slots || 0, 10);
+    const tpgNum = parseInt(meta?.teams_per_group || meta?.teams_per_district || 16, 10) || 16;
+    const maxR1Count = slotsTotalNum > 0 ? Math.ceil(slotsTotalNum / tpgNum) : 0;
 
-    // 1. Districts from database
+    // 1. Canonical registration districts from database
     if (Array.isArray(districts)) {
-      districts.forEach((d) => {
+      districts.forEach((d, idx) => {
         if (d && (d.id || d.name)) {
+          // If maxR1Count is known, only take up to maxR1Count from DB unless has assigned teams or explicit conflict
+          if (maxR1Count > 0 && idx >= maxR1Count && !(d.registered_teams_count > 0 || d.team_count > 0 || d.has_conflict)) {
+            return;
+          }
           const key = d.id || d.name;
           map.set(key, {
             ...d,
             id: d.id || key,
             name: d.name || `District ${d.group_index || key}`,
             registered_teams_count: d.registered_teams_count ?? d.team_count ?? 0,
-            capacity: d.capacity || 16,
+            capacity: d.capacity || tpgNum,
           });
         }
       });
     }
 
-    // 2. Any district referenced in rounds/days allocations (e.g. Grand Finals, custom districts)
-    rounds.forEach((r) => {
-      (r.days || []).forEach((d) => {
+    // 2. Any explicit custom district referenced in Round 1 allocations
+    const r1 = rounds[0];
+    if (r1 && Array.isArray(r1.days)) {
+      r1.days.forEach((d) => {
         (d.allocations || []).forEach((a) => {
           const distId = a.district_id || a.id;
           if (distId && !map.has(distId)) {
-            map.set(distId, {
-              id: distId,
-              name: a.district_name || a.name || `District ${distId}`,
-              registered_teams_count: a.registered_teams_count ?? a.team_count ?? 0,
-              capacity: a.capacity || 16,
-              is_custom: true,
-            });
+            const hasData = (a.matches && a.matches.length > 0) || (a.registered_teams_count > 0) || a.is_custom;
+            if (hasData) {
+              map.set(distId, {
+                id: distId,
+                name: a.district_name || a.name || `District ${distId}`,
+                registered_teams_count: a.registered_teams_count ?? a.team_count ?? 0,
+                capacity: a.capacity || tpgNum,
+                is_custom: true,
+              });
+            }
           }
         });
       });
-    });
+    }
 
     return Array.from(map.values());
-  }, [districts, rounds]);
+  }, [districts, rounds, meta?.slotsTotal, meta?.total_slots, meta?.teams_per_group, meta?.teams_per_district]);
 
   // Grand Finals / Custom District Modal State
   const [showCustomDistrictModal, setShowCustomDistrictModal] = useState(false);

@@ -120,7 +120,7 @@ export function selectRoomForTeam(rooms = [], occupancy = {}, roundNumber = 1) {
 
 // Builds the row descriptors for an automatic placement (one assignment per match
 // in the chosen room). Never references room credentials.
-export function buildAutomaticAssignmentRows({ tournamentId, teamId, room, matchIds = [], source = ALLOCATION_SOURCES.AUTOMATIC, idFn = null }) {
+export function buildAutomaticAssignmentRows({ tournamentId, teamId, room, matchIds = [], slotNumber = null, source = ALLOCATION_SOURCES.AUTOMATIC, idFn = null }) {
   const roomId = room.id ?? room.roomId;
   const groupId = room.group_id ?? room.groupId;
   const dayId = room.day_id ?? room.dayId;
@@ -132,6 +132,7 @@ export function buildAutomaticAssignmentRows({ tournamentId, teamId, room, match
     room_id: roomId,
     group_id: groupId,
     day_id: dayId,
+    slot_number: slotNumber,
     source,
   }));
 }
@@ -139,7 +140,7 @@ export function buildAutomaticAssignmentRows({ tournamentId, teamId, room, match
 // New roadmaps keep team membership at group scope, with every match linked to
 // its own technical room. Each scheduled match gets one assignment row for the
 // same team/group membership.
-export function buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId, matches = [], source = ALLOCATION_SOURCES.AUTOMATIC, idFn = null }) {
+export function buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId, matches = [], slotNumber = null, source = ALLOCATION_SOURCES.AUTOMATIC, idFn = null }) {
   return matches.map((match) => ({
     id: idFn ? idFn() : randomId('ASN-'),
     tournament_id: tournamentId,
@@ -148,8 +149,28 @@ export function buildPersistentGroupAssignmentRows({ tournamentId, teamId, group
     room_id: match.room_id,
     group_id: groupId,
     day_id: match.day_id,
+    slot_number: slotNumber,
     source,
   }));
+}
+
+async function findAvailableSlotNumber(client, { tournamentId, scopeColumn, scopeId, capacity }) {
+  if (!['group_id', 'room_id'].includes(scopeColumn)) {
+    throw allocationError(ALLOCATION_ERR.ALLOCATION_CONFLICT, 'Invalid allocation scope.');
+  }
+  const slotsRes = await client.query(
+    `SELECT DISTINCT slot_number
+     FROM tournament_match_assignments
+     WHERE tournament_id = $1::varchar AND ${scopeColumn} = $2::varchar
+       AND status = 'allocated' AND slot_number IS NOT NULL`,
+    [tournamentId, scopeId]
+  );
+  const usedSlots = new Set(slotsRes.rows.map((row) => Number(row.slot_number)).filter((slot) => Number.isInteger(slot) && slot > 0));
+  const maxCapacity = Math.max(0, Number(capacity) || 0);
+  for (let slot = 1; slot <= maxCapacity; slot += 1) {
+    if (!usedSlots.has(slot)) return slot;
+  }
+  throw allocationError(ALLOCATION_ERR.NO_AVAILABLE_POSITION, 'No available slot exists in the selected roadmap allocation.');
 }
 
 // Pure manual-target gate. room = destination room row, match = the room's match
@@ -175,9 +196,9 @@ async function insertAssignments(client, rows) {
   for (const row of rows) {
     try {
       await client.query(
-        `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, room_id, group_id, day_id, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [row.id, row.tournament_id, row.tournament_team_id, row.match_id, row.room_id, row.group_id, row.day_id, row.source]
+        `INSERT INTO tournament_match_assignments (id, tournament_id, tournament_team_id, match_id, room_id, group_id, day_id, slot_number, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [row.id, row.tournament_id, row.tournament_team_id, row.match_id, row.room_id, row.group_id, row.day_id, row.slot_number, row.source]
       );
     } catch (err) {
       if (err && err.code === '23505') {
@@ -349,9 +370,15 @@ async function allocateAutomatic(client, { team, tournamentId, actorId, source =
     throw allocationError(ALLOCATION_ERR.ALLOCATION_CONFLICT, 'The selected roadmap room has no scheduled matches.');
   }
 
+  const slotNumber = await findAvailableSlotNumber(client, {
+    tournamentId,
+    scopeColumn: room.persistent_group ? 'group_id' : 'room_id',
+    scopeId: room.persistent_group ? room.group_id : room.id,
+    capacity: room.capacity,
+  });
   const rows = room.persistent_group
-    ? buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId: room.group_id, matches: matchesRes.rows, source: src })
-    : buildAutomaticAssignmentRows({ tournamentId, teamId, room, matchIds, source: src });
+    ? buildPersistentGroupAssignmentRows({ tournamentId, teamId, groupId: room.group_id, matches: matchesRes.rows, slotNumber, source: src })
+    : buildAutomaticAssignmentRows({ tournamentId, teamId, room, matchIds, slotNumber, source: src });
   await insertAssignments(client, rows);
 
   await client.query("UPDATE tournament_teams SET status = 'allocated', updated_at = NOW() WHERE id = $1", [teamId]);
@@ -439,11 +466,18 @@ async function allocateManual(client, { team, tournamentId, opts, actorId }) {
       : 'SELECT id, room_id, day_id FROM tournament_matches WHERE id = $1 AND tournament_id = $2',
     [persistentGroup ? match.group_id : matchId, tournamentId]
   );
+  const slotNumber = await findAvailableSlotNumber(client, {
+    tournamentId,
+    scopeColumn: persistentGroup ? 'group_id' : 'room_id',
+    scopeId: persistentGroup ? match.group_id : roomId,
+    capacity: room.capacity,
+  });
   const rows = buildPersistentGroupAssignmentRows({
     tournamentId,
     teamId,
     groupId: match.group_id,
     matches: targetMatchesRes.rows,
+    slotNumber,
     source: ALLOCATION_SOURCES.ORGANIZER,
   });
   await insertAssignments(client, rows);
