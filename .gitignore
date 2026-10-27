@@ -45,3 +45,6 @@ _agents/
 _agent/
 .ua/
 .understand-anything/
+
+# Standalone repositories
+bot/matchdistrict-manager-discord-bot/
