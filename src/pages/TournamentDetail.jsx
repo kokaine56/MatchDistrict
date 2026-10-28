@@ -113,6 +113,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [frozenCards, setFrozenCards] = useState({});
   const [isNavigatingToRegister, setIsNavigatingToRegister] = useState(false);
   const [discordToast, setDiscordToast] = useState(null);
+  const [showDiscordLinkModal, setShowDiscordLinkModal] = useState(false);
+  const [discordLinkError, setDiscordLinkError] = useState('');
   const [discordRefreshTrigger, setDiscordRefreshTrigger] = useState(0);
 
   useEffect(() => {
@@ -120,12 +122,31 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const params = new URLSearchParams(window.location.search);
       const discordParam = params.get('discord');
       if (discordParam) {
+        const shouldResumeRegistration = params.get('discordJoin') === '1';
         if (discordParam === 'connected') {
           setDiscordToast({
             type: 'success',
             message: 'Discord account linked successfully!'
           });
           setDiscordRefreshTrigger(prev => prev + 1);
+          if (shouldResumeRegistration && tournamentId) {
+            (async () => {
+              try {
+                const token = await getAuthToken();
+                const headers = token ? { Authorization: `Bearer ${token}` } : {};
+                const response = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { credentials: 'include', headers });
+                const status = await response.json();
+                if (status?.discord_linked) navigate(`/tournaments/${tournamentId}/register`);
+                else {
+                  setDiscordLinkError('Discord linking did not complete. Please try again.');
+                  setShowDiscordLinkModal(true);
+                }
+              } catch {
+                setDiscordLinkError('Could not confirm the Discord link. Please try again.');
+                setShowDiscordLinkModal(true);
+              }
+            })();
+          }
         } else if (discordParam === 'error') {
           const code = params.get('code');
           let message = 'Failed to link Discord account.';
@@ -139,8 +160,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             type: 'error',
             message
           });
+          if (shouldResumeRegistration) {
+            setDiscordLinkError(message);
+            setShowDiscordLinkModal(true);
+          }
         }
 
+        params.delete('discordJoin');
         params.delete('discord');
         params.delete('code');
         params.delete('retry_after');
@@ -1314,7 +1340,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                           disabled={isNavigatingToRegister || !discordLinkChecked}
                           onClick={() => {
                             if (isNavigatingToRegister) return;
-                            if (!discordLinked) { window.alert('Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Without linking, registration cannot be completed.'); return; }
+                            if (!discordLinked) { setDiscordLinkError(''); setShowDiscordLinkModal(true); return; }
                             setIsNavigatingToRegister(true);
                             navigate(`/tournaments/${tourney.id}/register`);
                           }}
@@ -1379,7 +1405,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         disabled={isButtonDisabled}
                         onClick={() => {
                           if (isButtonDisabled || !btnState.action) return;
-                          if (!discordLinked) { window.alert('Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Without linking, registration cannot be completed.'); return; }
+                          if (!discordLinked) { setDiscordLinkError(''); setShowDiscordLinkModal(true); return; }
                           setIsNavigatingToRegister(true);
                           navigate(`/tournaments/${tourney.id}/register`);
                         }}
@@ -2487,6 +2513,43 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                   Got it
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDiscordLinkModal && (
+          <motion.div
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setShowDiscordLinkModal(false)}
+          >
+            <motion.div
+              className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#11131A] p-6 text-white shadow-2xl"
+              initial={{ opacity: 0, y: 14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="discord-link-required-title"
+            >
+              <button type="button" onClick={() => setShowDiscordLinkModal(false)} className="absolute right-4 top-4 rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
+                <span className="material-symbols-outlined">link</span>
+              </div>
+              <h2 id="discord-link-required-title" className="mb-3 pr-8 text-xl font-black">Link Discord to Register</h2>
+              <p className="text-sm leading-relaxed text-white/70">Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Registration cannot be completed without linking.</p>
+              {discordLinkError && <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">{discordLinkError}</p>}
+              <button
+                type="button"
+                onClick={() => {
+                  setDiscordLinkError('');
+                  const returnTo = `/tournaments/${tournamentId}?discordJoin=1`;
+                  window.location.assign(`/api/auth/discord/connect?redirect=${encodeURIComponent(returnTo)}`);
+                }}
+                className="mt-6 w-full rounded-xl bg-indigo-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-indigo-400"
+              >
+                Link Discord
+              </button>
             </motion.div>
           </motion.div>
         )}

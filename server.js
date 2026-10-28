@@ -3238,6 +3238,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const isLoginFlow = urlPath === '/api/auth/discord/login';
     const parsedUrl = new URL(req.url, 'http://localhost');
     const returnTo = getSafeRelativeRedirect(parsedUrl.searchParams.get('redirect'), '/profile');
+    const linkErrorRedirect = (code, retryAfter = null) => {
+      const suffix = retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : '';
+      if (!isLoginFlow && returnTo && returnTo !== '/' && returnTo !== '/profile') {
+        return `${returnTo}${returnTo.includes('?') ? '&' : '?'}discord=error&code=${encodeURIComponent(code)}${suffix}`;
+      }
+      return isLoginFlow ? `/login?discord_error=${encodeURIComponent(code)}${retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : ''}` : `/profile?discord=error&code=${encodeURIComponent(code)}${suffix}`;
+    };
     const authUser = getAuthUser(req);
     if (!isLoginFlow && !authUser) {
       const errRedirect = returnTo && returnTo !== '/' && returnTo !== '/profile'
@@ -3253,7 +3260,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const ipLimit = checkRateLimit('discord_connect_ip:' + clientIp, 30, 10 * 60 * 1000);
     if (!ipLimit.allowed) {
       console.error(`[DISCORD AUTH] Step: connect_ip_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | IP: ${clientIp}`);
-      res.writeHead(302, { Location: isLoginFlow ? `/login?discord_error=rate_limited&retry_after=${ipLimit.retryAfter}` : `/profile?discord=error&code=rate_limited&retry_after=${ipLimit.retryAfter}` });
+      res.writeHead(302, { Location: linkErrorRedirect('rate_limited', ipLimit.retryAfter) });
       res.end();
       return;
     }
@@ -3262,7 +3269,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (!userLimit.allowed) {
         rollbackRateLimit('discord_connect_ip:' + clientIp);
         console.error(`[DISCORD AUTH] Step: connect_user_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | User: ${authUserId}`);
-        res.writeHead(302, { Location: isLoginFlow ? `/login?discord_error=rate_limited&retry_after=${userLimit.retryAfter}` : `/profile?discord=error&code=rate_limited&retry_after=${userLimit.retryAfter}` });
+        res.writeHead(302, { Location: linkErrorRedirect('rate_limited', userLimit.retryAfter) });
         res.end();
         return;
       }
@@ -3279,7 +3286,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       if (!discordClientSecret) missing.push('DISCORD_CLIENT_SECRET');
       if (!discordRedirectUri) missing.push('DISCORD_REDIRECT_URI');
       console.error(`[DISCORD CONNECT ERROR] Step: connect_start | Code: not_configured | Missing env: ${missing.join(', ')}`);
-      res.writeHead(302, { Location: isLoginFlow ? '/login?discord_error=not_configured' : '/profile?discord=error&code=not_configured' });
+      res.writeHead(302, { Location: linkErrorRedirect('not_configured') });
       res.end();
       return;
     }
