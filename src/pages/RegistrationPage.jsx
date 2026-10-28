@@ -501,9 +501,30 @@ function RegistrationPage({ onNavigate }) {
   const [copiedRegId, setCopiedRegId] = useState(false)
   const [submittedTimeIST, setSubmittedTimeIST] = useState('')
   const [rejectedReg, setRejectedReg] = useState(null)
+  const [discordLinkChecked, setDiscordLinkChecked] = useState(false)
+  const [discordLinked, setDiscordLinked] = useState(false)
 
   const isPaid = parseInt(tourney?.entry_fee_amount || 0) > 0
   const entryFee = parseInt(tourney?.entry_fee_amount || 0)
+
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const token = await getAuthToken()
+        const headers = token ? { Authorization: `Bearer ${token}` } : {}
+        const res = await fetch(`/api/tournaments/${id}/my-registration`, { credentials: 'include', headers })
+        const data = await res.json()
+        if (!cancelled) setDiscordLinked(Boolean(data?.discord_linked))
+      } catch {
+        if (!cancelled) setDiscordLinked(false)
+      } finally {
+        if (!cancelled) setDiscordLinkChecked(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [id])
 
   useEffect(() => {
     if (!id) return
@@ -1625,6 +1646,22 @@ function RegistrationPage({ onNavigate }) {
         </BottomSheetModal>
       </div>
     );
+  }
+
+  if (!discordLinkChecked) {
+    return <div className="min-h-screen bg-[#07080C] text-white flex items-center justify-center">Checking Discord account link…</div>
+  }
+
+  if (!discordLinked) {
+    return (
+      <div className="min-h-screen bg-[#07080C] text-white flex items-center justify-center p-6">
+        <div className="max-w-lg rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+          <h1 className="text-xl font-black mb-3">Link Discord to Register</h1>
+          <p className="text-sm text-white/70">Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Without linking, registration cannot be completed.</p>
+          <button type="button" onClick={() => navigate(`/tournaments/${id}`)} className="mt-5 rounded-xl bg-white/10 px-4 py-2 font-semibold">Back to Tournament</button>
+        </div>
+      </div>
+    )
   }
 
   return (

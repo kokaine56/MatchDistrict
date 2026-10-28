@@ -1204,6 +1204,16 @@ function getAuthUser(req) {
   return user;
 }
 
+async function userHasLinkedDiscordAccount(userId, queryable = pool) {
+  if (!userId) return false;
+  const result = await queryable.query(
+    `SELECT 1 FROM user_discord_connections WHERE user_id = $1 AND discord_id ~ '^[0-9]{17,20}$'
+     UNION SELECT 1 FROM users WHERE id = $1 AND COALESCE(discord_id, discord_user_id) ~ '^[0-9]{17,20}$' LIMIT 1`,
+    [userId]
+  );
+  return result.rows.length > 0;
+}
+
 // ─────────────────────────────────────────────────────────────
 // IAM Role Hierarchy Engine (Multi-Role Array)
 // Role inheritance model:
@@ -6326,7 +6336,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       // 2. Fetch registrations
       const regRes = await pool.query(
-        `SELECT id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, created_at
+        `SELECT id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, created_at, discord_verified
          FROM tournament_registrations
          WHERE tournament_id = $1
          ORDER BY created_at ASC`,
@@ -6554,6 +6564,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           team_name: reg.team_name,
           captain: reg.captain,
           status: reg.status,
+          discord_verified: Boolean(reg.discord_verified),
           is_eligible: isEligible,
           leader: teamMembers.find((m) => m.role === 'leader') || null,
           members: teamMembers,
@@ -6589,6 +6600,59 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
     }
+    return;
+  }
+
+  // POST /api/bot/tournaments/:id/registrations/:registrationId/verification
+  const botVerificationMatch = urlPath.match(/^\/api\/bot\/tournaments\/([^/]+)\/registrations\/([^/]+)\/verification$/);
+  if (botVerificationMatch && req.method === 'POST') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED' }));
+      return;
+    }
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const tId = decodeURIComponent(botVerificationMatch[1]);
+        const registrationId = decodeURIComponent(botVerificationMatch[2]);
+        const payload = JSON.parse(body || '{}');
+        const discordId = String(payload.discord_id || '');
+        if (!/^\d{17,20}$/.test(discordId)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_DISCORD_ID' }));
+          return;
+        }
+        const updated = await pool.query(
+          `UPDATE tournament_registrations tr SET discord_verified = TRUE
+           WHERE tr.id = $1 AND tr.tournament_id = $2 AND (
+             EXISTS (
+               SELECT 1 FROM users u LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
+               WHERE u.id = tr.user_id AND (u.discord_id = $3 OR u.discord_user_id = $3 OR udc.discord_id = $3)
+             ) OR EXISTS (
+               SELECT 1 FROM tournament_teams tt
+               JOIN tournament_team_members tm ON tm.tournament_team_id = tt.id AND tm.status = 'active'
+               JOIN users u ON u.id = tm.user_id
+               LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
+               WHERE tt.registration_id = tr.id AND (u.discord_id = $3 OR u.discord_user_id = $3 OR udc.discord_id = $3)
+             )
+           ) RETURNING tr.id, tr.discord_verified`,
+          [registrationId, tId, discordId]
+        );
+        if (!updated.rows.length) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'REGISTERED_DISCORD_USER_NOT_FOUND' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, registration_id: updated.rows[0].id, discord_verified: true }));
+      } catch (err) {
+        console.error('[BOT API] Failed to persist Discord registration verification:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
     return;
   }
 
@@ -8614,8 +8678,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           'SELECT * FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 AND status = $3',
           [id, authUser.id, 'approved']
         );
-        if (regRes.rows.length > 0) {
+        if (regRes.rows.length > 0 && regRes.rows[0].discord_verified) {
           isAllowed = true;
+        } else if (regRes.rows.length > 0) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'DISCORD_VERIFICATION_REQUIRED', message: 'Complete verification in this tournament’s #verification channel before accessing room ID and password.' }));
+          return;
         }
       }
 
@@ -11024,7 +11092,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // Unauthenticated — return null registration rather than 401 so the client
         // can safely call this without a login guard and get "not registered".
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: true, registration: null }));
+        return res.end(JSON.stringify({ success: true, registration: null, discord_linked: false }));
       }
       const tId = decodeURIComponent(myRegMatch[1]);
       const regRes = await pool.query(
@@ -11042,8 +11110,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         [tId, authUser.id]
       );
       const registration = regRes.rows.length > 0 ? regRes.rows[0] : null;
+      const discordLinked = await userHasLinkedDiscordAccount(authUser.id);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, registration }));
+      return res.end(JSON.stringify({ success: true, registration, discord_linked: discordLinked }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: err.message }));
@@ -12792,6 +12861,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         isAllocated = true;
         matchedTeam = teamCheck.rows[0];
 
+        const verificationRes = matchedTeam.registration_id
+          ? await pool.query('SELECT discord_verified FROM tournament_registrations WHERE id = $1 AND tournament_id = $2', [matchedTeam.registration_id, tId])
+          : await pool.query('SELECT discord_verified FROM tournament_registrations WHERE tournament_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [tId, matchedTeam.leader_user_id]);
+        if (!verificationRes.rows[0]?.discord_verified) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'DISCORD_VERIFICATION_REQUIRED', message: 'Complete verification in this tournament’s #verification channel before accessing room ID and password.' }));
+        }
+
         // B4, B6, B7: STRICT SQUAD GATE
         // A participant receives credentials only if:
         // 1. Organizer has waived this team (squad_waived_by IS NOT NULL) OR
@@ -12898,6 +12975,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to register.' }));
+          return;
+        }
+
+        if (!(await userHasLinkedDiscordAccount(authUser.id))) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
           return;
         }
 
@@ -13047,6 +13130,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
 
+      if (!(await userHasLinkedDiscordAccount(authUser.id))) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
+        return;
+      }
+
       const sesRes = await pool.query('SELECT * FROM registration_sessions WHERE id = $1 AND user_id = $2', [sessionId, authUser.id]);
       if (sesRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -13146,6 +13235,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to complete registration.' }));
+          return;
+        }
+
+        if (!(await userHasLinkedDiscordAccount(authUser.id, client))) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
           return;
         }
 
@@ -13556,6 +13651,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to register.' }));
+          return;
+        }
+
+        if (!(await userHasLinkedDiscordAccount(authUser.id))) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
           return;
         }
 

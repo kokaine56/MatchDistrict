@@ -245,6 +245,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [slotsError, setSlotsError] = useState(null);
   const [myRegistration, setMyRegistration] = useState(null);
+  const [discordLinked, setDiscordLinked] = useState(false);
+  const [discordLinkChecked, setDiscordLinkChecked] = useState(false);
 
   // Fetch the caller's own registration (+ payment proof status) for the button state.
   // Uses the dedicated /my-registration endpoint that never exposes other users' data.
@@ -255,8 +257,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { headers });
       const data = await res.json();
-      if (data.success) setMyRegistration(data.registration || null);
-    } catch (_) {}
+      if (data.success) { setMyRegistration(data.registration || null); setDiscordLinked(Boolean(data.discord_linked)); }
+    } catch (_) { setDiscordLinked(false); } finally { setDiscordLinkChecked(true); }
   }, [tournamentId]);
 
   // Keep the full registrations list fetch for the organizer registrations tab.
@@ -1309,9 +1311,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         </div>
                         <button
                           type="button"
-                          disabled={isNavigatingToRegister}
+                          disabled={isNavigatingToRegister || !discordLinkChecked}
                           onClick={() => {
                             if (isNavigatingToRegister) return;
+                            if (!discordLinked) { window.alert('Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Without linking, registration cannot be completed.'); return; }
                             setIsNavigatingToRegister(true);
                             navigate(`/tournaments/${tourney.id}/register`);
                           }}
@@ -1367,7 +1370,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     }
                   }
 
-                  const isButtonDisabled = btnState.disabled || isNavigatingToRegister;
+                  const isButtonDisabled = btnState.disabled || isNavigatingToRegister || !discordLinkChecked;
 
                   return (
                     <div className="flex w-full items-center gap-3">
@@ -1376,6 +1379,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         disabled={isButtonDisabled}
                         onClick={() => {
                           if (isButtonDisabled || !btnState.action) return;
+                          if (!discordLinked) { window.alert('Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Without linking, registration cannot be completed.'); return; }
                           setIsNavigatingToRegister(true);
                           navigate(`/tournaments/${tourney.id}/register`);
                         }}
