@@ -223,6 +223,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
     const targetItem = items.find(i => i.id === regId) || selectedItem;
     if (!targetItem) return;
 
+    const previousItems = items;
+    const previousCounts = counts;
+    const previousSelectedId = selectedId;
+    const optimisticItems = items.map((item) => item.id === regId ? { ...item, status: 'approved', payment_status: 'verified', actionPending: true } : item);
+    setItems(optimisticItems);
+    setCounts((prev) => ({ ...prev, pending_review: Math.max(0, prev.pending_review - 1), approved: prev.approved + 1 }));
+
     setFlagWarningItem(null);
     setActionLoadingId(regId);
 
@@ -240,8 +247,11 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
       const data = await res.json().catch(() => ({}));
 
       if (res.status === 409) {
+        setItems(previousItems);
+        setCounts(previousCounts);
+        setSelectedId(previousSelectedId);
         showToast(data.message || 'Already handled by another reviewer.', 'warning');
-        fetchQueue(true);
+        void fetchQueue(true);
       } else if (!res.ok || !data.success) {
         let errMsg = data.message || data.error;
         if (!errMsg) {
@@ -250,24 +260,22 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
           else if (res.status === 404) errMsg = 'Registration record not found.';
           else errMsg = 'Failed to approve registration.';
         }
+        setItems(previousItems);
+        setCounts(previousCounts);
+        setSelectedId(previousSelectedId);
         showToast(errMsg, 'error');
-        fetchQueue(true);
+        void fetchQueue(true);
       } else {
-        // Successful confirmation from backend: update UI state
-        setItems(prev => prev.filter(i => i.id !== regId));
-        setCounts(prev => ({
-          ...prev,
-          pending_review: Math.max(0, prev.pending_review - 1),
-          approved: prev.approved + 1
-        }));
-        if (selectedItem?.id === regId) {
-          setSelectedItem(prev => prev ? { ...prev, status: 'approved', payment_status: 'verified' } : null);
-        }
+        setItems((prev) => prev.filter((item) => item.id !== regId));
+        if (selectedId === regId) setSelectedId((prev) => prev === regId ? (optimisticItems.find((item) => item.id !== regId)?.id || null) : prev);
         showToast(`Approved ${targetItem.team_name} successfully.`, 'success');
       }
     } catch (err) {
+      setItems(previousItems);
+      setCounts(previousCounts);
+      setSelectedId(previousSelectedId);
       showToast('Network error during approval: ' + (err.message || 'connection failed'), 'error');
-      fetchQueue(true);
+      void fetchQueue(true);
     } finally {
       setActionLoadingId(null);
     }
@@ -283,6 +291,12 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
     }
 
     setRejectingItem(null);
+    const previousItems = items;
+    const previousCounts = counts;
+    const previousSelectedId = selectedId;
+    const optimisticItems = items.map((registration) => registration.id === item.id ? { ...registration, status: 'rejected', payment_status: 'rejected', actionPending: true } : registration);
+    setItems(optimisticItems);
+    setCounts((prev) => ({ ...prev, pending_review: Math.max(0, prev.pending_review - 1), rejected: prev.rejected + 1 }));
     setActionLoadingId(item.id);
 
     try {
@@ -299,8 +313,11 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
       const data = await res.json().catch(() => ({}));
 
       if (res.status === 409) {
+        setItems(previousItems);
+        setCounts(previousCounts);
+        setSelectedId(previousSelectedId);
         showToast(data.message || 'Already handled by another reviewer.', 'warning');
-        fetchQueue(true);
+        void fetchQueue(true);
       } else if (!res.ok || !data.success) {
         let errMsg = data.message || data.error;
         if (!errMsg) {
@@ -309,23 +326,22 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
           else if (res.status === 404) errMsg = 'Registration record not found.';
           else errMsg = 'Failed to reject registration.';
         }
+        setItems(previousItems);
+        setCounts(previousCounts);
+        setSelectedId(previousSelectedId);
         showToast(errMsg, 'error');
-        fetchQueue(true);
+        void fetchQueue(true);
       } else {
-        setItems(prev => prev.filter(i => i.id !== item.id));
-        setCounts(prev => ({
-          ...prev,
-          pending_review: Math.max(0, prev.pending_review - 1),
-          rejected: prev.rejected + 1
-        }));
-        if (selectedItem?.id === item.id) {
-          setSelectedItem(prev => prev ? { ...prev, status: 'rejected', payment_status: 'rejected' } : null);
-        }
+        setItems((prev) => prev.filter((registration) => registration.id !== item.id));
+        if (selectedId === item.id) setSelectedId((prev) => prev === item.id ? (optimisticItems.find((registration) => registration.id !== item.id)?.id || null) : prev);
         showToast(`Registration for ${item.team_name} rejected.`, 'info');
       }
     } catch (err) {
+      setItems(previousItems);
+      setCounts(previousCounts);
+      setSelectedId(previousSelectedId);
       showToast('Network error during rejection: ' + (err.message || 'connection failed'), 'error');
-      fetchQueue(true);
+      void fetchQueue(true);
     } finally {
       setActionLoadingId(null);
     }
@@ -366,9 +382,7 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
           [activeTab]: Math.max(0, prev[activeTab] - 1),
           pending_review: prev.pending_review + 1
         }));
-        if (selectedItem?.id === item.id) {
-          setSelectedItem(prev => prev ? { ...prev, status: 'pending', payment_status: 'pending_admin_review' } : null);
-        }
+        if (selectedId === item.id) setSelectedId(null);
         showToast(`Reopened ${item.team_name} and moved back to pending review.`, 'success');
       }
     } catch (err) {
@@ -409,9 +423,7 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
           ...prev,
           awaiting_payment: Math.max(0, prev.awaiting_payment - 1)
         }));
-        if (selectedItem?.id === item.id) {
-          setSelectedItem(prev => prev ? { ...prev, status: 'cancelled', slot_number: null } : null);
-        }
+        if (selectedId === item.id) setSelectedId(null);
         showToast(`Slot released for ${item.team_name}.`, 'info');
       }
     } catch (err) {
@@ -816,8 +828,8 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                           disabled={actionLoadingId === item.id}
                           className="rounded-full px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1 disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-sm">check</span>
-                          Approve
+                          <span className="material-symbols-outlined text-sm">{actionLoadingId === item.id ? 'progress_activity' : 'check'}</span>
+                          {actionLoadingId === item.id ? 'Approving…' : 'Approve'}
                         </button>
                         <button
                           type="button"
@@ -825,8 +837,8 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                           disabled={actionLoadingId === item.id}
                           className="rounded-full px-4 py-1.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-sm">close</span>
-                          Reject
+                          <span className="material-symbols-outlined text-sm">{actionLoadingId === item.id ? 'progress_activity' : 'close'}</span>
+                          {actionLoadingId === item.id ? 'Rejecting…' : 'Reject'}
                         </button>
                       </>
                     )}
@@ -969,8 +981,8 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                           disabled={actionLoadingId === selectedItem.id}
                           className="flex-1 rounded-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-base">check</span>
-                          Approve (A)
+                          <span className="material-symbols-outlined text-base">{actionLoadingId === selectedItem.id ? 'progress_activity' : 'check'}</span>
+                          {actionLoadingId === selectedItem.id ? 'Approving…' : 'Approve (A)'}
                         </button>
                         <button
                           type="button"
@@ -978,8 +990,8 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                           disabled={actionLoadingId === selectedItem.id}
                           className="flex-1 rounded-full py-2.5 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 text-xs font-bold transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
                         >
-                          <span className="material-symbols-outlined text-base">close</span>
-                          Reject (R)
+                          <span className="material-symbols-outlined text-base">{actionLoadingId === selectedItem.id ? 'progress_activity' : 'close'}</span>
+                          {actionLoadingId === selectedItem.id ? 'Rejecting…' : 'Reject (R)'}
                         </button>
                       </>
                     )}

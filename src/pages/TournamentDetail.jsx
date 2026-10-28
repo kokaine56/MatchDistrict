@@ -30,6 +30,20 @@ import gameValorant from '../assets/supported_games/valorant.png';
 
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80';
 
+function getValidDiscordInvite(...values) {
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    try {
+      const url = new URL(value.trim());
+      const validHost = url.hostname === 'discord.gg' || url.hostname === 'www.discord.gg' ||
+        url.hostname === 'discord.com' || url.hostname === 'www.discord.com';
+      const validPath = url.hostname.includes('discord.gg') ? /^\/[A-Za-z0-9-]+\/?$/.test(url.pathname) : /^\/invite\/[A-Za-z0-9-]+\/?$/.test(url.pathname);
+      if (url.protocol === 'https:' && validHost && validPath) return url.toString();
+    } catch { /* Ignore invalid invite values. */ }
+  }
+  return null;
+}
+
 const GAME_BADGE = {
   bgmi: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   'battlegrounds mobile india': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
@@ -930,9 +944,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const entryFee = parseInt(tourney?.entry_fee_amount, 10) || 0;
   const entryDisplay = entryFee === 0 ? 'Free' : formatIndianCurrency(entryFee);
   const basePrize = parseInt(tourney?.prize_pool_amount || tourney?.basePrize || tourney?.prizePool || 0, 10) || 0;
-  const sponsoredAmount = tourney?.totalSponsorContributions || tourney?.sponsorRevenue || 0;
-  const totalPrize = basePrize + sponsoredAmount;
+  const totalPrize = basePrize;
+  const sponsoredAmount = 0;
   const prizeDisplay = totalPrize > 0 ? `₹${totalPrize.toLocaleString('en-IN')}` : (tourney?.prizePool ? formatIndianCurrency(tourney.prizePool) : 'TBA');
+  const discordInvite = getValidDiscordInvite(
+    tourney?.discord_invite_url, tourney?.discord_invite, tourney?.discordInvite,
+    orgProfile?.discord_invite_url, orgProfile?.discord_invite, orgProfile?.discordInvite
+  );
   const slotTotal = parseInt(tourney?.slotsTotal || slotsData?.slotsTotal, 10) || 128;
 
   // Derive canonical filled slot count consistent with Registered Teams tab
@@ -941,10 +959,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     : 0;
 
   const validRegistrationsCount = (registrations && registrations.length > 0)
-    ? registrations.filter(r => {
-        const s = (r.status || '').toLowerCase();
-        return !['cancelled', 'expired', 'rejected', 'payment_rejected'].includes(s);
-      }).length
+    ? registrations.filter(r => ['approved', 'confirmed'].includes((r.status || '').toLowerCase())).length
     : 0;
 
   const slotFilled = Math.min(
@@ -980,11 +995,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         const parsedPositions = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (Array.isArray(parsedPositions) && parsedPositions.length > 0) {
           parsedPositions.forEach((pos) => {
+            const amount = pos.amount ?? pos.prize_amount;
             const pct = parseFloat(pos.percentage);
-            const amount = !isNaN(pct) && pool > 0 ? Math.round(pool * pct / 100) : 0;
             list.push({
               position: pos.name || `${list.length + 1} Place`,
-              prize: amount > 0 ? `₹${amount.toLocaleString('en-IN')}` : `${pct}%`,
+              prize: amount !== undefined && amount !== null && amount !== ''
+                ? `₹${Number(amount).toLocaleString('en-IN')}`
+                : (Number.isFinite(pct) ? `${pct}%` : '—'),
               badge: '',
               badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
             });
@@ -995,13 +1012,12 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     } catch (_) {}
 
     if (!usedPrizePositions) {
-      const firstVal = tourney.prize_split_1st || (pool > 0 ? `₹${Math.round(pool * 0.5).toLocaleString('en-IN')}` : '50%');
-      const secondVal = tourney.prize_split_2nd || (pool > 0 ? `₹${Math.round(pool * 0.3).toLocaleString('en-IN')}` : '30%');
-      const thirdVal = tourney.prize_split_3rd || (pool > 0 ? `₹${Math.round(pool * 0.2).toLocaleString('en-IN')}` : '20%');
-
-      list.push({ position: 'WWCD', prize: firstVal, badge: '🥇', badgeBg: 'bg-amber-500/20 text-amber-400 border border-amber-500/30' });
-      list.push({ position: '2nd Place', prize: secondVal, badge: '🥈', badgeBg: 'bg-slate-400/20 text-slate-300 border border-slate-400/30' });
-      list.push({ position: '3rd Place', prize: thirdVal, badge: '🥉', badgeBg: 'bg-amber-700/20 text-amber-600 border border-amber-700/30' });
+      const legacySplits = [
+        ['WWCD', tourney.prize_split_1st, '🥇', 'bg-amber-500/20 text-amber-400 border border-amber-500/30'],
+        ['2nd Place', tourney.prize_split_2nd, '🥈', 'bg-slate-400/20 text-slate-300 border border-slate-400/30'],
+        ['3rd Place', tourney.prize_split_3rd, '🥉', 'bg-amber-700/20 text-amber-600 border border-amber-700/30'],
+      ].filter(([, amount]) => amount !== undefined && amount !== null && amount !== '');
+      legacySplits.forEach(([position, amount, badge, badgeBg]) => list.push({ position, prize: `₹${Number(amount).toLocaleString('en-IN')}`, badge, badgeBg }));
     }
 
     if (tourney.mvp_enabled) {
@@ -1605,82 +1621,15 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           {/* Tab Content Area */}
           <div className="mt-6 w-full pb-20 min-h-[120px]">
             {activeTab === 'overview' && (
-              <div className="flex flex-col lg:flex-row gap-6 w-full">
-
-                {/* Left Column: Descriptions */}
-                <div className="flex-1 space-y-4">
-                  <div className={cardContainerClass}>
-                    <h3 className={cardTitleClass}>About Tournament</h3>
-                    <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
-                  </div>
-                  <div className={cardContainerClass}>
-                    <h3 className={cardTitleClass}>About Organizer</h3>
-                    <p className={cardBodyClass}>{orgProfile?.orgBio || orgProfile?.experience || orgProfile?.bio || tourney?.orgBio || 'No description provided for this organizer.'}</p>
-                  </div>
-                </div>
-
-                {/* Right Column: Organizer Profile Card */}
-                <div className="w-full lg:w-[320px] shrink-0">
-                  <div className={`${cardContainerClass} flex flex-col gap-4`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-12 h-12 rounded-full overflow-hidden shrink-0 border flex items-center justify-center font-bold text-xs ${
-                        isGoldTheme ? 'bg-[#F5F0E1] border-[#D4A017]/40 text-[#1F2937]' : 'bg-slate-100 border-slate-200 text-slate-500'
-                      }`}>
-                        {tourney?.orgLogo || orgProfile?.avatar ? (
-                          <img src={tourney?.orgLogo || orgProfile?.avatar} className="w-full h-full object-cover" alt="" />
-                        ) : (
-                          (orgProfile?.orgName || tourney?.orgName || 'MD').slice(0, 2).toUpperCase()
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-bold truncate ${isGoldTheme ? 'text-[#1F2937] font-black' : 'text-slate-900'}`}>{orgProfile?.orgName || tourney?.orgName || orgProfile?.name || 'Organizer'}</span>
-                          <VerificationBadge tier={orgProfile?.tier || tourney?.orgTier} size="xs" />
-                        </div>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          {[1,2,3,4,5].map(star => (
-                            <svg key={star} className="w-3.5 h-3.5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
-                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                            </svg>
-                          ))}
-                          <span className={`text-sm font-bold ml-1 ${isGoldTheme ? 'text-[#374151]' : 'text-slate-700'}`}>4.8 <span className={isGoldTheme ? 'text-slate-500 font-medium' : 'text-slate-400 font-medium'}>(120 reviews)</span></span>
-                        </div>
-                        <div className={`flex items-center gap-4 mt-2 text-xs font-bold ${isGoldTheme ? 'text-[#4B5563]' : 'text-slate-500'}`}>
-                          <span>🎮 {orgProfile?.totalTournaments || tourney?.orgTotalHosted || 12} Tournaments Hosted</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleFollow}
-                      disabled={followLoading}
-                      className={`w-full font-bold py-2.5 px-4 rounded-xl text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-60 ${
-                        isGoldTheme
-                          ? 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-md hover:brightness-105'
-                          : 'bg-slate-900 hover:bg-slate-800 text-white'
-                      }`}
-                    >
-                      {isFollowing ? (
-                        <>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                          Following
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                          </svg>
-                          Follow Organizer
-                        </>
-                      )}
-                    </button>
-                    {followerCount > 0 && (
-                      <p className="text-xs text-slate-500 text-center -mt-2">{followerCount.toLocaleString()} follower{followerCount !== 1 ? 's' : ''}</p>
-                    )}
-                  </div>
-                </div>
-
+              <div className={cardContainerClass}>
+                <h3 className={cardTitleClass}>About Tournament</h3>
+                <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
+                {discordInvite && (
+                  <a href={discordInvite} target="_blank" rel="noopener noreferrer"
+                    className="mt-5 inline-flex items-center justify-center rounded-xl bg-[#5865F2] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#4752C4]">
+                    Join Discord
+                  </a>
+                )}
               </div>
             )}
             {activeTab === 'prize' && (
@@ -1739,7 +1688,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                             return `${idx + 1}th Place`;
                           };
 
-                          const positionTitle = getCleanRankTitle(i, row.position);
+                          const positionTitle = row.position || getCleanRankTitle(i, row.position);
                           const subtitle = isWWCD ? 'Winning Team' : isSecond ? 'Runner-up' : isThird ? 'Third-place finish' : '';
 
                           if (isWWCD) {
@@ -1897,7 +1846,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                                 </span>
                               )}
                               <span className="font-extrabold text-sm leading-tight truncate text-slate-900">
-                                {i <= 2 ? displayName : `Rank ${i + 1}`}
+                                {row.position || displayName}
                               </span>
                             </div>
                             <span className="font-black text-sm sm:text-base shrink-0 ml-3 text-green-700">{row.prize}</span>

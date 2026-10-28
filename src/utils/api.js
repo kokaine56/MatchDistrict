@@ -63,6 +63,8 @@ export function normalizeTournamentRow(matched) {
     entry_fee_amount: parseInt(matched.entry_fee_amount, 10) || 0,
     prize_pool_type: matched.prize_pool_type || 'fixed',
     prize_pool_amount: parseInt(matched.prize_pool_amount, 10) || 0,
+    payment_qr_image_url: matched.payment_qr_image_url || '',
+    payment_upi_id: matched.payment_upi_id || '',
     prize_split_1st: matched.prize_split_1st || 'TBD',
     prize_split_2nd: matched.prize_split_2nd || 'TBD',
     prize_split_3rd: matched.prize_split_3rd || 'TBD',
@@ -105,16 +107,6 @@ export function normalizeTournamentRow(matched) {
       }
     })(),
     basePrize: parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0,
-    totalPrize: (() => {
-      const base = parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0
-      let contrib = 0
-      try {
-        const data = typeof matched.sponsors_data === 'string' ? JSON.parse(matched.sponsors_data) : (matched.sponsors_data || [])
-        if (Array.isArray(data)) {
-          contrib = data.filter(s => s.status === 'approved').reduce((sum, s) => sum + (parseInt(s.amount) || 0), 0)
-        }
-      } catch {}
-      return base + contrib
-    })(),
+    totalPrize: parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0,
   }
 }

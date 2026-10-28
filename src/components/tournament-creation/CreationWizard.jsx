@@ -31,7 +31,7 @@ function emptyForm() {
     slotsTotal: '64',
     reserved_slots: '0',
     entry_fee_amount: '',
-    prize_pool_type: 'dynamic',
+    prize_pool_type: 'fixed',
     prize_pool_amount: '',
     prize_split_1st: '',
     prize_split_2nd: '',
@@ -42,9 +42,9 @@ function emptyForm() {
     kill_reward_enabled: false,
     kill_reward_per_kill: '',
     prize_positions: [
-      { id: 'pos_1', name: '1st', percentage: '50' },
-      { id: 'pos_2', name: '2nd', percentage: '30' },
-      { id: 'pos_3', name: '3rd', percentage: '20' },
+      { id: 'pos_1', name: '1st', amount: '' },
+      { id: 'pos_2', name: '2nd', amount: '' },
+      { id: 'pos_3', name: '3rd', amount: '' },
     ],
     cover_image_url: '',
     registrationOpenDate: '',
@@ -85,16 +85,6 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       break
     }
     case 4: {
-      const entryFee = parseInt(data.entry_fee_amount) || 0
-      const totalSlots = parseInt(data.slotsTotal) || 0
-      const basePrizePool = entryFee * totalSlots
-      const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
-      const killRewardBudget = data.kill_reward_enabled ? (totalSlots * (parseInt(data.kill_reward_per_kill) || 0)) : 0
-
-      if (mvpAmount + killRewardBudget > basePrizePool && basePrizePool > 0) {
-        errs.prize_split = 'MVP + Kill Reward budget exceeds base prize pool.'
-      }
-
       if (data.entry_fee_amount !== '' && data.entry_fee_amount !== undefined) {
         const parsedFee = parseInt(data.entry_fee_amount)
         if (isNaN(parsedFee) || parsedFee < 1) {
@@ -103,15 +93,12 @@ function validateStep(step, data, planLimits, orgName, userTier, userRole) {
       }
 
       const positions = data.prize_positions || []
-      if (!positions.length) {
-        errs.prize_positions = 'Please add at least one prize distribution position.'
+      if (data.prize_pool_amount !== '' && (!Number.isFinite(Number(data.prize_pool_amount)) || Number(data.prize_pool_amount) < 0)) {
+        errs.prize_pool_amount = 'Prize pool must be a valid INR amount.'
       }
-      const totalPct = positions.reduce((s, p) => s + (parseFloat(p.percentage) || 0), 0)
-      const isExactly100 = Number(totalPct.toFixed(2)) === 100.00
-      if (positions.length && !isExactly100) {
-        errs.prize_positions_total = 'Prize distribution total must equal exactly 100%.'
+      if (positions.some((position) => position.amount != null && position.amount !== '' && (!Number.isFinite(Number(position.amount)) || Number(position.amount) < 0))) {
+        errs.prize_positions = 'Position prizes must be valid INR amounts.'
       }
-      if (totalPct > 100.01) errs.prize_split = 'Prize distribution exceeds 100%.'
 
       if (data.sponsors_enabled && (userTier === 'Free' || !userTier)) {
         errs.sponsors_enabled = 'Sponsor Contributions require the Basic plan or higher.'
@@ -264,7 +251,7 @@ export default function CreationWizard() {
           slotsTotal: String(t.slotsTotal || '100'),
           reserved_slots: String(t.reserved_slots || '0'),
           entry_fee_amount: String(t.entry_fee_amount || '0'),
-          prize_pool_type: t.prize_pool_type || 'dynamic',
+          prize_pool_type: 'fixed',
           prize_pool_amount: String(t.prize_pool_amount || ''),
           prize_split_1st: t.prize_split_1st || '',
           prize_split_2nd: t.prize_split_2nd || '',
@@ -274,7 +261,17 @@ export default function CreationWizard() {
           mvp_amount: String(t.mvp_amount || ''),
           kill_reward_enabled: t.kill_reward_enabled || false,
           kill_reward_per_kill: String(t.kill_reward_per_kill || ''),
-          prize_positions: [],
+          prize_positions: (() => {
+            try {
+              const rows = typeof t.prize_positions === 'string' ? JSON.parse(t.prize_positions || '[]') : t.prize_positions
+              return Array.isArray(rows) ? rows.map((row, index) => ({
+                ...row,
+                id: row.id || `pos_${index + 1}`,
+                name: row.name || `${index + 1}${index === 0 ? 'st' : index === 1 ? 'nd' : index === 2 ? 'rd' : 'th'}`,
+                amount: row.amount == null ? '' : String(row.amount),
+              })) : []
+            } catch { return [] }
+          })(),
           cover_image_url: t.cover_image_url || '',
           registrationOpenDate: t.registrationOpenDate || '',
           registrationCloseDate: t.registrationCloseDate || '',
@@ -337,16 +334,7 @@ export default function CreationWizard() {
       const isPublished = intendedStatus === 'PUBLISHED'
       const isDraft = !isPublished
 
-      // Calculate prize pool
-      const basePrizePool = (parseInt(formData.entry_fee_amount) || 0) * (parseInt(formData.slotsTotal) || 0)
-      const sponsorContribs = (Array.isArray(formData.sponsors) ? formData.sponsors : [])
-        .filter((s) => s.status === 'approved')
-        .reduce((sum, s) => sum + (s.amount || 0), 0)
-      const finalPrizePool = basePrizePool + sponsorContribs
-      // Use the net placement pool (after platform fee, organizer fee, MVP, kill rewards)
-      // synced from Step4PrizePool; fall back to gross for backward compat
-      const rawPlacementPool = parseInt(formData.availablePlacementPool) || 0
-      const netPrizePool = rawPlacementPool > 0 ? rawPlacementPool + sponsorContribs : finalPrizePool
+      const prizePoolAmount = Number(formData.prize_pool_amount) || 0
 
 const body = {
         title: formData.title,
@@ -359,7 +347,7 @@ const body = {
         orgName: '',
         teamsCount: '0',
         featured: false,
-        prize: netPrizePool > 0 ? `₹${netPrizePool.toLocaleString('en-IN')}` : 'TBD',
+        prize: prizePoolAmount > 0 ? `₹${prizePoolAmount.toLocaleString('en-IN')}` : 'TBD',
         entry: formData.entry_fee_amount ? `₹${parseInt(formData.entry_fee_amount)}` : 'Free',
         registrationOpenDate: formData.registrationOpenDate || '',
         registrationCloseDate: formData.registrationCloseDate || '',
@@ -368,8 +356,8 @@ const body = {
         perspective: formData.perspective || 'tpp',
         reserved_slots: parseInt(formData.reserved_slots) || 0,
         entry_fee_amount: parseInt(formData.entry_fee_amount) || 0,
-        prize_pool_type: 'dynamic',
-        prize_pool_amount: netPrizePool,
+        prize_pool_type: 'fixed',
+        prize_pool_amount: prizePoolAmount,
         prize_split_1st: formData.prize_split_1st || '',
         prize_split_2nd: formData.prize_split_2nd || '',
         prize_split_3rd: formData.prize_split_3rd || '',

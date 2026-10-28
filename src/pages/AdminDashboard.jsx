@@ -14,6 +14,7 @@ import BottomSheetModal from '../components/BottomSheetModal.jsx'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 import { ReviewKYCModal } from '../components/admin/ReviewKYCModal.jsx'
+import TournamentPaymentSettings from '../components/admin/TournamentPaymentSettings.jsx'
 import { UserGovernance } from '../components/admin/UserGovernance.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -1086,16 +1087,19 @@ export default function AdminDashboard({ onNavigate }) {
       {activeTab === 'tournaments' && (
         <div className="space-y-6 animate-in fade-in duration-300">
           {activeTournament ? (
-            <RegistrationManager
-              tournament={activeTournament}
-              registrations={registrationData}
-              loading={registrationLoading}
-              onBack={() => { setActiveTournament(null); setRegistrationData([]); }}
-              onConfirm={handleConfirmRegistration}
-              onReject={handleRejectRegistration}
-              onDeleteTestData={handleOpenDeleteModal}
-              onPruneOverflow={handlePruneOverflow}
-            />
+            <>
+              <TournamentPaymentSettings tournament={activeTournament} />
+              <RegistrationManager
+                tournament={activeTournament}
+                registrations={registrationData}
+                loading={registrationLoading}
+                onBack={() => { setActiveTournament(null); setRegistrationData([]); }}
+                onConfirm={handleConfirmRegistration}
+                onReject={handleRejectRegistration}
+                onDeleteTestData={handleOpenDeleteModal}
+                onPruneOverflow={handlePruneOverflow}
+              />
+            </>
           ) : (
             <>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

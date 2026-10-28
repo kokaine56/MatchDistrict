@@ -41,7 +41,8 @@ function logId() {
 /**
  * Parse and validate organizer-configured prize_positions.
  * Positions are ordered: index 0 → rank 1, index 1 → rank 2, …
- * Percentages must sum to 100 (±0.01), matching the creation wizard.
+ * New tournaments store exact INR amounts. Legacy percentage rows are still
+ * accepted so existing saved tournaments can continue to be finalized.
  */
 export function parseAndValidatePrizePositions(raw) {
   let positions;
@@ -73,19 +74,25 @@ export function parseAndValidatePrizePositions(raw) {
       return { ok: false, code: PRIZE_AWARD_ERR.PRIZE_CONFIGURATION_INVALID, message: `Duplicate prize position for rank ${rank}.` };
     }
     seenRanks.add(rank);
-    const percentage = parseFloat(pos.percentage);
-    if (!Number.isFinite(percentage) || percentage <= 0) {
-      return { ok: false, code: PRIZE_AWARD_ERR.PRIZE_CONFIGURATION_INVALID, message: `Prize position rank ${rank} has an invalid percentage.` };
+    const amount = pos.amount ?? pos.prize_amount;
+    const percentage = amount == null || amount === '' ? parseFloat(pos.percentage) : null;
+    if (amount != null && amount !== '' && (!Number.isFinite(Number(amount)) || Number(amount) < 0)) {
+      return { ok: false, code: PRIZE_AWARD_ERR.PRIZE_CONFIGURATION_INVALID, message: `Prize position rank ${rank} has an invalid INR amount.` };
+    }
+    if (amount == null && (!Number.isFinite(percentage) || percentage <= 0)) {
+      return { ok: false, code: PRIZE_AWARD_ERR.PRIZE_CONFIGURATION_INVALID, message: `Prize position rank ${rank} has an invalid amount.` };
     }
     normalized.push({
       rank,
       name: typeof pos.name === 'string' ? pos.name : `${rank}`,
+      amount: amount == null || amount === '' ? null : Number(amount),
       percentage,
     });
   }
 
-  const totalPct = Number(normalized.reduce((sum, p) => sum + p.percentage, 0).toFixed(2));
-  if (Math.abs(totalPct - 100) >= 0.01) {
+  const legacyPercentages = normalized.every((position) => position.amount == null);
+  const totalPct = Number(normalized.reduce((sum, p) => sum + (p.percentage || 0), 0).toFixed(2));
+  if (legacyPercentages && Math.abs(totalPct - 100) >= 0.01) {
     return {
       ok: false,
       code: PRIZE_AWARD_ERR.PRIZE_CONFIGURATION_INVALID,
@@ -111,10 +118,22 @@ export function calculatePlacementAmounts(positions, prizePoolAmount) {
     };
   }
 
-  const exact = positions.map((p) => ({
-    ...p,
-    exact: (p.percentage / 100) * pool,
-  }));
+  const manualAmounts = positions.every((p) => p.amount != null);
+  if (manualAmounts) {
+    return {
+      ok: true,
+      pool,
+      awards: positions.map((p) => ({
+        rank: p.rank,
+        name: p.name,
+        percentage: null,
+        prize_amount: p.amount,
+        award_type: AWARD_TYPE.PLACEMENT,
+      })),
+    };
+  }
+
+  const exact = positions.map((p) => ({ ...p, exact: (p.percentage / 100) * pool }));
   const floored = exact.map((p) => ({
     ...p,
     prize_amount: Math.floor(p.exact),

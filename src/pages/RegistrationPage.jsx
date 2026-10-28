@@ -140,77 +140,17 @@ function getPaymentAppLabel(appIdOrName) {
 
 function PaymentAppIcon({ id, name, className = 'w-6 h-6' }) {
   const key = (id || name || '').toLowerCase()
-  if (key === 'google_pay' || key === 'google pay' || key === 'gpay') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
-        <path d="M35.5 24.5c0-1.2-.1-2.1-.4-3.1H24v5.4h6.5a5.6 5.6 0 0 1-2.4 3.7l4.2 3.2c2.1-2 3.2-5 3.2-9.2Z" fill="#4285F4" />
-        <path d="M24 36c3.2 0 5.9-1.1 7.9-3l-4.2-3.2c-1.1.7-2.3 1.1-3.7 1.1-2.9 0-5.3-2-6.2-4.7l-4.3 3.3A11.9 11.9 0 0 0 24 36Z" fill="#34A853" />
-        <path d="M17.8 26.2a7.2 7.2 0 0 1 0-4.5l-4.3-3.3a12 12 0 0 0 0 11.1l4.3-3.3Z" fill="#FBBC05" />
-        <path d="M24 17c1.8 0 3.4.6 4.7 1.9l3.5-3.5A11.5 11.5 0 0 0 24 12a11.9 11.9 0 0 0-10.5 6.4l4.3 3.3c.9-2.7 3.3-4.7 6.2-4.7Z" fill="#EA4335" />
-      </svg>
-    )
+  const assets = {
+    google_pay: ['/payment-brand-assets/google-pay-logo.png', 'Google Pay official logo'],
+    'google pay': ['/payment-brand-assets/google-pay-logo.png', 'Google Pay official logo'],
+    gpay: ['/payment-brand-assets/google-pay-logo.png', 'Google Pay official logo'],
+    phonepe: ['/payment-brand-assets/phonepe-logo.svg', 'PhonePe official logo'],
+    'phone pe': ['/payment-brand-assets/phonepe-logo.svg', 'PhonePe official logo'],
+    paytm: ['/payment-brand-assets/paytm-brand.png', 'Paytm official logo'],
+    bhim: ['/payment-brand-assets/bhim-logo.svg', 'BHIM official logo'],
   }
-  if (key === 'phonepe' || key === 'phone pe') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#5F259F" />
-        <path d="M18 14h15v5H23v4h7v5h-7v7h-5V14Z" fill="white" />
-      </svg>
-    )
-  }
-  if (key === 'paytm') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
-        <text x="24" y="30" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="15" fontWeight="700">
-          <tspan fill="#002970">pay</tspan><tspan fill="#00BAF2">tm</tspan>
-        </text>
-      </svg>
-    )
-  }
-  if (key === 'bhim') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#FFF5E9" />
-        <path d="M12 16h24" stroke="#F58220" strokeWidth="4" strokeLinecap="round" />
-        <path d="M12 24h24" stroke="#263A80" strokeWidth="4" strokeLinecap="round" />
-        <path d="M12 32h24" stroke="#138808" strokeWidth="4" strokeLinecap="round" />
-      </svg>
-    )
-  }
-  if (key === 'amazon_pay' || key === 'amazon pay') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#232F3E" />
-        <path d="M14 28c4 4 16 4 20 0" stroke="#FF9900" strokeWidth="3" strokeLinecap="round" />
-        <path d="M32 25l3 3-4 1" stroke="#FF9900" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="#FF9900" />
-      </svg>
-    )
-  }
-  if (key === 'cred') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
-        <rect x="4" y="4" width="40" height="40" rx="10" fill="#0F1015" />
-        <path d="M14 14h20v20H14V14Z" stroke="#FFFFFF" strokeWidth="3" />
-        <path d="M20 20h8v8h-8V20Z" fill="#FFFFFF" />
-      </svg>
-    )
-  }
-  if (key === 'whatsapp_pay' || key === 'whatsapp pay' || key === 'whatsapp') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#25D366" />
-        <path d="M34 23.5c0 5.2-4.3 9.5-9.5 9.5-1.6 0-3.1-.4-4.5-1.1L14 33.5l1.7-5.8C14.9 26.3 14.5 24.9 14.5 23.5c0-5.2 4.3-9.5 9.5-9.5s10 4.3 10 9.5Z" fill="#FFFFFF" />
-      </svg>
-    )
-  }
-  if (key === 'mobikwik' || key === 'mobi kwik') {
-    return (
-      <svg viewBox="0 0 48 48" className={className} fill="none" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#0079C1" />
-        <path d="M15 31V17l9 9 9-9v14" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    )
-  }
+  const asset = assets[key]
+  if (asset) return <img src={asset[0]} alt={asset[1]} className={`${className} object-contain`} />
   return (
     <svg viewBox="0 0 24 24" className={`${className} text-white/70`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -1193,7 +1133,8 @@ function RegistrationPage({ onNavigate }) {
   }
 
   if (step === 'payment') {
-    const upiLink = `upi://pay?pa=matchdistrict@upi&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
+    const paymentUpiId = tourney.payment_upi_id || 'matchdistrict@upi'
+    const upiLink = `upi://pay?pa=${encodeURIComponent(paymentUpiId)}&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
 
     const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
     const isIOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent)
@@ -1306,7 +1247,7 @@ function RegistrationPage({ onNavigate }) {
                 {/* QR Code Container */}
                 <div className="bg-white p-3 rounded-2xl shadow-[0_0_25px_rgba(59,130,246,0.2)] border border-white/20 hover:scale-102 transition-transform duration-300">
                   <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiLink)}`}
+                    src={tourney.payment_qr_image_url || `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiLink)}`}
                     alt="Scan to Pay"
                     className="w-[180px] h-[180px] block"
                   />
@@ -1335,11 +1276,11 @@ function RegistrationPage({ onNavigate }) {
 
                 <div className="bg-white/10 rounded-xl p-3 inline-flex items-center gap-2 mx-auto border border-white/5">
                   <span className="text-sm text-white/50">UPI ID:</span>
-                  <span className="text-sm font-bold text-primary">matchdistrict@upi</span>
+                  <span className="text-sm font-bold text-primary">{paymentUpiId}</span>
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText('matchdistrict@upi');
+                      navigator.clipboard.writeText(paymentUpiId);
                       setCopiedToast('UPI ID copied!');
                       setTimeout(() => setCopiedToast(''), 2000);
                     }}

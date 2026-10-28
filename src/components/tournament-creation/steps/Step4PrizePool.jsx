@@ -1,31 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useMemo, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
-import PrizeAllocationEngine from '../PrizeAllocationEngine'
 import { OptimizedInput } from '../../OptimizedInput'
 
-export default function Step4PrizePool({ data, onChange, errors, userTier, orgName, onNavigateToSubscription }) {
-  const [platformFeePct, setPlatformFeePct] = useState(0)
-  const [orgFeePct, setOrgFeePct] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([
-      fetch('/api/settings/platform-fee').then((r) => r.json()),
-      fetch('/api/settings/organizer-fee').then((r) => r.json()),
-    ])
-      .then(([platRes, orgRes]) => {
-        if (!cancelled) {
-          if (platRes.success) setPlatformFeePct(platRes.percentage)
-          if (orgRes.success) setOrgFeePct(orgRes.percentage)
-        }
-      })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [])
-
-  const organizerName = orgName || 'Organizer'
-
+export default function Step4PrizePool({ data, onChange, errors, userTier, onNavigateToSubscription }) {
   const handlePositionsChange = useCallback((positions) => {
     onChange({ ...data, prize_positions: positions })
   }, [data, onChange])
@@ -34,38 +12,13 @@ export default function Step4PrizePool({ data, onChange, errors, userTier, orgNa
   const entryFee = parseInt(data.entry_fee_amount) || 0
   const orgPct = Math.min(parseInt(data.organizer_fee_pct) || 0, 5)
 
-  const basePrizePool = entryFee * totalSlots
   const sponsorContributions = useMemo(() => {
     return (Array.isArray(data.sponsors) ? data.sponsors : [])
       .filter((s) => s.status === 'approved')
       .reduce((sum, s) => sum + (s.amount || 0), 0)
   }, [data.sponsors])
 
-  const totalPrizePool = basePrizePool + sponsorContributions
-  const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
-  const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
-  const killRewardBudget = data.kill_reward_enabled ? (totalSlots * killRewardPerKill) : 0
-  const platformFeeAmount = useMemo(() => {
-    if (!platformFeePct || basePrizePool <= 0) return 0
-    return Math.round(basePrizePool * (platformFeePct / 100))
-  }, [platformFeePct, basePrizePool])
-  const organizerFeeAmount = useMemo(() => {
-    if (!orgPct || basePrizePool <= 0) return 0
-    return Math.round(basePrizePool * (orgPct / 100))
-  }, [orgPct, basePrizePool])
-  const availablePlacementPool = Math.max(0, basePrizePool - mvpAmount - killRewardBudget - organizerFeeAmount - platformFeeAmount)
-
-  // Sync the net placement pool into formData
-  const prevPool = useRef(null)
-  useEffect(() => {
-    const pool = availablePlacementPool > 0 ? availablePlacementPool : ''
-    if (prevPool.current !== pool) {
-      prevPool.current = pool
-      if (data.availablePlacementPool !== pool) {
-        onChange({ ...data, availablePlacementPool: pool })
-      }
-    }
-  }, [availablePlacementPool])
+  const prizePoolAmount = Number(data.prize_pool_amount) || 0
 
   return (
     <motion.div
@@ -98,13 +51,18 @@ export default function Step4PrizePool({ data, onChange, errors, userTier, orgNa
         {errors?.entry_fee_amount && <p className="text-xs text-error mt-2">{errors.entry_fee_amount}</p>}
       </div>
 
-      <PrizeAllocationEngine
-        data={data}
-        platformFeePct={platformFeePct}
-        organizerFeePct={orgPct}
-        organizerName={organizerName}
-        onOrganizerFeeChange={(v) => onChange({ ...data, organizer_fee_pct: v })}
-      />
+      <div className="bg-surface-container/50 border border-slate-200 dark:border-outline-variant/20 p-5 rounded-xl space-y-3">
+        <h3 className="text-sm font-semibold text-on-background">Full Prize Pool</h3>
+        <div className="relative max-w-xs">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">₹</span>
+          <OptimizedInput type="number" min="0" step="1" value={data.prize_pool_amount || ''}
+            onChange={(value) => onChange({ ...data, prize_pool_amount: value })}
+            placeholder="Enter full prize pool in INR"
+            className="w-full pl-8 pr-4 py-2.5 rounded-lg bg-surface-container border border-slate-200 dark:border-outline-variant/30 text-sm text-on-background focus:outline-none focus:border-primary/40" />
+        </div>
+        <p className="text-xs text-on-surface-variant">This exact amount is displayed as the tournament prize pool.</p>
+        {errors?.prize_pool_amount && <p className="text-xs text-error">{errors.prize_pool_amount}</p>}
+      </div>
 
       <div className="space-y-4">
         {/* MVP Reward */}
@@ -195,7 +153,6 @@ export default function Step4PrizePool({ data, onChange, errors, userTier, orgNa
           <PrizeDistributionEditor
             positions={data.prize_positions || []}
             onChange={handlePositionsChange}
-            availablePlacementPool={availablePlacementPool}
           />
           {errors?.prize_positions && <p className="text-xs text-error mt-2">{errors.prize_positions}</p>}
           {errors?.prize_positions_total && <p className="text-xs text-error mt-2">{errors.prize_positions_total}</p>}

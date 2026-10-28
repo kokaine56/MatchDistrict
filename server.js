@@ -1528,7 +1528,7 @@ function withTournamentDisplay(r) {
     }
   } catch { /* malformed sponsor JSON is treated as no sponsors */ }
   const basePrize = parseInt(r.prize_pool_amount) || 0;
-  const totalPrize = basePrize + sponsorRevenue;
+  const totalPrize = basePrize;
   const sanitized = {
     ...r,
     timeline: sanitizeTimelineForUser(r.timeline),
@@ -1540,7 +1540,6 @@ function withTournamentDisplay(r) {
     basePrize,
     totalPrize,
     prize: (() => {
-      if (r.prize && r.prize.startsWith('\u20B9') && !hasApprovedSponsors) return r.prize;
       if (totalPrize > 0) return `\u20B9${totalPrize.toLocaleString('en-IN')}`;
       if (r.prize && r.prize !== 'TBD' && r.prize !== 'TBA') return r.prize;
       return 'TBD';
@@ -6276,11 +6275,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                t."registrationOpenDate", t."registrationCloseDate", t."startDate", t.created_at,
                (SELECT COUNT(*) FROM tournament_registrations tr
                 WHERE tr.tournament_id = t.id
-                  AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($1)))) AS registered_teams_count
+                  AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
         FROM tournaments t
       `;
-      const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
-      const params = [EXCLUDED_REG_STATUSES];
+      const params = [];
       const whereClauses = [];
 
       if (!includeAll) {
@@ -6302,8 +6300,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       const tournaments = (dbRes.rows || []).map((t) => {
         const slotsTotal = parseInt(t.slotsTotal, 10) || 100;
-        const slotsFilled = parseInt(t.slotsFilled, 10) || 0;
-        const regCount = parseInt(t.registered_teams_count, 10) || slotsFilled;
+        const regCount = parseInt(t.registered_teams_count, 10) || 0;
+        const slotsFilled = regCount;
 
         // Compute registration status
         let regStatus = 'open';
@@ -6373,7 +6371,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const regRes = await pool.query(
         `SELECT id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, created_at, discord_verified
          FROM tournament_registrations
-         WHERE tournament_id = $1
+         WHERE tournament_id = $1 AND LOWER(COALESCE(status, '')) = 'approved'
          ORDER BY created_at ASC`,
         [tId]
       );
@@ -6384,7 +6382,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                 m.user_id AS member_user_id, m.role AS member_role, m.status AS member_status
          FROM tournament_teams t
          LEFT JOIN tournament_team_members m ON m.tournament_team_id = t.id AND m.status = 'active'
-         WHERE t.tournament_id = $1`,
+         WHERE t.tournament_id = $1
+           AND t.registration_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM tournament_registrations r
+             WHERE r.id = t.registration_id AND r.tournament_id = t.tournament_id
+               AND LOWER(COALESCE(r.status, '')) = 'approved'
+           )`,
         [tId]
       );
 
@@ -6740,7 +6744,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
          JOIN tournaments t ON t.id = r.tournament_id
          WHERE (r.user_id = $1 OR r.captain_uid = $1 OR r.members::text LIKE $2)
            AND (t."isDraft" = false OR t."isDraft" IS NULL)
-           AND LOWER(COALESCE(r.status, '')) NOT IN ('rejected', 'cancelled', 'expired', 'payment_rejected')`,
+           AND LOWER(COALESCE(r.status, '')) = 'approved'`,
         [userId, `%"uid":"${userId}"%`]
       );
 
@@ -6752,6 +6756,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
          JOIN tournaments t ON t.id = tt.tournament_id
          WHERE tm.user_id = $1 AND tm.status = 'active'
            AND tt.status != 'disqualified'
+           AND EXISTS (
+             SELECT 1 FROM tournament_registrations approved_reg
+             WHERE approved_reg.id = tt.registration_id
+               AND approved_reg.tournament_id = tt.tournament_id
+               AND LOWER(COALESCE(approved_reg.status, '')) = 'approved'
+           )
            AND (t."isDraft" = false OR t."isDraft" IS NULL)`,
         [userId]
       );
@@ -7009,17 +7019,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         resetFailedLinkingAttempts(guildId);
 
         // 7. Fetch tournaments owned by this organiser
-        const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
         const tourRes = await pool.query(
           `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
                   (SELECT COUNT(*) FROM tournament_registrations tr
                    WHERE tr.tournament_id = t.id
-                     AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
+                     AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
            FROM tournaments t
            WHERE (t."orgId" = $1 OR t.org_id = $1)
              AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
            ORDER BY t.created_at DESC`,
-          [organiser.id, EXCLUDED_REG_STATUSES]
+          [organiser.id]
         );
 
         const tournaments = (tourRes.rows || []).map((t) => ({
@@ -7109,17 +7118,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     const organiserId = decodeURIComponent(botOrgTourMatch[1]).trim();
     try {
-      const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
       const tourRes = await pool.query(
         `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
                 (SELECT COUNT(*) FROM tournament_registrations tr
                  WHERE tr.tournament_id = t.id
-                   AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
+                   AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
          FROM tournaments t
          WHERE (t."orgId" = $1 OR t.org_id = $1)
            AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
          ORDER BY t.created_at DESC`,
-        [organiserId, EXCLUDED_REG_STATUSES]
+        [organiserId]
       );
 
       const tournaments = (tourRes.rows || []).map((t) => ({
@@ -7227,6 +7235,71 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: err.message }));
     }
+    return;
+  }
+
+  // GET/PUT /api/admin/tournaments/:id/payment-settings
+  const adminTournamentPaymentMatch = urlPath.match(/^\/api\/admin\/tournaments\/([^/]+)\/payment-settings$/);
+  if (adminTournamentPaymentMatch && req.method === 'GET') {
+    const admin = await requireAdminFromDb(req, res);
+    if (!admin) return;
+    const tournamentId = decodeURIComponent(adminTournamentPaymentMatch[1]);
+    try {
+      const result = await pool.query('SELECT payment_qr_image_url, payment_upi_id FROM tournaments WHERE id = $1', [tournamentId]);
+      if (!result.rows.length) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, settings: result.rows[0] }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+  if (adminTournamentPaymentMatch && req.method === 'PUT') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      const admin = await requireAdminFromDb(req, res);
+      if (!admin) return;
+      const tournamentId = decodeURIComponent(adminTournamentPaymentMatch[1]);
+      try {
+        const payload = JSON.parse(body || '{}');
+        const qrUrl = payload.payment_qr_image_url === undefined ? undefined : String(payload.payment_qr_image_url || '').trim();
+        const upiId = payload.payment_upi_id === undefined ? undefined : String(payload.payment_upi_id || '').trim();
+        if (qrUrl !== undefined && qrUrl && (!/^https:\/\//i.test(qrUrl) || qrUrl.length > 2048)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_QR_URL', message: 'QR image must be a valid HTTPS URL.' }));
+          return;
+        }
+        if (upiId !== undefined && upiId.length > 255) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_UPI_ID', message: 'UPI ID must be 255 characters or fewer.' }));
+          return;
+        }
+        const result = await pool.query(
+          `UPDATE tournaments SET
+             payment_qr_image_url = COALESCE($1, payment_qr_image_url),
+             payment_upi_id = COALESCE($2, payment_upi_id)
+           WHERE id = $3
+           RETURNING payment_qr_image_url, payment_upi_id`,
+          [qrUrl, upiId, tournamentId]
+        );
+        if (!result.rows.length) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, settings: result.rows[0] }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message, message: 'Could not save tournament payment settings.' }));
+      }
+    });
     return;
   }
 
@@ -7499,7 +7572,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       row.sponsorRevenue = sponsorRevenue;
       row.hasApprovedSponsors = hasApprovedSponsors;
       row.basePrize = parseInt(row.prize_pool_amount) || 0;
-      row.totalPrize = row.basePrize + sponsorRevenue;
+      row.totalPrize = row.basePrize;
       // Room credentials are strictly served via the dedicated credentials / lobby endpoint
       delete row.roomID;
       delete row.roomPassword;
@@ -15073,7 +15146,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const parts = urlPath.split('/');
     const id = parts[3];
     try {
-      const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
       const regsRes = await pool.query(
         `SELECT tr.team_name, tr.captain, tr.user_id, tr.captain_uid, tr.status, tr.created_at,
                 COALESCE(udc.discord_id, u.discord_id, u.discord_user_id) AS discord_id,
@@ -15082,9 +15154,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
          LEFT JOIN users u ON (u.id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND u.id::text = tr.captain_uid::text))
          LEFT JOIN user_discord_connections udc ON (udc.user_id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND udc.user_id::text = tr.captain_uid::text))
          WHERE tr.tournament_id = $1
-           AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))
+           AND LOWER(COALESCE(tr.status, '')) = 'approved'
          ORDER BY tr.created_at ASC`,
-        [id, EXCLUDED_STATUSES]
+        [id]
       );
 
       const seen = new Set();

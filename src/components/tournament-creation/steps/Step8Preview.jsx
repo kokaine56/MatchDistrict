@@ -19,24 +19,8 @@ function DetailRow({ label, value }) {
 export default function Step8Preview({ data, orgName, orgTier }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
   const entryFee = parseInt(data.entry_fee_amount) || 0
-
-  const basePrizePool = entryFee * totalSlots
-
-  const sponsorContributions = useMemo(() => {
-    return (Array.isArray(data.sponsors) ? data.sponsors : [])
-      .filter((s) => s.status === 'approved')
-      .reduce((sum, s) => sum + (s.amount || 0), 0)
-  }, [data.sponsors])
-
-  const totalPrizePool = basePrizePool + sponsorContributions
-  const mvpAmount = data.mvp_enabled ? (parseInt(data.mvp_amount) || 0) : 0
-  const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
-  const killRewardBudget = data.kill_reward_enabled ? (totalSlots * killRewardPerKill) : 0
-  const availablePlacementPool = Math.max(0, totalPrizePool - mvpAmount - killRewardBudget)
-
+  const totalPrizePool = Number(data.prize_pool_amount) || 0
   const positions = data.prize_positions || []
-  const totalAllocatedPct = positions.reduce((s, p) => s + (parseInt(p.percentage) || 0), 0)
-  const isFullyAllocated = totalAllocatedPct === 100 && availablePlacementPool >= 0
 
   const availableSlots = Math.max(0, totalSlots - (parseInt(data.reserved_slots) || 0))
 
@@ -115,42 +99,19 @@ export default function Step8Preview({ data, orgName, orgTier }) {
           {/* Prize Pool Breakdown */}
           <div className="pt-2 border-t border-outline-variant/20">
             <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-2">Prize Pool</h4>
-            <DetailRow label="Base Prize Pool" value={`₹${basePrizePool.toLocaleString('en-IN')}`} />
-            {sponsorContributions > 0 && (
-              <DetailRow label="Sponsor Contributions" value={`+₹${sponsorContributions.toLocaleString('en-IN')}`} />
-            )}
             <DetailRow label="Total Prize Pool" value={`₹${totalPrizePool.toLocaleString('en-IN')}`} />
-            {mvpAmount > 0 && (
-              <DetailRow label="MVP Reward" value={`−₹${mvpAmount.toLocaleString('en-IN')}`} />
-            )}
-            {killRewardBudget > 0 && (
-              <DetailRow label="Kill Reward Budget" value={`−₹${killRewardBudget.toLocaleString('en-IN')} (${totalSlots} Max Kills × ₹${killRewardPerKill})`} />
-            )}
-            <DetailRow label="Available for Placement" value={
-              <span className={`text-sm font-bold ${availablePlacementPool >= 0 ? 'text-emerald-500' : 'text-error'}`}>
-                ₹{availablePlacementPool.toLocaleString('en-IN')}
-              </span>
-            } />
-
             {positions.length > 0 && (
               <div className="mt-2 space-y-1">
                 <p className="text-[10px] text-on-surface-variant/70 uppercase tracking-wider">Placement Distribution</p>
                 {positions.map((pos) => {
-                  const pct = parseInt(pos.percentage) || 0
-                  const amt = Math.round((pct / 100) * availablePlacementPool)
+                  const amount = Number(pos.amount) || 0
                   return (
                     <div key={pos.id} className="flex items-center justify-between text-xs py-0.5">
                       <span className="text-on-surface-variant">{pos.name || 'Unnamed'}</span>
-                      <span className="text-on-background font-medium">{pct}% — ₹{amt.toLocaleString('en-IN')}</span>
+                      <span className="text-on-background font-medium">₹{amount.toLocaleString('en-IN')}</span>
                     </div>
                   )
                 })}
-                {!isFullyAllocated && (
-                  <div className="flex items-center justify-between text-xs pt-1 border-t border-outline-variant/10">
-                    <span className="text-on-surface-variant italic">Unallocated</span>
-                    <span className="text-on-surface-variant">₹{(availablePlacementPool - positions.reduce((s, p) => s + Math.round(((parseInt(p.percentage) || 0) / 100) * availablePlacementPool), 0)).toLocaleString('en-IN')}</span>
-                  </div>
-                )}
               </div>
             )}
           </div>

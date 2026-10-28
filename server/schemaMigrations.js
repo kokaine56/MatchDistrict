@@ -555,6 +555,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS kill_reward_enabled BOOLEAN DEFAULT false;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS kill_reward_per_kill INTEGER DEFAULT 0;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS prize_positions TEXT DEFAULT '[]';
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS payment_qr_image_url TEXT DEFAULT '';
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS payment_upi_id VARCHAR(255) DEFAULT '';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgLogo" TEXT DEFAULT '';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgHandle" VARCHAR(100) DEFAULT '';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS "orgMotto" VARCHAR(255) DEFAULT '';
@@ -617,6 +619,7 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS injected_at TIMESTAMPTZ;
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS discord_verified BOOLEAN NOT NULL DEFAULT FALSE;
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
+      CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament_status_created ON tournament_registrations(tournament_id, status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_status ON tournament_registrations(status);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_idempotency ON tournament_registrations(idempotency_key);
@@ -679,6 +682,7 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS amount NUMERIC(10, 2) DEFAULT 0;
       ALTER TABLE payment_submissions ADD COLUMN IF NOT EXISTS proof_url TEXT;
       CREATE INDEX IF NOT EXISTS idx_payment_submissions_registration ON payment_submissions(registration_id);
+      CREATE INDEX IF NOT EXISTS idx_payment_submissions_review_status ON payment_submissions(payment_status, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_payment_submissions_tournament ON payment_submissions(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_payment_submissions_user ON payment_submissions(user_id);
 

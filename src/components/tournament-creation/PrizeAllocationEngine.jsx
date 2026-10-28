@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { PLATFORM_FEE_ENABLED } from '../../utils/prizePool.js'
 
 export default function PrizeAllocationEngine({ data, platformFeePct = 0, organizerFeePct = 0, organizerName = 'Organizer', onOrganizerFeeChange }) {
   const totalSlots = parseInt(data.slotsTotal) || 0
@@ -11,7 +12,7 @@ export default function PrizeAllocationEngine({ data, platformFeePct = 0, organi
   const killRewardBudget = data.kill_reward_enabled ? (totalSlots * killRewardPerKill) : 0
 
   const platformFeeAmount = useMemo(() => {
-    if (!platformFeePct || basePrizePool <= 0) return 0
+    if (!PLATFORM_FEE_ENABLED || !platformFeePct || basePrizePool <= 0) return 0
     return Math.round(basePrizePool * (platformFeePct / 100))
   }, [platformFeePct, basePrizePool])
 

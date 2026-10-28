@@ -569,11 +569,7 @@ export default function TournamentManagement({ onNavigate }) {
                     <tbody className="divide-y divide-outline-variant/10">
                       {filtered.map((t, i) => {
                         const status = getStatus(t.status, t.isDraft)
-                        const entryFee = parseInt(t.entry_fee_amount) || 0
-                        const slotsTotal = parseInt(t.slotsTotal) || 0
-                        const basePool = entryFee * slotsTotal
-                        const sponsorAmount = parseFloat(t.sponsorRevenue) || parseFloat(t.totalSponsorContributions) || 0
-                        const totalPrize = (parseInt(t.prize_pool_amount) || basePool) + sponsorAmount
+                        const totalPrize = parseInt(t.prize_pool_amount) || 0
                         const registrations = parseInt(t.registrationCount) || parseInt(t.slotsFilled) || 0
                         const isOpen = menuOpenId === (t.id || i)
 
@@ -1008,14 +1004,11 @@ function RegistrationManager({
   const registrations = propRegistrations || []
 
   const status = tournament.isDraft ? 'draft' : tournament.status || 'draft'
-  const entryFee = parseInt(tournament.entry_fee_amount) || 0
   const slotsTotal = parseInt(tournament.slotsTotal) || 0
   const confirmedCount = registrations.filter(r => r.status === 'confirmed' || r.status === 'approved').length
   const pendingCount = registrations.filter(r => r.status === 'pending' || r.status === 'pending_payment').length
   const rejectedCount = registrations.filter(r => r.status === 'rejected').length
-  const basePool = entryFee * slotsTotal
-  const sponsorAmount = parseFloat(tournament.sponsorRevenue) || parseFloat(tournament.totalSponsorContributions) || 0
-  const totalPrize = (parseInt(tournament.prize_pool_amount) || basePool) + sponsorAmount
+  const totalPrize = parseInt(tournament.prize_pool_amount) || 0
   const progressPct = slotsTotal > 0 ? Math.round((confirmedCount / slotsTotal) * 100) : 0
 
   // Parse team members — supports both `teamMembers` array (mock) and `members` JSON string (server)

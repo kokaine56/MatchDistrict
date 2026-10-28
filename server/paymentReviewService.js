@@ -805,51 +805,10 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
       );
     }
 
-    // 7. Ensure team squad is created
-    await ensureTeamForRegistrationSafe(client, actualTournamentId, reg.user_id, reg.team_name, registrationId);
-
-    // 8. Write audit entry INSIDE transaction
-    const logId = 'LOG-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, target_user, details, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-      [
-        logId,
-        reviewerId,
-        'payment_approved',
-        'payment_approved',
-        'registration',
-        registrationId,
-        reg.user_id || null,
-        JSON.stringify({
-          note: note || null,
-          previousStatus: currentStatus,
-          teamName: reg.team_name,
-          tournamentTitle: reg.tournament_title
-        })
-      ]
-    );
-
-    // 9. Write alert player notification INSIDE transaction (if player has user record)
-    if (reg.user_id) {
-      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-      await client.query(
-        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-        [
-          alertId,
-          reg.user_id,
-          'Registration Approved ✅',
-          `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}. Slot #${reg.slot_number || 'allocated'} secured!`,
-          actualTournamentId
-        ]
-      );
-    }
-
     await client.query('COMMIT');
-
-    // 10. Reconcile slots once after commit
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.approve] Slot reconciliation error:', err));
+    setImmediate(() => runApprovalSideEffects(pool, {
+      reg, updatedReg, registrationId, actualTournamentId, reviewerId, note, currentStatus,
+    }));
 
     return { success: true, message: 'Registration approved successfully.', registration: updatedReg };
   } catch (err) {
@@ -859,6 +818,42 @@ export async function approve(pool, user, { registrationId, tournamentId, note =
   } finally {
     client.release();
   }
+}
+
+async function runApprovalSideEffects(pool, { reg, updatedReg, registrationId, actualTournamentId, reviewerId, note, currentStatus }) {
+  const client = await pool.connect().catch((err) => {
+    console.error('[paymentReviewService.approve] Background connection failed:', err);
+    return null;
+  });
+  if (!client) return;
+  try {
+    await client.query('BEGIN');
+    await ensureTeamForRegistrationSafe(client, actualTournamentId, reg.user_id, reg.team_name, registrationId);
+    const logId = 'LOG-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+    await client.query(
+      `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, target_user, details, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+      [logId, reviewerId, 'payment_approved', 'payment_approved', 'registration', registrationId, reg.user_id || null,
+        JSON.stringify({ note: note || null, previousStatus: currentStatus, teamName: reg.team_name, tournamentTitle: reg.tournament_title })]
+    );
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [alertId, reg.user_id, 'Registration Approved ✅',
+          `Your team "${reg.team_name}" has been approved for ${reg.tournament_title}. Slot #${updatedReg.slot_number || 'allocated'} secured!`,
+          actualTournamentId]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(`[paymentReviewService.approve] Background approval work failed for ${registrationId}:`, err);
+  } finally {
+    client.release();
+  }
+  reconcileTournamentSlots(pool, actualTournamentId).catch((err) => console.error('[paymentReviewService.approve] Slot reconciliation error:', err));
 }
 
 /**
@@ -971,49 +966,10 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
       );
     }
 
-    // 8. Write audit entry INSIDE transaction
-    const logId = 'LOG-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-    await client.query(
-      `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, target_user, details, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
-      [
-        logId,
-        reviewerId,
-        'payment_rejected',
-        'payment_rejected',
-        'registration',
-        registrationId,
-        reg.user_id || null,
-        JSON.stringify({
-          reasonCode,
-          reasonText,
-          note: note || null,
-          teamName: reg.team_name,
-          tournamentTitle: reg.tournament_title
-        })
-      ]
-    );
-
-    // 9. Write alert notification INSIDE transaction (if user record exists)
-    if (reg.user_id) {
-      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
-      await client.query(
-        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
-         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
-        [
-          alertId,
-          reg.user_id,
-          'Payment Proof Rejected ❌',
-          `Payment proof for "${reg.team_name}" was rejected. Reason: ${reasonText}. You may re-upload correct proof from the tournament page.`,
-          actualTournamentId
-        ]
-      );
-    }
-
     await client.query('COMMIT');
-
-    // 10. Reconcile slots once after commit
-    reconcileTournamentSlots(pool, actualTournamentId).catch(err => console.error('[paymentReviewService.reject] Slot reconciliation error:', err));
+    setImmediate(() => runRejectionSideEffects(pool, {
+      reg, registrationId, actualTournamentId, reviewerId, reasonCode, reasonText, note,
+    }));
 
     return { success: true, message: 'Registration rejected.', registration: updatedReg };
   } catch (err) {
@@ -1023,6 +979,41 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
   } finally {
     client.release();
   }
+}
+
+async function runRejectionSideEffects(pool, { reg, registrationId, actualTournamentId, reviewerId, reasonCode, reasonText, note }) {
+  const client = await pool.connect().catch((err) => {
+    console.error('[paymentReviewService.reject] Background connection failed:', err);
+    return null;
+  });
+  if (!client) return;
+  try {
+    await client.query('BEGIN');
+    const logId = 'LOG-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+    await client.query(
+      `INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, target_user, details, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+      [logId, reviewerId, 'payment_rejected', 'payment_rejected', 'registration', registrationId, reg.user_id || null,
+        JSON.stringify({ reasonCode, reasonText, note: note || null, teamName: reg.team_name, tournamentTitle: reg.tournament_title })]
+    );
+    if (reg.user_id) {
+      const alertId = 'ALT-' + crypto.randomBytes(8).toString('hex').toUpperCase();
+      await client.query(
+        `INSERT INTO alerts (id, user_id, title, message, tournament_id, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, NOW())`,
+        [alertId, reg.user_id, 'Payment Proof Rejected ❌',
+          `Payment proof for "${reg.team_name}" was rejected. Reason: ${reasonText}. You may re-upload correct proof from the tournament page.`,
+          actualTournamentId]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(`[paymentReviewService.reject] Background rejection work failed for ${registrationId}:`, err);
+  } finally {
+    client.release();
+  }
+  reconcileTournamentSlots(pool, actualTournamentId).catch((err) => console.error('[paymentReviewService.reject] Slot reconciliation error:', err));
 }
 
 /**
