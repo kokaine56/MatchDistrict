@@ -224,8 +224,10 @@ export default function AdminDashboard({ onNavigate }) {
       if (json.success) {
         setRegistrationData(prev => prev.map(r => r.id === regId ? { ...r, status: 'confirmed' } : r))
         triggerToast('Registration confirmed. User notified.')
+        fetchRegistrations(activeTournament.id)
+        fetchTournaments()
       } else {
-        triggerToast(json.message || 'Failed to confirm registration.')
+        triggerToast(json.message || json.error || 'Failed to confirm registration.')
       }
     } catch {
       triggerToast('Network error confirming registration.')
@@ -244,15 +246,15 @@ export default function AdminDashboard({ onNavigate }) {
       })
       const json = await res.json()
       if (json.success) {
-        setRegistrationData(prev => prev.map(r => r.id === regId ? { ...r, status: 'rejected' } : r))
+        setRegistrationData(prev => prev.map(r => r.id === regId ? { ...r, status: 'rejected', rejection_reason: reason } : r))
         triggerToast('Registration rejected.')
+        fetchRegistrations(activeTournament.id)
+        fetchTournaments()
       } else {
-        setRegistrationData(prev => prev.map(r => r.id === regId ? { ...r, status: 'rejected' } : r))
-        triggerToast('Registration rejected (local state updated).')
+        triggerToast(json.message || json.error || 'Failed to reject registration.')
       }
     } catch {
-      setRegistrationData(prev => prev.map(r => r.id === regId ? { ...r, status: 'rejected' } : r))
-      triggerToast('Registration rejected.')
+      triggerToast('Network error rejecting registration.')
     }
   }
 

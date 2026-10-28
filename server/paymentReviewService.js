@@ -912,7 +912,18 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
       return { success: true, idempotent: true, message: 'Registration is already rejected.', registration: reg };
     }
 
-    const allowedStatuses = ['pending', 'pending_payment', 'pending_admin_review', 'verified_by_host'];
+    const allowedStatuses = [
+      'pending',
+      'pending_payment',
+      'pending_admin_review',
+      'pending_payment_verification',
+      'pending_verification',
+      'verified_by_host',
+      'waitlisted',
+      'submitted',
+      'approved',
+      'confirmed'
+    ];
     if (!allowedStatuses.includes(currentStatus)) {
       let reviewerName = 'another reviewer';
       let reviewedAt = reg.updated_at || reg.created_at;
@@ -940,10 +951,10 @@ export async function reject(pool, user, { registrationId, tournamentId, reason 
       ? (note ? `${defaultText} Note: ${note.trim()}` : defaultText)
       : defaultText;
 
-    // 6. Update registration status
+    // 6. Update registration status & release slot
     const updRegRes = await client.query(
       `UPDATE tournament_registrations
-       SET status = 'rejected', rejection_reason = $1, rejected_at = NOW(), updated_at = NOW()
+       SET status = 'rejected', slot_number = NULL, rejection_reason = $1, rejected_at = NOW(), updated_at = NOW()
        WHERE id = $2 AND tournament_id = $3
        RETURNING *`,
       [reasonText, registrationId, actualTournamentId]
