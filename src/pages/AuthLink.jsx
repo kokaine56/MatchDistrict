@@ -12,12 +12,14 @@ export default function AuthLink() {
   const [error, setError] = useState('')
   const [provider, setProvider] = useState('provider')
   const [maskedProviderEmail, setMaskedProviderEmail] = useState('')
+  const [cancelRedirect, setCancelRedirect] = useState('/login')
 
   useEffect(() => {
     fetch('/api/auth/link/pending', { credentials: 'include' }).then(response => response.json()).then(data => {
       if (data.success) {
         setProvider(data.provider === 'discord' ? 'Discord' : 'Google')
         setMaskedProviderEmail(data.maskedProviderEmail || '')
+        setCancelRedirect(data.cancelRedirect || '/login')
       } else {
         setError('This confirmation expired. Start provider sign-in again.')
       }
@@ -71,7 +73,9 @@ export default function AuthLink() {
         </form>
         <div className="space-y-2">
           <button type="button" disabled={busy} onClick={requestCode} className="w-full rounded-lg border border-outline-variant px-4 py-3 text-sm font-semibold disabled:opacity-50">{codeSent ? 'Resend email code' : 'Send a code to the account email'}</button>
-          <button type="button" onClick={() => navigate('/login', { replace: true })} className="w-full px-4 py-2 text-sm text-on-surface-variant">Cancel and sign in another way</button>
+          <button type="button" onClick={() => window.location.assign(cancelRedirect)} className="w-full px-4 py-2 text-sm text-on-surface-variant">
+            {cancelRedirect.includes('discordJoin=1') ? 'Cancel and return to tournament' : 'Cancel and sign in another way'}
+          </button>
         </div>
       </section>
     </main>

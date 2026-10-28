@@ -315,6 +315,15 @@ function getSafeRelativeRedirect(redirectUrl, defaultPath = '/') {
   return defaultPath;
 }
 
+function getDiscordJoinReturnPath(redirectUrl, status, code = null) {
+  const safePath = getSafeRelativeRedirect(redirectUrl, '/');
+  const parsed = new URL(safePath, 'http://localhost');
+  if (parsed.searchParams.get('discordJoin') !== '1') return safePath;
+  parsed.searchParams.set('discord', status);
+  if (code) parsed.searchParams.set('code', String(code).slice(0, 60));
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
 async function storeProviderIdentity(db, { userId, provider, providerUserId, providerEmail = null, emailVerified = null, displayName = null, avatarUrl = null, lastLogin = false }) {
   await db.query(
     `INSERT INTO auth_identities (id, user_id, provider, provider_user_id, provider_email, email_verified, display_name, avatar_url, linked_at, last_login_at)
@@ -2662,7 +2671,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, provider: pending.provider, maskedProviderEmail: maskUserEmail(pending.providerEmail) }));
+    res.end(JSON.stringify({
+      success: true,
+      provider: pending.provider,
+      maskedProviderEmail: maskUserEmail(pending.providerEmail),
+      cancelRedirect: pending.provider === 'discord'
+        ? getDiscordJoinReturnPath(pending.returnTo, 'error', 'account_link_cancelled')
+        : '/login',
+    }));
     return;
   }
 
@@ -2836,8 +2852,11 @@ const server = http.createServer(async (req, res) => {
         const token = signJwt({ email: account.email, role: account.role, roles: account.roles || [account.role], id: account.uid || account.id });
         const clearPending = pendingProviderCookie(req, '', 0);
         const clearLoggedOut = 'md_logged_out=; Path=/; SameSite=Lax; Max-Age=0' + (isHttpsRequest(req) ? '; Secure' : '');
+        const providerReturn = pending.provider === 'discord'
+          ? getDiscordJoinReturnPath(pending.returnTo, 'connected')
+          : getSafeRelativeRedirect(pending.returnTo, '/');
         res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': [clearPending, buildSessionCookie(token, req), clearLoggedOut] });
-        res.end(JSON.stringify({ success: true, provider: pending.provider, redirect: getSafeRelativeRedirect(pending.returnTo, '/'), message: `${pending.provider === 'discord' ? 'Discord' : 'Google'} connected and you are logged in.` }));
+        res.end(JSON.stringify({ success: true, provider: pending.provider, redirect: providerReturn, message: `${pending.provider === 'discord' ? 'Discord' : 'Google'} connected and you are logged in.` }));
       } catch (error) {
         await db?.query('ROLLBACK').catch(() => {});
         console.error('[AUTH LINK] Ownership confirmation failed [code: ' + (error?.code || 'UNKNOWN') + '].');
@@ -3240,6 +3259,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const returnTo = getSafeRelativeRedirect(parsedUrl.searchParams.get('redirect'), '/profile');
     const linkErrorRedirect = (code, retryAfter = null) => {
       const suffix = retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : '';
+      if (new URL(returnTo, 'http://localhost').searchParams.get('discordJoin') === '1') {
+        const returnPath = getDiscordJoinReturnPath(returnTo, 'error', code);
+        return `${returnPath}${suffix}`;
+      }
       if (!isLoginFlow && returnTo && returnTo !== '/' && returnTo !== '/profile') {
         return `${returnTo}${returnTo.includes('?') ? '&' : '?'}discord=error&code=${encodeURIComponent(code)}${suffix}`;
       }
@@ -3316,13 +3339,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const cookieName = isLoginFlow ? 'discord_oauth_state_login' : 'discord_oauth_state_link';
     const stateCookie = `${cookieName}=${encodeURIComponent(stateToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${isHttps ? '; Secure' : ''}`;
 
-    // Email is requested only for new-account eligibility; it is never used to
-    // link to an existing account. Profile linking still requests identify only.
+    // Email is needed only for Discord sign-up's existing verified-email policy.
+    // An authenticated account-link flow requests only the Discord identity.
     const discordAuthUrl = new URL('https://discord.com/oauth2/authorize');
     discordAuthUrl.searchParams.set('client_id', discordClientId);
     discordAuthUrl.searchParams.set('redirect_uri', discordRedirectUri);
     discordAuthUrl.searchParams.set('response_type', 'code');
-    discordAuthUrl.searchParams.set('scope', 'identify email');
+    discordAuthUrl.searchParams.set('scope', isLoginFlow ? 'identify email' : 'identify');
     discordAuthUrl.searchParams.set('state', stateRandom);
     discordAuthUrl.searchParams.set('code_challenge', codeChallenge);
     discordAuthUrl.searchParams.set('code_challenge_method', 'S256');
@@ -3349,6 +3372,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     let statePayload = null;
     const callbackErrorLocation = (code, retryAfter = null) => {
       const qs = retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : '';
+      if (statePayload?.returnTo && new URL(getSafeRelativeRedirect(statePayload.returnTo, '/'), 'http://localhost').searchParams.get('discordJoin') === '1') {
+        return `${getDiscordJoinReturnPath(statePayload.returnTo, 'error', code)}${qs}`;
+      }
       if (statePayload?.flow === 'login') {
         return `/login?discord_error=${encodeURIComponent(code)}${qs}`;
       }
@@ -3492,7 +3518,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     // Single-use code deduplication: prevent double token exchange replay
     if (processedDiscordCodes.has(queryCode)) {
       const prior = processedDiscordCodes.get(queryCode);
-      console.warn(`[DISCORD AUTH] Step: code_dedup | Replay detected for code: ${queryCode.slice(0, 6)}... (age: ${Math.round((Date.now() - prior.timestamp) / 1000)}s)`);
+      console.warn(`[DISCORD AUTH] Step: code_dedup | Replay detected (age: ${Math.round((Date.now() - prior.timestamp) / 1000)}s)`);
       res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('invalid_grant') });
       res.end();
       return;
@@ -3830,9 +3856,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           roles: targetUser.roles || [targetUser.role],
           id: targetUser.uid || targetUser.id
         });
+        const safeLoginReturn = getSafeRelativeRedirect(statePayload.returnTo, '/');
+        const postLoginPath = getDiscordJoinReturnPath(safeLoginReturn, 'connected');
         res.writeHead(302, {
           'Set-Cookie': [...clearStateCookies, buildSessionCookie(token, req)],
-          'Location': `/auth/success?provider=discord&next=${encodeURIComponent(getSafeRelativeRedirect(statePayload.returnTo, '/'))}`
+          'Location': `/auth/success?provider=discord&next=${encodeURIComponent(postLoginPath)}`
         });
         res.end();
         return;

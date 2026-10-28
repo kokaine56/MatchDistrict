@@ -63,6 +63,14 @@ function getGameLogo(game) {
   return GAME_LOGOS[key] || null;
 }
 
+function DiscordBrandIcon({ className = 'h-5 w-5' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M19.54 5.34a18.2 18.2 0 0 0-4.46-1.39.07.07 0 0 0-.08.04c-.2.36-.42.83-.58 1.2a16.8 16.8 0 0 0-4.85 0c-.16-.38-.39-.84-.59-1.2a.08.08 0 0 0-.08-.04 18.15 18.15 0 0 0-4.46 1.4.07.07 0 0 0-.03.03C1.57 9.52.8 13.56 1.18 17.55c0 .02.01.04.03.05a18.3 18.3 0 0 0 5.47 2.77.08.08 0 0 0 .09-.03c.42-.58.8-1.2 1.12-1.85a.08.08 0 0 0-.04-.1 12.05 12.05 0 0 1-1.71-.82.08.08 0 0 1-.01-.13l.34-.27a.08.08 0 0 1 .08-.01c3.59 1.64 7.48 1.64 11.03 0a.08.08 0 0 1 .08.01l.35.27a.08.08 0 0 1-.01.13c-.55.32-1.12.6-1.72.82a.08.08 0 0 0-.04.1c.33.65.7 1.27 1.12 1.85a.08.08 0 0 0 .09.03 18.24 18.24 0 0 0 5.48-2.77.08.08 0 0 0 .03-.05c.45-4.61-.76-8.61-3.23-12.18a.06.06 0 0 0-.03-.03ZM8.1 14.7c-1.08 0-1.97-.99-1.97-2.2s.87-2.2 1.97-2.2c1.1 0 1.99 1 1.97 2.2 0 1.21-.87 2.2-1.97 2.2Zm7.8 0c-1.08 0-1.97-.99-1.97-2.2s.87-2.2 1.97-2.2c1.1 0 1.99 1 1.97 2.2 0 1.21-.87 2.2-1.97 2.2Z" />
+    </svg>
+  );
+}
+
 function getDetailPageTheme(themeKey) {
   const config = getThemeConfig(themeKey)
   
@@ -116,6 +124,42 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [showDiscordLinkModal, setShowDiscordLinkModal] = useState(false);
   const [discordLinkError, setDiscordLinkError] = useState('');
   const [discordRefreshTrigger, setDiscordRefreshTrigger] = useState(0);
+  const discordModalRef = useRef(null);
+  const discordContinueRef = useRef(null);
+
+  useEffect(() => {
+    if (!showDiscordLinkModal) return undefined;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusFrame = window.requestAnimationFrame(() => discordContinueRef.current?.focus());
+    const handleModalKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowDiscordLinkModal(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = discordModalRef.current?.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !discordModalRef.current.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !discordModalRef.current.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleModalKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleModalKeyDown);
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus?.();
+    };
+  }, [showDiscordLinkModal]);
 
   useEffect(() => {
     try {
@@ -136,13 +180,14 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 const headers = token ? { Authorization: `Bearer ${token}` } : {};
                 const response = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { credentials: 'include', headers });
                 const status = await response.json();
+                if (!response.ok || !status?.success) throw new Error(status?.message || 'Could not confirm the Discord link.');
                 if (status?.discord_linked) navigate(`/tournaments/${tournamentId}/register`);
                 else {
                   setDiscordLinkError('Discord linking did not complete. Please try again.');
                   setShowDiscordLinkModal(true);
                 }
-              } catch {
-                setDiscordLinkError('Could not confirm the Discord link. Please try again.');
+              } catch (error) {
+                setDiscordLinkError(error?.message || 'Could not confirm the Discord link. Please try again.');
                 setShowDiscordLinkModal(true);
               }
             })();
@@ -152,9 +197,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           let message = 'Failed to link Discord account.';
           if (code === 'unauthorized') message = 'Please sign in to link your Discord account.';
           else if (code === 'already_linked') message = 'This Discord account is already linked to another user.';
+          else if (code === 'account_conflict') message = 'This Discord identity matches multiple accounts. Contact support to recover access; no accounts were merged.';
+          else if (code === 'account_link_required') message = 'A MatchDistrict account already uses this email. Sign in to that account or confirm account ownership to link Discord.';
+          else if (code === 'verified_email_required') message = 'Discord sign-up needs a verified email. Verify your email with Discord or sign in to your existing MatchDistrict account.';
+          else if (code === 'account_unavailable') message = 'This MatchDistrict account is unavailable. Contact support for help.';
           else if (code === 'rate_limited') message = 'Too many linking attempts. Please wait a few minutes.';
           else if (code === 'cancelled' || code === 'access_denied') message = 'Discord authorization was cancelled.';
+          else if (code === 'account_link_cancelled') message = 'Account confirmation was cancelled. Your MatchDistrict account was not changed.';
           else if (code === 'csrf_error' || code === 'state_invalid') message = 'Invalid OAuth session. Please try again.';
+          else if (code === 'state_mismatch' || code === 'session_expired') message = 'The Discord sign-in session expired or could not be verified. Please try again.';
+          else if (code === 'discord_denied') message = 'Discord authorization was cancelled.';
+          else if (code === 'not_configured' || code === 'invalid_client') message = 'Discord sign-in is temporarily unavailable. Please contact support.';
+          else if (code === 'timeout' || code === 'token_exchange_failed' || code === 'profile_fetch_failed') message = 'Could not finish connecting to Discord. Please try again.';
+          else if (code === 'db_error') message = 'Your Discord account could not be saved. No account changes were completed; please try again.';
           else if (code) message = `Discord linking error: ${code.replace(/_/g, ' ')}`;
           setDiscordToast({
             type: 'error',
@@ -2521,34 +2576,49 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       <AnimatePresence>
         {showDiscordLinkModal && (
           <motion.div
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-black/60 p-4"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setShowDiscordLinkModal(false)}
           >
             <motion.div
-              className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#11131A] p-6 text-white shadow-2xl"
+              ref={discordModalRef}
+              className="relative my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-outline-variant/60 bg-surface-container-low p-5 text-on-background shadow-xl sm:p-7"
               initial={{ opacity: 0, y: 14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }}
               onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="discord-link-required-title"
             >
-              <button type="button" onClick={() => setShowDiscordLinkModal(false)} className="absolute right-4 top-4 rounded-lg p-2 text-white/50 hover:bg-white/10 hover:text-white" aria-label="Close">
+              <button type="button" onClick={() => setShowDiscordLinkModal(false)} className="absolute right-3 top-3 inline-flex h-10 w-10 items-center justify-center rounded-lg text-on-surface-variant transition hover:bg-surface-container-high hover:text-on-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" aria-label="Close Discord sign-in dialog">
                 <span className="material-symbols-outlined">close</span>
               </button>
-              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
-                <span className="material-symbols-outlined">link</span>
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                <DiscordBrandIcon className="h-7 w-7" />
               </div>
-              <h2 id="discord-link-required-title" className="mb-3 pr-8 text-xl font-black">Link Discord to Register</h2>
-              <p className="text-sm leading-relaxed text-white/70">Linking a Discord account is compulsory. We only take your Discord username for registration and slot allotment. Registration cannot be completed without linking.</p>
-              {discordLinkError && <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">{discordLinkError}</p>}
+              <h2 id="discord-link-required-title" className="mb-2 pr-10 font-headline-lg text-xl font-bold text-on-background sm:text-2xl">Continue with Discord</h2>
+              <p className="text-sm leading-relaxed text-on-surface-variant">
+                {currentUser
+                  ? 'Connect Discord to your existing MatchDistrict account. Discord is required for tournament registration, player identification, and slot allocation.'
+                  : 'Create your MatchDistrict account or sign in to your existing account with Discord. Discord is required for tournament registration, player identification, and slot allocation.'}
+              </p>
+              {discordLinkError && <p role="alert" className="mt-4 rounded-xl border border-error/30 bg-error/10 p-3 text-sm text-error">{discordLinkError}</p>}
               <button
                 type="button"
                 onClick={() => {
                   setDiscordLinkError('');
-                  const returnTo = `/tournaments/${tournamentId}?discordJoin=1`;
-                  window.location.assign(`/api/auth/discord/connect?redirect=${encodeURIComponent(returnTo)}`);
+                  const returnTo = `/tournaments/${encodeURIComponent(tournamentId)}?discordJoin=1`;
+                  const flow = currentUser ? 'connect' : 'login';
+                  window.location.assign(`/api/auth/discord/${flow}?redirect=${encodeURIComponent(returnTo)}`);
                 }}
-                className="mt-6 w-full rounded-xl bg-indigo-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-indigo-400"
+                ref={discordContinueRef}
+                className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-primary px-5 py-3 text-sm font-bold text-on-primary shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-low"
               >
-                Link Discord
+                <DiscordBrandIcon />
+                Continue with Discord
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDiscordLinkModal(false)}
+                className="mt-2 min-h-11 w-full rounded-xl px-5 py-2.5 text-sm font-semibold text-on-surface-variant transition hover:bg-surface-container-high hover:text-on-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Cancel
               </button>
             </motion.div>
           </motion.div>
