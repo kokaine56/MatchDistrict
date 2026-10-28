@@ -455,8 +455,11 @@ function TournamentCardBase({
 
   // If we have the viewer's own registration status, use it to drive the button.
   // Otherwise fall back to the generic lifecycle CTA.
+  const total = parseInt(slotsTotal) || 0
+  const filled = parseInt(slotsFilled) || 0
+  const isSlotsFull = total > 0 && filled >= total
   const regRow = regStatus ? { status: regStatus } : null
-  const registrationBtnState = getRegistrationButtonState(regRow, lifecycleStatus)
+  const registrationBtnState = getRegistrationButtonState(regRow, lifecycleStatus, { slotsFull: isSlotsFull })
   const buttonConfig = registrationBtnState
 
   const displayBadgeText = badgeText || badgeConfig.text
@@ -467,8 +470,6 @@ function TournamentCardBase({
 
   const matchLabel = MATCH_LABELS[(matchType || '').toLowerCase()] || matchType || 'N/A'
   const perspLabel = PERSPECTIVE_LABELS[(perspective || '').toLowerCase()] || perspective || 'N/A'
-  const total = parseInt(slotsTotal) || 0
-  const filled = parseInt(slotsFilled) || 0
   const fillPct = total > 0 ? Math.min(Math.round((filled / total) * 100), 100) : 0
   const entryDisplay = entryFeeAmount > 0 ? `₹${parseInt(entryFeeAmount).toLocaleString('en-IN')}` : (entryFee || 'Free')
 

@@ -183,7 +183,7 @@ export function getCTAButtonConfig(lifecycleStatus) {
  *     'pay'      → navigate to registration page at payment step (has registration, missing proof)
  *     null       → no navigation (disabled)
  */
-export function getRegistrationButtonState(reg, lifecycle) {
+export function getRegistrationButtonState(reg, lifecycle, options = {}) {
   const rawStatus = ((reg && reg.status) || '').toLowerCase().trim()
 
   // ── 1. User has an active registration ────────────────────────────────────
@@ -228,7 +228,23 @@ export function getRegistrationButtonState(reg, lifecycle) {
     }
   }
 
-  // ── 2. Registration rejected / no registration — fall back to lifecycle CTA ─
+  // ── 2. Slots full enforcement ─────────────────────────────────────────────
+  // If capacity is reached and the user does not have an active confirmed/pending registration:
+  if (options && options.slotsFull) {
+    return {
+      text: 'Slots Full',
+      icon: 'x',
+      disabled: true,
+      action: null,
+      styleClass: 'bg-red-600 text-white font-bold cursor-not-allowed opacity-90 shadow-sm',
+      rejectionReason: null,
+      isRejected: false,
+      isSlotsFull: true,
+      rawStatus
+    }
+  }
+
+  // ── 3. Registration rejected / no registration — fall back to lifecycle CTA ─
   const lifecycleCta = getCTAButtonConfig(lifecycle)
   // But if rejected, show distinct red state regardless of lifecycle
   if (['rejected', 'payment_rejected'].includes(rawStatus)) {

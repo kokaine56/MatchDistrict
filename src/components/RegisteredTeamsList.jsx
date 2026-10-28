@@ -1,14 +1,34 @@
 import { useState, useEffect } from 'react';
+import { useCurrentUser } from '../hooks/useCurrentUser.js';
+
+function DiscordIcon({ className = 'w-4 h-4' }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+    </svg>
+  );
+}
 
 /**
  * RegisteredTeamsList component
  * Displays a clean, unified list of registered teams for a tournament.
- * Shows strictly two public fields: Team Name and Team Leader.
- * Removes all legacy district groupings, tabs, slot boxes, and occupancy maps.
+ * Shows Team Name and Team Leader, with Discord connection status and linking actions.
  */
-export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldTheme = false }) {
+export default function RegisteredTeamsList({
+  tournamentId,
+  slotsData,
+  isGoldTheme = false,
+  refreshTrigger = 0,
+}) {
+  const [currentUser] = useCurrentUser();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [linkingTeam, setLinkingTeam] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -46,6 +66,9 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
               fallbackTeams.push({
                 teamName: name,
                 teamLeader: (s.captain || 'Anonymous').trim(),
+                leaderUserId: s.userId || s.user_id || s.leader_user_id || null,
+                discordLinked: Boolean(s.discordLinked || s.discord_id),
+                discordUsername: s.discordUsername || s.discord_username || null,
               });
             }
           }
@@ -73,30 +96,49 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
     return () => {
       isMounted = false;
     };
-  }, [tournamentId, slotsData]);
+  }, [tournamentId, slotsData, refreshTrigger]);
+
+  const handleLinkDiscord = (team) => {
+    if (linkingTeam) return;
+    setLinkingTeam(team.teamName);
+    const returnTo = window.location.pathname + window.location.search;
+    window.location.href = `/api/auth/discord/link?redirect=${encodeURIComponent(returnTo)}`;
+  };
+
+  const currentUserId = currentUser ? String(currentUser.id || currentUser.uid || '') : '';
 
   if (loading) {
     return (
-      <div className={`rounded-2xl p-6 sm:p-8 shadow-sm border w-full text-center ${
-        isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#8A6D3B]' : 'bg-white border-slate-200 text-slate-500'
-      }`}>
+      <div
+        className={`rounded-2xl p-6 sm:p-8 shadow-sm border w-full text-center ${
+          isGoldTheme
+            ? 'bg-[#FAF7F0] border-[#D4A017]/35 text-[#8A6D3B]'
+            : 'bg-white border-slate-200 text-slate-500'
+        }`}
+      >
         <p className="text-sm font-medium">Loading registered teams...</p>
       </div>
     );
   }
 
   return (
-    <div className={`rounded-2xl p-5 sm:p-7 shadow-sm border w-full ${
-      isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35' : 'bg-white border-slate-200'
-    }`}>
+    <div
+      className={`rounded-2xl p-5 sm:p-7 shadow-sm border w-full ${
+        isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35' : 'bg-white border-slate-200'
+      }`}
+    >
       {/* Header with Title and Count */}
-      <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-5 border-b ${
-        isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-200'
-      }`}>
+      <div
+        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-5 border-b ${
+          isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-200'
+        }`}
+      >
         <div>
-          <h3 className={`text-base sm:text-lg font-black uppercase tracking-wider ${
-            isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
-          }`}>
+          <h3
+            className={`text-base sm:text-lg font-black uppercase tracking-wider ${
+              isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
+            }`}
+          >
             Registered Teams
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -104,11 +146,13 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
           </p>
         </div>
 
-        <span className={`self-start sm:self-auto text-xs font-bold px-3 py-1 rounded-full ${
-          isGoldTheme
-            ? 'bg-[#D4A017]/20 text-[#8A5C00] border border-[#D4A017]/30'
-            : 'bg-blue-50 text-blue-600 border border-blue-200/60'
-        }`}>
+        <span
+          className={`self-start sm:self-auto text-xs font-bold px-3 py-1 rounded-full ${
+            isGoldTheme
+              ? 'bg-[#D4A017]/20 text-[#8A5C00] border border-[#D4A017]/30'
+              : 'bg-blue-50 text-blue-600 border border-blue-200/60'
+          }`}
+        >
           {teams.length} {teams.length === 1 ? 'Team' : 'Teams'}
         </span>
       </div>
@@ -131,18 +175,22 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
             <path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
           <p className="text-sm font-semibold text-slate-600">No teams registered yet</p>
-          <p className="text-xs text-slate-400 mt-1">Be the first squad to register and join the tournament!</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Be the first squad to register and join the tournament!
+          </p>
         </div>
       ) : (
         /* Unified List / Table */
         <div className="w-full overflow-hidden rounded-xl border border-slate-100">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead>
-              <tr className={`${
-                isGoldTheme
-                  ? 'bg-[#F5F0E1] text-[#6B5B3E] border-b border-[#D4A017]/25'
-                  : 'bg-slate-50 text-slate-600 border-b border-slate-200'
-              }`}>
+              <tr
+                className={`${
+                  isGoldTheme
+                    ? 'bg-[#F5F0E1] text-[#6B5B3E] border-b border-[#D4A017]/25'
+                    : 'bg-slate-50 text-slate-600 border-b border-slate-200'
+                }`}
+              >
                 <th className="py-3 px-4 font-bold uppercase tracking-wider w-3/5">
                   Team Name
                 </th>
@@ -151,26 +199,93 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
                 </th>
               </tr>
             </thead>
-            <tbody className={`divide-y ${isGoldTheme ? 'divide-[#D4A017]/15' : 'divide-slate-100'}`}>
-              {teams.map((team, idx) => (
-                <tr
-                  key={`${team.teamName}-${idx}`}
-                  className={`transition-colors ${
-                    isGoldTheme ? 'hover:bg-[#D4A017]/5' : 'hover:bg-slate-50/80'
-                  }`}
-                >
-                  <td className={`py-3.5 px-4 font-bold break-words align-middle ${
-                    isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
-                  }`}>
-                    {team.teamName}
-                  </td>
-                  <td className={`py-3.5 px-4 font-medium break-words align-middle ${
-                    isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
-                  }`}>
-                    {team.teamLeader}
-                  </td>
-                </tr>
-              ))}
+            <tbody
+              className={`divide-y ${
+                isGoldTheme ? 'divide-[#D4A017]/15' : 'divide-slate-100'
+              }`}
+            >
+              {teams.map((team, idx) => {
+                const leaderId = team.leaderUserId ? String(team.leaderUserId) : '';
+                const isOwner = Boolean(currentUserId && leaderId && currentUserId === leaderId);
+
+                return (
+                  <tr
+                    key={`${team.teamName}-${idx}`}
+                    className={`transition-colors ${
+                      isGoldTheme ? 'hover:bg-[#D4A017]/5' : 'hover:bg-slate-50/80'
+                    }`}
+                  >
+                    <td
+                      className={`py-3.5 px-4 font-bold break-words align-middle ${
+                        isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
+                      }`}
+                    >
+                      {team.teamName}
+                    </td>
+                    <td
+                      className={`py-3.5 px-4 font-medium align-middle ${
+                        isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                        <span
+                          className="truncate max-w-[130px] sm:max-w-[200px]"
+                          title={team.teamLeader}
+                        >
+                          {team.teamLeader}
+                        </span>
+
+                        {/* Discord Status / Action Icon */}
+                        {team.discordLinked ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#5865F2]/10 border border-[#5865F2]/30 text-[#5865F2] text-xs font-semibold select-none transition-colors"
+                            title={
+                              team.discordUsername
+                                ? `Discord Linked: @${team.discordUsername}`
+                                : 'Discord Linked'
+                            }
+                            aria-label={
+                              team.discordUsername
+                                ? `Discord Linked: @${team.discordUsername}`
+                                : 'Discord Linked'
+                            }
+                          >
+                            <DiscordIcon className="w-3.5 h-3.5 text-[#5865F2] shrink-0" />
+                            <span className="hidden sm:inline text-[11px] font-semibold text-[#5865F2] max-w-[110px] truncate leading-none">
+                              {team.discordUsername ? `@${team.discordUsername}` : 'Linked'}
+                            </span>
+                            <span className="sm:hidden text-[11px] font-semibold text-[#5865F2] leading-none">
+                              Linked
+                            </span>
+                          </span>
+                        ) : isOwner ? (
+                          <button
+                            type="button"
+                            onClick={() => handleLinkDiscord(team)}
+                            disabled={linkingTeam === team.teamName}
+                            title="Link Discord"
+                            aria-label="Link Discord"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-dashed border-[#5865F2]/50 hover:border-[#5865F2] text-[#5865F2] bg-[#5865F2]/5 hover:bg-[#5865F2]/15 transition-all text-xs font-semibold cursor-pointer active:scale-95 group focus:outline-none focus:ring-2 focus:ring-[#5865F2]/40 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            <DiscordIcon className="w-3.5 h-3.5 text-[#5865F2] group-hover:scale-110 transition-transform shrink-0" />
+                            <span className="text-[11px] font-medium leading-none">
+                              {linkingTeam === team.teamName ? 'Connecting...' : 'Link Discord'}
+                            </span>
+                          </button>
+                        ) : (
+                          <span
+                            className="inline-flex items-center text-slate-400/60 hover:text-slate-400 transition-colors cursor-default select-none"
+                            title="Discord Not Linked"
+                            aria-label="Discord Not Linked"
+                          >
+                            <DiscordIcon className="w-3.5 h-3.5" />
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -178,3 +293,4 @@ export default function RegisteredTeamsList({ tournamentId, slotsData, isGoldThe
     </div>
   );
 }
+

@@ -24,9 +24,11 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
     const occupiedSlots = new Set();
     const approvedWithoutSlot = [];
 
-    // Map occupied slots — only registrations that are truly confirmed/approved count as slot holders
+    // Map occupied slots — all eligible registrations (not rejected/cancelled/expired) count towards slot allocation
+    const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected'];
     for (const reg of regs) {
-      if (reg.status === 'approved' || reg.status === 'confirmed' || reg.status === 'VERIFIED_BY_HOST' || reg.status === 'verified_by_host') {
+      const regStatus = (reg.status || '').toLowerCase();
+      if (!EXCLUDED_STATUSES.includes(regStatus) && regStatus !== 'waitlisted') {
         const slot = parseInt(reg.slot_number);
         if (slot >= 1 && slot <= slotsTotal && !occupiedSlots.has(slot)) {
           occupiedSlots.add(slot);
@@ -41,7 +43,7 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
     }
 
     // Auto-promote waitlisted registrations to pending if slots are available
-    const waitlistedRegs = regs.filter(r => r.status === 'waitlisted');
+    const waitlistedRegs = regs.filter(r => (r.status || '').toLowerCase() === 'waitlisted');
     for (const reg of waitlistedRegs) {
       if (occupiedSlots.size < slotsTotal) {
         reg.status = 'pending';
@@ -51,7 +53,7 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
       }
     }
 
-    // Auto-allocate slots to approved/confirmed/VERIFIED_BY_HOST registrations that don't have one
+    // Auto-allocate slots to eligible registrations that don't have one
     let currentSlot = 1;
     for (const reg of approvedWithoutSlot) {
       while (currentSlot <= slotsTotal && occupiedSlots.has(currentSlot)) {
@@ -71,12 +73,16 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
     // Assign groups to verified slot-holders (idempotent, same transaction).
     await assignGroups(client, tournamentId);
 
-    // 3. Update the slotsFilled count — count only truly confirmed/approved registrations
+    // 3. Update the slotsFilled count — canonical count of eligible registrations (excluding cancelled, rejected, expired, payment_rejected)
+    // De-duplicate by team_name if present to prevent duplicate registrations from inflating count
     const approvedCountRes = await client.query(
-      "SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = $1 AND status IN ('approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host')",
-      [tournamentId]
+      `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
+       FROM tournament_registrations
+       WHERE tournament_id = $1
+         AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
+      [tournamentId, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
     );
-    const slotsFilled = parseInt(approvedCountRes.rows[0].count) || 0;
+    const slotsFilled = Math.min(slotsTotal, parseInt(approvedCountRes.rows[0].count) || 0);
     await client.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [slotsFilled, tournamentId]);
 
     await client.query('COMMIT');
@@ -88,6 +94,6 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
   }
 }
 
-export function startSlotManagerWorker(pool) {
+export function startSlotManagerWorker(_pool) {
   console.log('🤖 [SLOT MANAGER WORKER] Slot reconciliation is event-driven (triggered on registration & approval).');
 }

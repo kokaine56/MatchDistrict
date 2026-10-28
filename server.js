@@ -720,6 +720,25 @@ async function initDb() {
     // Idempotent migrations for tournament_matches, tournament_rounds, etc.
     try {
       await runMigrationBatch(client, `
+        -- 0. Discord account linking columns on users and connections table
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(50);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_user_id VARCHAR(50);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100);
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_linked_at TIMESTAMP WITH TIME ZONE;
+        CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);
+        CREATE INDEX IF NOT EXISTS idx_users_discord_user_id ON users(discord_user_id);
+
+        CREATE TABLE IF NOT EXISTS user_discord_connections (
+          user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          discord_id VARCHAR(32) NOT NULL UNIQUE,
+          username VARCHAR(64),
+          global_name VARCHAR(128),
+          avatar_hash VARCHAR(64),
+          connected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_discord_connections_discord_id ON user_discord_connections(discord_id);
+
         -- 1. tournament_matches additive columns
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS district_id VARCHAR(50);
         ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS display_order INTEGER;
@@ -3134,11 +3153,16 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   }
 
   // 2c. Discord OAuth2 Flow: Start authentication or authenticated account linking.
-  if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord' || urlPath === '/api/auth/discord/login') && req.method === 'GET') {
+  if ((urlPath === '/api/auth/discord/connect' || urlPath === '/api/auth/discord' || urlPath === '/api/auth/discord/link' || urlPath === '/api/auth/discord/login') && req.method === 'GET') {
     const isLoginFlow = urlPath === '/api/auth/discord/login';
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    const returnTo = getSafeRelativeRedirect(parsedUrl.searchParams.get('redirect'), '/profile');
     const authUser = getAuthUser(req);
     if (!isLoginFlow && !authUser) {
-      res.writeHead(302, { Location: '/profile?discord=error&code=session_expired' });
+      const errRedirect = returnTo && returnTo !== '/' && returnTo !== '/profile'
+        ? `${returnTo}${returnTo.includes('?') ? '&' : '?'}discord=error&code=unauthorized`
+        : '/login?discord_error=unauthorized';
+      res.writeHead(302, { Location: errRedirect });
       res.end();
       return;
     }
@@ -3179,9 +3203,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       return;
     }
 
-    const parsedUrl = new URL(req.url, 'http://localhost');
     const isReconnect = parsedUrl.searchParams.get('reconnect') === 'true';
-    const returnTo = getSafeRelativeRedirect(parsedUrl.searchParams.get('redirect'), '/');
 
     // Generate 32-byte CSPRNG state and PKCE verifier/challenge
     const stateRandom = crypto.randomBytes(32).toString('hex');
@@ -3239,9 +3261,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     let statePayload = null;
     const callbackErrorLocation = (code, retryAfter = null) => {
       const qs = retryAfter ? `&retry_after=${encodeURIComponent(retryAfter)}` : '';
-      return statePayload?.flow === 'login'
-        ? `/login?discord_error=${encodeURIComponent(code)}${qs}`
-        : `/profile?discord=error&code=${encodeURIComponent(code)}${qs}`;
+      if (statePayload?.flow === 'login') {
+        return `/login?discord_error=${encodeURIComponent(code)}${qs}`;
+      }
+      if (statePayload?.returnTo && typeof statePayload.returnTo === 'string' && statePayload.returnTo.startsWith('/') && !statePayload.returnTo.startsWith('//')) {
+        const sep = statePayload.returnTo.includes('?') ? '&' : '?';
+        return `${statePayload.returnTo}${sep}discord=error&code=${encodeURIComponent(code)}${qs}`;
+      }
+      return `/profile?discord=error&code=${encodeURIComponent(code)}${qs}`;
     };
 
     const cbIpLimit = checkRateLimit('discord_callback_ip:' + clientIp, 60, 10 * 60 * 1000);
@@ -3776,7 +3803,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           }
           await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'discord'", [actualUserId]);
         }
-        await dbClient.query('UPDATE users SET discord_id = $1 WHERE id = $2', [discordId, actualUserId]);
+        await dbClient.query('UPDATE users SET discord_id = $1, discord_user_id = $1, discord_username = $2, discord_linked_at = NOW() WHERE id = $3', [discordId, discordUsername, actualUserId]);
         await dbClient.query(
           `INSERT INTO user_discord_connections (user_id, discord_id, username, global_name, avatar_hash, connected_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -3807,9 +3834,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       console.log('[AUTH] Provider link succeeded: discord.');
 
+      const returnUrl = (statePayload?.returnTo && typeof statePayload.returnTo === 'string' && statePayload.returnTo.startsWith('/') && !statePayload.returnTo.startsWith('//') && statePayload.returnTo !== '/')
+        ? `${statePayload.returnTo}${statePayload.returnTo.includes('?') ? '&' : '?'}discord=connected`
+        : '/profile?discord=connected';
+
       res.writeHead(302, {
         'Set-Cookie': clearStateCookie,
-        'Location': '/profile?discord=connected'
+        'Location': returnUrl
       });
       res.end();
       return;
@@ -3893,7 +3924,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
           return;
         }
-        await dbClient.query('UPDATE users SET discord_id = NULL WHERE id = $1', [account.id]);
+        await dbClient.query('UPDATE users SET discord_id = NULL, discord_user_id = NULL, discord_username = NULL, discord_linked_at = NULL WHERE id = $1', [account.id]);
         await dbClient.query('DELETE FROM user_discord_connections WHERE user_id = $1', [account.id]);
         await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'discord'", [account.id]);
         await dbClient.query('COMMIT');
@@ -3911,6 +3942,50 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
     });
     return;
+  }
+
+  // 2e-status. Get Discord Linking Status (GET /api/auth/discord/status)
+  if (urlPath === '/api/auth/discord/status' && req.method === 'GET') {
+    const authUser = getAuthUser(req);
+    if (!authUser) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Authentication required.' }));
+      return;
+    }
+    try {
+      const uId = authUser.id || authUser.uid;
+      const statusRes = await pool.query(
+        `SELECT udc.discord_id, udc.username, udc.global_name, udc.connected_at,
+                u.discord_id AS u_discord_id, u.discord_user_id, u.discord_username, u.discord_linked_at
+         FROM users u
+         LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
+         WHERE u.id = $1 OR u.uid = $1
+         LIMIT 1`,
+        [uId]
+      );
+      if (statusRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'USER_NOT_FOUND' }));
+        return;
+      }
+      const row = statusRes.rows[0];
+      const discordId = row.discord_id || row.discord_user_id || row.u_discord_id || null;
+      const connected = Boolean(discordId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        connected,
+        discordId: connected ? discordId : null,
+        username: connected ? (row.username || row.discord_username || null) : null,
+        displayName: connected ? (row.global_name || row.username || row.discord_username || null) : null,
+        connectedAt: connected ? (row.connected_at || row.discord_linked_at || null) : null
+      }));
+      return;
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+      return;
+    }
   }
 
   // 2f. Logout Service (/api/auth/logout)
@@ -6281,6 +6356,28 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
       const row = dbRes.rows[0];
+
+      // Reconcile authoritative slotsFilled count from canonical active registrations
+      try {
+        const countRes = await pool.query(
+          `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
+           FROM tournament_registrations
+           WHERE tournament_id = $1
+             AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
+          [id, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
+        );
+        const canonicalCount = parseInt(countRes.rows[0]?.count) || 0;
+        const total = parseInt(row.slotsTotal) || 128;
+        const canonicalFilled = Math.min(total, Math.max(parseInt(row.slotsFilled) || 0, canonicalCount));
+        if (canonicalFilled !== parseInt(row.slotsFilled)) {
+          row.slotsFilled = canonicalFilled;
+          pool.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [canonicalFilled, id]).catch(() => {});
+        } else {
+          row.slotsFilled = canonicalFilled;
+        }
+      } catch (countErr) {
+        console.warn(`[TournamentDetail] slotsFilled count reconcile warn: ${countErr.message}`);
+      }
 
       // Block draft access for non-owners (drafts should only be visible to the organizer)
       if (row.isDraft) {
@@ -12247,7 +12344,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // Serialize distinct sessions for the same tournament so parallel tabs cannot
         // both pass the duplicate-registration check before either inserts a row.
         const tournamentLockRes = await client.query(
-          'SELECT id FROM tournaments WHERE id = $1::varchar FOR UPDATE',
+          'SELECT id, "slotsTotal", "slotsFilled", title FROM tournaments WHERE id = $1::varchar FOR UPDATE',
           [session.tournament_id]
         );
         if (tournamentLockRes.rows.length === 0) {
@@ -12339,6 +12436,27 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
              assignedAmountDue, regId]
           );
         } else {
+          const lockedTourney = tournamentLockRes.rows[0];
+          const sessionSlotsTotal = parseInt(lockedTourney.slotsTotal) || 128;
+          const capCheckRes = await client.query(
+            `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
+             FROM tournament_registrations
+             WHERE tournament_id = $1::varchar
+               AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
+            [session.tournament_id, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
+          );
+          const currentOccupied = parseInt(capCheckRes.rows[0]?.count) || 0;
+          if (currentOccupied >= sessionSlotsTotal) {
+            await client.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'SLOTS_FULL',
+              message: `Tournament "${lockedTourney.title || session.tournament_id}" is full (${currentOccupied}/${sessionSlotsTotal} slots occupied).`
+            }));
+            return;
+          }
+
           regId = 'REG-' + Date.now().toString().slice(-6) + '-' + crypto.randomBytes(4).toString('hex');
           regRes = await client.query(
             `INSERT INTO tournament_registrations (id, tournament_id, user_id, team_name, captain, captain_uid, members, status, email, phone, idempotency_key, version, screenshot_url, transaction_id, payment_app, amount_due)
@@ -12538,25 +12656,34 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
             amountToPay = entryFeeAmount + suffix / 100;
           }
 
-          // Count active non-waitlisted registrations within transaction
+          // Count active registrations within transaction (excluding cancelled, rejected, expired, payment_rejected)
+          const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted'];
           const activeCountRes = await regClient.query(
-            "SELECT COUNT(*) AS active_count FROM tournament_registrations WHERE tournament_id = $1::varchar AND status IN ('approved', 'confirmed', 'pending', 'pending_payment')",
-            [id]
+            `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS active_count
+             FROM tournament_registrations
+             WHERE tournament_id = $1::varchar
+               AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
+            [id, EXCLUDED_STATUSES]
           );
           const activeCount = parseInt(activeCountRes.rows[0]?.active_count || '0');
-          const isWaitlisted = activeCount >= t.slotsTotal;
+          const slotsTotal = parseInt(t.slotsTotal) || 128;
 
-          let status;
-          if (isWaitlisted) {
-            status = 'waitlisted';
-          } else if (isPaid) {
-            status = 'pending_payment';
-          } else {
-            status = 'pending';
+          if (activeCount >= slotsTotal && !existingOrphanId) {
+            await regClient.query('ROLLBACK');
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'SLOTS_FULL',
+              message: `Tournament "${t.title || id}" is full (${activeCount}/${slotsTotal} slots occupied).`
+            }));
+            regClient.release();
+            return;
           }
 
+          let status = isPaid ? 'pending_payment' : 'pending';
+
           let slotNumber = data.slot_number ? parseInt(data.slot_number) : null;
-          if (slotNumber && !isWaitlisted) {
+          if (slotNumber) {
             const slotCheck = await regClient.query(
               "SELECT id FROM tournament_registrations WHERE tournament_id = $1::varchar AND slot_number = $2::int AND status IN ('approved', 'confirmed', 'pending', 'pending_payment') FOR UPDATE",
               [id, slotNumber]
@@ -13825,17 +13952,21 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   }
 
   // --- GET PUBLIC UNIFIED REGISTERED TEAMS ---
-  if (req.url.startsWith('/api/tournaments/') && (req.url.endsWith('/registered-teams') || req.url.endsWith('/public-teams')) && req.method === 'GET') {
-    const parts = req.url.split('/');
+  if ((urlPath.startsWith('/api/tournaments/') && (urlPath.endsWith('/registered-teams') || urlPath.endsWith('/public-teams'))) && req.method === 'GET') {
+    const parts = urlPath.split('/');
     const id = parts[3];
     try {
       const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
       const regsRes = await pool.query(
-        `SELECT team_name, captain, status, created_at
-         FROM tournament_registrations
-         WHERE tournament_id = $1
-           AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))
-         ORDER BY created_at ASC`,
+        `SELECT tr.team_name, tr.captain, tr.user_id, tr.captain_uid, tr.status, tr.created_at,
+                COALESCE(udc.discord_id, u.discord_id, u.discord_user_id) AS discord_id,
+                COALESCE(udc.username, u.discord_username) AS discord_username
+         FROM tournament_registrations tr
+         LEFT JOIN users u ON (u.id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND u.id::text = tr.captain_uid::text))
+         LEFT JOIN user_discord_connections udc ON (udc.user_id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND udc.user_id::text = tr.captain_uid::text))
+         WHERE tr.tournament_id = $1
+           AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))
+         ORDER BY tr.created_at ASC`,
         [id, EXCLUDED_STATUSES]
       );
 
@@ -13847,9 +13978,13 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const lower = rawName.toLowerCase();
         if (seen.has(lower)) continue;
         seen.add(lower);
+        const isLinked = Boolean(r.discord_id);
         teams.push({
           teamName: rawName,
           teamLeader: (r.captain || 'Anonymous').trim(),
+          leaderUserId: r.user_id || r.captain_uid || null,
+          discordLinked: isLinked,
+          discordUsername: isLinked && r.discord_username ? r.discord_username : null,
         });
       }
 
@@ -13875,7 +14010,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
       const slotsTotal = parseInt(tRes.rows[0].slotsTotal) || 100;
-      const slotsFilled = parseInt(tRes.rows[0].slotsFilled) || 0;
       const matchType = (tRes.rows[0].match_type || 'squad').toLowerCase();
       const maxSlotsPerRoom = tRes.rows[0].max_slots_per_room
         ? parseInt(tRes.rows[0].max_slots_per_room)
@@ -13884,7 +14018,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const groupLayout = buildGroups(slotsTotal, teamsPerGroup);
 
       // Authoritative payment/registration verification statuses
-      // (mirrors workers/slotManagerWorker.js).
+      // (mirrors workers/slotManagerWorker.js and registered-teams).
+      const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
       const VERIFIED_REG_STATUSES = ['approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
       const ACTIVE_REG_STATUSES = ['pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
 
@@ -13893,6 +14028,26 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         [id]
       );
       const regs = regsRes.rows;
+
+      // Deduplicate valid registrations by team_name to prevent duplicates from inflating occupancy
+      const seenTeams = new Set();
+      const validRegs = [];
+      for (const r of regs) {
+        const s = (r.status || '').toLowerCase();
+        if (EXCLUDED_STATUSES.includes(s) || s === 'waitlisted') continue;
+        const normName = (r.team_name || '').trim().toLowerCase();
+        if (normName) {
+          if (seenTeams.has(normName)) continue;
+          seenTeams.add(normName);
+        }
+        validRegs.push(r);
+      }
+
+      const canonicalFilled = Math.min(slotsTotal, Math.max(parseInt(tRes.rows[0].slotsFilled) || 0, validRegs.length));
+      const slotsFilled = canonicalFilled;
+      if (canonicalFilled !== parseInt(tRes.rows[0].slotsFilled)) {
+        pool.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [canonicalFilled, id]).catch(() => {});
+      }
 
       const slots = [];
       for (let i = 1; i <= slotsTotal; i++) {

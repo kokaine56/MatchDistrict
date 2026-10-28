@@ -111,6 +111,51 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [selectedCardId, setSelectedCardId] = useState(null);
   const [frozenCards, setFrozenCards] = useState({});
   const [isNavigatingToRegister, setIsNavigatingToRegister] = useState(false);
+  const [discordToast, setDiscordToast] = useState(null);
+  const [discordRefreshTrigger, setDiscordRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const discordParam = params.get('discord');
+      if (discordParam) {
+        if (discordParam === 'connected') {
+          setDiscordToast({
+            type: 'success',
+            message: 'Discord account linked successfully!'
+          });
+          setDiscordRefreshTrigger(prev => prev + 1);
+        } else if (discordParam === 'error') {
+          const code = params.get('code');
+          let message = 'Failed to link Discord account.';
+          if (code === 'unauthorized') message = 'Please sign in to link your Discord account.';
+          else if (code === 'already_linked') message = 'This Discord account is already linked to another user.';
+          else if (code === 'rate_limited') message = 'Too many linking attempts. Please wait a few minutes.';
+          else if (code === 'cancelled' || code === 'access_denied') message = 'Discord authorization was cancelled.';
+          else if (code === 'csrf_error' || code === 'state_invalid') message = 'Invalid OAuth session. Please try again.';
+          else if (code) message = `Discord linking error: ${code.replace(/_/g, ' ')}`;
+          setDiscordToast({
+            type: 'error',
+            message
+          });
+        }
+
+        params.delete('discord');
+        params.delete('code');
+        params.delete('retry_after');
+        const newSearch = params.toString();
+        const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : '') + window.location.hash;
+        window.history.replaceState({}, document.title, newUrl);
+
+        const timer = setTimeout(() => {
+          setDiscordToast(null);
+        }, 4000);
+        return () => clearTimeout(timer);
+      }
+    } catch (err) {
+      console.warn('Discord param processing error:', err);
+    }
+  }, []);
 
   const getCardType = (amt) => {
     if (amt >= 1000) return 'OBSIDIAN_ELITE';
@@ -195,7 +240,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     }));
   }, [showSponsorForm, currentUser]);
 
-  const [slotsData, setSlotsData] = useState({ slotsTotal: 100, slotsFilled: 0, slotsAvailable: 100, slots: [] });
+  const [slotsData, setSlotsData] = useState(null);
+  const [slotsLoading, setSlotsLoading] = useState(true);
+  const [slotsError, setSlotsError] = useState(null);
   const [myRegistration, setMyRegistration] = useState(null);
 
   // Fetch the caller's own registration (+ payment proof status) for the button state.
@@ -225,12 +272,25 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   }, [tournamentId]);
 
   const fetchSlots = useCallback(async () => {
-    if (!tournamentId) return;
+    if (!tournamentId) {
+      setSlotsLoading(false);
+      return;
+    }
+    setSlotsLoading(true);
+    setSlotsError(null);
     try {
       const res = await fetch(`/api/tournaments/${tournamentId}/slots`);
       const data = await res.json();
-      if (data.success) setSlotsData(data);
-    } catch (_) {}
+      if (data.success) {
+        setSlotsData(data);
+      } else {
+        setSlotsError(data.error || 'Failed to fetch slots');
+      }
+    } catch (err) {
+      setSlotsError(err.message || 'Failed to fetch slots');
+    } finally {
+      setSlotsLoading(false);
+    }
   }, [tournamentId]);
 
   const [tournamentsList, setTournamentsList] = useState([]);
@@ -272,6 +332,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   // Refetch the viewer's own registration on tab focus so approval/rejection updates without a manual reload.
   useRefetchOnFocus(fetchMyRegistration, !!tournamentId);
   useRefetchOnFocus(fetchRegistrations, !!tournamentId);
+  useRefetchOnFocus(fetchSlots, !!tournamentId);
 
   // Fetch approved sponsor data for public wall
   const fetchSponsors = useCallback(async () => {
@@ -787,11 +848,33 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const basePrize = parseInt(tourney?.prize_pool_amount || tourney?.basePrize || tourney?.prizePool || 0, 10) || 0;
   const sponsoredAmount = tourney?.totalSponsorContributions || tourney?.sponsorRevenue || 0;
   const totalPrize = basePrize + sponsoredAmount;
-  const prizeDisplay = formatIndianCurrency(totalPrize || tourney?.prize);
-  const slotTotal = tourney?.slotsTotal || slotsData?.slotsTotal || 100;
-  const slotFilled = slotsData?.slotsFilled ?? (registrations ? registrations.filter(r => !['cancelled','expired','rejected'].includes((r.status || '').toLowerCase())).length : 0);
+  const slotTotal = parseInt(tourney?.slotsTotal || slotsData?.slotsTotal, 10) || 128;
+
+  // Derive canonical filled slot count consistent with Registered Teams tab
+  const occupiedFromSlotsArray = Array.isArray(slotsData?.slots)
+    ? slotsData.slots.filter(s => s && s.status && s.status !== 'available' && s.registrationId).length
+    : 0;
+
+  const validRegistrationsCount = (registrations && registrations.length > 0)
+    ? registrations.filter(r => {
+        const s = (r.status || '').toLowerCase();
+        return !['cancelled', 'expired', 'rejected', 'payment_rejected'].includes(s);
+      }).length
+    : 0;
+
+  const slotFilled = Math.min(
+    slotTotal,
+    Math.max(
+      Number(slotsData?.slotsFilled) || 0,
+      Number(tourney?.slotsFilled) || 0,
+      occupiedFromSlotsArray,
+      validRegistrationsCount
+    )
+  );
+
   const slotAvailable = Math.max(0, slotTotal - slotFilled);
   const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
+  const isSlotsFull = slotTotal > 0 && slotFilled >= slotTotal;
 
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
@@ -1187,7 +1270,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                           <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
                           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                         </svg>
-                        <span>{slotFilled}/{slotTotal}</span>
+                        {slotsLoading && !tourney?.slotsFilled && !slotsData ? (
+                          <span className="animate-pulse opacity-75">...</span>
+                        ) : (
+                          <span>{slotFilled}/{slotTotal}</span>
+                        )}
                       </span>
                     </div>
                   </div>
@@ -1195,13 +1282,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               </div>
 
               {/* Action Area */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 mt-4 sm:mt-5 pt-4 border-t border-white/10">
+              <div className="w-full mt-4 sm:mt-5 pt-4 border-t border-white/10">
                 {(() => {
                   // Use the viewer's own registration row (from /my-registration) to drive the CTA.
                   // Fall back to myRoster (organizer-tab enriched data) if the dedicated fetch hasn't run yet.
                   const regSource = myRegistration || myRoster || null;
                   const lifecycle = getTournamentLifecycleStatus(tourney, new Date());
-                  const btnState = getRegistrationButtonState(regSource, lifecycle);
+                  const btnState = getRegistrationButtonState(regSource, lifecycle, { slotsFull: isSlotsFull });
 
                   // Distinct rejected-payment UI separating status message from the action
                   if (btnState.isRejected) {
@@ -1268,9 +1355,9 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     );
                   };
 
-                  // Gold-theme overrides for the registered/join states
+                  // Gold-theme overrides for the registered/join states (never override Slots Full state)
                   let finalClass = btnState.styleClass;
-                  if (isGoldTheme) {
+                  if (isGoldTheme && !btnState.isSlotsFull) {
                     if (btnState.action === 'join' && !btnState.disabled) {
                       finalClass = 'bg-gradient-to-r from-[#FFE082] via-[#FFC107] to-[#FFCA28] text-[#3D2500] font-black border border-[#FFF4C2]/70 shadow-[0_4px_16px_rgba(80,50,0,0.5)] hover:shadow-[0_6px_24px_rgba(255,193,7,0.6)]';
                     } else if (btnState.icon === 'check') {
@@ -1278,16 +1365,19 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     }
                   }
 
+                  const isButtonDisabled = btnState.disabled || isNavigatingToRegister;
+
                   return (
-                    <>
+                    <div className="flex w-full items-center gap-3">
                       <button
-                        disabled={btnState.disabled || isNavigatingToRegister}
+                        type="button"
+                        disabled={isButtonDisabled}
                         onClick={() => {
-                          if (btnState.disabled || isNavigatingToRegister || !btnState.action) return;
+                          if (isButtonDisabled || !btnState.action) return;
                           setIsNavigatingToRegister(true);
                           navigate(`/tournaments/${tourney.id}/register`);
                         }}
-                        className={`flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${finalClass} ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
+                        className={`min-w-0 flex-1 font-bold text-sm px-5 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 ${finalClass} ${isNavigatingToRegister ? 'opacity-80 cursor-wait' : ''}`}
                       >
                         {isNavigatingToRegister ? (
                           <>
@@ -1302,15 +1392,17 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         )}
                       </button>
                       {getGameLogo(tourney.game) && (
-                        <img 
-                          src={getGameLogo(tourney.game)} 
-                          alt={tourney.game} 
-                          className={`shrink-0 rounded-xl overflow-hidden border object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ${
-                            isGoldTheme ? 'border-[#FFC107]/40 shadow-md' : 'border-slate-200'
-                          }`}
-                        />
+                        <div className="shrink-0">
+                          <img 
+                            src={getGameLogo(tourney.game)} 
+                            alt={tourney.game} 
+                            className={`rounded-xl overflow-hidden border object-cover h-[40px] sm:h-[48px] w-[40px] sm:w-[48px] ${
+                              isGoldTheme ? 'border-[#FFC107]/40 shadow-md' : 'border-slate-200'
+                            }`}
+                          />
+                        </div>
                       )}
-                    </>
+                    </div>
                   );
                 })()}
               </div>
@@ -1801,6 +1893,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 tournamentId={tourney?.id || tournamentId}
                 slotsData={slotsData}
                 isGoldTheme={isGoldTheme}
+                refreshTrigger={discordRefreshTrigger}
               />
             )}
             {activeTab === 'sponsors' && (
@@ -2389,6 +2482,38 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Discord Account Linking Toast Notification */}
+      <AnimatePresence>
+        {discordToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 30, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-2xl border flex items-center gap-3 backdrop-blur-md text-sm font-semibold max-w-md ${
+              discordToast.type === 'error'
+                ? 'bg-red-950/90 text-red-100 border-red-700/60 shadow-red-950/40'
+                : 'bg-emerald-950/90 text-emerald-100 border-emerald-600/50 shadow-emerald-950/40'
+            }`}
+          >
+            {discordToast.type === 'error' ? (
+              <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+            )}
+            <span className="leading-tight">{discordToast.message}</span>
+            <button
+              type="button"
+              onClick={() => setDiscordToast(null)}
+              className="ml-auto text-xs opacity-60 hover:opacity-100 transition-opacity p-1"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
