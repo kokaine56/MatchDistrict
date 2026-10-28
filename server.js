@@ -6223,6 +6223,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const parsedUrl = new URL(req.url, 'http://localhost');
       const statusParam = (parsedUrl.searchParams.get('status') || 'published').toLowerCase().trim();
+      const organizerParam = (parsedUrl.searchParams.get('organizer_id') || parsedUrl.searchParams.get('organiser_id') || '').trim();
       const includeAll = statusParam === 'all';
 
       let query = `
@@ -6235,9 +6236,18 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       `;
       const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
       const params = [EXCLUDED_REG_STATUSES];
+      const whereClauses = [];
 
       if (!includeAll) {
-        query += ` WHERE (t."isDraft" = false OR t."isDraft" IS NULL) AND LOWER(COALESCE(t.status, '')) NOT IN ('archived', 'completed')`;
+        whereClauses.push(`(t."isDraft" = false OR t."isDraft" IS NULL) AND LOWER(COALESCE(t.status, '')) NOT IN ('archived', 'completed')`);
+      }
+      if (organizerParam) {
+        params.push(organizerParam);
+        whereClauses.push(`(t.organizer_id = $${params.length} OR t.user_id = $${params.length})`);
+      }
+
+      if (whereClauses.length > 0) {
+        query += ` WHERE ` + whereClauses.join(' AND ');
       }
 
       query += ` ORDER BY t.created_at DESC`;
@@ -6692,6 +6702,343 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }));
     } catch (err) {
       console.warn('⚠️ [BOT API] Failed to fetch user eligible tournaments:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
+  // ── ORGANISER DISCORD LINKING SYSTEM HELPERS ───────────────────────
+  const linkingRateLimits = new Map(); // key -> { attempts: number, lockoutUntil: number }
+
+  function checkLinkingRateLimit(key) {
+    const now = Date.now();
+    const entry = linkingRateLimits.get(key);
+    if (!entry) return { allowed: true };
+    if (entry.lockoutUntil && entry.lockoutUntil > now) {
+      const waitMinutes = Math.ceil((entry.lockoutUntil - now) / 60000);
+      return { allowed: false, waitMinutes };
+    }
+    if (entry.lockoutUntil && entry.lockoutUntil <= now) {
+      linkingRateLimits.delete(key);
+      return { allowed: true };
+    }
+    return { allowed: true };
+  }
+
+  function recordFailedLinkingAttempt(key) {
+    const now = Date.now();
+    const entry = linkingRateLimits.get(key) || { attempts: 0, lockoutUntil: 0 };
+    entry.attempts += 1;
+    if (entry.attempts >= 5) {
+      entry.lockoutUntil = now + (15 * 60 * 1000); // 15-minute cooldown
+    }
+    linkingRateLimits.set(key, entry);
+  }
+
+  function resetFailedLinkingAttempts(key) {
+    linkingRateLimits.delete(key);
+  }
+
+  function generateOrganiserCode() {
+    const bytes = crypto.randomBytes(8).toString('hex').toUpperCase();
+    return `MD-ORG-${bytes.slice(0, 4)}-${bytes.slice(4, 8)}-${bytes.slice(8, 12)}-${bytes.slice(12, 16)}`;
+  }
+
+  function hashOrganiserCode(code) {
+    return crypto.createHash('sha256').update(String(code).trim().toUpperCase()).digest('hex');
+  }
+
+  function getOrganiserCipherKey() {
+    const secretSource = process.env.TOTP_ENCRYPTION_KEY || process.env.JWT_SECRET || process.env.MATCHDISTRICT_BOT_SECRET || 'matchdistrict-org-link-salt';
+    return crypto.createHash('sha256').update(secretSource).digest();
+  }
+
+  function encryptOrganiserCode(plaintext) {
+    if (!plaintext) return null;
+    const key = getOrganiserCipherKey();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `enc:v1:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  }
+
+  function decryptOrganiserCode(ciphertext) {
+    if (!ciphertext || typeof ciphertext !== 'string' || !ciphertext.startsWith('enc:v1:')) return null;
+    try {
+      const parts = ciphertext.split(':');
+      if (parts.length !== 5) return null;
+      const iv = Buffer.from(parts[2], 'hex');
+      const tag = Buffer.from(parts[3], 'hex');
+      const enc = Buffer.from(parts[4], 'hex');
+      const key = getOrganiserCipherKey();
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(tag);
+      return decipher.update(enc, undefined, 'utf8') + decipher.final('utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  // POST /api/bot/organizer/verify-link (Verify linking code and bind Discord server to organiser)
+  if (urlPath === '/api/bot/organizer/verify-link' && req.method === 'POST') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const code = (payload.code || '').trim();
+        const guildId = (payload.guild_id || '').trim();
+        const guildName = (payload.guild_name || '').trim();
+        const discordUserId = (payload.discord_user_id || '').trim();
+
+        if (!code || !guildId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_PAYLOAD', message: 'code and guild_id are required.' }));
+          return;
+        }
+
+        // 1. Rate-limit check per guild
+        const rateCheck = checkLinkingRateLimit(guildId);
+        if (!rateCheck.allowed) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'RATE_LIMITED',
+            message: `Too many failed linking attempts for this server. Please wait ${rateCheck.waitMinutes} minute(s) before trying again.`,
+          }));
+          return;
+        }
+
+        // 2. Hash code and query organiser_linking_codes
+        const codeHash = hashOrganiserCode(code);
+        const codeRes = await pool.query(
+          `SELECT id, organiser_id, code_hash, status, created_at, revoked_at
+           FROM organiser_linking_codes
+           WHERE code_hash = $1
+           LIMIT 1`,
+          [codeHash]
+        );
+
+        if (codeRes.rows.length === 0 || codeRes.rows[0].status !== 'active') {
+          recordFailedLinkingAttempt(guildId);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_CODE',
+            message: 'The Organiser Linking Code is invalid, expired, or has been revoked.',
+          }));
+          return;
+        }
+
+        const linkingRecord = codeRes.rows[0];
+        const bufComputed = Buffer.from(codeHash, 'hex');
+        const bufStored = Buffer.from(linkingRecord.code_hash, 'hex');
+        if (bufComputed.length !== bufStored.length || !crypto.timingSafeEqual(bufComputed, bufStored)) {
+          recordFailedLinkingAttempt(guildId);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'INVALID_CODE',
+            message: 'Invalid linking code.',
+          }));
+          return;
+        }
+
+        // 3. Confirm organiser account exists and has organiser rights
+        const userRes = await pool.query(
+          `SELECT id, name, "orgName", "orgHandle", "gamerTag", role, roles, status
+           FROM users
+           WHERE id = $1
+           LIMIT 1`,
+          [linkingRecord.organiser_id]
+        );
+
+        if (userRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'ORGANISER_NOT_FOUND', message: 'Organiser account not found.' }));
+          return;
+        }
+
+        const organiser = userRes.rows[0];
+        if (!hasOrganizerRights(organiser)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_AN_ORGANISER', message: 'This user account does not have active tournament organiser rights.' }));
+          return;
+        }
+
+        // 4. Check existing server link (prevent silent ownership transfer)
+        const existingLinkRes = await pool.query(
+          `SELECT id, organiser_id, guild_id, status
+           FROM organiser_discord_servers
+           WHERE guild_id = $1
+           LIMIT 1`,
+          [guildId]
+        );
+
+        if (existingLinkRes.rows.length > 0 && existingLinkRes.rows[0].status === 'linked') {
+          const existing = existingLinkRes.rows[0];
+          if (existing.organiser_id !== organiser.id) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'GUILD_ALREADY_LINKED_DIFFERENT_OWNER',
+              message: 'This Discord server is already linked to another organiser. Please unlink the existing organiser before linking a new account.',
+            }));
+            return;
+          }
+        }
+
+        // 5. Upsert link record in organiser_discord_servers
+        const linkId = existingLinkRes.rows[0]?.id || `srv_${crypto.randomBytes(12).toString('hex')}`;
+        await pool.query(
+          `INSERT INTO organiser_discord_servers (id, organiser_id, guild_id, guild_name, linked_by, status, created_at, updated_at, unlinked_at)
+           VALUES ($1, $2, $3, $4, $5, 'linked', NOW(), NOW(), NULL)
+           ON CONFLICT (guild_id)
+           DO UPDATE SET organiser_id = $2, guild_name = $4, linked_by = $5, status = 'linked', updated_at = NOW(), unlinked_at = NULL`,
+          [linkId, organiser.id, guildId, guildName || 'Discord Server', discordUserId || null]
+        );
+
+        // 6. Reset failed rate limits on success
+        resetFailedLinkingAttempts(guildId);
+
+        // 7. Fetch tournaments owned by this organiser
+        const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+        const tourRes = await pool.query(
+          `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
+                  (SELECT COUNT(*) FROM tournament_registrations tr
+                   WHERE tr.tournament_id = t.id
+                     AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
+           FROM tournaments t
+           WHERE (t.organizer_id = $1 OR t.user_id = $1)
+             AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
+           ORDER BY t.created_at DESC`,
+          [organiser.id, EXCLUDED_REG_STATUSES]
+        );
+
+        const tournaments = (tourRes.rows || []).map((t) => ({
+          id: t.id,
+          title: t.title || 'Untitled Tournament',
+          game: t.game || 'Esports',
+          status: t.isDraft ? 'draft' : (t.status || 'published'),
+          registeredTeamsCount: parseInt(t.registered_teams_count, 10) || 0,
+        }));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          organizer: {
+            id: organiser.id,
+            name: organiser.orgName || organiser.name || 'Tournament Organiser',
+            handle: organiser.orgHandle || organiser.gamerTag || '',
+          },
+          guild: {
+            id: guildId,
+            name: guildName,
+          },
+          tournaments,
+          message: 'Discord server successfully linked to organiser account.',
+        }));
+      } catch (err) {
+        console.warn('⚠️ [BOT API] Error verifying organiser linking code:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+      }
+    });
+    return;
+  }
+
+  // POST /api/bot/organizer/unlink (Unlink a Discord server from an organiser)
+  if (urlPath === '/api/bot/organizer/unlink' && req.method === 'POST') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const guildId = (payload.guild_id || '').trim();
+        const discordUserId = (payload.discord_user_id || '').trim();
+
+        if (!guildId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_PAYLOAD', message: 'guild_id is required.' }));
+          return;
+        }
+
+        await pool.query(
+          `UPDATE organiser_discord_servers
+           SET status = 'unlinked', unlinked_at = NOW(), updated_at = NOW()
+           WHERE guild_id = $1`,
+          [guildId]
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          guild_id: guildId,
+          message: 'Discord server unlinked successfully.',
+        }));
+      } catch (err) {
+        console.warn('⚠️ [BOT API] Error unlinking organiser server:', err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+      }
+    });
+    return;
+  }
+
+  // GET /api/bot/organizers/:id/tournaments (Fetch tournaments belonging to a specific organiser)
+  const botOrgTourMatch = urlPath.match(/^\/api\/bot\/organizers\/([^/]+)\/tournaments$/);
+  if (botOrgTourMatch && req.method === 'GET') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    const organiserId = decodeURIComponent(botOrgTourMatch[1]).trim();
+    try {
+      const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+      const tourRes = await pool.query(
+        `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
+                (SELECT COUNT(*) FROM tournament_registrations tr
+                 WHERE tr.tournament_id = t.id
+                   AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
+         FROM tournaments t
+         WHERE (t.organizer_id = $1 OR t.user_id = $1)
+           AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
+         ORDER BY t.created_at DESC`,
+        [organiserId, EXCLUDED_REG_STATUSES]
+      );
+
+      const tournaments = (tourRes.rows || []).map((t) => ({
+        id: t.id,
+        title: t.title || 'Untitled Tournament',
+        game: t.game || 'Esports',
+        status: t.isDraft ? 'draft' : (t.status || 'published'),
+        registeredTeamsCount: parseInt(t.registered_teams_count, 10) || 0,
+      }));
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        organizer_id: organiserId,
+        tournaments,
+      }));
+    } catch (err) {
+      console.warn('⚠️ [BOT API] Error fetching organiser tournaments:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
     }
@@ -20174,6 +20521,165 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
+    return;
+  }
+
+  // ── ORGANISER DISCORD LINKING SYSTEM (Website Authenticated) ────────
+  // GET /api/organizer/discord-linking-code — Retrieve or create linking code & linked servers
+  if (req.url === '/api/organizer/discord-linking-code' && req.method === 'GET') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!requireOrganizer(req, res, authUser)) return;
+
+      const userRes = await pool.query('SELECT id FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+      if (userRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'User not found.' }));
+        return;
+      }
+      const userId = userRes.rows[0].id;
+
+      // Look for active linking code
+      const codeRes = await pool.query(
+        `SELECT id, code_encrypted, status, created_at
+         FROM organiser_linking_codes
+         WHERE organiser_id = $1 AND status = 'active'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [userId]
+      );
+
+      let code = null;
+      let status = 'active';
+      let createdAt = null;
+
+      if (codeRes.rows.length > 0) {
+        code = decryptOrganiserCode(codeRes.rows[0].code_encrypted);
+        status = codeRes.rows[0].status;
+        createdAt = codeRes.rows[0].created_at;
+      }
+
+      // If no active code exists, generate a new one
+      if (!code) {
+        code = generateOrganiserCode();
+        const codeHash = hashOrganiserCode(code);
+        const codeEncrypted = encryptOrganiserCode(code);
+        const codeId = `orgcode_${crypto.randomBytes(12).toString('hex')}`;
+
+        await pool.query(
+          `INSERT INTO organiser_linking_codes (id, organiser_id, code_hash, code_encrypted, status, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())`,
+          [codeId, userId, codeHash, codeEncrypted]
+        );
+        createdAt = new Date().toISOString();
+      }
+
+      // Fetch linked Discord servers for this organiser
+      const serverRes = await pool.query(
+        `SELECT id, guild_id, guild_name, linked_by, status, created_at, updated_at
+         FROM organiser_discord_servers
+         WHERE organiser_id = $1 AND status = 'linked'
+         ORDER BY created_at DESC`,
+        [userId]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        code,
+        status,
+        createdAt,
+        linkedServers: serverRes.rows || [],
+      }));
+    } catch (err) {
+      console.warn('⚠️ [ORGANISER API] Error retrieving discord linking code:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/organizer/discord-linking-code/regenerate — Generate a new code and invalidate previous
+  if (req.url === '/api/organizer/discord-linking-code/regenerate' && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!requireOrganizer(req, res, authUser)) return;
+
+      const userRes = await pool.query('SELECT id FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+      if (userRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'User not found.' }));
+        return;
+      }
+      const userId = userRes.rows[0].id;
+
+      // Revoke any existing active codes
+      await pool.query(
+        `UPDATE organiser_linking_codes
+         SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
+         WHERE organiser_id = $1 AND status = 'active'`,
+        [userId]
+      );
+
+      // Generate new secure code
+      const newCode = generateOrganiserCode();
+      const codeHash = hashOrganiserCode(newCode);
+      const codeEncrypted = encryptOrganiserCode(newCode);
+      const codeId = `orgcode_${crypto.randomBytes(12).toString('hex')}`;
+
+      await pool.query(
+        `INSERT INTO organiser_linking_codes (id, organiser_id, code_hash, code_encrypted, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'active', NOW(), NOW())`,
+        [codeId, userId, codeHash, codeEncrypted]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        code: newCode,
+        status: 'active',
+        message: 'New Organiser Linking Code generated. Previous code has been revoked.',
+      }));
+    } catch (err) {
+      console.warn('⚠️ [ORGANISER API] Error regenerating linking code:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
+  // POST /api/organizer/discord-linking-code/revoke — Revoke current linking code
+  if (req.url === '/api/organizer/discord-linking-code/revoke' && req.method === 'POST') {
+    try {
+      const authUser = getAuthUser(req);
+      if (!requireOrganizer(req, res, authUser)) return;
+
+      const userRes = await pool.query('SELECT id FROM users WHERE id = $1 OR uid = $1', [authUser.id]);
+      if (userRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'User not found.' }));
+        return;
+      }
+      const userId = userRes.rows[0].id;
+
+      await pool.query(
+        `UPDATE organiser_linking_codes
+         SET status = 'revoked', revoked_at = NOW(), updated_at = NOW()
+         WHERE organiser_id = $1 AND status = 'active'`,
+        [userId]
+      );
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        status: 'revoked',
+        message: 'Organiser Linking Code revoked. Previous code can no longer be used.',
+      }));
+    } catch (err) {
+      console.warn('⚠️ [ORGANISER API] Error revoking linking code:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
     return;
   }
 

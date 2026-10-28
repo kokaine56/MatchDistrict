@@ -26,6 +26,7 @@ import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
 import LoginMethodsCard from '../components/LoginMethodsCard.jsx'
+import DiscordOrganiserLinkingCard from '../components/DiscordOrganiserLinkingCard.jsx'
 import Avatar from '../components/Avatar.jsx'
 import ProfileEditFieldModal from '../components/ProfileEditFieldModal.jsx'
 import PillTabs from '../components/PillTabs.jsx'
@@ -3059,6 +3060,11 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                       )}
                     </div>
                   </div>
+
+                  {/* ORGANIZER DISCORD LINKING */}
+                  {hasOrganizerRights(currentUser) && (
+                    <DiscordOrganiserLinkingCard triggerToast={triggerToast} />
+                  )}
 
                   {/* GROUP 4: MORE */}
                   <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 backdrop-blur-md shadow-sm space-y-3">

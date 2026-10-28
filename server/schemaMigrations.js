@@ -85,6 +85,8 @@ export const SCHEMA_TABLES = Object.freeze([
   'tournament_qualified_teams',
   'tournament_tie_resolutions',
   'tournament_leaderboard_publications',
+  'organiser_linking_codes',
+  'organiser_discord_servers',
 ]);
 
 function splitSqlStatements(sql) {
@@ -1629,6 +1631,33 @@ export async function runSchemaMigrations(clientOrPool) {
       CREATE INDEX IF NOT EXISTS idx_lb_publications_active ON tournament_leaderboard_publications(tournament_id, round_id, is_active);
 
       ALTER TABLE tournament_match_assignments ADD COLUMN IF NOT EXISTS slot_number INTEGER;
+
+      CREATE TABLE IF NOT EXISTS organiser_linking_codes (
+        id VARCHAR(50) PRIMARY KEY,
+        organiser_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash VARCHAR(64) UNIQUE NOT NULL,
+        code_encrypted TEXT NOT NULL,
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        revoked_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_organiser_linking_codes_org_id ON organiser_linking_codes(organiser_id);
+      CREATE INDEX IF NOT EXISTS idx_organiser_linking_codes_hash ON organiser_linking_codes(code_hash);
+
+      CREATE TABLE IF NOT EXISTS organiser_discord_servers (
+        id VARCHAR(50) PRIMARY KEY,
+        organiser_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        guild_id VARCHAR(30) UNIQUE NOT NULL,
+        guild_name VARCHAR(255),
+        linked_by VARCHAR(30),
+        status VARCHAR(20) DEFAULT 'linked',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        unlinked_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS idx_organiser_discord_servers_guild ON organiser_discord_servers(guild_id);
+      CREATE INDEX IF NOT EXISTS idx_organiser_discord_servers_org ON organiser_discord_servers(organiser_id);
 
     `);
 

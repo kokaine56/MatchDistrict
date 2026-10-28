@@ -20,6 +20,7 @@ import AutomationPanel from './AutomationPanel'
 import { formatDate } from '../utils/timeFormat'
 import { isTournamentOrganizer } from '../utils/tournamentAuth.js'
 import FormBuilder from './FormBuilder'
+import DiscordOrganiserLinkingCard from './DiscordOrganiserLinkingCard'
 
 function OrganizerDashboard({
   currentUser,
@@ -1879,6 +1880,10 @@ function OrganizerDashboard({
             </button>
           </div>
             </form>
+
+            <div className="mt-6">
+              <DiscordOrganiserLinkingCard triggerToast={triggerToast} />
+            </div>
 
           {cropState && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
