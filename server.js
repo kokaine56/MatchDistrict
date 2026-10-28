@@ -3905,6 +3905,19 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
       console.log('[AUTH] Provider link succeeded: discord.');
 
+      // Notify Discord bot to synchronize tournament access if bot webhook or sync URL is configured
+      const botSyncUrl = process.env.DISCORD_BOT_SYNC_URL || (process.env.PORT ? `http://127.0.0.1:${process.env.PORT}/api/bot/sync/user` : null);
+      if (botSyncUrl && discordId) {
+        fetch(botSyncUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-bot-secret': process.env.MATCHDISTRICT_BOT_SECRET || '',
+          },
+          body: JSON.stringify({ discord_id: discordId }),
+        }).catch(() => {});
+      }
+
       const returnUrl = (statePayload?.returnTo && typeof statePayload.returnTo === 'string' && statePayload.returnTo.startsWith('/') && !statePayload.returnTo.startsWith('//') && statePayload.returnTo !== '/')
         ? `${statePayload.returnTo}${statePayload.returnTo.includes('?') ? '&' : '?'}discord=connected`
         : '/profile?discord=connected';
@@ -6539,6 +6552,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         });
       }
 
+      const websiteBaseUrl = (process.env.MATCHDISTRICT_WEBSITE_URL || process.env.VITE_API_URL || 'https://matchdistrict.in').replace(/\/+$/, '');
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
@@ -6547,6 +6562,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           title: tournament.title,
           game: tournament.game,
           status: tournament.isDraft ? 'draft' : (tournament.status || 'published'),
+          url: `${websiteBaseUrl}/tournaments/${tournament.id}`,
         },
         summary: {
           total_registered_teams: totalRegisteredTeams,
@@ -6560,6 +6576,122 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }));
     } catch (err) {
       console.warn('⚠️ [BOT API] Failed to fetch registrations:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/bot/users/:discordId/eligible-tournaments (Fetch tournaments a linked Discord user is eligible for)
+  const botUserTourMatch = urlPath.match(/^\/api\/bot\/users\/([^/]+)\/eligible-tournaments$/);
+  if (botUserTourMatch && req.method === 'GET') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    const discordId = decodeURIComponent(botUserTourMatch[1]).trim();
+    if (!/^\d{17,20}$/.test(discordId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'INVALID_ID', message: 'Invalid Discord user ID snowflake.' }));
+      return;
+    }
+
+    try {
+      // 1. Look up user by Discord ID
+      const userRes = await pool.query(
+        `SELECT u.id, u.name, u.email
+         FROM users u
+         LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
+         WHERE u.discord_id = $1 OR u.discord_user_id = $1 OR udc.discord_id = $1
+         LIMIT 1`,
+        [discordId]
+      );
+
+      if (userRes.rows.length === 0) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          discord_id: discordId,
+          user_id: null,
+          eligible_tournaments: [],
+        }));
+        return;
+      }
+
+      const user = userRes.rows[0];
+      const userId = user.id;
+
+      // 2. Query tournament registrations & tournament_teams for this user
+      const regRes = await pool.query(
+        `SELECT r.id AS registration_id, r.tournament_id, r.team_name, r.status, r.members,
+                t.title AS tournament_title, t.game AS tournament_game, t.status AS tournament_status, t."isDraft"
+         FROM tournament_registrations r
+         JOIN tournaments t ON t.id = r.tournament_id
+         WHERE (r.user_id = $1 OR r.captain_uid = $1 OR r.members::text LIKE $2)
+           AND (t."isDraft" = false OR t."isDraft" IS NULL)
+           AND LOWER(COALESCE(r.status, '')) NOT IN ('rejected', 'cancelled', 'expired', 'payment_rejected')`,
+        [userId, `%"uid":"${userId}"%`]
+      );
+
+      const teamMemberRes = await pool.query(
+        `SELECT tm.tournament_team_id, tt.tournament_id, tt.team_name, tt.status AS team_status,
+                t.title AS tournament_title, t.game AS tournament_game, t.status AS tournament_status, t."isDraft"
+         FROM tournament_team_members tm
+         JOIN tournament_teams tt ON tt.id = tm.tournament_team_id
+         JOIN tournaments t ON t.id = tt.tournament_id
+         WHERE tm.user_id = $1 AND tm.status = 'active'
+           AND tt.status != 'disqualified'
+           AND (t."isDraft" = false OR t."isDraft" IS NULL)`,
+        [userId]
+      );
+
+      const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+      const ELIGIBLE_STATUSES = ['approved', 'confirmed', 'verified_by_host', 'VERIFIED_BY_HOST', 'verified'];
+
+      const eligibleMap = new Map();
+      const websiteBaseUrl = (process.env.MATCHDISTRICT_WEBSITE_URL || process.env.VITE_API_URL || 'https://matchdistrict.in').replace(/\/+$/, '');
+
+      for (const reg of regRes.rows) {
+        const rawStatus = (reg.status || 'pending').toLowerCase().trim();
+        const isEligible = !EXCLUDED_STATUSES.includes(rawStatus) &&
+          (ELIGIBLE_STATUSES.includes(rawStatus) || (typeof isEligibleRegistrationStatus === 'function' ? isEligibleRegistrationStatus(reg.status) : false));
+
+        if (isEligible && !eligibleMap.has(reg.tournament_id)) {
+          eligibleMap.set(reg.tournament_id, {
+            id: reg.tournament_id,
+            title: reg.tournament_title || 'Untitled Tournament',
+            game: reg.tournament_game || 'Esports',
+            status: reg.isDraft ? 'draft' : (reg.tournament_status || 'published'),
+            team_name: reg.team_name,
+            url: `${websiteBaseUrl}/tournaments/${reg.tournament_id}`,
+          });
+        }
+      }
+
+      for (const tm of teamMemberRes.rows) {
+        if (!eligibleMap.has(tm.tournament_id)) {
+          eligibleMap.set(tm.tournament_id, {
+            id: tm.tournament_id,
+            title: tm.tournament_title || 'Untitled Tournament',
+            game: tm.tournament_game || 'Esports',
+            status: tm.isDraft ? 'draft' : (tm.tournament_status || 'published'),
+            team_name: tm.team_name,
+            url: `${websiteBaseUrl}/tournaments/${tm.tournament_id}`,
+          });
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        discord_id: discordId,
+        user_id: userId,
+        eligible_tournaments: Array.from(eligibleMap.values()),
+      }));
+    } catch (err) {
+      console.warn('⚠️ [BOT API] Failed to fetch user eligible tournaments:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
     }
