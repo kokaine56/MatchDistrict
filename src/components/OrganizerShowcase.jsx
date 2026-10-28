@@ -108,16 +108,7 @@ const OrganizerShowcase = ({ onNavigate }) => {
               </button>
             </motion.div>
 
-            <motion.div variants={itemVariants} className="pt-6 flex items-center justify-center lg:justify-start gap-4 text-xs font-body-sm text-on-surface-variant/80">
-              <div className="flex -space-x-2">
-                {[1, 2, 3].map(i => (
-                  <div key={i} className={`w-6 h-6 rounded-full border border-background bg-surface-variant flex items-center justify-center overflow-hidden z-[${4 - i}]`}>
-                    <img src={`https://i.pravatar.cc/100?img=${i + 10}`} alt="avatar" />
-                  </div>
-                ))}
-              </div>
-              <p>Trusted by <strong className="text-white">1.2K+</strong> competitive gaming communities</p>
-            </motion.div>
+
           </motion.div>
 
           {/* Right Content - Interactive Dashboard Preview */}

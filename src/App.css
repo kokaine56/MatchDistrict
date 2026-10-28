@@ -301,3 +301,15 @@ html::-webkit-scrollbar, body::-webkit-scrollbar {
 }
 
 
+
+/* Tournament creation bottom clearance ensuring form inputs and navigation buttons scroll above mobile bottom navigation */
+.tournament-creation-container {
+  box-sizing: border-box;
+  padding-bottom: calc(var(--bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px) + 2rem);
+}
+
+@media (min-width: 1024px) {
+  .tournament-creation-container {
+    padding-bottom: 8rem;
+  }
+}

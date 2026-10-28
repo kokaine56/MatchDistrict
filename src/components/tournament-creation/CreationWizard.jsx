@@ -654,7 +654,7 @@ const body = {
   }, [currentStep, formData, handleChange, errors, userTier, planLimits, handleSaveDraft, handlePublish, isSubmitting, uploadingMedia, orgName, orgTier, handleValidationBlocked, handlePublishStep9, publishError, handleSavePlanningConfig])
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen min-h-[100dvh] bg-background">
       {/* Recovery banner */}
       <AnimatePresence>
         {showRecovery && (
@@ -761,7 +761,7 @@ const body = {
         <StepIndicator currentStep={currentStep} />
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 pb-32">
+      <div className="max-w-4xl mx-auto px-4 pb-12 lg:pb-32 tournament-creation-container">
         <div className="bg-surface-container rounded-2xl p-4 sm:p-6 shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)]">
           <AnimatePresence mode="wait">
             <motion.div
@@ -775,22 +775,41 @@ const body = {
             </motion.div>
           </AnimatePresence>
 
-
+          {/* In-flow action buttons on mobile & tablet: always visible at end of step, never trapped under bottom nav */}
+          <div className="mt-8 pt-5 border-t border-slate-200 dark:border-outline-variant/30 lg:hidden">
+            <StepNavigation
+              currentStep={currentStep}
+              totalSteps={totalSteps}
+              onBack={handleBack}
+              onNext={handleNext}
+              onSaveDraft={handleSaveDraft}
+              onPublish={handlePublish}
+              isSubmitting={isSubmitting}
+              isLastStep={isLastStep}
+              navigationBlocked={isNavigationBlocked}
+              isEditMode={isEditMode}
+              variant="inline"
+            />
+          </div>
         </div>
       </div>
 
-      <StepNavigation
-        currentStep={currentStep}
-        totalSteps={totalSteps}
-        onBack={handleBack}
-        onNext={handleNext}
-        onSaveDraft={handleSaveDraft}
-        onPublish={handlePublish}
-        isSubmitting={isSubmitting}
-        isLastStep={isLastStep}
-        navigationBlocked={isNavigationBlocked}
-        isEditMode={isEditMode}
-      />
+      {/* Desktop fixed bottom navigation (only on lg+ where mobile bottom nav does not exist) */}
+      <div className="hidden lg:block">
+        <StepNavigation
+          currentStep={currentStep}
+          totalSteps={totalSteps}
+          onBack={handleBack}
+          onNext={handleNext}
+          onSaveDraft={handleSaveDraft}
+          onPublish={handlePublish}
+          isSubmitting={isSubmitting}
+          isLastStep={isLastStep}
+          navigationBlocked={isNavigationBlocked}
+          isEditMode={isEditMode}
+          variant="fixed"
+        />
+      </div>
     </div>
   )
 }

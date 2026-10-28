@@ -4,6 +4,9 @@ import { useUser } from '../UserContext.jsx'
 import heroImg from '../assets/background/hero.png'
 import heroImgMobile from '../assets/background/hero_mobile.png'
 
+// Top advertisement banner placement - temporarily hidden. Flip to true to re-enable.
+export const SHOW_TOP_AD_BANNER = false
+
 const slides = [
   {
     id: 'bgis-2026',
@@ -89,6 +92,7 @@ function HeroBannerCarousel({ onNavigate }) {
   }, [totalSlides])
 
   useEffect(() => {
+    if (!SHOW_TOP_AD_BANNER) return
     intervalRef.current = setInterval(goNext, 10000)
     return () => {
       if (intervalRef.current) {
@@ -165,15 +169,16 @@ function HeroBannerCarousel({ onNavigate }) {
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200px] h-[200px] bg-primary/5 blur-[80px] rounded-full pointer-events-none z-0 block sm:hidden" />
 
       {/* Main content wrapper */}
-      <div className="relative z-10 max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-11 md:pt-14">
+      <div className={`relative z-10 max-w-container-max mx-auto px-4 sm:px-sm md:px-lg pt-11 md:pt-14${SHOW_TOP_AD_BANNER ? '' : ' pb-2 sm:pb-4'}`}>
         {/* Top static greeting area */}
-        <div className="text-left sm:text-center pb-3 md:pb-5 pt-3 sm:pt-4">
+        <div className={`text-left sm:text-center pt-3 sm:pt-4${SHOW_TOP_AD_BANNER ? ' pb-3 md:pb-5' : ' pb-1 sm:pb-2'}`}>
           <h1 className="font-display-lg text-xl sm:text-2xl md:text-3xl lg:text-4xl font-semibold text-white tracking-wide leading-tight">
             Welcome to the District{currentUser ? `, ${(currentUser.name || '').split(' ')[0]}` : '.'}
           </h1>
         </div>
 
-        {/* Slide container */}
+        {/* Slide container - Top advertisement placement */}
+        {SHOW_TOP_AD_BANNER && (
         <div className="pb-6 sm:pb-8 flex justify-center w-full !touch-pan-y" style={{ touchAction: 'pan-y !important' }}>
           {/* Slides area */}
           <div 
@@ -259,6 +264,7 @@ function HeroBannerCarousel({ onNavigate }) {
             </div>
           </div>
         </div>
+        )}
       </div>
     </section>
   )
