@@ -134,7 +134,22 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
     window.location.href = url;
   };
 
+  const connectedAt = discord?.connected_at || currentUser?.discord_linked_at || providerIdentity?.linked_at || null;
+  const daysSinceConnected = connectedAt ? (Date.now() - new Date(connectedAt).getTime()) / (1000 * 60 * 60 * 24) : null;
+  const canUnlink = currentUser?.can_unlink_discord !== undefined
+    ? currentUser.can_unlink_discord
+    : (daysSinceConnected === null || daysSinceConnected >= 14);
+  const remainingDays = currentUser?.discord_unlink_remaining_days !== undefined
+    ? currentUser.discord_unlink_remaining_days
+    : (daysSinceConnected !== null && daysSinceConnected < 14 ? Math.ceil(14 - daysSinceConnected) : 0);
+
   const handleDisconnectConfirm = async () => {
+    if (!canUnlink) {
+      if (typeof triggerToast === 'function') {
+        triggerToast(`Discord account can only be unlinked 14 days after linking (${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining).`);
+      }
+      return;
+    }
     try {
       setIsDisconnecting(true);
       const res = await fetch('/api/auth/discord/disconnect', {
@@ -255,6 +270,11 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
                       Connected profile
                     </p>
                   )}
+                  {!canUnlink && (
+                    <p className="font-body-sm text-[11px] text-amber-400 font-medium">
+                      Can be unlinked after 14 days ({remainingDays} day{remainingDays === 1 ? '' : 's'} cooldown remaining).
+                    </p>
+                  )}
                 </div>
               ) : (
                 <p className="font-body-sm text-[11px] text-on-surface-variant leading-relaxed max-w-xl">
@@ -279,8 +299,16 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowConfirmModal(true)}
-                  className="flex-1 md:flex-initial px-4 h-9 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-full font-headline-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+                  disabled={!canUnlink}
+                  onClick={() => {
+                    if (!canUnlink) {
+                      triggerToast?.(`Discord account can only be unlinked 14 days after linking (${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining).`);
+                      return;
+                    }
+                    setShowConfirmModal(true);
+                  }}
+                  title={!canUnlink ? `Discord can only be unlinked 14 days after linking (${remainingDays} days remaining)` : 'Disconnect Discord'}
+                  className="flex-1 md:flex-initial px-4 h-9 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-rose-500 border border-rose-500/30 rounded-full font-headline-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
                   <span className="material-symbols-outlined text-sm">link_off</span>
                   <span>Disconnect</span>
@@ -325,6 +353,11 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
             <p className="font-body-sm text-xs text-on-surface-variant leading-relaxed bg-surface-container-low p-3 rounded-lg border border-outline-variant/20">
               Disconnecting removes the Discord identity record and compatibility link from Match District. You can reconnect anytime.
             </p>
+
+            <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-300 text-[11px] flex items-center gap-2">
+              <span className="material-symbols-outlined text-sm shrink-0">info</span>
+              <span>Security policy: Once linked, Discord accounts can only be unlinked after 14 days.</span>
+            </div>
 
             {currentUser?.password_set === false ? (
               <p className="text-xs text-amber-500">Confirm within 10 minutes of signing in. Another login method must remain connected.</p>

@@ -44,7 +44,20 @@ export default function GoogleConnectCard({ currentUser, providerIdentity, onUse
     callbackRef.current = handleCredential
   }, [handleCredential])
 
+  const linkedAt = providerIdentity?.linked_at || currentUser?.google_linked_at || null
+  const daysSinceLinked = linkedAt ? (Date.now() - new Date(linkedAt).getTime()) / (1000 * 60 * 60 * 24) : null
+  const canUnlink = currentUser?.can_unlink_google !== undefined
+    ? currentUser.can_unlink_google
+    : (daysSinceLinked === null || daysSinceLinked >= 14)
+  const remainingDays = currentUser?.google_unlink_remaining_days !== undefined
+    ? currentUser.google_unlink_remaining_days
+    : (daysSinceLinked !== null && daysSinceLinked < 14 ? Math.ceil(14 - daysSinceLinked) : 0)
+
   const handleUnlink = async () => {
+    if (!canUnlink) {
+      triggerToast?.(`Google account can only be unlinked 14 days after linking (${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining).`)
+      return
+    }
     if ((currentUser?.password_set !== false && !unlinkPassword) || isUnlinking) return
     setIsUnlinking(true)
     try {
@@ -135,6 +148,11 @@ export default function GoogleConnectCard({ currentUser, providerIdentity, onUse
           </p>
           {providerIdentity?.provider_email && <p className="mt-1 text-xs text-on-surface-variant">Linked Google email: {providerIdentity.provider_email}</p>}
           {providerIdentity?.linked_at && <p className="mt-1 text-[11px] text-on-surface-variant">Connected on {formatDateIST12h(providerIdentity.linked_at)} (IST)</p>}
+          {!canUnlink && (
+            <p className="mt-1 text-[11px] text-amber-400 font-medium">
+              Can be unlinked after 14 days ({remainingDays} day{remainingDays === 1 ? '' : 's'} remaining).
+            </p>
+          )}
         </div>
         {currentUser?.google_id ? (
           <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-500">Linked</span>
@@ -159,7 +177,21 @@ export default function GoogleConnectCard({ currentUser, providerIdentity, onUse
               </div>
             </div>
           ) : (
-            <button type="button" onClick={() => setIsUnlinkMode(true)} className="rounded-full border border-outline-variant px-4 h-9 text-xs font-semibold text-on-surface-variant hover:text-rose-500 whitespace-nowrap">Unlink Google</button>
+            <button
+              type="button"
+              disabled={!canUnlink}
+              onClick={() => {
+                if (!canUnlink) {
+                  triggerToast?.(`Google account can only be unlinked 14 days after linking (${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining).`)
+                  return
+                }
+                setIsUnlinkMode(true)
+              }}
+              title={!canUnlink ? `Can be unlinked after 14 days (${remainingDays} days remaining)` : 'Unlink Google'}
+              className="rounded-full border border-outline-variant px-4 h-9 text-xs font-semibold text-on-surface-variant hover:text-rose-500 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              Unlink Google
+            </button>
           )}
         </div>
       )}

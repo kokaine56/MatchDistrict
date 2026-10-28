@@ -141,6 +141,12 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
       triggerToast?.('The last remaining login method cannot be removed.')
       return
     }
+    const methodInfo = provider === 'google' ? methods?.google : methods?.discord
+    if (methodInfo && methodInfo.can_unlink === false) {
+      const days = methodInfo.remaining_days || 14
+      triggerToast?.(`${provider === 'google' ? 'Google' : 'Discord'} can only be unlinked 14 days after linking (${days} day${days === 1 ? '' : 's'} remaining).`)
+      return
+    }
     setModalError('')
     setConfirmPassword('')
     setDisconnectModal(provider)
@@ -232,15 +238,28 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
           </div>
         </div>
         {isGoogleConnected ? (
-          <button
-            type="button"
-            onClick={() => handleOpenDisconnect('google')}
-            disabled={isLastMethod}
-            title={isLastMethod ? 'The last remaining login method cannot be removed.' : 'Disconnect Google'}
-            className="px-4 h-9 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 disabled:pointer-events-none text-rose-400 text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-          >
-            <span className="material-symbols-outlined text-sm">link_off</span> Disconnect
-          </button>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenDisconnect('google')}
+              disabled={isLastMethod || methods?.google?.can_unlink === false}
+              title={
+                isLastMethod
+                  ? 'The last remaining login method cannot be removed.'
+                  : methods?.google?.can_unlink === false
+                    ? `Google can only be unlinked 14 days after linking (${methods.google.remaining_days} day${methods.google.remaining_days === 1 ? '' : 's'} remaining)`
+                    : 'Disconnect Google'
+              }
+              className="px-4 h-9 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-rose-400 text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-sm">link_off</span> Disconnect
+            </button>
+            {methods?.google?.can_unlink === false && (
+              <span className="text-[10px] text-amber-400 font-medium">
+                {methods.google.remaining_days}d cooldown remaining
+              </span>
+            )}
+          </div>
         ) : (
           <button
             type="button"
@@ -268,15 +287,28 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
           </div>
         </div>
         {isDiscordConnected ? (
-          <button
-            type="button"
-            onClick={() => handleOpenDisconnect('discord')}
-            disabled={isLastMethod}
-            title={isLastMethod ? 'The last remaining login method cannot be removed.' : 'Disconnect Discord'}
-            className="px-4 h-9 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-50 disabled:pointer-events-none text-rose-400 text-xs font-bold flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
-          >
-            <span className="material-symbols-outlined text-sm">link_off</span> Disconnect
-          </button>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenDisconnect('discord')}
+              disabled={isLastMethod || methods?.discord?.can_unlink === false}
+              title={
+                isLastMethod
+                  ? 'The last remaining login method cannot be removed.'
+                  : methods?.discord?.can_unlink === false
+                    ? `Discord can only be unlinked 14 days after linking (${methods.discord.remaining_days} day${methods.discord.remaining_days === 1 ? '' : 's'} remaining)`
+                    : 'Disconnect Discord'
+              }
+              className="px-4 h-9 rounded-full border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed text-rose-400 text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-sm">link_off</span> Disconnect
+            </button>
+            {methods?.discord?.can_unlink === false && (
+              <span className="text-[10px] text-amber-400 font-medium">
+                {methods.discord.remaining_days}d cooldown remaining
+              </span>
+            )}
+          </div>
         ) : (
           <button
             type="button"

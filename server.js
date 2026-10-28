@@ -252,6 +252,26 @@ function isValidImageBuffer(buffer) {
   return false;
 }
 
+const UNLINK_COOLDOWN_DAYS = 14;
+const UNLINK_COOLDOWN_MS = UNLINK_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+
+function getUnlinkCooldownStatus(linkedAt) {
+  if (!linkedAt) {
+    return { canUnlink: true, remainingDays: 0, canUnlinkAt: null, elapsedDays: null };
+  }
+  const linkedTime = new Date(linkedAt).getTime();
+  if (isNaN(linkedTime)) {
+    return { canUnlink: true, remainingDays: 0, canUnlinkAt: null, elapsedDays: null };
+  }
+  const canUnlinkAt = new Date(linkedTime + UNLINK_COOLDOWN_MS);
+  const diffMs = canUnlinkAt.getTime() - Date.now();
+  if (diffMs <= 0) {
+    return { canUnlink: true, remainingDays: 0, canUnlinkAt, elapsedDays: Math.floor((Date.now() - linkedTime) / (24 * 60 * 60 * 1000)) };
+  }
+  const remainingDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+  return { canUnlink: false, remainingDays, canUnlinkAt, elapsedDays: Math.floor((Date.now() - linkedTime) / (24 * 60 * 60 * 1000)) };
+}
+
 function publicUserRow(row) {
   if (!row) return null;
   const user = { ...row };
@@ -269,6 +289,15 @@ function publicUserRow(row) {
   user.banner = sanitizeImageUrlForDb(user.banner);
   user.orgImage = sanitizeImageUrlForDb(user.orgImage);
   user.orgBanner = sanitizeImageUrlForDb(user.orgBanner);
+
+  user.google_linked_at = row.google_linked_at || null;
+  user.discord_linked_at = row.discord_linked_at || null;
+  const googleCd = getUnlinkCooldownStatus(row.google_linked_at);
+  const discordCd = getUnlinkCooldownStatus(row.discord_linked_at);
+  user.can_unlink_google = googleCd.canUnlink;
+  user.google_unlink_remaining_days = googleCd.remainingDays;
+  user.can_unlink_discord = discordCd.canUnlink;
+  user.discord_unlink_remaining_days = discordCd.remainingDays;
   return user;
 }
 
@@ -720,13 +749,16 @@ async function initDb() {
     // Idempotent migrations for tournament_matches, tournament_rounds, etc.
     try {
       await runMigrationBatch(client, `
-        -- 0. Discord account linking columns on users and connections table
+        -- 0. Discord and Google account linking columns on users and connections table
         ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(50);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_user_id VARCHAR(50);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100);
         ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_linked_at TIMESTAMP WITH TIME ZONE;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS google_linked_at TIMESTAMP WITH TIME ZONE;
         CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id);
         CREATE INDEX IF NOT EXISTS idx_users_discord_user_id ON users(discord_user_id);
+        CREATE INDEX IF NOT EXISTS idx_users_google_linked_at ON users(google_linked_at);
+        CREATE INDEX IF NOT EXISTS idx_users_discord_linked_at ON users(discord_linked_at);
 
         CREATE TABLE IF NOT EXISTS user_discord_connections (
           user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -2494,8 +2526,8 @@ const server = http.createServer(async (req, res) => {
             for (let attempt = 0; attempt < 8 && !targetUser; attempt += 1) {
               const districtId = generateDistrictId();
               const insertRes = await registrationClient.query(
-                `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id, password_set, district_id)
-                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, false, $13)
+                `INSERT INTO users (id, uid, name, email, password, "gamerTag", role, roles, tier, "orgApplicationStatus", avatar, status, google_id, google_linked_at, password_set, district_id)
+                 VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), false, $13)
                  ON CONFLICT DO NOTHING
                  RETURNING *`,
                 [userUUID, userUUID, cleanName, googleEmail, gamerTag, 'player', ['user'], 'Amateur', 'none', avatarUrl, 'Active', googleSub, districtId]
@@ -2562,7 +2594,7 @@ const server = http.createServer(async (req, res) => {
         const identityClient = await pool.connect();
         try {
           await identityClient.query('BEGIN');
-          await identityClient.query('UPDATE users SET google_id = COALESCE(google_id, $1) WHERE id = $2', [googleSub, targetUser.id]);
+          await identityClient.query('UPDATE users SET google_id = COALESCE(google_id, $1), google_linked_at = COALESCE(google_linked_at, NOW()) WHERE id = $2', [googleSub, targetUser.id]);
           await storeProviderIdentity(identityClient, {
             userId: targetUser.id, provider: 'google', providerUserId: googleSub,
             providerEmail: googleEmail, emailVerified: true,
@@ -2911,7 +2943,7 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ success: false, error: 'PROVIDER_ALREADY_LINKED', message: 'This Google account is already linked to another Match District account.' }));
             return;
           }
-          await dbClient.query('UPDATE users SET google_id = $1 WHERE id = $2', [googleId, account.id]);
+          await dbClient.query('UPDATE users SET google_id = $1, google_linked_at = NOW() WHERE id = $2', [googleId, account.id]);
           await storeProviderIdentity(dbClient, {
             userId: account.id, provider: 'google', providerUserId: googleId,
             providerEmail: (claims.email || '').toLowerCase() || null, emailVerified: true,
@@ -2973,7 +3005,7 @@ const server = http.createServer(async (req, res) => {
         dbClient = await pool.connect();
         await dbClient.query('BEGIN');
         const result = await dbClient.query(
-          'SELECT id, google_id, discord_id, password, password_set FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          'SELECT id, google_id, google_linked_at, discord_id, password, password_set, created_at FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
           [authUser.id || authUser.uid]
         );
         const account = result.rows[0];
@@ -2983,6 +3015,33 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
           return;
         }
+        if (!account.google_id) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_LINKED', message: 'Google account is not linked.' }));
+          return;
+        }
+
+        // 14-day unlink lock rule: accounts can only be unlinked 14 days after being linked
+        let googleLinkedAt = account.google_linked_at;
+        if (!googleLinkedAt) {
+          const idRes = await dbClient.query("SELECT linked_at FROM auth_identities WHERE user_id = $1 AND provider = 'google' LIMIT 1", [account.id]);
+          googleLinkedAt = idRes.rows[0]?.linked_at || account.created_at;
+        }
+        const cooldown = getUnlinkCooldownStatus(googleLinkedAt);
+        if (!cooldown.canUnlink) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'UNLINK_COOLDOWN',
+            message: `Google account can only be unlinked 14 days after linking. You can unlink it in ${cooldown.remainingDays} day${cooldown.remainingDays === 1 ? '' : 's'}.`,
+            remainingDays: cooldown.remainingDays,
+            canUnlinkAt: cooldown.canUnlinkAt ? cooldown.canUnlinkAt.toISOString() : null,
+          }));
+          return;
+        }
+
         const hasPassword = account.password_set === true && Boolean(account.password);
         if (!hasPassword) {
           const recentLogin = Number.isFinite(Number(authUser.iat)) && Date.now() - Number(authUser.iat) * 1000 <= 10 * 60 * 1000;
@@ -3005,7 +3064,7 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ success: false, error: 'REAUTHENTICATION_REQUIRED', message: 'Enter your current password to confirm this change.' }));
           return;
         }
-        await dbClient.query('UPDATE users SET google_id = NULL WHERE id = $1', [account.id]);
+        await dbClient.query('UPDATE users SET google_id = NULL, google_linked_at = NULL WHERE id = $1', [account.id]);
         await dbClient.query("DELETE FROM auth_identities WHERE user_id = $1 AND provider = 'google'", [account.id]);
         await dbClient.query('COMMIT');
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -3097,7 +3156,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     }
     try {
       const userRes = await pool.query(
-        'SELECT id, email, password, password_set, google_id, discord_id FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1',
+        'SELECT id, email, password, password_set, google_id, google_linked_at, discord_id, discord_linked_at, created_at FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1',
         [authUser.id || authUser.uid]
       );
       const user = userRes.rows[0];
@@ -3124,6 +3183,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const isDiscordConnected = Boolean(discordIdentity || user.discord_id || discordConn?.connected);
       const discordName = discordIdentity?.display_name || discordConn?.global_name || discordConn?.username || (user.discord_id ? 'Connected' : null);
 
+      const googleLinkedAt = googleIdentity?.linked_at || user.google_linked_at || (user.google_id ? user.created_at : null);
+      const googleCooldown = getUnlinkCooldownStatus(googleLinkedAt);
+
+      const discordLinkedAt = user.discord_linked_at || discordConn?.connected_at || discordIdentity?.linked_at || null;
+      const discordCooldown = getUnlinkCooldownStatus(discordLinkedAt);
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
@@ -3134,14 +3199,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           },
           google: isGoogleConnected ? {
             email: googleEmail || user.email || '',
-            linked_at: googleIdentity?.linked_at || null,
+            linked_at: googleLinkedAt || null,
+            can_unlink: googleCooldown.canUnlink,
+            remaining_days: googleCooldown.remainingDays,
+            can_unlink_at: googleCooldown.canUnlinkAt ? googleCooldown.canUnlinkAt.toISOString() : null,
           } : null,
           discord: isDiscordConnected ? {
             name: discordName || 'Connected',
             username: discordConn?.username || '',
             display_name: discordConn?.global_name || discordName || '',
             avatar_url: discordConn?.avatar_url || discordIdentity?.avatar_url || null,
-            linked_at: discordIdentity?.linked_at || discordConn?.connected_at || null,
+            linked_at: discordLinkedAt || null,
+            can_unlink: discordCooldown.canUnlink,
+            remaining_days: discordCooldown.remainingDays,
+            can_unlink_at: discordCooldown.canUnlinkAt ? discordCooldown.canUnlinkAt.toISOString() : null,
           } : null,
         }
       }));
@@ -3892,7 +3963,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         dbClient = await pool.connect();
         await dbClient.query('BEGIN');
         const accountResult = await dbClient.query(
-          'SELECT id, password, password_set, google_id FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
+          'SELECT id, password, password_set, google_id, discord_id, discord_linked_at, created_at FROM users WHERE id = $1 OR uid = $1 ORDER BY (id = $1) DESC LIMIT 1 FOR UPDATE',
           [authUser.id || authUser.uid]
         );
         const account = accountResult.rows[0];
@@ -3900,6 +3971,36 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           await dbClient.query('ROLLBACK');
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'ACCOUNT_NOT_FOUND', message: 'Match District account not found.' }));
+          return;
+        }
+        if (!account.discord_id) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NOT_LINKED', message: 'Discord account is not connected.' }));
+          return;
+        }
+
+        // 14-day unlink lock rule: accounts can only be unlinked 14 days after being linked
+        let discordLinkedAt = account.discord_linked_at;
+        if (!discordLinkedAt) {
+          const dcRes = await dbClient.query('SELECT connected_at FROM user_discord_connections WHERE user_id = $1 LIMIT 1', [account.id]);
+          discordLinkedAt = dcRes.rows[0]?.connected_at;
+        }
+        if (!discordLinkedAt) {
+          const idRes = await dbClient.query("SELECT linked_at FROM auth_identities WHERE user_id = $1 AND provider = 'discord' LIMIT 1", [account.id]);
+          discordLinkedAt = idRes.rows[0]?.linked_at || account.created_at;
+        }
+        const cooldown = getUnlinkCooldownStatus(discordLinkedAt);
+        if (!cooldown.canUnlink) {
+          await dbClient.query('ROLLBACK');
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'UNLINK_COOLDOWN',
+            message: `Discord account can only be unlinked 14 days after linking. You can unlink it in ${cooldown.remainingDays} day${cooldown.remainingDays === 1 ? '' : 's'}.`,
+            remainingDays: cooldown.remainingDays,
+            canUnlinkAt: cooldown.canUnlinkAt ? cooldown.canUnlinkAt.toISOString() : null,
+          }));
           return;
         }
         const hasPassword = account.password_set === true && Boolean(account.password);
@@ -3971,6 +4072,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const row = statusRes.rows[0];
       const discordId = row.discord_id || row.discord_user_id || row.u_discord_id || null;
       const connected = Boolean(discordId);
+      const discordLinkedAt = connected ? (row.connected_at || row.discord_linked_at || null) : null;
+      const cooldown = getUnlinkCooldownStatus(discordLinkedAt);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
@@ -3978,7 +4081,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         discordId: connected ? discordId : null,
         username: connected ? (row.username || row.discord_username || null) : null,
         displayName: connected ? (row.global_name || row.username || row.discord_username || null) : null,
-        connectedAt: connected ? (row.connected_at || row.discord_linked_at || null) : null
+        connectedAt: discordLinkedAt,
+        canUnlink: cooldown.canUnlink,
+        remainingDays: cooldown.remainingDays,
+        canUnlinkAt: cooldown.canUnlinkAt ? cooldown.canUnlinkAt.toISOString() : null,
       }));
       return;
     } catch (err) {
