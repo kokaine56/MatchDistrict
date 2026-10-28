@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useUser } from '../UserContext.jsx';
 import { hasOrganizerRights } from '../utils/iamRoles.js';

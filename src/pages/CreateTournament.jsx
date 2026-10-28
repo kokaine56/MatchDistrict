@@ -1526,7 +1526,7 @@ export default function CreateTournament({ onNavigate, template }) {
       </div>
 
       {/* FOOTER NAVIGATION */}
-      <footer className="flex items-center justify-between px-4 sm:px-8 py-4 shrink-0 gap-3 border-t bg-white/80 dark:bg-[#07080C]/90 backdrop-blur-md sticky bottom-0 z-20 border-slate-200 dark:border-white/10">
+      <footer className="flex items-center justify-between px-4 sm:px-8 py-4 shrink-0 gap-3 border-t bg-white/80 dark:bg-[#07080C]/90 backdrop-blur-md sticky bottom-0 z-20 mb-[calc(var(--bottom-nav-h,64px)+env(safe-area-inset-bottom,0px))] lg:mb-0 border-slate-200 dark:border-white/10">
         <button
           type="button" onClick={handlePrevStep} disabled={createStep === 1}
           className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-30 bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:bg-slate-200 dark:hover:bg-white/10 active:scale-95 text-slate-700 dark:text-white"

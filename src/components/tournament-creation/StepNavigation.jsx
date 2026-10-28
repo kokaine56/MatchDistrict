@@ -2,7 +2,6 @@ import { motion } from 'framer-motion'
 
 export default function StepNavigation({
   currentStep,
-  totalSteps,
   onBack,
   onNext,
   onSaveDraft,
@@ -10,7 +9,6 @@ export default function StepNavigation({
   isSubmitting,
   isLastStep,
   navigationBlocked = false,
-  isEditMode = false,
   variant = 'fixed'
 }) {
   const isInline = variant === 'inline'
