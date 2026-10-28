@@ -6170,6 +6170,402 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     return;
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // 7d-bot. MatchDistrict Official Discord Bot API Endpoints
+  // Authenticated via MATCHDISTRICT_BOT_SECRET or Admin Session
+  // ─────────────────────────────────────────────────────────────
+  function verifyBotAuth(req) {
+    const secret = process.env.MATCHDISTRICT_BOT_SECRET || process.env.BOT_API_SECRET;
+    if (secret && typeof secret === 'string' && secret.trim().length > 0) {
+      let incoming = req.headers['x-bot-secret'] || req.headers['x-bot-token'];
+      if (!incoming && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        incoming = req.headers.authorization.slice(7).trim();
+      }
+      if (incoming && typeof incoming === 'string') {
+        const bufIncoming = Buffer.from(incoming.trim());
+        const bufSecret = Buffer.from(secret.trim());
+        if (bufIncoming.length === bufSecret.length && crypto.timingSafeEqual(bufIncoming, bufSecret)) {
+          return true;
+        }
+      }
+    }
+
+    // Also allow requests authenticated with an admin user session
+    const authUser = getAuthUser(req);
+    if (authUser && (authUser.role === 'admin' || (Array.isArray(authUser.roles) && authUser.roles.includes('admin')))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // GET /api/bot/tournaments (List tournaments for Discord Bot)
+  if (urlPath === '/api/bot/tournaments' && req.method === 'GET') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const statusParam = (parsedUrl.searchParams.get('status') || 'published').toLowerCase().trim();
+      const includeAll = statusParam === 'all';
+
+      let query = `
+        SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled",
+               t."registrationOpenDate", t."registrationCloseDate", t."startDate", t.created_at,
+               (SELECT COUNT(*) FROM tournament_registrations tr
+                WHERE tr.tournament_id = t.id
+                  AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($1)))) AS registered_teams_count
+        FROM tournaments t
+      `;
+      const EXCLUDED_REG_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+      const params = [EXCLUDED_REG_STATUSES];
+
+      if (!includeAll) {
+        query += ` WHERE (t."isDraft" = false OR t."isDraft" IS NULL) AND LOWER(COALESCE(t.status, '')) NOT IN ('archived', 'completed')`;
+      }
+
+      query += ` ORDER BY t.created_at DESC`;
+
+      const dbRes = await pool.query(query, params);
+      const now = new Date();
+
+      const tournaments = (dbRes.rows || []).map((t) => {
+        const slotsTotal = parseInt(t.slotsTotal, 10) || 100;
+        const slotsFilled = parseInt(t.slotsFilled, 10) || 0;
+        const regCount = parseInt(t.registered_teams_count, 10) || slotsFilled;
+
+        // Compute registration status
+        let regStatus = 'open';
+        const regOpen = t.registrationOpenDate ? new Date(t.registrationOpenDate) : null;
+        const regClose = t.registrationCloseDate ? new Date(t.registrationCloseDate) : null;
+
+        if (slotsFilled >= slotsTotal && slotsTotal > 0) {
+          regStatus = 'full';
+        } else if (regOpen && now < regOpen) {
+          regStatus = 'upcoming';
+        } else if (regClose && now > regClose) {
+          regStatus = 'closed';
+        }
+
+        const isDraft = Boolean(t.isDraft);
+        const pubStatus = isDraft ? 'draft' : (t.status || 'published');
+
+        return {
+          id: t.id,
+          title: t.title || 'Untitled Tournament',
+          game: t.game || 'Esports',
+          status: pubStatus,
+          is_draft: isDraft,
+          registration_status: regStatus,
+          slots_total: slotsTotal,
+          slots_filled: slotsFilled,
+          registered_teams_count: regCount,
+          start_date: t.startDate || null,
+          created_at: t.created_at,
+        };
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, count: tournaments.length, tournaments }));
+    } catch (err) {
+      console.warn('⚠️ [BOT API] Failed to fetch tournaments:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
+  // GET /api/bot/tournaments/:id/registrations (Fetch registered teams & Discord links for Discord Bot)
+  const botRegMatch = urlPath.match(/^\/api\/bot\/tournaments\/([^/]+)\/registrations$/);
+  if (botRegMatch && req.method === 'GET') {
+    if (!verifyBotAuth(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Missing or invalid bot authentication secret.' }));
+      return;
+    }
+
+    const tId = decodeURIComponent(botRegMatch[1]);
+    try {
+      // 1. Fetch tournament
+      const tRes = await pool.query(
+        'SELECT id, title, game, status, "isDraft", "slotsTotal", "slotsFilled" FROM tournaments WHERE id = $1',
+        [tId]
+      );
+      if (tRes.rows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        return;
+      }
+      const tournament = tRes.rows[0];
+
+      // 2. Fetch registrations
+      const regRes = await pool.query(
+        `SELECT id, tournament_id, user_id, team_name, captain, captain_uid, members, status, slot_number, created_at
+         FROM tournament_registrations
+         WHERE tournament_id = $1
+         ORDER BY created_at ASC`,
+        [tId]
+      );
+
+      // 3. Fetch bridged tournament teams & active members
+      const teamsRes = await pool.query(
+        `SELECT t.id AS team_id, t.team_name, t.leader_user_id, t.status AS team_status, t.registration_id,
+                m.user_id AS member_user_id, m.role AS member_role, m.status AS member_status
+         FROM tournament_teams t
+         LEFT JOIN tournament_team_members m ON m.tournament_team_id = t.id AND m.status = 'active'
+         WHERE t.tournament_id = $1`,
+        [tId]
+      );
+
+      const teamsByRegId = new Map();
+      const teamsByName = new Map();
+      for (const row of teamsRes.rows) {
+        const key = row.registration_id || row.team_id;
+        if (!teamsByRegId.has(key)) {
+          teamsByRegId.set(key, {
+            id: row.team_id,
+            team_name: row.team_name,
+            leader_user_id: row.leader_user_id,
+            status: row.team_status,
+            members: [],
+          });
+        }
+        if (row.member_user_id) {
+          teamsByRegId.get(key).members.push({
+            user_id: row.member_user_id,
+            role: row.member_role,
+            status: row.member_status,
+          });
+        }
+        if (row.team_name) {
+          teamsByName.set(row.team_name.toLowerCase().trim(), teamsByRegId.get(key));
+        }
+      }
+
+      // Collect user IDs
+      const userIds = new Set();
+      for (const reg of regRes.rows) {
+        if (reg.user_id) userIds.add(String(reg.user_id));
+        if (reg.captain_uid) userIds.add(String(reg.captain_uid));
+        const parsed = parseRosterMembers(reg.members);
+        for (const m of parsed) {
+          if (m.uid) userIds.add(String(m.uid));
+        }
+      }
+      for (const row of teamsRes.rows) {
+        if (row.leader_user_id) userIds.add(String(row.leader_user_id));
+        if (row.member_user_id) userIds.add(String(row.member_user_id));
+      }
+
+      // Query discord accounts
+      const discordMap = new Map();
+      if (userIds.size > 0) {
+        const discordRes = await pool.query(
+          `SELECT u.id AS user_id,
+                  COALESCE(udc.discord_id, u.discord_id, u.discord_user_id) AS discord_id,
+                  COALESCE(udc.username, u.discord_username) AS discord_username
+           FROM users u
+           LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
+           WHERE u.id = ANY($1)`,
+          [Array.from(userIds)]
+        );
+        for (const d of discordRes.rows) {
+          const rawId = (d.discord_id || '').trim();
+          const isValidSnowflake = /^\d{17,20}$/.test(rawId);
+          discordMap.set(String(d.user_id), {
+            discord_id: isValidSnowflake ? rawId : null,
+            discord_username: isValidSnowflake ? (d.discord_username || null) : null,
+            is_linked: isValidSnowflake,
+          });
+        }
+      }
+
+      const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'PAYMENT_REJECTED'];
+      const ELIGIBLE_STATUSES = ['approved', 'confirmed', 'verified_by_host', 'VERIFIED_BY_HOST', 'verified'];
+
+      const teams = [];
+      const seenDiscordIds = new Map();
+      let totalRegisteredTeams = 0;
+      let eligibleTeamsCount = 0;
+      let ineligibleTeamsCount = 0;
+      let eligibleLinkedMembersCount = 0;
+      let unlinkedMembersCount = 0;
+      let duplicateDiscordCount = 0;
+
+      for (const reg of regRes.rows) {
+        totalRegisteredTeams++;
+        const rawStatus = (reg.status || 'pending').toLowerCase().trim();
+        const bridgedTeam = teamsByRegId.get(reg.id) || teamsByName.get((reg.team_name || '').toLowerCase().trim());
+
+        const isExcluded = EXCLUDED_STATUSES.includes(rawStatus) || (bridgedTeam && bridgedTeam.status === 'disqualified');
+        const isEligible = !isExcluded && (ELIGIBLE_STATUSES.includes(rawStatus) || isEligibleRegistrationStatus(reg.status));
+
+        if (isEligible) {
+          eligibleTeamsCount++;
+        } else {
+          ineligibleTeamsCount++;
+        }
+
+        const teamMembers = [];
+        const seenUserIdsInTeam = new Set();
+
+        // Leader
+        const leaderUserId = reg.user_id || reg.captain_uid || bridgedTeam?.leader_user_id || null;
+        if (leaderUserId) {
+          seenUserIdsInTeam.add(String(leaderUserId));
+          const conn = discordMap.get(String(leaderUserId));
+          const isLinked = Boolean(conn?.is_linked);
+          const discordId = isLinked ? conn.discord_id : null;
+
+          if (isEligible) {
+            if (isLinked) {
+              eligibleLinkedMembersCount++;
+              if (seenDiscordIds.has(discordId)) {
+                duplicateDiscordCount++;
+              } else {
+                seenDiscordIds.set(discordId, reg.team_name);
+              }
+            } else {
+              unlinkedMembersCount++;
+            }
+          }
+
+          teamMembers.push({
+            user_id: leaderUserId,
+            name: (reg.captain || 'Team Leader').trim(),
+            role: 'leader',
+            discord_id: discordId,
+            discord_username: isLinked ? conn.discord_username : null,
+            is_linked: isLinked,
+          });
+        }
+
+        // Bridged members
+        if (bridgedTeam && Array.isArray(bridgedTeam.members)) {
+          for (const m of bridgedTeam.members) {
+            const mUid = String(m.user_id);
+            if (seenUserIdsInTeam.has(mUid)) continue;
+            seenUserIdsInTeam.add(mUid);
+
+            const conn = discordMap.get(mUid);
+            const isLinked = Boolean(conn?.is_linked);
+            const discordId = isLinked ? conn.discord_id : null;
+
+            if (isEligible) {
+              if (isLinked) {
+                eligibleLinkedMembersCount++;
+                if (seenDiscordIds.has(discordId)) {
+                  duplicateDiscordCount++;
+                } else {
+                  seenDiscordIds.set(discordId, reg.team_name);
+                }
+              } else {
+                unlinkedMembersCount++;
+              }
+            }
+
+            teamMembers.push({
+              user_id: mUid,
+              name: 'Member',
+              role: m.role || 'member',
+              discord_id: discordId,
+              discord_username: isLinked ? conn.discord_username : null,
+              is_linked: isLinked,
+            });
+          }
+        } else {
+          // Roster members fallback
+          const roster = parseRosterMembers(reg.members);
+          for (const rm of roster) {
+            if (rm.uid && !seenUserIdsInTeam.has(String(rm.uid))) {
+              const mUid = String(rm.uid);
+              seenUserIdsInTeam.add(mUid);
+              const conn = discordMap.get(mUid);
+              const isLinked = Boolean(conn?.is_linked);
+              const discordId = isLinked ? conn.discord_id : null;
+
+              if (isEligible) {
+                if (isLinked) {
+                  eligibleLinkedMembersCount++;
+                  if (seenDiscordIds.has(discordId)) {
+                    duplicateDiscordCount++;
+                  } else {
+                    seenDiscordIds.set(discordId, reg.team_name);
+                  }
+                } else {
+                  unlinkedMembersCount++;
+                }
+              }
+
+              teamMembers.push({
+                user_id: mUid,
+                name: rm.ign || 'Member',
+                role: 'member',
+                discord_id: discordId,
+                discord_username: isLinked ? conn.discord_username : null,
+                is_linked: isLinked,
+              });
+            } else if (!rm.uid) {
+              if (isEligible) unlinkedMembersCount++;
+              teamMembers.push({
+                user_id: null,
+                name: rm.ign || 'Member',
+                role: 'member',
+                discord_id: null,
+                discord_username: null,
+                is_linked: false,
+              });
+            }
+          }
+        }
+
+        const teamLinkedMembers = teamMembers.filter((m) => m.is_linked && m.discord_id);
+        const teamUnlinkedCount = teamMembers.filter((m) => !m.is_linked).length;
+
+        teams.push({
+          id: bridgedTeam?.id || reg.id,
+          registration_id: reg.id,
+          team_name: reg.team_name,
+          captain: reg.captain,
+          status: reg.status,
+          is_eligible: isEligible,
+          leader: teamMembers.find((m) => m.role === 'leader') || null,
+          members: teamMembers,
+          linked_members: teamLinkedMembers,
+          unlinked_count: teamUnlinkedCount,
+        });
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        success: true,
+        tournament: {
+          id: tournament.id,
+          title: tournament.title,
+          game: tournament.game,
+          status: tournament.isDraft ? 'draft' : (tournament.status || 'published'),
+        },
+        summary: {
+          total_registered_teams: totalRegisteredTeams,
+          eligible_teams_count: eligibleTeamsCount,
+          ineligible_teams_count: ineligibleTeamsCount,
+          eligible_linked_members_count: eligibleLinkedMembersCount,
+          unlinked_members_count: unlinkedMembersCount,
+          duplicate_discord_ids_count: duplicateDiscordCount,
+        },
+        teams,
+      }));
+    } catch (err) {
+      console.warn('⚠️ [BOT API] Failed to fetch registrations:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+    }
+    return;
+  }
+
   // 7e. Supabase Get All Tournaments Service
   if (urlPath === '/api/tournaments' && req.method === 'GET') {
     try {
