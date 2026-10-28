@@ -21,6 +21,7 @@ import TournamentTeamHub from '../components/TournamentTeamHub.jsx';
 import { computeSquadCapacity } from '../utils/squadRegistration.js';
 import { isSystemAdmin } from '../utils/iamRoles.js';
 import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
+import { getThemeConfig } from '../utils/themeEngine.js';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -526,7 +527,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         logo: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=100&q=80',
         winRate: 'N/A',
         rank: r.status === 'approved' || r.status === 'confirmed' ? 'Active Squad' : r.status === 'waitlisted' ? 'Waitlisted' : 'Pending Verification',
-        captain: r.captain.startsWith('@') ? r.captain : `@${r.captain}`,
+        captain: (r.captain && typeof r.captain === 'string') ? (r.captain.startsWith('@') ? r.captain : `@${r.captain}`) : '@Anonymous',
         verified: r.status === 'approved' || r.status === 'confirmed',
         status: r.status === 'approved' ? 'Approved' : r.status === 'confirmed' ? 'Confirmed' : r.status === 'rejected' ? 'Rejected' : r.status === 'waitlisted' ? 'Waitlisted' : r.status === 'pending_payment' ? 'Pending Payment' : r.status === 'cancelled' ? 'Cancelled' : r.status === 'expired' ? 'Expired' : 'Pending Approval',
         members: parsedMembers, user_id: r.user_id
@@ -848,6 +849,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const basePrize = parseInt(tourney?.prize_pool_amount || tourney?.basePrize || tourney?.prizePool || 0, 10) || 0;
   const sponsoredAmount = tourney?.totalSponsorContributions || tourney?.sponsorRevenue || 0;
   const totalPrize = basePrize + sponsoredAmount;
+  const prizeDisplay = totalPrize > 0 ? `₹${totalPrize.toLocaleString('en-IN')}` : (tourney?.prizePool ? formatIndianCurrency(tourney.prizePool) : 'TBA');
   const slotTotal = parseInt(tourney?.slotsTotal || slotsData?.slotsTotal, 10) || 128;
 
   // Derive canonical filled slot count consistent with Registered Teams tab
@@ -879,7 +881,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const formatLabel = (s) => (s || '').charAt(0).toUpperCase() + (s || '').slice(1);
 
   const startDateStr = tourney?.startDate ? new Date(tourney.startDate) : null;
-  const formattedDate = startDateStr ? formatDate(startDateStr.toISOString()) : '';
+  const formattedDate = (startDateStr && !isNaN(startDateStr.getTime())) ? formatDate(startDateStr.toISOString()) : '';
   const formattedTime = '';
 
   // Generate prize distribution split lists against total prize (base + sponsored)

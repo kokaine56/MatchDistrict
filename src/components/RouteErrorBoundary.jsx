@@ -9,9 +9,9 @@ export default class RouteErrorBoundary extends React.Component {
     this.state = { hasError: false, refCode: '' }
   }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(error) {
     const refCode = Math.random().toString(36).substring(2, 8).toUpperCase()
-    return { hasError: true, refCode }
+    return { hasError: true, refCode, error }
   }
 
   componentDidCatch(error, errorInfo) {
@@ -31,21 +31,27 @@ export default class RouteErrorBoundary extends React.Component {
   }
 
   handleTryAgain = () => {
-    this.setState({ hasError: false, refCode: '' })
+    this.setState({ hasError: false, refCode: '', error: null })
   }
 
   handleClearAndHome = () => {
-    this.setState({ hasError: false, refCode: '' })
+    this.setState({ hasError: false, refCode: '', error: null })
     window.location.href = '/'
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 bg-background text-on-background max-w-md mx-auto text-center">
+        <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 bg-background text-on-background max-w-lg mx-auto text-center">
           <p className="text-sm font-bold text-slate-800 dark:text-white">
             Something went wrong loading this page. Please try again.{this.state.refCode ? ` (Ref: ${this.state.refCode})` : ''}
           </p>
+          {this.state.error && (
+            <div className="w-full mt-2 p-3 bg-red-950/80 text-red-200 border border-red-800 rounded-lg text-xs font-mono text-left max-h-60 overflow-auto whitespace-pre-wrap">
+              <div className="font-bold text-red-300">{this.state.error?.message || String(this.state.error)}</div>
+              {this.state.error?.stack && <div className="mt-2 text-[10px] text-red-400 opacity-80">{this.state.error.stack}</div>}
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
             <button
               type="button"
