@@ -6243,7 +6243,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
       if (organizerParam) {
         params.push(organizerParam);
-        whereClauses.push(`(t.organizer_id = $${params.length} OR t.user_id = $${params.length})`);
+        whereClauses.push(`(t."orgId" = $${params.length} OR t.org_id = $${params.length})`);
       }
 
       if (whereClauses.length > 0) {
@@ -6917,7 +6917,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                    WHERE tr.tournament_id = t.id
                      AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
            FROM tournaments t
-           WHERE (t.organizer_id = $1 OR t.user_id = $1)
+           WHERE (t."orgId" = $1 OR t.org_id = $1)
              AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
            ORDER BY t.created_at DESC`,
           [organiser.id, EXCLUDED_REG_STATUSES]
@@ -7017,7 +7017,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
                  WHERE tr.tournament_id = t.id
                    AND (tr.status IS NULL OR NOT (LOWER(tr.status) = ANY($2)))) AS registered_teams_count
          FROM tournaments t
-         WHERE (t.organizer_id = $1 OR t.user_id = $1)
+         WHERE (t."orgId" = $1 OR t.org_id = $1)
            AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
          ORDER BY t.created_at DESC`,
         [organiserId, EXCLUDED_REG_STATUSES]
