@@ -14,7 +14,7 @@ import BottomSheetModal from '../components/BottomSheetModal.jsx'
 import { ROLES, hasRole, getUserRoles } from '../utils/iamRoles.js'
 import AdminLayout from '../components/admin/AdminLayout.jsx'
 import { ReviewKYCModal } from '../components/admin/ReviewKYCModal.jsx'
-import TournamentPaymentSettings from '../components/admin/TournamentPaymentSettings.jsx'
+import { RegistrationPaymentDetails } from '../components/admin/RegistrationPaymentDetails.jsx'
 import { UserGovernance } from '../components/admin/UserGovernance.jsx'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -197,7 +197,7 @@ export default function AdminDashboard({ onNavigate }) {
     if (ok && data?.success && data.theme) setThemeMode(data.theme)
   }
 
-  const fetchRegistrations = async (tournamentId) => {
+  const fetchRegistrations = useCallback(async (tournamentId) => {
     setRegistrationLoading(true)
     try {
       const token = await getAuthToken()
@@ -211,7 +211,13 @@ export default function AdminDashboard({ onNavigate }) {
     } finally {
       setRegistrationLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!activeTournament?.id) return undefined
+    const timer = setInterval(() => fetchRegistrations(activeTournament.id), 30000)
+    return () => clearInterval(timer)
+  }, [activeTournament?.id, fetchRegistrations])
 
   const handleConfirmRegistration = async (regId) => {
     try {
@@ -1112,7 +1118,6 @@ export default function AdminDashboard({ onNavigate }) {
         <div className="space-y-6 animate-in fade-in duration-300">
           {activeTournament ? (
             <>
-              <TournamentPaymentSettings tournament={activeTournament} />
               <RegistrationManager
                 tournament={activeTournament}
                 registrations={registrationData}
@@ -1915,8 +1920,6 @@ function RegistrationManager({
                 {registrations.map((reg) => {
                   const isPending = reg.status === 'pending' || reg.status === 'pending_payment' || reg.status === 'PENDING_PAYMENT_VERIFICATION';
                   const teamMembers = getTeamMembers(reg);
-                   const amountDisplay = reg.amount || (entryFee > 0 ? `₹${entryFee.toLocaleString('en-IN')}` : 'Free');
-                   const proofUrl = reg.proofImg || reg.screenshot_url;
                   return (
                     <tr key={reg.id} className="hover:bg-slate-100/30 dark:hover:bg-white/[0.01] transition-colors">
                       {/* Player / Team Column — teamName + full member roster */}
@@ -1981,32 +1984,9 @@ function RegistrationManager({
                         </div>
                       </td>
 
-                      {/* Payment Details Column — amount, UTR, View Screenshot */}
+                      {/* Payment Details Column */}
                       <td className="p-3 min-w-[210px] align-top">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-3.5 h-3.5 shrink-0 text-slate-400 dark:text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          <span className="text-[9px] uppercase tracking-wider text-slate-400 dark:text-white/30 w-[68px] shrink-0 whitespace-nowrap">Amount</span>
-                          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 select-all">
-                            {amountDisplay}
-                          </span>
-                        </div>
-                        {reg.transaction_id && (
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <svg className="w-3.5 h-3.5 shrink-0 text-slate-400 dark:text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                            <span className="text-[9px] uppercase tracking-wider text-slate-400 dark:text-white/30 w-[68px] shrink-0 whitespace-nowrap">UTR</span>
-                            <span className="text-[10px] font-mono text-slate-800 dark:text-white/80 select-all">{reg.transaction_id}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <svg className="w-3.5 h-3.5 shrink-0 text-blue-500 dark:text-blue-450" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                          <span className="text-[9px] uppercase tracking-wider text-blue-600 dark:text-blue-450 w-[68px] shrink-0 whitespace-nowrap font-semibold">Proof</span>
-                          <button
-                            onClick={() => setSelectedProof(proofUrl)}
-                            className="text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline w-max block"
-                          >
-                            View Screenshot
-                          </button>
-                        </div>
+                        <RegistrationPaymentDetails registration={reg} mode="table" onOpenProof={setSelectedProof} />
                       </td>
 
                       <td className="p-3 align-top">

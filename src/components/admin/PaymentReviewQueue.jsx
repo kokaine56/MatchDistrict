@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getAuthToken } from '../../utils/getAuthToken.js';
 import { useRefetchOnFocus } from '../../hooks/useRefetchOnFocus.js';
 import BottomSheetModal from '../BottomSheetModal.jsx';
+import TournamentPaymentSettings from './TournamentPaymentSettings.jsx';
+import { RegistrationPaymentDetails, PaymentProofBox } from './RegistrationPaymentDetails.jsx';
 
 const REJECTION_REASONS = [
   { code: 'payment_not_received', label: 'Payment not received in bank/UPI account' },
@@ -590,7 +592,7 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
             >
               <span>{t.label}</span>
               <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                activeTab === t.id ? 'bg-black/20 text-white' : 'bg-surface text-on-surface-variant'
+                activeTab === t.id ? 'bg-white text-slate-900' : 'bg-slate-100 dark:bg-slate-200 text-slate-800'
               }`}>
                 {t.count}
               </span>
@@ -636,6 +638,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
           )}
         </div>
       </div>
+
+      {role === 'admin' && !tournamentId && tournamentFilter && (
+        <TournamentPaymentSettings
+          key={tournamentFilter}
+          tournament={availableTournaments.find((item) => item.id === tournamentFilter) || { id: tournamentFilter, title: tournamentFilter }}
+        />
+      )}
 
       {/* Main Content Area */}
       {loading ? (
@@ -720,49 +729,8 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                     )}
                   </div>
 
-                  {/* Amount Due vs Paid & UTR */}
-                  <div className="grid grid-cols-2 gap-2 p-2.5 rounded-xl bg-surface-variant/25 text-xs">
-                    <div>
-                      <span className="text-[10px] text-on-surface-variant/70 block">Due vs Paid</span>
-                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                        <span className="font-semibold text-on-surface-variant">
-                          Due: {item.amount_due !== null ? `₹${item.amount_due}` : 'Not recorded'}
-                        </span>
-                        <span>•</span>
-                        <span className={`font-bold flex items-center gap-1 ${
-                          item.flags?.amount_mismatch
-                            ? 'text-rose-400'
-                            : isDueMatch
-                            ? 'text-emerald-400'
-                            : 'text-on-background'
-                        }`}>
-                          Paid: ₹{item.amount_paid !== null ? item.amount_paid : '0'}
-                          {isDueMatch && <span className="text-emerald-400 text-xs font-bold">✓</span>}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] text-on-surface-variant/70 block">UTR Reference</span>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="font-mono text-xs font-bold text-on-background truncate">
-                          {item.payment_utr || '—'}
-                        </span>
-                        {item.payment_utr && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); handleCopy(item.payment_utr, item.id); }}
-                            className="p-1 rounded hover:bg-surface text-on-surface-variant hover:text-on-background transition-colors"
-                            title="Copy UTR"
-                          >
-                            <span className="material-symbols-outlined text-[13px]">
-                              {copiedUtr === item.id ? 'check' : 'content_copy'}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  {/* Shared payment summary */}
+                  <RegistrationPaymentDetails registration={item} mode="queue-card" onOpenProof={(url) => { setProofModalUrl(url); setProofZoom(1); }} />
 
                   {/* Verification Flags */}
                   {hasFlags && (
@@ -793,30 +761,6 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                       )}
                     </div>
                   )}
-
-                  {/* Submission Timestamp & Proof Thumbnail */}
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-outline-variant/15 text-xs">
-                    <span className="text-[11px] text-on-surface-variant font-mono">
-                      {item.payment_submitted_at_ist || item.reg_created_at_ist}
-                    </span>
-
-                    {item.payment_proof_url ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setProofModalUrl(item.payment_proof_url);
-                          setProofZoom(1);
-                        }}
-                        className="rounded-full px-2.5 py-1 text-[11px] font-bold bg-surface-variant/40 hover:bg-surface-variant text-primary border border-outline-variant/30 flex items-center gap-1 transition-colors"
-                      >
-                        <span className="material-symbols-outlined text-[13px]">image</span>
-                        View Proof
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-on-surface-variant/50 italic">No proof attached</span>
-                    )}
-                  </div>
 
                   {/* Mobile Actions (Visible on small screens) */}
                   <div className="lg:hidden flex items-center gap-2 pt-2 border-t border-outline-variant/15 flex-wrap">
@@ -910,66 +854,13 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
                     )}
                   </div>
 
-                  {/* Large Proof Preview Container */}
-                  <div className="space-y-2">
-                    <span className="text-xs font-bold text-on-surface-variant block uppercase tracking-wider">
-                      Payment Screenshot Proof
-                    </span>
-                    {selectedItem.payment_proof_url ? (
-                      <div
-                        onClick={() => { setProofModalUrl(selectedItem.payment_proof_url); setProofZoom(1); }}
-                        className="relative group rounded-xl overflow-hidden border border-outline-variant/20 bg-black/40 max-h-[300px] flex items-center justify-center cursor-zoom-in"
-                      >
-                        <img
-                          src={selectedItem.payment_proof_url}
-                          alt="Proof preview"
-                          className="w-full object-contain max-h-[300px] group-hover:scale-102 transition-transform duration-200"
-                        />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1.5">
-                          <span className="material-symbols-outlined text-lg">zoom_in</span>
-                          Click to pinch-zoom / fullscreen
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-outline-variant/30 p-8 text-center text-on-surface-variant/50 text-xs">
-                        No screenshot proof attached.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Verification Key Points */}
+                  {/* Shared payment proof and detail components */}
+                  <PaymentProofBox registration={selectedItem} onOpenProof={(url) => { setProofModalUrl(url); setProofZoom(1); }} />
                   <div className="space-y-2 text-xs bg-surface-variant/20 p-3 rounded-xl">
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">Captain / Leader:</span>
-                      <strong className="text-on-background">{selectedItem.leader_name}</strong>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">District ID:</span>
-                      <strong className="font-mono text-on-background">{selectedItem.district_id || '—'}</strong>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">Payment App:</span>
-                      <strong className="text-on-background">{formatPaymentApp(selectedItem.payment_app)}</strong>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">Amount Due:</span>
-                      <strong className="text-on-background">
-                        {selectedItem.amount_due !== null ? `₹${selectedItem.amount_due}` : 'Not recorded'}
-                      </strong>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">Amount Paid:</span>
-                      <strong className={`font-bold ${selectedItem.flags?.amount_mismatch ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        ₹{selectedItem.amount_paid !== null ? selectedItem.amount_paid : '0'}
-                      </strong>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-on-surface-variant">Submitted At (IST):</span>
-                      <strong className="font-mono text-on-background">
-                        {selectedItem.payment_submitted_at_ist || selectedItem.reg_created_at_ist}
-                      </strong>
-                    </div>
+                    <div className="flex justify-between gap-3"><span className="text-on-surface-variant">Captain / Leader:</span><strong className="text-on-background">{selectedItem.leader_name || selectedItem.captain || '—'}</strong></div>
+                    <div className="flex justify-between gap-3"><span className="text-on-surface-variant">District ID:</span><strong className="font-mono text-on-background">{selectedItem.district_id || '—'}</strong></div>
                   </div>
+                  <RegistrationPaymentDetails registration={selectedItem} mode="detail" />
 
                   {/* Actions Bar */}
                   <div className="pt-2 border-t border-outline-variant/15 flex items-center gap-2.5">

@@ -115,6 +115,18 @@ export function formatIST12h(dateStr) {
   }
 }
 
+export function formatPaymentSubmittedAtIST(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${value.day} ${value.month} ${value.year}, ${value.hour}:${value.minute} ${value.dayPeriod.toUpperCase()} IST`;
+}
+
 /**
  * Formats elapsed duration into concise human-readable waiting time string.
  */
@@ -308,7 +320,12 @@ export async function listQueue(pool, user, options = {}) {
       )::int AS rejected
     FROM tournament_registrations r
     LEFT JOIN tournaments t ON t.id = r.tournament_id
-    LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+    LEFT JOIN LATERAL (
+      SELECT * FROM payment_submissions
+      WHERE registration_id = r.id
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) ps ON TRUE
     LEFT JOIN users u ON u.id = r.user_id
     WHERE ${scopeSql}
   `;
@@ -388,6 +405,7 @@ export async function listQueue(pool, user, options = {}) {
       r.tournament_id,
       r.user_id,
       r.team_name,
+      team_lookup.team_name AS linked_team_name,
       r.captain,
       r.captain_uid,
       r.slot_number,
@@ -423,7 +441,19 @@ export async function listQueue(pool, user, options = {}) {
       rev.name AS reviewer_name
     FROM tournament_registrations r
     LEFT JOIN tournaments t ON t.id = r.tournament_id
-    LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+    LEFT JOIN LATERAL (
+      SELECT * FROM payment_submissions
+      WHERE registration_id = r.id
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) ps ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT team_name FROM tournament_teams
+      WHERE registration_id = r.id
+         OR (registration_id IS NULL AND leader_user_id = r.user_id)
+      ORDER BY (registration_id = r.id) DESC, created_at DESC
+      LIMIT 1
+    ) team_lookup ON TRUE
     LEFT JOIN users u ON u.id = r.user_id
     LEFT JOIN users rev ON rev.id = ps.reviewed_by
     WHERE ${scopeSql} ${tabSql} ${searchSql} ${cursorSql}
@@ -506,7 +536,7 @@ export async function listQueue(pool, user, options = {}) {
       tournament_game: row.tournament_game || 'BGMI',
       tournament_org_name: row.tournament_org_name || 'Organizer',
       user_id: row.user_id,
-      team_name: row.team_name || 'Team',
+      team_name: row.team_name || row.linked_team_name || 'Team',
       captain: row.captain || 'Captain',
       captain_uid: row.captain_uid || null,
       district_id: row.district_id || null,
@@ -518,9 +548,11 @@ export async function listQueue(pool, user, options = {}) {
       amount_due: row.amount_due != null ? parseFloat(row.amount_due).toFixed(2) : null,
       amount_paid: row.amount_paid != null ? parseFloat(row.amount_paid).toFixed(2) : null,
       raw_utr: rawUtr,
+      payment_utr: rawUtr,
       normalized_utr: normUtr,
       payment_app: formatPaymentApp(row.ps_payment_app || row.reg_payment_app),
       proof_url: proofUrl,
+      payment_proof_url: proofUrl,
       rejection_reason: row.rejection_reason || null,
       admin_notes: row.admin_notes || null,
       reviewed_by: row.reviewed_by || null,
@@ -528,6 +560,8 @@ export async function listQueue(pool, user, options = {}) {
       reviewed_at: row.reviewed_at || null,
       created_at: row.reg_created_at,
       submitted_at: submittedAt,
+      payment_submitted_at_ist: formatPaymentSubmittedAtIST(submittedAt),
+      reg_created_at_ist: formatPaymentSubmittedAtIST(row.reg_created_at),
       waiting_time: waitingStr,
       age: ageStr,
       flags: {
@@ -580,6 +614,7 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
       r.tournament_id,
       r.user_id,
       r.team_name,
+      team_lookup.team_name AS linked_team_name,
       r.captain,
       r.captain_uid,
       r.slot_number,
@@ -615,7 +650,19 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
       rev.name AS reviewer_name
     FROM tournament_registrations r
     LEFT JOIN tournaments t ON t.id = r.tournament_id
-    LEFT JOIN payment_submissions ps ON ps.registration_id = r.id
+    LEFT JOIN LATERAL (
+      SELECT * FROM payment_submissions
+      WHERE registration_id = r.id
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) ps ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT team_name FROM tournament_teams
+      WHERE registration_id = r.id
+         OR (registration_id IS NULL AND leader_user_id = r.user_id)
+      ORDER BY (registration_id = r.id) DESC, created_at DESC
+      LIMIT 1
+    ) team_lookup ON TRUE
     LEFT JOIN users u ON u.id = r.user_id
     LEFT JOIN users rev ON rev.id = ps.reviewed_by
     WHERE r.id = $1 ${tidSql}
@@ -666,7 +713,7 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
     tournament_game: row.tournament_game || 'BGMI',
     tournament_org_name: row.tournament_org_name || 'Organizer',
     user_id: row.user_id,
-    team_name: row.team_name || 'Team',
+    team_name: row.team_name || row.linked_team_name || 'Team',
     captain: row.captain || 'Captain',
     captain_uid: row.captain_uid || null,
     district_id: row.district_id || null,
@@ -678,9 +725,11 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
     amount_due: row.amount_due != null ? parseFloat(row.amount_due).toFixed(2) : null,
     amount_paid: row.amount_paid != null ? parseFloat(row.amount_paid).toFixed(2) : null,
     raw_utr: rawUtr,
+    payment_utr: rawUtr,
     normalized_utr: normUtr,
     payment_app: formatPaymentApp(row.ps_payment_app || row.reg_payment_app),
     proof_url: proofUrl,
+    payment_proof_url: proofUrl,
     rejection_reason: row.rejection_reason || null,
     admin_notes: row.admin_notes || null,
     reviewed_by: row.reviewed_by || null,
@@ -688,6 +737,7 @@ export async function getItem(pool, user, { registrationId, tournamentId = null 
     reviewed_at: row.reviewed_at || null,
     created_at: row.reg_created_at,
     submitted_at: row.payment_submitted_at || row.reg_created_at,
+    payment_submitted_at_ist: formatPaymentSubmittedAtIST(row.payment_submitted_at || row.reg_created_at),
     waiting_time: formatWaitingTime(row.payment_submitted_at || row.reg_created_at),
     age: formatAge(row.reg_created_at),
     members: row.members ? (typeof row.members === 'string' ? JSON.parse(row.members) : row.members) : [],

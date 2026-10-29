@@ -79,7 +79,8 @@ import {
   normalizeUtr,
   normalizePaymentApp,
   isValidPaymentApp,
-  formatPaymentApp
+  formatPaymentApp,
+  formatPaymentSubmittedAtIST
 } from './server/paymentReviewService.js';
 import { userDisplayNameSql, userDisplayNameRawSql, formatUserDisplayName, maskUserEmail, sanitizeUserForPublic } from './server/userUtils.js';
 import { createAccountSecurity } from './server/accountSecurity.js';
@@ -14378,7 +14379,20 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
       }
-      const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC', [id]);
+      const dbRes = await pool.query(`
+        SELECT r.*, ps.utr_number AS payment_utr, ps.proof_url AS payment_proof_url,
+               ps.amount AS payment_amount_paid, ps.payment_app AS ps_payment_app,
+               ps.created_at AS payment_submitted_at
+        FROM tournament_registrations r
+        LEFT JOIN LATERAL (
+          SELECT * FROM payment_submissions
+          WHERE registration_id = r.id
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) ps ON TRUE
+        WHERE r.tournament_id = $1
+        ORDER BY r.created_at ASC
+      `, [id]);
 
       // Enrich registrations with squad stage & team details
       const teamsRes = await pool.query(`
@@ -14424,6 +14438,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
         return {
           ...reg,
+          team_name: reg.team_name || team?.team_name || null,
+          payment_submitted_at_ist: formatPaymentSubmittedAtIST(reg.payment_submitted_at || reg.created_at),
           stage: stageInfo.stage,
           stage_label: stageInfo.label,
           stage_message: stageInfo.message,
