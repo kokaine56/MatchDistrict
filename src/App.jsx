@@ -5,7 +5,6 @@ import Header from './components/Header.jsx'
 import MobileBottomNav from './components/MobileBottomNav.jsx'
 import LoadingScreen from './components/LoadingScreen.jsx'
 import RouteErrorBoundary from './components/RouteErrorBoundary.jsx'
-import BgmiCursor from './components/BgmiCursor.jsx'
 import { fetchJsonWithRetry } from './utils/api.js'
 import { useUser } from './UserContext.jsx'
 import { hasOrganizerRights, hasRole, getUserRoles, ROLES } from './utils/iamRoles.js'
@@ -674,8 +673,6 @@ function AppInner() {
       </div>
 
       {showMobileNavigation && <MobileBottomNav />}
-
-      <BgmiCursor />
     </div>
   )
 }
