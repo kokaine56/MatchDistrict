@@ -31,14 +31,20 @@ import gameValorant from '../assets/supported_games/valorant.png';
 const FALLBACK_IMG = 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80';
 
 function getValidDiscordInvite(...values) {
-  for (const value of values) {
+  for (let value of values) {
     if (typeof value !== 'string' || !value.trim()) continue;
+    let trimmed = value.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      trimmed = 'https://' + trimmed;
+    }
     try {
-      const url = new URL(value.trim());
+      const url = new URL(trimmed);
       const validHost = url.hostname === 'discord.gg' || url.hostname === 'www.discord.gg' ||
         url.hostname === 'discord.com' || url.hostname === 'www.discord.com';
-      const validPath = url.hostname.includes('discord.gg') ? /^\/[A-Za-z0-9-]+\/?$/.test(url.pathname) : /^\/invite\/[A-Za-z0-9-]+\/?$/.test(url.pathname);
-      if (url.protocol === 'https:' && validHost && validPath) return url.toString();
+      const validPath = url.hostname.includes('discord.gg')
+        ? /^\/[A-Za-z0-9-_]+\/?$/.test(url.pathname)
+        : /^\/invite\/[A-Za-z0-9-_]+\/?$/.test(url.pathname);
+      if (validHost && validPath) return url.toString();
     } catch { /* Ignore invalid invite values. */ }
   }
   return null;
@@ -312,11 +318,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [revealCountdown, setRevealCountdown] = useState('');
   const [revealTimeReached, setRevealTimeReached] = useState(false);
 
-  // Organizer profile & follow state
+  // Organizer profile state
   const [orgProfile, setOrgProfile] = useState(null);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [followerCount, setFollowerCount] = useState(0);
-  const [followLoading, setFollowLoading] = useState(false);
 
   // Countdown state
   const [countdown, setCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0, label: '', active: false, type: '' });
@@ -880,23 +883,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
 
   const handleCopyCredentials = (text, type) => { navigator.clipboard.writeText(text); triggerToast(`${type} copied to clipboard!`); };
 
-  const handleFollow = async () => {
-    if (!currentUser) { triggerToast('Sign in to follow this organizer.'); return; }
-    if (!tourney?.orgId) return;
-    setFollowLoading(true);
-    const prev = isFollowing;
-    const prevCount = followerCount;
-    setIsFollowing(!prev);
-    setFollowerCount(c => prev ? c - 1 : c + 1);
-    try {
-      const token = await getAuthToken();
-      const res = await fetch('/api/org/follow', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ orgId: tourney?.orgId }) });
-      const data = await res.json();
-      if (!data.success) { setIsFollowing(prev); setFollowerCount(prevCount); triggerToast(data.message || 'Failed to update follow.'); }
-      else triggerToast(prev ? 'Unfollowed organizer' : 'Following organizer');
-    } catch { setIsFollowing(prev); setFollowerCount(prevCount); triggerToast('Network error.'); }
-    finally { setFollowLoading(false); }
-  };
+
 
   // Decrypted credentials endpoint helper
   const fetchLobbyCredentials = useCallback(async () => {

@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useCallback } from 'react'
 import { motion } from 'framer-motion'
 import PrizeDistributionEditor from '../PrizeDistributionEditor'
 import { OptimizedInput } from '../../OptimizedInput'
@@ -9,16 +9,7 @@ export default function Step4PrizePool({ data, onChange, errors, userTier, onNav
   }, [data, onChange])
 
   const totalSlots = parseInt(data.slotsTotal) || 0
-  const entryFee = parseInt(data.entry_fee_amount) || 0
-  const orgPct = Math.min(parseInt(data.organizer_fee_pct) || 0, 5)
-
-  const sponsorContributions = useMemo(() => {
-    return (Array.isArray(data.sponsors) ? data.sponsors : [])
-      .filter((s) => s.status === 'approved')
-      .reduce((sum, s) => sum + (s.amount || 0), 0)
-  }, [data.sponsors])
-
-  const prizePoolAmount = Number(data.prize_pool_amount) || 0
+  const killRewardPerKill = parseInt(data.kill_reward_per_kill) || 0
 
   return (
     <motion.div

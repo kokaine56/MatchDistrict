@@ -1004,6 +1004,7 @@ function RegistrationManager({
   const registrations = propRegistrations || []
 
   const status = tournament.isDraft ? 'draft' : tournament.status || 'draft'
+  const entryFee = parseInt(tournament.entry_fee_amount) || 0
   const slotsTotal = parseInt(tournament.slotsTotal) || 0
   const confirmedCount = registrations.filter(r => r.status === 'confirmed' || r.status === 'approved').length
   const pendingCount = registrations.filter(r => r.status === 'pending' || r.status === 'pending_payment').length

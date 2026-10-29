@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAuthToken } from '../../utils/getAuthToken.js';
 import { useRefetchOnFocus } from '../../hooks/useRefetchOnFocus.js';
@@ -1049,9 +1049,10 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
             <button
               type="button"
               onClick={() => flagWarningItem && executeApprove(flagWarningItem.id, flagWarningNote)}
-              className="rounded-full px-5 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-black transition-colors"
+              disabled={actionLoadingId === flagWarningItem?.id}
+              className="rounded-full px-5 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-black transition-colors disabled:opacity-50"
             >
-              Approve Anyway
+              {actionLoadingId === flagWarningItem?.id ? 'Approving…' : 'Approve Anyway'}
             </button>
           </div>
         }
@@ -1107,10 +1108,10 @@ export default function PaymentReviewQueue({ role = 'admin', tournamentId = null
             <button
               type="button"
               onClick={executeReject}
-              disabled={rejectReason === 'other' && !rejectNote.trim()}
+              disabled={(rejectReason === 'other' && !rejectNote.trim()) || actionLoadingId === rejectingItem?.id}
               className="rounded-full px-5 py-2 text-xs font-bold bg-rose-500 hover:bg-rose-600 text-white transition-colors disabled:opacity-50"
             >
-              Confirm Rejection
+              {actionLoadingId === rejectingItem?.id ? 'Rejecting…' : 'Confirm Rejection'}
             </button>
           </div>
         }

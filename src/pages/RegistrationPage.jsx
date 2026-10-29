@@ -11,7 +11,6 @@ import { uploadImage } from '../utils/imagekitUpload.js'
 import GameIcon from '../components/GameIcon'
 import { normalizeGameName } from '../utils/gameUtils.js'
 
-const PAYMENT_APPS = ['PhonePe', 'Google Pay', 'Paytm', 'BHIM', 'Other']
 
 const INPUT_BASE =
   'w-full bg-white/5 border rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none transition-colors'
@@ -148,6 +147,8 @@ function PaymentAppIcon({ id, name, className = 'w-6 h-6' }) {
     'phone pe': ['/payment-brand-assets/phonepe-logo.svg', 'PhonePe official logo'],
     paytm: ['/payment-brand-assets/paytm-brand.png', 'Paytm official logo'],
     bhim: ['/payment-brand-assets/bhim-logo.svg', 'BHIM official logo'],
+    upi: ['/payment-brand-assets/upi-logo.svg', 'UPI official logo'],
+    'upi app': ['/payment-brand-assets/upi-logo.svg', 'UPI official logo'],
   }
   const asset = assets[key]
   if (asset) return <img src={asset[0]} alt={asset[1]} className={`${className} object-contain`} />
@@ -1133,7 +1134,7 @@ function RegistrationPage({ onNavigate }) {
   }
 
   if (step === 'payment') {
-    const paymentUpiId = tourney.payment_upi_id || 'matchdistrict@upi'
+    const paymentUpiId = tourney.payment_upi_id || tourney.upi_id || 'matchdistrict@upi'
     const upiLink = `upi://pay?pa=${encodeURIComponent(paymentUpiId)}&pn=Match%20District&am=${entryFee}&cu=INR&tn=${encodeURIComponent(tourney.title)}`
 
     const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
@@ -1241,13 +1242,16 @@ function RegistrationPage({ onNavigate }) {
           <div className="space-y-6">
             {/* UPI Details & QR Code Redesign */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
-              <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Pay via UPI</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Pay via UPI</h2>
+                <img src="/payment-brand-assets/upi-logo.svg" alt="UPI official logo" className="h-5 w-auto object-contain" />
+              </div>
               <div className="bg-white/5 rounded-xl p-6 text-center space-y-4 flex flex-col items-center">
                 
                 {/* QR Code Container */}
                 <div className="bg-white p-3 rounded-2xl shadow-[0_0_25px_rgba(59,130,246,0.2)] border border-white/20 hover:scale-102 transition-transform duration-300">
                   <img 
-                    src={tourney.payment_qr_image_url || `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiLink)}`}
+                    src={tourney.payment_qr_image_url || tourney.payment_qr_url || tourney.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiLink)}`}
                     alt="Scan to Pay"
                     className="w-[180px] h-[180px] block"
                   />

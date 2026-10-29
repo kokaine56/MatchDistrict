@@ -7268,8 +7268,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const tournamentId = decodeURIComponent(adminTournamentPaymentMatch[1]);
       try {
         const payload = JSON.parse(body || '{}');
-        const qrUrl = payload.payment_qr_image_url === undefined ? undefined : String(payload.payment_qr_image_url || '').trim();
-        const upiId = payload.payment_upi_id === undefined ? undefined : String(payload.payment_upi_id || '').trim();
+        const rawQr = payload.payment_qr_image_url !== undefined ? payload.payment_qr_image_url : payload.payment_qr_url;
+        const rawUpi = payload.payment_upi_id !== undefined ? payload.payment_upi_id : payload.upi_id;
+        const qrUrl = rawQr === undefined ? undefined : String(rawQr || '').trim();
+        const upiId = rawUpi === undefined ? undefined : String(rawUpi || '').trim();
         if (qrUrl !== undefined && qrUrl && (!/^https:\/\//i.test(qrUrl) || qrUrl.length > 2048)) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_QR_URL', message: 'QR image must be a valid HTTPS URL.' }));
@@ -7280,13 +7282,26 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: 'INVALID_UPI_ID', message: 'UPI ID must be 255 characters or fewer.' }));
           return;
         }
+        const setClauses = [];
+        const updateParams = [];
+        if (qrUrl !== undefined) {
+          updateParams.push(qrUrl);
+          setClauses.push(`payment_qr_image_url = ${updateParams.length}`);
+        }
+        if (upiId !== undefined) {
+          updateParams.push(upiId);
+          setClauses.push(`payment_upi_id = ${updateParams.length}`);
+        }
+        if (setClauses.length === 0) {
+          const curRes = await pool.query('SELECT payment_qr_image_url, payment_upi_id FROM tournaments WHERE id = $1', [tournamentId]);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, settings: curRes.rows[0] || {} }));
+          return;
+        }
+        updateParams.push(tournamentId);
         const result = await pool.query(
-          `UPDATE tournaments SET
-             payment_qr_image_url = COALESCE($1, payment_qr_image_url),
-             payment_upi_id = COALESCE($2, payment_upi_id)
-           WHERE id = $3
-           RETURNING payment_qr_image_url, payment_upi_id`,
-          [qrUrl, upiId, tournamentId]
+          `UPDATE tournaments SET ${setClauses.join(', ')} WHERE id = ${updateParams.length} RETURNING payment_qr_image_url, payment_upi_id`,
+          updateParams
         );
         if (!result.rows.length) {
           res.writeHead(404, { 'Content-Type': 'application/json' });

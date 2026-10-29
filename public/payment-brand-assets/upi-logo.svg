@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 52" fill="none">
+  <!-- NPCI UPI Official Dual Angle Chevrons -->
+  <g transform="translate(4, 4)">
+    <!-- Left Chevron: Saffron/Orange #F47920 -->
+    <path d="M22 2L4 42H13L31 2H22Z" fill="#F47920"/>
+    <!-- Right Chevron: Green #0F753A -->
+    <path d="M36 2L23 31L17 42H26L45 2H36Z" fill="#0F753A"/>
+    <!-- Letter U -->
+    <path d="M52 10V30C52 36.5 56.5 41 63 41C69.5 41 74 36.5 74 30V10H68V30C68 33.5 65.5 35.5 63 35.5C60.5 35.5 58 33.5 58 30V10H52Z" fill="#FFFFFF"/>
+    <!-- Letter P -->
+    <path d="M82 10H97C104 10 108 14 108 20.5C108 27 104 31 97 31H88V41H82V10ZM88 15.5V25.5H96.5C100 25.5 102 23.5 102 20.5C102 17.5 100 15.5 96.5 15.5H88Z" fill="#FFFFFF"/>
+    <!-- Letter I -->
+    <path d="M116 10H122V41H116V10Z" fill="#FFFFFF"/>
+  </g>
+</svg>
