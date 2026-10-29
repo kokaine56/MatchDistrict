@@ -87,6 +87,40 @@ import { createAccountSecurity } from './server/accountSecurity.js';
 import { attachResolvedAvatars } from './server/avatarResolver.js';
 import { normalizeIndianMobile } from './server/accountRules.js';
 
+const INJECTED_ESPORTS_TEAM_NAMES = Object.freeze([
+  'TRYTAN ESPORTS',
+  'TEAM FORSAKEN',
+  'Team REAPERZONE',
+  'SHOGUN',
+  'TEAM MIGHTY',
+  'Golden Gliders',
+  'Alfred Prediction eSports',
+  'Team Paradise eSports',
+  'Team Zenos',
+  'Team Hacker Esports',
+  'WARGODS ESPORTS',
+  'TEAM Z7PRIME',
+  'Haryana Warriors',
+  'TEAM POISONUS ESPORTS',
+  'Team Zero Gravity',
+  'Team NOXARQ',
+  'Team guardians',
+  'NEMESIS ESPORTS',
+  'TEAM RAGE',
+  'Arc8 Esports',
+  'ETERNIX ESPORTS',
+  'Elite Falcons',
+  'Team demonx eSports',
+  'team white rage',
+  'MEGNITE',
+  'Team ZEROFRAME',
+  'ENDLESS TEMPEST ESPORTS',
+  'Team Alpha Nemesis',
+  'TEAM ASHENBORN ESPORTS',
+  'Fearless Legends',
+  'TNR eSports'
+]);
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9141,6 +9175,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
     try {
       const authUser = getAuthUser(req);
       if (!requireOrganizer(req, res, authUser)) return;
+      const organizerRes = await pool.query('SELECT role, roles FROM users WHERE id = $1 OR uid = $1 LIMIT 1', [authUser.id]);
+      const organizerRecord = organizerRes.rows[0] || {};
+      const organizerRoles = [
+        ...(Array.isArray(organizerRecord.roles) ? organizerRecord.roles : []),
+        organizerRecord.role
+      ].filter(Boolean).map(role => String(role).toLowerCase());
       const dbRes = await pool.query(`
         SELECT t.*,
           u.tier AS "orgTier", u."orgName" AS "userOrgName", u.name AS "userName",
@@ -9165,7 +9205,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         return item;
       });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, tournaments }));
+      res.end(JSON.stringify({ success: true, tournaments, verifiedOrganizer: organizerRoles.includes('verified organizer') }));
     } catch (err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Fetch organiser tournaments failed:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -9545,7 +9585,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         }
         const bodyData = JSON.parse(body);
         const newStatus = (bodyData.status || '').toLowerCase();
-        const currentStatus = (t.status || '').toLowerCase();
+        const currentStatus = (t.status || 'upcoming').toLowerCase();
 
         // Validate transitions
         const LIVE_ALLOWED_FROM = ['upcoming', 'open', 'registration_open', 'closed', 'registration_closed'];
@@ -9570,17 +9610,41 @@ function validateTournamentSocialUrl(platform, rawUrl) {
             res.end(JSON.stringify({ success: false, error: 'INVALID_TRANSITION', message: 'Tournament must be past registration closed state before going live.' }));
             return;
           }
+        } else if (newStatus === 'non-live') {
+          if (currentStatus !== 'live') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'NOT_LIVE', message: 'Tournament is not currently live.' }));
+            return;
+          }
+          if (t.finalized_at) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'CANNOT_MODIFY', message: 'A finalized tournament cannot be changed.' }));
+            return;
+          }
+          const priorStatus = (t.status_before_live || '').toLowerCase();
+          const restoredStatus = LIVE_ALLOWED_FROM.includes(priorStatus) ? priorStatus : null;
+          await pool.query(
+            'UPDATE tournaments SET status = $1, status_before_live = NULL, live_disabled_by_organizer = true WHERE id = $2',
+            [restoredStatus, id]
+          );
+          console.log(`\n🏆 [MATCH DISTRICT TOURNAMENT] Status updated: ${id} → ${restoredStatus} (non-live by ${authUser.email})\n`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, status: restoredStatus, message: 'Tournament marked as non-live.' }));
+          return;
         } else if (newStatus === 'completed') {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'FINALIZATION_REQUIRED', message: 'Use the validated tournament finalization action to mark this tournament completed.' }));
           return;
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Invalid status. Use "live".' }));
+          res.end(JSON.stringify({ success: false, error: 'INVALID_STATUS', message: 'Invalid status. Use "live" or "non-live".' }));
           return;
         }
 
-        await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', [newStatus, id]);
+        await pool.query(
+          'UPDATE tournaments SET status_before_live = $1, live_disabled_by_organizer = false, status = $2 WHERE id = $3',
+          [currentStatus, newStatus, id]
+        );
         console.log(`\n🏆 [MATCH DISTRICT TOURNAMENT] Status updated: ${id} → ${newStatus} (by ${authUser.email})\n`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, status: newStatus, message: `Tournament marked as ${newStatus}.` }));
@@ -18438,6 +18502,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
     });
 
     req.on('end', async () => {
+      let injectionClient = null;
+      let injectionTransactionOpen = false;
       try {
         const authUser = getAuthUser(req);
         if (!authUser || !hasRole(authUser, ROLES.ADMIN)) {
@@ -18470,9 +18536,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           return;
         }
 
-        // Validate tournament existence
-        const tRes = await pool.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", status FROM tournaments WHERE id = $1',
+        // Serialize injections for a tournament so parallel requests cannot reuse names or slots.
+        injectionClient = await pool.connect();
+        await injectionClient.query('BEGIN');
+        injectionTransactionOpen = true;
+        const tRes = await injectionClient.query(
+          'SELECT id, title, "slotsTotal", "slotsFilled", status FROM tournaments WHERE id = $1 FOR UPDATE',
           [tournamentId]
         );
         if (tRes.rows.length === 0) {
@@ -18485,8 +18554,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         const slotsTotal = parseInt(tournament.slotsTotal, 10) || 128;
 
         // Query existing registrations to ensure no duplicate slot numbers or IDs
-        const existingRegsRes = await pool.query(
-          'SELECT id, slot_number FROM tournament_registrations WHERE tournament_id = $1',
+        const existingRegsRes = await injectionClient.query(
+          'SELECT id, slot_number, team_name FROM tournament_registrations WHERE tournament_id = $1',
           [tournamentId]
         );
         const existingCount = existingRegsRes.rows.length;
@@ -18504,7 +18573,14 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         }
 
         // Clamp to remaining slots so total registrations never exceed slotsTotal
-        const slotsToInject = Math.min(requestedSlots, remainingSlots);
+        const injectedTeamNames = new Set(existingRegsRes.rows.map(registration => String(registration.team_name || '').trim().toLocaleLowerCase('en-US')));
+        const availableTeamNames = INJECTED_ESPORTS_TEAM_NAMES.filter(name => !injectedTeamNames.has(name.toLocaleLowerCase('en-US')));
+        const slotsToInject = Math.min(requestedSlots, remainingSlots, availableTeamNames.length);
+        if (slotsToInject <= 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NO_UNIQUE_TEAM_NAMES', message: 'All supplied esports team names are already registered in this tournament.' }));
+          return;
+        }
 
         const occupiedSlots = new Set(
           existingRegsRes.rows
@@ -18521,10 +18597,10 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         let candidateSlot = 1;
 
         for (let i = 0; i < slotsToInject; i++) {
-          const teamSeq = existingCount + i + 1;
+          const teamName = availableTeamNames[i];
           const regId = `REG-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
           const userId = `USR-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
-          const leaderIgn = `TestLeader_${teamSeq}`;
+          const leaderIgn = `TestLeader_${i + 1}`;
 
           // Find next unoccupied slot within capacity (1..slotsTotal)
           while (occupiedSlots.has(candidateSlot) && candidateSlot <= slotsTotal) {
@@ -18541,17 +18617,17 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           const regStatus = 'approved';
 
           const members = JSON.stringify([
-            { role: 'Leader', ign: leaderIgn, in_game_id: `999${teamSeq}1` },
-            { role: 'Member', ign: `TestAssault_${teamSeq}`, in_game_id: `999${teamSeq}2` },
-            { role: 'Member', ign: `TestSniper_${teamSeq}`, in_game_id: `999${teamSeq}3` },
-            { role: 'Member', ign: `TestSupport_${teamSeq}`, in_game_id: `999${teamSeq}4` }
+            { role: 'Leader', ign: leaderIgn, in_game_id: `999${i + 1}1` },
+            { role: 'Member', ign: `TestAssault_${i + 1}`, in_game_id: `999${i + 1}2` },
+            { role: 'Member', ign: `TestSniper_${i + 1}`, in_game_id: `999${i + 1}3` },
+            { role: 'Member', ign: `TestSupport_${i + 1}`, in_game_id: `999${i + 1}4` }
           ]);
 
           testRegistrations.push({
             id: regId,
             tournament_id: tournamentId,
             user_id: userId,
-            team_name: `[TEST] Squad ${teamSeq}`,
+            team_name: teamName,
             captain: leaderIgn,
             captain_uid: `UID-TEST-${now}-${i + 1}`,
             members,
@@ -18560,7 +18636,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
             transaction_id: `TXN-TEST-${batchTag}-${i + 1}`,
             payment_id: `PAY-TEST-${batchTag}-${i + 1}`,
             payment_app: 'TEST',
-            email: `test_squad_${teamSeq}@test.matchdistrict.local`,
+            email: `test_squad_${i + 1}@test.matchdistrict.local`,
             phone: '9999999999',
             amount_due: '0.00',
             is_test: true,
@@ -18571,10 +18647,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         }
 
         // Insert into database in batches using server connection pool
-        const client = await pool.connect();
-        try {
-          await client.query('BEGIN');
-          const hasCols = await hasTestProvenanceColumns(client);
+          const hasCols = await hasTestProvenanceColumns(injectionClient);
+          if (!hasCols) {
+            res.writeHead(503, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'TEST_PROVENANCE_UNAVAILABLE', message: 'Development injection is disabled until test-registration provenance columns are available.' }));
+            return;
+          }
           const CHUNK_SIZE = 100;
           for (let c = 0; c < testRegistrations.length; c += CHUNK_SIZE) {
             const chunk = testRegistrations.slice(c, c + CHUNK_SIZE);
@@ -18582,24 +18660,23 @@ function validateTournamentSocialUrl(platform, rawUrl) {
             const params = [];
             let pIdx = 1;
 
-            if (hasCols) {
-              for (const r of chunk) {
-                valueRows.push(`(
+            for (const r of chunk) {
+              valueRows.push(`(
                   $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
                   $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
                   $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
                   1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                   $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}
-                )`);
-                params.push(
-                  r.id, r.tournament_id, r.user_id, r.team_name, r.captain,
-                  r.captain_uid, r.members, r.status, r.slot_number, r.transaction_id,
-                  r.payment_id, r.payment_app, r.email, r.phone, r.amount_due,
-                  r.is_test, r.test_batch_id, r.injected_by, r.injected_at
-                );
-              }
+              )`);
+              params.push(
+                r.id, r.tournament_id, r.user_id, r.team_name, r.captain,
+                r.captain_uid, r.members, r.status, r.slot_number, r.transaction_id,
+                r.payment_id, r.payment_app, r.email, r.phone, r.amount_due,
+                r.is_test, r.test_batch_id, r.injected_by, r.injected_at
+              );
+            }
 
-              const insertSql = `
+            const insertSql = `
                 INSERT INTO tournament_registrations (
                   id, tournament_id, user_id, team_name, captain,
                   captain_uid, members, status, slot_number, transaction_id,
@@ -18608,37 +18685,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
                   is_test, test_batch_id, injected_by, injected_at
                 ) VALUES ${valueRows.join(', ')}
               `;
-              await client.query(insertSql, params);
-            } else {
-              for (const r of chunk) {
-                valueRows.push(`(
-                  $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
-                  $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
-                  $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++}, $${pIdx++},
-                  1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-                )`);
-                params.push(
-                  r.id, r.tournament_id, r.user_id, r.team_name, r.captain,
-                  r.captain_uid, r.members, r.status, r.slot_number, r.transaction_id,
-                  r.payment_id, r.payment_app, r.email, r.phone, r.amount_due
-                );
-              }
-
-              const insertSql = `
-                INSERT INTO tournament_registrations (
-                  id, tournament_id, user_id, team_name, captain,
-                  captain_uid, members, status, slot_number, transaction_id,
-                  payment_id, payment_app, email, phone, amount_due,
-                  version, created_at, updated_at
-                ) VALUES ${valueRows.join(', ')}
-              `;
-              await client.query(insertSql, params);
-            }
+            await injectionClient.query(insertSql, params);
           }
 
           // Record injection event in admin_action_log
           const auditId = `AAL-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-          await client.query(`
+          await injectionClient.query(`
             INSERT INTO admin_action_log (id, admin_id, action, action_type, target_type, target_id, details, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
           `, [
@@ -18656,13 +18708,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
             })
           ]);
 
-          await client.query('COMMIT');
-        } catch (dbErr) {
-          await client.query('ROLLBACK');
-          throw dbErr;
-        } finally {
-          client.release();
-        }
+          await injectionClient.query('COMMIT');
+          injectionTransactionOpen = false;
 
         // Reconcile slots, groups, and slotsFilled counts
         await reconcileTournamentSlots(pool, tournamentId);
@@ -18672,7 +18719,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          message: `Successfully injected ${testRegistrations.length} registration${testRegistrations.length === 1 ? '' : 's'}. Tournament capacity is now ${existingCount + testRegistrations.length}/${slotsTotal} slots.`,
+          message: `Successfully injected ${testRegistrations.length} registration${testRegistrations.length === 1 ? '' : 's'} using unique esports team names. Tournament capacity is now ${existingCount + testRegistrations.length}/${slotsTotal} slots.${testRegistrations.length < requestedSlots ? ` Only ${testRegistrations.length} unique names or capacity slots were available.` : ''}`,
           injectedCount: testRegistrations.length,
           slotsTotal,
           slotsFilled: existingCount + testRegistrations.length,
@@ -18683,6 +18730,11 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         console.error('❌ [ADMIN INJECT] Failed to inject dummy registrations:', err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', message: err.message }));
+      } finally {
+        if (injectionClient) {
+          if (injectionTransactionOpen) await injectionClient.query('ROLLBACK').catch(() => {});
+          injectionClient.release();
+        }
       }
     });
     return;
@@ -21711,6 +21763,7 @@ async function processTournamentLifecycle(now) {
       `SELECT id, timeline FROM tournaments
        WHERE ("isDraft" = false OR "isDraft" IS NULL)
          AND (status IS NULL OR status NOT IN ('live','completed','archived'))
+         AND COALESCE(live_disabled_by_organizer, false) = false
          AND timeline IS NOT NULL AND timeline != '' AND timeline != '[]'`
     );
     for (const t of notLive.rows) {
@@ -21722,7 +21775,7 @@ async function processTournamentLifecycle(now) {
         const roundStart = new Date(`${first.date}T${first.time}+05:30`);
         if (isNaN(roundStart.getTime())) continue;
         if (now >= new Date(roundStart.getTime() - 5 * 60 * 1000)) {
-          await pool.query('UPDATE tournaments SET status = $1 WHERE id = $2', ['live', t.id]);
+          await pool.query('UPDATE tournaments SET status_before_live = status, status = $1 WHERE id = $2', ['live', t.id]);
           console.log(`🏆 [AUTO LIFECYCLE] Tournament ${t.id} set to live (round 1 at ${first.date}T${first.time} IST)`);
         }
       } catch (_) { /* skip malformed timeline */ }
@@ -21731,7 +21784,7 @@ async function processTournamentLifecycle(now) {
     // Live-state tournaments may revert before the first scheduled round begins.
     // Completion is reserved for the validated /finalize transaction.
     const liveOnes = await pool.query(
-      `SELECT id, timeline FROM tournaments
+      `SELECT id, timeline, status_before_live FROM tournaments
        WHERE status = 'live'
          AND finalized_at IS NULL
          AND timeline IS NOT NULL AND timeline != '' AND timeline != '[]'`
@@ -21747,7 +21800,7 @@ async function processTournamentLifecycle(now) {
         if (first?.date && first?.time) {
           const roundStart = new Date(`${first.date}T${first.time}+05:30`);
           if (!isNaN(roundStart.getTime()) && now < new Date(roundStart.getTime() - 5 * 60 * 1000)) {
-            await pool.query('UPDATE tournaments SET status = NULL WHERE id = $1', [t.id]);
+            await pool.query('UPDATE tournaments SET status = status_before_live, status_before_live = NULL WHERE id = $1', [t.id]);
             console.log(`🔄 [AUTO LIFECYCLE] Tournament ${t.id} reverted from live (round 1 at ${first.date}T${first.time} IST, now is before -5min)`);
             continue; // skip complete check since status was reverted
           }

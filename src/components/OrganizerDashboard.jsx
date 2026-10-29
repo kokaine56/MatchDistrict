@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useTheme } from '../ThemeContext.jsx'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { getAuthToken } from '../utils/getAuthToken.js'
 import { uploadImage } from '../utils/imagekitUpload'
@@ -18,7 +17,6 @@ import { getUpgradeMessage, getNextPlan } from '../utils/featureGates'
 import VerificationBadge from './VerificationBadge'
 import AutomationPanel from './AutomationPanel'
 import { formatDate } from '../utils/timeFormat'
-import { isTournamentOrganizer } from '../utils/tournamentAuth.js'
 import FormBuilder from './FormBuilder'
 import DiscordOrganiserLinkingCard from './DiscordOrganiserLinkingCard'
 
@@ -27,6 +25,9 @@ function OrganizerDashboard({
   setCurrentUser,
   tournamentsList,
   setTournamentsList,
+  tournamentsLoading = false,
+  tournamentsError = '',
+  organizationVerified = false,
   triggerToast,
   handleOpenCreateNew,
   handleEditDetails,
@@ -35,17 +36,27 @@ function OrganizerDashboard({
   handleSaveOrgSettingsTab,
 }) {
   const navigate = useNavigate()
-  const { theme } = useTheme()
-  const [activeTab, setActiveTab] = useState('overview')
-  const [timeRange, setTimeRange] = useState('30d') // '7d' | '30d' | 'all'
+  const [searchParams, setSearchParams] = useSearchParams()
+  const dashboardTabs = ['overview', 'events', 'tournaments', 'finance', 'subscription', 'staff', 'settings']
+  const [activeTab, setActiveTab] = useState(() => dashboardTabs.includes(searchParams.get('section')) ? searchParams.get('section') : 'overview')
   
   // Wallet balance
   const [walletBalance, setWalletBalance] = useState(0)
+  const [walletLoading, setWalletLoading] = useState(true)
+  const [walletError, setWalletError] = useState('')
   const [showUpgradePrompt, setShowUpgradePrompt] = useState(false);
   const [upgradeLimitType, setUpgradeLimitType] = useState(null);
   const { subscription, usage, loading: subLoading, refresh: refreshSub, features, tier, hasFeature, billingHistory } = useSubscription();
   const [staffList, setStaffList] = useState([]);
   const [staffLoading, setStaffLoading] = useState(false);
+  const canManageStaff = hasFeature('staffManagement');
+  const [staffError, setStaffError] = useState('');
+  const [isAddingStaff, setIsAddingStaff] = useState(false);
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffRole, setNewStaffRole] = useState('Bracket Manager');
+  const [isInvitingStaff, setIsInvitingStaff] = useState(false);
+  const [liveUpdatingIds, setLiveUpdatingIds] = useState(() => new Set());
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [apiKeys, setApiKeys] = useState([]);
   const [newApiKey, setNewApiKey] = useState(null);
@@ -253,63 +264,120 @@ function OrganizerDashboard({
   }
 
   // Filtered tournament list for current organizer
-  const orgHostedTournaments = useMemo(() => {
-    return tournamentsList.filter(t => isTournamentOrganizer(currentUser, t) || (Boolean(orgData?.name && t.orgName) && t.orgName === orgData.name))
-  }, [tournamentsList, currentUser, orgData])
+  const orgHostedTournaments = useMemo(() => tournamentsList, [tournamentsList])
+  const displayedStaff = useMemo(() => {
+    const owner = orgData?.staff || []
+    const combined = [...owner, ...staffList]
+    return combined.filter((member, index) => combined.findIndex(candidate => candidate.id ? candidate.id === member.id : candidate.email === member.email) === index)
+  }, [orgData?.staff, staffList])
+
+  useEffect(() => {
+    const selectedTab = searchParams.get('section')
+    setActiveTab(dashboardTabs.includes(selectedTab) ? selectedTab : 'overview')
+  }, [searchParams])
+
+  const changeDashboardTab = (tabId) => {
+    setActiveTab(tabId)
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous)
+      next.set('section', tabId)
+      return next
+    })
+  }
 
   // Further filter by status sub-filter
   const filteredHostedTournaments = useMemo(() => {
     if (tournamentSubFilter === 'all') return orgHostedTournaments
     if (tournamentSubFilter === 'draft') return orgHostedTournaments.filter(t => t.isDraft)
-    return orgHostedTournaments.filter(t => !t.isDraft && t.status === tournamentSubFilter)
+    if (tournamentSubFilter === 'upcoming') return orgHostedTournaments.filter(t => !t.isDraft && !['live', 'completed', 'archived', 'cancelled', 'canceled'].includes(String(t.status || '').toLowerCase()))
+    return orgHostedTournaments.filter(t => !t.isDraft && String(t.status || '').toLowerCase() === tournamentSubFilter)
   }, [orgHostedTournaments, tournamentSubFilter])
 
   // Fetch wallet balance from Database
   const fetchFinancials = async () => {
-    if (!currentUser) return;
-    const token = await getAuthToken();
+    if (!currentUser) { setWalletLoading(false); return; }
+    setWalletLoading(true);
+    setWalletError('');
     try {
+      const token = await getAuthToken();
       const userRes = await fetch(`/api/users/${currentUser.id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
       });
       const userData = await userRes.json();
       if (userData.success && userData.user) {
         setWalletBalance(Number(userData.user.wallet_balance || 0));
-      }
+      } else setWalletError(userData.message || userData.error || 'Could not load wallet balance.');
     } catch (e) {
       console.error("Error fetching organizer financials:", e);
-    }
+      setWalletError(e.message || 'Could not load wallet balance.');
+    } finally { setWalletLoading(false); }
   };
 
   useEffect(() => {
     fetchFinancials();
-  }, [currentUser, tournamentsList]);
+  }, [currentUser?.id]);
 
-  useEffect(() => {
-    if (activeTab === 'staff' && hasFeature('staffManagement')) {
-      fetchStaff();
-    }
-  }, [activeTab]);
-
-  const fetchStaff = async () => {
+  const fetchStaff = useCallback(async () => {
     setStaffLoading(true);
+    setStaffError('');
     try {
       const res = await subscriptionApi.getStaff();
       if (res.success) setStaffList(res.staff || []);
-    } catch (err) {} finally { setStaffLoading(false); }
-  };
+      else setStaffError(res.message || res.error || 'Could not load staff roster.');
+    } catch (err) { setStaffError(err.message || 'Could not load staff roster.'); } finally { setStaffLoading(false); }
+  }, []);
 
-  const handleInviteStaff = async (e) => {
+  useEffect(() => {
+    if (activeTab === 'staff' && canManageStaff) fetchStaff();
+  }, [activeTab, canManageStaff, fetchStaff]);
+
+  const handleInviteStaffSubmit = async (e) => {
     e.preventDefault();
+    if (isInvitingStaff) return;
+    setIsInvitingStaff(true);
+    setStaffError('');
     try {
       const res = await subscriptionApi.inviteStaff({ name: newStaffName, email: newStaffEmail, role: newStaffRole });
-      if (res.success) { fetchStaff(); }
-      else if (res.limitType) { setUpgradeLimitType(res.limitType); setShowUpgradePrompt(true); }
-    } catch (err) {}
+      if (res.success) {
+        setIsAddingStaff(false);
+        setNewStaffName('');
+        setNewStaffEmail('');
+        setNewStaffRole('Bracket Manager');
+        triggerToast('Staff invitation sent.');
+        await fetchStaff();
+      } else if (res.limitType) { setUpgradeLimitType(res.limitType); setShowUpgradePrompt(true); }
+      else setStaffError(res.message || res.error || 'Could not send staff invitation.');
+    } catch (err) { setStaffError(err.message || 'Could not send staff invitation.'); }
+    finally { setIsInvitingStaff(false); }
   };
 
   const handleRemoveStaff = async (staffId) => {
-    try { await subscriptionApi.removeStaff(staffId); fetchStaff(); } catch (err) {}
+    try {
+      const res = await subscriptionApi.removeStaff(staffId);
+      if (res?.success === false) throw new Error(res.message || 'Could not remove staff member.');
+      await fetchStaff();
+    } catch (err) { setStaffError(err.message || 'Could not remove staff member.'); }
+  };
+
+  const handleLiveStatusChange = async (tournament, nextLive) => {
+    if (!tournament?.id || liveUpdatingIds.has(tournament.id)) return;
+    setLiveUpdatingIds(previous => new Set(previous).add(tournament.id));
+    try {
+      const token = await getAuthToken();
+      const response = await fetch(`/api/tournaments/${tournament.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ status: nextLive ? 'live' : 'non-live' })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.message || data.error || 'Could not update tournament status.');
+      setTournamentsList(previous => previous.map(item => item.id === tournament.id ? { ...item, status: data.status } : item));
+      triggerToast(data.message || `Tournament marked ${nextLive ? 'Live' : 'Non-Live'}.`);
+    } catch (err) {
+      triggerToast(err.message || 'Could not update tournament status.');
+    } finally {
+      setLiveUpdatingIds(previous => { const next = new Set(previous); next.delete(tournament.id); return next; });
+    }
   };
 
   const openUpgradePrompt = (limitType) => {
@@ -356,102 +424,34 @@ function OrganizerDashboard({
     const gameCounts = {};
 
     orgHostedTournaments.forEach(t => {
-      const regCount = parseInt(t.slotsFilled) || 0;
+      const regCount = parseInt(t.registrationCount ?? t.slotsFilled, 10) || 0;
       totalRegistrations += regCount;
       if (t.game) {
         gameCounts[t.game] = (gameCounts[t.game] || 0) + regCount;
       }
     });
 
-    // If total registrations is 0, split counts by tournament count for ratios
-    if (totalRegistrations === 0) {
-      orgHostedTournaments.forEach(t => {
-        if (t.game) {
-          gameCounts[t.game] = (gameCounts[t.game] || 0) + 1;
-        }
-      });
-    }
-
-    const totalViews = totalRegistrations * 12 + orgHostedTournaments.length * 150;
-    const conversionRate = totalViews > 0 
-      ? ((totalRegistrations / totalViews) * 100).toFixed(1) + '%' 
-      : '0.0%';
-
     const gameColors = ['#ff0055', '#c0c1ff', '#00ffff', '#fbbf24', '#34d399'];
     const totalGameCounts = Object.values(gameCounts).reduce((a, b) => a + b, 0) || 1;
     const donutData = Object.keys(gameCounts).map((game, idx) => ({
       name: game,
+      count: gameCounts[game],
       value: Math.round((gameCounts[game] / totalGameCounts) * 100),
       color: gameColors[idx % gameColors.length]
     }));
 
-    if (donutData.length === 0) {
-      donutData.push({ name: 'None Hosted', value: 100, color: '#4B5563' });
-    }
-
-    // Dynamic dates mapping
-    const dates = timeRange === '7d' 
-      ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] 
-      : timeRange === '30d' 
-        ? ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6', 'Week 7']
-        : ['2025 Q1', '2025 Q2', '2025 Q3', '2025 Q4', '2026 Q1', '2026 Q2', '2026 Q3'];
-
-    const datesCount = dates.length;
-    const registrations = Array.from({ length: datesCount }, (_, i) => {
-      if (totalRegistrations === 0) return 0;
-      const base = totalRegistrations / datesCount;
-      return Math.round(base * (0.6 + (i / (datesCount - 1) * 0.8)));
-    });
-
-    const views = registrations.map(r => Math.round(r * 12 + Math.random() * 5));
-
-    const liveOrCompleted = orgHostedTournaments.filter(t => t.status === 'live' || t.status === 'completed').length;
-    const checkinRate = orgHostedTournaments.length > 0
-      ? Math.round(75 + (liveOrCompleted / orgHostedTournaments.length) * 20)
-      : 0;
+    const totalSlots = orgHostedTournaments.reduce((sum, tournament) => sum + (Number(tournament.slotsTotal) || 0), 0);
+    const filledSlots = orgHostedTournaments.reduce((sum, tournament) => sum + (Number(tournament.slotsFilled) || 0), 0);
+    const activeCount = orgHostedTournaments.filter(t => ['live', 'published', 'registration_open'].includes(String(t.status || '').toLowerCase())).length;
 
     return {
-      registrations,
-      dates,
-      views,
       totalRegistrations,
-      totalViews,
-      conversionRate,
       donutData,
-      checkinRate: Math.min(100, checkinRate)
+      totalSlots,
+      filledSlots,
+      activeCount
     };
-  }, [orgHostedTournaments, timeRange]);
-
-  // Custom SVG Chart calculations
-  const svgWidth = 500
-  const svgHeight = 200
-  const padding = 30
-  const linePoints = useMemo(() => {
-    const data = analyticsData.registrations
-    const maxVal = Math.max(...data) * 1.1 || 1
-    return data.map((val, idx) => {
-      const x = padding + (idx * (svgWidth - 2 * padding)) / (data.length - 1)
-      const y = svgHeight - padding - (val * (svgHeight - 2 * padding)) / maxVal
-      return { x, y, val }
-    })
-  }, [analyticsData])
-
-  const linePath = useMemo(() => {
-    if (linePoints.length === 0) return ''
-    return linePoints.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
-  }, [linePoints])
-
-  const barWidth = 30
-  const barChartPoints = useMemo(() => {
-    const data = analyticsData.views
-    const maxVal = Math.max(...data) * 1.1 || 1
-    return data.map((val, idx) => {
-      const x = padding + (idx * (svgWidth - 2 * padding)) / (data.length - 1) - barWidth / 2
-      const height = (val * (svgHeight - 2 * padding)) / maxVal
-      const y = svgHeight - padding - height
-      return { x, y, height, val }
-    })
-  }, [analyticsData])
+  }, [orgHostedTournaments]);
 
   const handleDuplicate = (tourney) => {
     const duplicated = {
@@ -551,8 +551,17 @@ function OrganizerDashboard({
     <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-300">
       
       {/* Redesigned Tab Navigation - Segmented on desktop, horizontal scroll on mobile */}
-      <div className="glass-card p-1 rounded-2xl border border-outline-variant/35 bg-surface/50 shadow-sm">
-        <div className="flex flex-nowrap overflow-x-auto items-center gap-2 w-full pb-2 snap-x scrollbar-hide">
+      <div className="rounded-xl border border-outline-variant/40 bg-surface p-2 shadow-sm">
+        <label className="sr-only" htmlFor="organizer-dashboard-section">Dashboard section</label>
+        <select id="organizer-dashboard-section" className="sm:hidden w-full min-h-11 rounded-lg border border-outline-variant bg-surface px-3 text-sm font-semibold text-on-background" value={activeTab} onChange={(event) => changeDashboardTab(event.target.value)}>
+          {[
+            { id: 'overview', label: 'Overview' }, { id: 'events', label: 'Active Events' },
+            { id: 'tournaments', label: 'Tournaments' }, { id: 'finance', label: 'Finance Center' },
+            { id: 'subscription', label: 'Subscription' }, { id: 'staff', label: 'Staff Roster' },
+            { id: 'settings', label: 'Settings' }
+          ].map(tab => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+        </select>
+        <div className="hidden sm:flex flex-wrap items-center gap-1.5">
           {[
             { id: 'overview', label: 'Overview', icon: 'corporate_fare' },
             { id: 'events', label: 'Active Events', icon: 'sensors' },
@@ -565,10 +574,9 @@ function OrganizerDashboard({
             <button
               key={tab.id}
               onClick={() => {
-                setActiveTab(tab.id)
-                triggerToast(`Opened ${tab.label}`)
+                changeDashboardTab(tab.id)
               }}
-              className={`snap-start shrink-0 flex items-center gap-1 sm:gap-2 px-3 py-2 font-headline-md text-[10px] sm:text-xs font-bold rounded-lg transition-all duration-200 whitespace-nowrap ${
+              className={`shrink-0 flex items-center gap-2 px-3 py-2.5 font-headline-md text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-primary text-on-primary shadow-sm'
                   : 'text-on-surface-variant hover:text-on-background hover:bg-surface-variant/40'
@@ -578,6 +586,7 @@ function OrganizerDashboard({
               <span className="text-[11px] sm:text-xs font-black">{tab.label}</span>
             </button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -594,26 +603,8 @@ function OrganizerDashboard({
           {/* Controls and Title */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="font-headline-lg text-lg sm:text-xl font-extrabold text-on-background tracking-tight">Interactive Analytics</h2>
-              <p className="font-body-sm text-[11px] text-on-surface-variant">Real-time metrics scaling and registration velocity.</p>
-            </div>
-            <div className="flex items-center gap-1 bg-surface-container p-1 border border-outline-variant/30 rounded-xl">
-              {[
-                { id: '7d', label: '7 Days' },
-                { id: '30d', label: '30 Days' },
-                { id: 'all', label: 'All Time' }
-              ].map(range => (
-                <button
-                  key={range.id}
-                  onClick={() => {
-                    setTimeRange(range.id)
-                    triggerToast(`Switched time filter to: ${range.label}`)
-                  }}
-                  className={`px-3 min-h-[44px] rounded-lg font-label-caps text-[9px] sm:text-[10px] font-bold uppercase tracking-wider transition-all ${timeRange === range.id ? 'bg-secondary text-on-secondary shadow-md' : 'text-on-surface-variant hover:text-on-background'}`}
-                >
-                  {range.label}
-                </button>
-              ))}
+              <h2 className="font-headline-lg text-lg sm:text-xl font-extrabold text-on-background tracking-tight">Organisation Overview</h2>
+              <p className="font-body-sm text-[11px] text-on-surface-variant">Current totals from your hosted tournament records.</p>
             </div>
           </div>
 
@@ -621,9 +612,9 @@ function OrganizerDashboard({
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { label: 'Roster Sign-ups', value: analyticsData.totalRegistrations.toLocaleString(), icon: 'how_to_reg', color: 'text-primary bg-primary/10 border-primary/20' },
-              { label: 'Page Views', value: analyticsData.totalViews.toLocaleString(), icon: 'visibility', color: 'text-secondary bg-secondary/10 border-secondary/20' },
-              { label: 'Conversion Velocity', value: analyticsData.conversionRate, icon: 'bolt', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
-              { label: 'Active Events', value: orgHostedTournaments.filter(t => t.status === 'live' || t.status === 'published' || t.status === 'registration_open').length.toString(), icon: 'sensors', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' }
+              { label: 'Hosted Tournaments', value: orgHostedTournaments.length.toLocaleString(), icon: 'emoji_events', color: 'text-secondary bg-secondary/10 border-secondary/20' },
+              { label: 'Live or Registration Open', value: analyticsData.activeCount.toLocaleString(), icon: 'sensors', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' },
+              { label: 'Available Slots', value: Math.max(0, analyticsData.totalSlots - analyticsData.filledSlots).toLocaleString(), icon: 'groups', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' }
             ].map((metric, idx) => (
               <motion.div
                 key={idx}
@@ -647,17 +638,13 @@ function OrganizerDashboard({
           <div className="bg-surface-container-low/40 border border-outline-variant/30 rounded-xl p-4 backdrop-blur-md mb-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <VerificationBadge tier={tier} size="lg" />
+                <span className="rounded-full border border-outline-variant bg-surface px-3 py-1 text-xs font-bold text-on-background">{tier} plan</span>
                 <div>
-                  <p className="text-sm font-semibold text-on-surface">{tier} Plan</p>
-                  <p className="text-xs text-on-surface-variant">
-                    {hasFeature('premiumBadge') ? 'Premium Verified Organizer' : 
-                     hasFeature('verifiedBadge') ? 'Enhanced Features' : 
-                     'Free Plan - Upgrade to get verified'}
-                  </p>
+                  <p className="text-sm font-semibold text-on-surface">Subscription plan</p>
+                  <p className="text-xs text-on-surface-variant">Plan limits and included features</p>
                 </div>
               </div>
-              <button onClick={() => setActiveTab('subscription')} className="text-xs text-primary font-medium min-h-[44px] flex items-center">Manage</button>
+              <button onClick={() => changeDashboardTab('subscription')} className="text-xs text-primary font-medium min-h-[44px] flex items-center">Manage</button>
             </div>
           </div>
 
@@ -689,248 +676,25 @@ function OrganizerDashboard({
             />
           </div>
 
-          {/* SVG Charts section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-            {/* Velocity Registration Line Chart */}
-            <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-              <div className="border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                  <span className="material-symbols-outlined text-primary text-xl">insights</span> Roster Sign-up Velocity
-                </h3>
-              </div>
-              
-              <div className="relative w-full overflow-x-auto no-scrollbar">
-                <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full min-w-[400px] h-[200px]">
-                  {/* Grid Lines */}
-                  {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
-                    <line
-                      key={i}
-                      x1={padding}
-                      y1={padding + ratio * (svgHeight - 2 * padding)}
-                      x2={svgWidth - padding}
-                      y2={padding + ratio * (svgHeight - 2 * padding)}
-                      stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.1)'}
-                      strokeWidth="1"
-                    />
-                  ))}
-                  
-                  {/* Neon Glow Defs */}
-                  <defs>
-                    <linearGradient id="lineGlow" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3B82F6" stopOpacity="0.4" />
-                      <stop offset="100%" stopColor="#3B82F6" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-
-                  {/* Gradient Area */}
-                  {linePoints.length > 0 && (
-                    <path
-                      d={`${linePath} L ${linePoints[linePoints.length - 1].x} ${svgHeight - padding} L ${linePoints[0].x} ${svgHeight - padding} Z`}
-                      fill="url(#lineGlow)"
-                    />
-                  )}
-
-                  {/* SVG Line path */}
-                  <path
-                     d={linePath}
-                     fill="none"
-                     stroke="#3B82F6"
-                     strokeWidth="3.5"
-                     strokeLinecap="round"
-                     strokeLinejoin="round"
-                     className="drop-shadow-[0_0_10px_rgba(59,130,246,0.6)]"
-                  />
-
-                  {/* Interactive Nodes */}
-                  {linePoints.map((point, idx) => (
-                    <g key={idx}>
-                      <circle
-                        cx={point.x}
-                        cy={point.y}
-                        r="5"
-                        fill={theme === 'dark' ? '#0B1020' : '#ffffff'}
-                        stroke="#3B82F6"
-                        strokeWidth="3"
-                        className="cursor-pointer hover:scale-125 transition-transform"
-                      />
-                      <text
-                        x={point.x}
-                        y={point.y - 12}
-                        textAnchor="middle"
-                        fill="#3B82F6"
-                        fontSize="9"
-                        fontWeight="bold"
-                        className="font-mono"
-                      >
-                        {point.val}
-                      </text>
-                      <text
-                        x={point.x}
-                        y={svgHeight - 10}
-                        textAnchor="middle"
-                        fill={theme === 'dark' ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.5)'}
-                        fontSize="9"
-                      >
-                        {analyticsData.dates[idx]}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
-              </div>
-            </div>
-
-            {/* Page Views Bar Chart */}
-            <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-              <div className="border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                  <span className="material-symbols-outlined text-secondary text-xl">bar_chart</span> Tournament Page Traffic
-                </h3>
-              </div>
-
-              <div className="relative w-full overflow-x-auto no-scrollbar">
-                <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full min-w-[400px] h-[200px]">
-                  <defs>
-                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#60A5FA" stopOpacity="0.4" />
-                      <stop offset="100%" stopColor="#60A5FA" stopOpacity="0.05" />
-                    </linearGradient>
-                  </defs>
-                  {/* Grid Lines */}
-                  {[0, 0.25, 0.5, 0.75, 1].map((ratio, i) => (
-                    <line
-                      key={i}
-                      x1={padding}
-                      y1={padding + ratio * (svgHeight - 2 * padding)}
-                      x2={svgWidth - padding}
-                      y2={padding + ratio * (svgHeight - 2 * padding)}
-                      stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.1)'}
-                      strokeWidth="1"
-                    />
-                  ))}
-
-                  {/* Render Columns */}
-                  {barChartPoints.map((bar, idx) => (
-                    <g key={idx}>
-                      <rect x={bar.x} y={bar.y} width={barWidth} height={bar.height} rx="4" fill="url(#barGradient)" stroke="#60A5FA" strokeWidth="1.5" className="cursor-pointer drop-shadow-sm hover:brightness-110 transition-all" />
-                      <text
-                        x={bar.x + barWidth / 2}
-                        y={bar.y - 8}
-                        textAnchor="middle"
-                        fill="#60A5FA"
-                        fontSize="9"
-                        fontWeight="bold"
-                        className="font-mono"
-                      >
-                        {bar.val}
-                      </text>
-                      <text
-                        x={bar.x + barWidth / 2}
-                        y={svgHeight - 10}
-                        textAnchor="middle"
-                        fill={theme === 'dark' ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.5)'}
-                        fontSize="9"
-                      >
-                        {analyticsData.dates[idx]}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
-              </div>
-            </div>
-            
-            {/* Donut Chart: Game Splits */}
-            <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-              <div className="border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                  <span className="material-symbols-outlined text-secondary text-xl">donut_large</span> Game Division Ratios
-                </h3>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center justify-around gap-6 py-2">
-                <svg viewBox="0 0 200 200" className="w-36 h-36">
-                  {/* Dynamic Donut Segments */}
-                  {(() => {
-                    let cumulativePercent = 0
-                    return analyticsData.donutData.map((item, idx) => {
-                      const radius = 65
-                      const circ = 2 * Math.PI * radius
-                      const strokeDash = (item.value / 100) * circ
-                      const strokeOffset = circ - (cumulativePercent / 100) * circ
-                      cumulativePercent += item.value
-
-                      return (
-                        <circle
-                          key={idx}
-                          cx="100"
-                          cy="100"
-                          r={radius}
-                          fill="transparent"
-                          stroke={item.color}
-                          strokeWidth="16"
-                          strokeDasharray={circ}
-                          strokeDashoffset={strokeOffset}
-                          transform="rotate(-90 100 100)"
-                          className="hover:stroke-opacity-80 transition-all cursor-pointer"
-                        />
-                      )
-                    })
-                  })()}
-                  
-                  <circle cx="100" cy="100" r="48" fill={theme === 'dark' ? '#0B1020' : '#ffffff'} />
-                  <text x="100" y="104" textAnchor="middle" fill={theme === 'dark' ? 'white' : '#0F172A'} fontSize="11" fontWeight="bold">Games split</text>
-                </svg>
-
-                <div className="space-y-2">
-                  {analyticsData.donutData.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3">
-                      <div className="w-3 h-3 rounded" style={{ backgroundColor: item.color }}></div>
-                      <span className="font-headline-md text-xs font-semibold text-on-background">{item.name}</span>
-                      <span className="font-body-sm text-[10px] text-on-surface-variant font-medium">({item.value}%)</span>
+          <div className="rounded-xl border border-outline-variant/40 bg-surface p-4 sm:p-5 shadow-sm">
+            <h3 className="font-headline-md text-sm font-bold text-on-background">Registrations by Game</h3>
+            {analyticsData.donutData.length === 0 ? (
+              <p className="mt-3 text-sm text-on-surface-variant">Registration totals will appear here when teams register.</p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                {analyticsData.donutData.map((item) => (
+                  <div key={item.name} className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="truncate font-medium text-on-background">{item.name}</span>
+                      <span className="shrink-0 text-on-surface-variant">{item.count.toLocaleString()} teams</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Radial Checked-In Gauge */}
-            <div className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
-              <div className="border-b border-outline-variant/30 pb-3">
-                <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight">
-                  <span className="material-symbols-outlined text-emerald-400 text-xl">how_to_reg</span> Roster Check-In Gauge
-                </h3>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center justify-around gap-6 py-2">
-                <div className="relative w-36 h-36 flex items-center justify-center">
-                  <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
-                    <circle cx="50" cy="50" r="40" fill="transparent" stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.1)'} strokeWidth="8" />
-                    <circle
-                      cx="50"
-                      cy="50"
-                      r="40"
-                      fill="transparent"
-                      stroke="#10b981"
-                      strokeWidth="8"
-                      strokeDasharray={251.2}
-                      strokeDashoffset={251.2 - (analyticsData.checkinRate / 100) * 251.2}
-                      strokeLinecap="round"
-                      className="transition-all duration-1000 ease-out"
-                    />
-                  </svg>
-                  <div className="absolute flex flex-col items-center justify-center">
-                    <span className="font-prize-display text-2xl font-extrabold text-on-background">{analyticsData.checkinRate}%</span>
-                    <span className="font-label-caps text-[8px] text-emerald-400 font-bold uppercase tracking-wider">Checked In</span>
+                    <div className="h-2 overflow-hidden rounded-full bg-surface-container-highest">
+                      <div className="h-full rounded-full" style={{ width: `${item.value}%`, backgroundColor: item.color }} />
+                    </div>
                   </div>
-                </div>
-
-                <div className="space-y-1.5 text-center sm:text-left">
-                  <h4 className="font-headline-md text-xs sm:text-sm font-semibold text-on-background">Active Match Validation</h4>
-                  <p className="font-body-sm text-[11px] text-on-surface-variant max-w-[200px] leading-relaxed">
-                    Percentage of registered rosters checking in 30 minutes before kick-off.
-                  </p>
-                </div>
+                ))}
               </div>
-            </div>
+            )}
           </div>
 
           {/* Advanced Analytics (BASIC/PRO) */}
@@ -966,7 +730,7 @@ function OrganizerDashboard({
                 <p className="font-body-sm text-xs text-on-surface-variant max-w-xs mx-auto leading-relaxed">There are no live or published events currently running. Publish drafts to activate management controllers.</p>
               </div>
               <button 
-                onClick={() => setActiveTab('tournaments')}
+                onClick={() => changeDashboardTab('tournaments')}
                 className="px-5 min-h-[44px] bg-primary hover:bg-primary/95 text-white font-headline-md text-xs font-bold rounded-xl transition-all shadow-md inline-flex items-center gap-1.5"
               >
                 <span className="material-symbols-outlined text-sm">event_note</span> Go to Tournaments
@@ -980,7 +744,7 @@ function OrganizerDashboard({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 rounded bg-primary/20 text-primary font-label-caps text-[8px] font-bold uppercase tracking-wider">{t.game}</span>
-                        <span className="px-2 py-0.5 rounded bg-error text-white font-label-caps text-[8px] font-black uppercase tracking-wider animate-pulse">LIVE</span>
+                        <span className={`px-2 py-0.5 rounded font-label-caps text-[8px] font-bold uppercase tracking-wider ${t.status === 'live' ? 'bg-error text-white' : 'bg-primary/10 text-primary'}`}>{String(t.status || 'Published').replaceAll('_', ' ')}</span>
                       </div>
                       <h3 className="font-headline-lg text-base sm:text-lg font-black text-on-background">{t.title}</h3>
                     </div>
@@ -1100,7 +864,11 @@ function OrganizerDashboard({
             ))}
           </div>
 
-          {filteredHostedTournaments.length === 0 ? (
+          {tournamentsLoading ? (
+            <div className="rounded-xl border border-outline-variant/30 bg-surface p-6 text-sm text-on-surface-variant" role="status">Loading tournaments…</div>
+          ) : tournamentsError ? (
+            <div className="rounded-xl border border-error/30 bg-error/5 p-5 text-sm text-error" role="alert">{tournamentsError}</div>
+          ) : filteredHostedTournaments.length === 0 ? (
             <div className="text-center py-16 space-y-4 bg-surface-variant/10 rounded-xl border border-outline-variant/15 p-6">
               <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
                 <span className="material-symbols-outlined text-2xl animate-pulse">sports_esports</span>
@@ -1122,7 +890,7 @@ function OrganizerDashboard({
                   key={t.id || idx}
                   className={`relative ${manageDropdownOpen === (t.id || idx) ? 'z-[100]' : 'z-0'}`}
                 >
-                <div className="glass-card p-4 rounded-xl border border-outline-variant/30 bg-surface-variant/20 flex items-center gap-4 shadow-sm hover:border-secondary/30 hover:bg-surface-variant/30 transition-all duration-200">
+                <div className="rounded-xl border border-outline-variant/40 bg-surface p-4 flex flex-col sm:flex-row sm:items-center gap-4 shadow-sm">
                   <img
                     src={t.cover_image_url}
                     alt="cover"
@@ -1145,10 +913,37 @@ function OrganizerDashboard({
                     <h4 className="font-headline-md text-sm sm:text-base font-bold text-on-background truncate">{t.title}</h4>
                     
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-body-sm text-[11px] text-on-surface-variant pt-0.5">
-                      <span>Prize: <strong className="text-secondary font-semibold font-prize-display">{t.prize}</strong></span>
-                      <span>Slots: <strong className="text-on-background font-semibold">{t.slotsFilled}/{t.slotsTotal}</strong></span>
+                      {t.prize && <span>Prize: <strong className="text-secondary font-semibold font-prize-display">{t.prize}</strong></span>}
+                      {(t.slotsFilled != null || t.slotsTotal != null) && <span>Slots: <strong className="text-on-background font-semibold">{t.slotsFilled || 0}/{t.slotsTotal ?? '—'}</strong></span>}
                     </div>
                   </div>
+
+                  {(() => {
+                    const status = String(t.status || '').toLowerCase();
+                    const live = status === 'live';
+                    const allowedForLive = ['upcoming', 'open', 'registration_open', 'closed', 'registration_closed'];
+                    const canToggle = !t.isDraft && !t.finalized_at && !['completed', 'archived', 'cancelled', 'canceled'].includes(status) && (live || allowedForLive.includes(status));
+                    const updating = liveUpdatingIds.has(t.id);
+                    return (
+                      <div className="flex items-center justify-between sm:justify-center gap-3 rounded-lg border border-outline-variant/30 px-3 py-2 sm:border-0 sm:px-0 sm:py-0">
+                        <span className="text-xs font-semibold text-on-surface-variant">{updating ? 'Updating…' : live ? 'Live' : 'Non-Live'}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={live}
+                          aria-label={!canToggle
+                            ? `${t.title || 'Tournament'} cannot be marked live until it passes registration closure, or because it is a draft or finalized.`
+                            : `${live ? 'Turn off live status for' : 'Mark'} ${t.title || 'tournament'}${live ? '' : ' as live'}`}
+                          disabled={!canToggle || updating}
+                          onClick={() => handleLiveStatusChange(t, !live)}
+                          className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${live ? 'bg-emerald-600' : 'bg-surface-container-highest'}`}
+                        >
+                          <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${live ? 'translate-x-6' : 'translate-x-1'}`} />
+                          {updating && <span className="sr-only">Updating tournament status</span>}
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Unified Manage Dropdown */}
                   <div className="shrink-0">
@@ -1261,9 +1056,10 @@ function OrganizerDashboard({
                 <span className="material-symbols-outlined text-primary text-base">account_balance_wallet</span> Available Balance
               </div>
               <div className="font-prize-display text-2xl sm:text-3xl font-extrabold text-on-background pt-0.5">
-                ₹{walletBalance.toLocaleString('en-IN')}
+                {walletLoading ? 'Loading…' : walletError ? 'Unavailable' : `₹${walletBalance.toLocaleString('en-IN')}`}
               </div>
             </div>
+            {walletError && <p className="text-xs text-error" role="alert">{walletError}</p>}
             <div className="text-[10px] text-on-surface-variant leading-relaxed pb-1 select-none">
               Entry fee revenues collected from hosted completions are credited to your wallet balance.
             </div>
@@ -1514,6 +1310,7 @@ function OrganizerDashboard({
                 </div>
               </div>
 
+              {staffError && <p className="text-sm text-error" role="alert">{staffError}</p>}
               <div className="flex justify-end gap-2.5 pt-2 border-t border-outline-variant/20">
                 <button 
                   type="button" 
@@ -1524,9 +1321,10 @@ function OrganizerDashboard({
                 </button>
                 <button 
                   type="submit"
-                  className="py-2 px-5 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm"
+                  disabled={isInvitingStaff}
+                  className="py-2 px-5 bg-secondary hover:bg-secondary/90 text-on-primary rounded-lg font-headline-md text-xs font-bold transition-all shadow-sm disabled:opacity-60"
                 >
-                  Send Invite
+                  {isInvitingStaff ? 'Sending…' : 'Send Invite'}
                 </button>
               </div>
             </form>
@@ -1538,8 +1336,10 @@ function OrganizerDashboard({
             {/* Left columns: Staff List Table */}
             <div className="lg:col-span-2 glass-card p-4 sm:p-5 rounded-[20px] border border-outline-variant/30 bg-surface/40 backdrop-blur-md shadow-sm space-y-4">
               <h3 className="font-headline-md text-base sm:text-lg font-bold uppercase flex items-center gap-2 text-on-background border-b border-outline-variant/30 pb-3 tracking-tight"><span className="material-symbols-outlined text-primary text-xl">groups</span> Roster Directory</h3>
-              
-              {orgData.staff.length === 0 ? (
+              {staffError && !isAddingStaff && <p className="text-sm text-error" role="alert">{staffError}</p>}
+              {staffLoading ? (
+                <p className="py-8 text-center text-sm text-on-surface-variant" role="status">Loading staff roster…</p>
+              ) : displayedStaff.length === 0 ? (
                 <div className="text-center py-12 space-y-4 bg-surface-variant/10 rounded-xl border border-outline-variant/15 p-6">
                   <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto text-primary">
                     <span className="material-symbols-outlined text-2xl animate-pulse">groups</span>
@@ -1562,24 +1362,20 @@ function OrganizerDashboard({
                       </tr>
                     </thead>
                     <tbody>
-                      {orgData.staff.map((member, idx) => (
-                        <tr key={idx} className="border-b border-outline-variant/20 hover:bg-surface-variant/25 transition-all text-xs font-semibold text-on-background">
+                      {displayedStaff.map((member, idx) => (
+                        <tr key={member.id || member.email || idx} className="border-b border-outline-variant/20 hover:bg-surface-variant/25 transition-all text-xs font-semibold text-on-background">
                           <td className="py-3 px-4">{member.name}</td>
-                          <td className="py-3 px-4 text-primary font-bold">{member.role}</td>
+                          <td className="py-3 px-4 text-primary font-bold">{member.role || member.admin_role || 'Staff'}</td>
                           <td className="py-3 px-4 text-on-surface-variant font-mono text-[11px]">{member.email}</td>
                           <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wide">Active</span>
+                            <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wide">{member.status || 'Active'}</span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            {member.role !== 'Owner / Head Admin' && (
+                            {member.id && (
                               <button
                                 onClick={() => {
                                   if (window.confirm(`Revoke permission for ${member.name}?`)) {
-                                    setOrgData(prev => ({
-                                      ...prev,
-                                      staff: prev.staff.filter((_, mIdx) => mIdx !== idx)
-                                    }))
-                                    triggerToast(`Revoked permissions for ${member.name}.`)
+                                    handleRemoveStaff(member.id)
                                   }
                                 }}
                                 className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded hover:bg-rose-500/20 text-on-surface-variant hover:text-rose-400 transition-all"
@@ -1830,8 +1626,9 @@ function OrganizerDashboard({
               </div>
               <div className="space-y-1">
                 <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider block font-bold">KYC Validation Status</label>
-                <div className="w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 text-emerald-400 font-bold text-xs flex items-center gap-1.5 shadow-sm">
-                  <span className="material-symbols-outlined text-sm">verified_user</span> Approved & Verified
+                <div className={`w-full bg-surface border border-outline-variant rounded-lg px-3 py-2 font-bold text-xs flex items-center gap-1.5 shadow-sm ${organizationVerified ? 'text-emerald-500' : 'text-on-surface-variant'}`}>
+                  <span className="material-symbols-outlined text-sm">{organizationVerified ? 'verified_user' : 'hourglass_empty'}</span>
+                  {organizationVerified ? 'Approved & Verified' : 'Not verified'}
                 </div>
               </div>
               <div className="sm:col-span-2 space-y-1">
@@ -1975,7 +1772,7 @@ function OrganizerDashboard({
         limitType={upgradeLimitType}
         onUpgrade={(plan) => {
           setShowUpgradePrompt(false);
-          setActiveTab('subscription');
+          changeDashboardTab('subscription');
         }}
       />
 

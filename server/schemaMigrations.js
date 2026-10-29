@@ -549,6 +549,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS roadmap_status VARCHAR(50) DEFAULT 'pending';
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS finalized_by VARCHAR(50);
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS status_before_live VARCHAR(50);
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS live_disabled_by_organizer BOOLEAN DEFAULT false;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sponsors_enabled BOOLEAN DEFAULT false;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_enabled BOOLEAN DEFAULT false;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS mvp_amount INTEGER DEFAULT 0;

@@ -1,42 +1,13 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Header from '../components/Header.jsx';
 import { hasOrganizerRights } from '../utils/iamRoles.js';
-import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
 import OrganizerDashboard from '../components/OrganizerDashboard.jsx';
-import SafeImage from '../components/SafeImage.jsx';
 import { DEFAULT_AVATAR, DEFAULT_BANNER } from '../utils/defaults.js';
 import { useUser } from '../UserContext.jsx';
 import { getAuthToken } from '../utils/getAuthToken.js';
-import VerificationBadge from '../components/VerificationBadge';
-
-const statsContainerVariants = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.08
-    }
-  }
-};
-
-const statsCardVariants = {
-  hidden: { opacity: 0, y: 15 },
-  show: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      type: 'spring',
-      stiffness: 300,
-      damping: 24
-    }
-  }
-};
 
 function OrganizationManagement({ onNavigate }) {
   const { currentUser, setCurrentUser } = useUser();
-  const [activeTab, setActiveTab] = useState('overview');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   
@@ -53,17 +24,17 @@ function OrganizationManagement({ onNavigate }) {
     website: '',
     discord: '',
     twitter: '',
-    kycStatus: 'Verified',
+    kycStatus: '',
     staff: []
   });
 
   const [orgEditForm, setOrgEditForm] = useState({ ...orgData });
   const [tournamentsList, setTournamentsList] = useState([]);
+  const [tournamentsLoading, setTournamentsLoading] = useState(true);
+  const [tournamentsError, setTournamentsError] = useState('');
+  const [organizationVerified, setOrganizationVerified] = useState(false);
   const [isEditingOrg, setIsEditingOrg] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
-  const quickButtonRef = useRef(null);
-  const [openUp, setOpenUp] = useState(false);
-  const [desktopDropdownPos, setDesktopDropdownPos] = useState({ top: 0, left: 0 });
 
   const [orgnameCooldownDays, setOrgnameCooldownDays] = useState(0);
 
@@ -108,13 +79,24 @@ function OrganizationManagement({ onNavigate }) {
       website: parsedSocial.website || '',
       discord: parsedSocial.discord || '',
       twitter: parsedSocial.twitter || '',
-      kycStatus: 'Verified',
+      kycStatus: '',
       motto: currentUser.orgMotto || '',
       staff: [{ name: currentUser.name || 'Admin', role: 'Owner / Head Admin', email: currentUser.email }]
     });
 
-    // Fetch tournaments
+  }, [currentUser]);
+
+  // Fetch the authenticated organiser's tournaments once per account.
+  useEffect(() => {
+    if (!currentUser?.id) {
+      setTournamentsLoading(false);
+      return;
+    }
+    let cancelled = false;
     async function fetchTournaments() {
+      setTournamentsLoading(true);
+      setTournamentsError('');
+      setOrganizationVerified(false);
       try {
         const token = await getAuthToken();
         const headers = { 'Content-Type': 'application/json' };
@@ -122,17 +104,21 @@ function OrganizationManagement({ onNavigate }) {
         
         const res = await fetch('/api/organiser/tournaments', { headers });
         const data = await res.json();
-        if (res.ok && data.success && Array.isArray(data.tournaments)) {
-          // Filter to only this organizer's tournaments
-          const filtered = data.tournaments.filter(t => isTournamentOrganizer(currentUser, t));
-          setTournamentsList(filtered);
+        if (!res.ok || !data.success || !Array.isArray(data.tournaments)) throw new Error(data.message || data.error || 'Could not load tournaments.');
+        if (!cancelled) {
+          setTournamentsList(data.tournaments);
+          setOrganizationVerified(data.verifiedOrganizer === true);
         }
       } catch (err) {
         console.error("Failed to fetch tournaments:", err);
+        if (!cancelled) setTournamentsError(err.message || 'Could not load tournaments.');
+      } finally {
+        if (!cancelled) setTournamentsLoading(false);
       }
     }
     fetchTournaments();
-  }, [currentUser]);
+    return () => { cancelled = true; };
+  }, [currentUser?.id]);
 
   // Track Name Change Cooldown (30 Days)
   useEffect(() => {
@@ -152,59 +138,23 @@ function OrganizationManagement({ onNavigate }) {
   }, [quickActionsOpen]);
 
   const handleToggleQuickActions = useCallback(() => {
-    if (quickActionsOpen) { setQuickActionsOpen(false); return }
-    if (quickButtonRef.current) {
-      const btnRect = quickButtonRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - btnRect.bottom;
-      const up = spaceBelow < 280 && btnRect.top > spaceBelow;
-      setOpenUp(up);
-      if (window.innerWidth >= 640) {
-        const dropdownH = 176;
-        setDesktopDropdownPos({
-          top: up ? btnRect.top - dropdownH - 6 : btnRect.bottom + 6,
-          left: Math.max(8, Math.min(btnRect.left, window.innerWidth - 260)),
-        });
-      }
-    }
-    setQuickActionsOpen(true);
-  }, [quickActionsOpen]);
-
-  useEffect(() => {
-    if (!quickActionsOpen || window.innerWidth < 640) return;
-    const updatePos = () => {
-      if (!quickButtonRef.current) return;
-      const btnRect = quickButtonRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - btnRect.bottom;
-      const up = spaceBelow < 280 && btnRect.top > spaceBelow;
-      const dropdownH = 176;
-      setDesktopDropdownPos({
-        top: up ? btnRect.top - dropdownH - 6 : btnRect.bottom + 6,
-        left: Math.max(8, Math.min(btnRect.left, window.innerWidth - 260)),
-      });
-      setOpenUp(up);
-    };
-    window.addEventListener('scroll', updatePos, { passive: true, capture: true });
-    window.addEventListener('resize', updatePos, { passive: true });
-    return () => {
-      window.removeEventListener('scroll', updatePos, { capture: true });
-      window.removeEventListener('resize', updatePos);
-    };
-  }, [quickActionsOpen]);
+    setQuickActionsOpen(open => !open);
+  }, []);
 
   const renderMenuItems = () => (
-    <div className="p-2">
+    <div className="p-2 bg-surface">
       <button onClick={(e) => { e.stopPropagation(); handleOpenCreateNew(); setQuickActionsOpen(false); }}
-        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-gray-900 hover:bg-[#F0F3FF] transition-colors duration-150 whitespace-nowrap">
-        <span className="material-symbols-outlined text-base text-gray-500 shrink-0">add_circle</span> Create Tournament
+        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-on-background hover:bg-surface-variant transition-colors duration-150 whitespace-nowrap">
+        <span className="material-symbols-outlined text-base text-on-surface-variant shrink-0">add_circle</span> Create Tournament
       </button>
       <button onClick={async (e) => { e.stopPropagation(); await navigator.clipboard.writeText(window.location.origin + '/org/' + orgData.handle?.replace(/^@/, '')); triggerToast('Hub link copied successfully'); setQuickActionsOpen(false); }}
-        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-gray-900 hover:bg-[#F0F3FF] transition-colors duration-150 whitespace-nowrap">
-        <span className="material-symbols-outlined text-base text-gray-500 shrink-0">link</span> Copy Hub Link
+        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-on-background hover:bg-surface-variant transition-colors duration-150 whitespace-nowrap">
+        <span className="material-symbols-outlined text-base text-on-surface-variant shrink-0">link</span> Copy Hub Link
       </button>
-      <div className="h-px bg-gray-100 mx-4 my-1" />
+      <div className="h-px bg-outline-variant/40 mx-4 my-1" />
       <button onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('subscription'); setQuickActionsOpen(false); }}
-        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-gray-900 hover:bg-[#F0F3FF] transition-colors duration-150 whitespace-nowrap">
-        <span className="material-symbols-outlined text-base text-gray-500 shrink-0">workspace_premium</span> Subscription
+        className="w-full flex items-center gap-3 px-4 min-h-[48px] rounded-lg text-sm font-medium text-on-background hover:bg-surface-variant transition-colors duration-150 whitespace-nowrap">
+        <span className="material-symbols-outlined text-base text-on-surface-variant shrink-0">workspace_premium</span> Subscription
       </button>
     </div>
   );
@@ -212,8 +162,8 @@ function OrganizationManagement({ onNavigate }) {
   // Compute stats details dynamically
   const stats = useMemo(() => {
     const hosted = tournamentsList.length;
-    const active = tournamentsList.filter(t => t.status === 'live').length;
-    const rosters = tournamentsList.reduce((sum, t) => sum + (t.slotsFilled || 0), 0);
+    const active = tournamentsList.filter(t => String(t.status || '').toLowerCase() === 'live').length;
+    const rosters = tournamentsList.reduce((sum, t) => sum + (Number(t.slotsFilled) || 0), 0);
     return {
       hosted,
       active,
@@ -276,150 +226,43 @@ function OrganizationManagement({ onNavigate }) {
 
   return (
     <div className="min-h-screen bg-background text-on-background relative overflow-x-hidden selection:bg-primary selection:text-on-primary">
-      {/* Background Glowing Rings */}
-      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-[300px] sm:w-[600px] h-[300px] sm:h-[600px] bg-primary/10 blur-[90px] sm:blur-[140px] rounded-full animate-pulse duration-[12s]"></div>
-      </div>
-
       <Header activePage="org-management" onNavigate={onNavigate} />
 
       <main className="w-full max-w-container-max mx-auto px-4 pt-20 pb-8 sm:pt-28 sm:pb-12 space-y-6 sm:space-y-8 relative z-10">
         
-        {/* Compact Organizer Header Hero Card */}
-        <div className="glass-card rounded-[20px] sm:rounded-[24px] border border-outline-variant/35 shadow-2xl bg-surface/60 backdrop-blur-xl relative overflow-hidden">
-          
-          {/* Cover Banner — clean edge to edge, no overlays */}
-          <div className="h-[180px] sm:h-[240px] lg:h-[280px] w-full relative overflow-hidden bg-slate-950">
-            <img src={orgData.banner} alt="Organization Cover" className="w-full h-full object-cover object-center" />
-          </div>
-
-          {/* Logo — overlaps banner edge 50/50 */}
-          <div className="flex justify-center sm:justify-start px-4 sm:px-6 relative z-10 -mt-10 sm:-mt-12 lg:-mt-14">
-            <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-2xl p-[3px] bg-gradient-to-tr from-primary via-primary/50 to-secondary shadow-lg transition-transform duration-300 hover:scale-[1.02] cursor-pointer">
-              <div className="w-full h-full rounded-2xl overflow-hidden border-2 border-surface bg-surface">
-                <SafeImage src={orgData.logo} alt={orgData.name} className="avatar-img rounded-xl" />
-              </div>
-            </div>
-          </div>
-
-          {/* Content section */}
-          <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4 relative z-10">
-            
-            {/* Top row: Info + Buttons */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex-1 min-w-0 text-center sm:text-left">
-                {/* Organization Name + Subscription Tick */}
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h1 className="font-headline-lg text-lg sm:text-xl md:text-2xl font-black text-on-background tracking-tight">{orgData.name}</h1>
-                  <VerificationBadge tier={orgData.tier} size="md" />
-                </div>
-
-                {/* Username + Email */}
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-3 gap-y-1 mt-1 text-on-surface-variant font-body-sm text-[11px] sm:text-xs">
-                  <span className="inline-flex items-center gap-0.5 text-primary font-bold">
-                    <span className="material-symbols-outlined text-xs">alternate_email</span>
-                    {orgData.handle?.replace(/^@/, '')}
+        <section className="rounded-2xl border border-outline-variant/40 bg-surface p-4 sm:p-5 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-bold text-on-background truncate">{orgData.name}</h1>
+                {organizationVerified && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    <span className="material-symbols-outlined text-sm">verified</span> Verified
                   </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="material-symbols-outlined text-xs text-on-surface-variant/70">mail</span>
-                    {orgData.email}
-                  </span>
-                </div>
-
-                {/* Verified Status */}
-                <div className="flex items-center justify-center sm:justify-start mt-2">
-                  <span className="inline-flex items-center gap-1 text-emerald-400 font-medium text-[11px] sm:text-xs">
-                    <span className="material-symbols-outlined text-xs">verified_user</span>
-                    {orgData.kycStatus}
-                  </span>
-                </div>
-              </div>
-
-              {/* Desktop buttons — right side */}
-              <div className="hidden sm:flex flex-row items-center gap-3 shrink-0">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => onNavigate && onNavigate('profile')}
-                className="min-h-[48px] w-[240px] px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-              >
-                <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">person</span> Return to Profile
-              </motion.button>
-              <motion.button
-                ref={quickButtonRef}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleToggleQuickActions}
-                className="min-h-[48px] w-[240px] px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-              >
-                <span className="material-symbols-outlined text-sm">bolt</span> Quick Actions
-                <span className="material-symbols-outlined text-sm ml-0.5">expand_more</span>
-              </motion.button>
-            </div>
-            </div>
-
-            {/* Organization description */}
-            <p className="mt-4 font-body-sm text-[11px] sm:text-xs text-on-surface-variant/90 max-w-[700px] mx-auto sm:mx-0 leading-relaxed text-center sm:text-left">
-              {orgData.bio || 'Accredited Match District Tournament Organizer. Building high-tier competitive arenas.'}
-            </p>
-
-            {/* Mobile buttons — stacked, full width */}
-            <div className="flex sm:hidden flex-col gap-3 mt-6">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => onNavigate && onNavigate('profile')}
-                className="min-h-[48px] w-full px-5 rounded-[12px] border border-[#E5E7EB] dark:border-white/10 bg-white dark:bg-white/5 hover:bg-[#F8FAFC] dark:hover:bg-white/10 text-[#2563EB] dark:text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-sm"
-              >
-                <span className="material-symbols-outlined text-sm text-[#2563EB] dark:text-white">person</span> Return to Profile
-              </motion.button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={handleToggleQuickActions}
-                className="min-h-[48px] w-full px-5 rounded-[12px] bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-headline-md text-xs font-semibold transition-all flex items-center justify-center gap-2 shadow-lg"
-              >
-                <span className="material-symbols-outlined text-sm">bolt</span> Quick Actions
-                <span className="material-symbols-outlined text-sm ml-0.5">expand_more</span>
-              </motion.button>
-              {/* Mobile inline dropdown — normal flow, pushes content down */}
-              <AnimatePresence>
-                {quickActionsOpen && (
-                  <motion.div
-                    key="mobile-dropdown"
-                    initial={{ opacity: 0, y: -8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.15, ease: 'easeOut' }}
-                    className="rounded-[14px] border border-black/10 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] overflow-hidden"
-                  >
-                    {renderMenuItems()}
-                  </motion.div>
                 )}
-              </AnimatePresence>
+              </div>
+              <p className="mt-1 text-sm text-on-surface-variant">Tournament organiser dashboard</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+              <button onClick={() => onNavigate && onNavigate('profile')} className="min-h-11 rounded-lg border border-outline-variant px-4 text-sm font-semibold text-on-background hover:bg-surface-variant">Return to Profile</button>
+              <button onClick={handleOpenCreateNew} className="min-h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-on-primary hover:brightness-95">Create Tournament</button>
+              <button onClick={handleToggleQuickActions} className="min-h-11 rounded-lg border border-outline-variant px-4 text-sm font-semibold text-on-background hover:bg-surface-variant" aria-expanded={quickActionsOpen}>More actions</button>
             </div>
           </div>
-        </div>
+          {quickActionsOpen && <div className="mt-3 rounded-lg border border-outline-variant bg-surface">{renderMenuItems()}</div>}
+        </section>
 
         {/* Premium Stats Grid Row */}
-        <motion.div 
-          variants={statsContainerVariants}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-2 md:grid-cols-4 gap-3"
-        >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'EVENTS HOSTED', value: `${stats.hosted} Hosted`, icon: 'sports_esports', color: 'text-primary bg-primary/10 border-primary/20' },
-            { label: 'ACTIVE EVENTS', value: `${stats.active} Live`, icon: 'sensors', color: 'text-secondary bg-secondary/10 border-secondary/20' },
-            { label: 'PARTICIPANTS', value: `${stats.rosters} Rosters`, icon: 'groups', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'EVENTS HOSTED', value: tournamentsLoading ? 'Loading…' : tournamentsError ? 'Unavailable' : `${stats.hosted} Hosted`, icon: 'sports_esports', color: 'text-primary bg-primary/10 border-primary/20' },
+            { label: 'ACTIVE EVENTS', value: tournamentsLoading ? 'Loading…' : tournamentsError ? 'Unavailable' : `${stats.active} Live`, icon: 'sensors', color: 'text-secondary bg-secondary/10 border-secondary/20' },
+            { label: 'PARTICIPANTS', value: tournamentsLoading ? 'Loading…' : tournamentsError ? 'Unavailable' : `${stats.rosters} Rosters`, icon: 'groups', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
             { label: 'ACCOUNT TIER', value: `${stats.tier} Plan`, icon: 'workspace_premium', color: 'text-rose-400 bg-rose-500/10 border-rose-500/20' }
           ].map((item, index) => (
-            <motion.div 
+            <div 
               key={index} 
-              variants={statsCardVariants}
-              whileHover={{ y: -3, scale: 1.02 }} 
-              whileTap={{ scale: 0.98 }}
-              className="glass-card p-3 sm:p-4 rounded-xl border border-outline-variant/30 bg-surface/40 flex items-center gap-3 group hover:border-primary/25 transition-all shadow-sm cursor-pointer"
+              className="rounded-xl border border-outline-variant/40 bg-surface p-3 sm:p-4 flex items-center gap-3 shadow-sm"
             >
               <div className={`w-9 h-9 rounded-lg flex items-center justify-center border ${item.color} shrink-0`}>
                 <span className="material-symbols-outlined text-lg">{item.icon}</span>
@@ -428,9 +271,9 @@ function OrganizationManagement({ onNavigate }) {
                 <span className="text-[8px] font-bold tracking-wider text-on-surface-variant uppercase block">{item.label}</span>
                 <span className="text-[11px] sm:text-xs font-black text-on-background block truncate">{item.value}</span>
               </div>
-            </motion.div>
+            </div>
           ))}
-        </motion.div>
+        </div>
 
         {/* Dashboard component */}
         <OrganizerDashboard
@@ -438,6 +281,9 @@ function OrganizationManagement({ onNavigate }) {
           setCurrentUser={setCurrentUser}
           tournamentsList={tournamentsList}
           setTournamentsList={setTournamentsList}
+          tournamentsLoading={tournamentsLoading}
+          tournamentsError={tournamentsError}
+          organizationVerified={organizationVerified}
           triggerToast={triggerToast}
           handleOpenCreateNew={handleOpenCreateNew}
           handleEditDetails={handleEditDetails}
@@ -447,36 +293,6 @@ function OrganizationManagement({ onNavigate }) {
         />
 
       </main>
-
-      {/* Quick Actions backdrop — fixed overlay outside main to catch clicks */}
-      {window.innerWidth >= 640 && quickActionsOpen && (
-        <div className="fixed inset-0 z-[99998]" onClick={() => setQuickActionsOpen(false)} />
-      )}
-
-      {/* Desktop portal dropdown — fixed at viewport coordinates, escapes card stacking context */}
-      {window.innerWidth >= 640 && quickActionsOpen && createPortal(
-        <AnimatePresence>
-          <motion.div
-            key="desktop-portal-dropdown"
-            initial={{ opacity: 0, y: openUp ? 4 : -4, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: openUp ? 4 : -4, scale: 0.96 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
-            style={{
-              position: 'fixed',
-              top: desktopDropdownPos.top,
-              left: desktopDropdownPos.left,
-              width: 240,
-              zIndex: 99999,
-              transformOrigin: openUp ? 'bottom' : 'top',
-            }}
-            className="rounded-[14px] border border-black/10 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.12)] overflow-hidden"
-          >
-            {renderMenuItems()}
-          </motion.div>
-        </AnimatePresence>,
-        document.body
-      )}
 
       {/* Sleek Toast Alerts */}
       {showToast && (
