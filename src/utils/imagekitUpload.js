@@ -1,6 +1,7 @@
 import { getAuthToken } from './getAuthToken';
 
-export async function uploadImage(image) {
+export async function uploadImage(image, options = {}) {
+  const { signal } = options;
   let fileToUpload = image;
   let fileData = '';
 
@@ -22,7 +23,7 @@ export async function uploadImage(image) {
   }
 
   try {
-    const token = await getAuthToken();
+    const token = Object.prototype.hasOwnProperty.call(options, 'token') ? options.token : await getAuthToken();
     const headers = { 'Content-Type': 'application/json' };
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -33,6 +34,7 @@ export async function uploadImage(image) {
       credentials: 'include',
       headers,
       body: JSON.stringify({ file: fileData }),
+      ...(signal ? { signal } : {}),
     });
 
     let data = null;

@@ -434,6 +434,7 @@ function RegistrationPage({ onNavigate }) {
   const [paymentErrors, setPaymentErrors] = useState({})
   const [paymentSubmitting, setPaymentSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [confirmPaymentError, setConfirmPaymentError] = useState('')
   const [copiedToast, setCopiedToast] = useState('')
   const [copiedRegId, setCopiedRegId] = useState(false)
   const [submittedTimeIST, setSubmittedTimeIST] = useState('')
@@ -1007,126 +1008,98 @@ function RegistrationPage({ onNavigate }) {
     if (paymentSubmitting || paymentSubmittedRef.current) return
     paymentSubmittedRef.current = true
     setPaymentSubmitting(true)
-    setServerError('')
-
+    setConfirmPaymentError('')
+    const controller = new AbortController()
+    let timedOut = false
+    let timeoutId
+    const timeout = new Promise((_, reject) => {
+      timeoutId = window.setTimeout(() => {
+        timedOut = true
+        controller.abort()
+        reject(new Error('Payment submission timed out after 60 seconds. Check your connection and try again.'))
+      }, 60000)
+    })
     try {
       await new Promise(resolve => window.setTimeout(resolve, 0))
-      const token = await getAuthToken()
-      let screenshotUrl = null
-      try {
-        screenshotUrl = await uploadImage(payment.screenshotFile)
-      } catch (uploadErr) {
-        let errorMsg = 'Could not upload the screenshot. Your entries are still here; please try again.'
-        if (uploadErr?.status === 413 || uploadErr?.code === 'FILE_TOO_LARGE') {
-          errorMsg = 'The selected file is too large (maximum allowed size is 10 MB).'
-        } else if (uploadErr?.status === 415 || uploadErr?.code === 'INVALID_FILE_TYPE') {
-          errorMsg = 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.'
-        } else if (uploadErr?.status === 429 || uploadErr?.code === 'RATE_LIMIT_EXCEEDED') {
-          const waitTime = uploadErr?.retryAfter || 60
-          errorMsg = `Too many uploads. Please wait ${waitTime} seconds and try again.`
-        } else if (uploadErr?.ref) {
-          errorMsg = `Could not upload the screenshot. Your entries are still here; please try again. (Ref: ${uploadErr.ref})`
-        } else if (uploadErr?.message && !uploadErr?.message.includes('fetch') && !uploadErr?.message.includes('network')) {
-          errorMsg = uploadErr.message
-        }
-        setServerError(errorMsg)
-        paymentSubmittedRef.current = false
-        setPaymentSubmitting(false)
-        setShowConfirmModal(false)
-        return
-      }
+      const submitWork = async () => {
+        const token = await getAuthToken()
+        const screenshotUrl = await uploadImage(payment.screenshotFile, { signal: controller.signal, token })
+        if (controller.signal.aborted) throw new Error('Payment submission was cancelled. Please try again.')
 
-      let res
-      let data
-      const headers = { 'Content-Type': 'application/json' }
-      if (token) headers['Authorization'] = `Bearer ${token}`
+        const headers = { 'Content-Type': 'application/json' }
+        if (token) headers.Authorization = `Bearer ${token}`
 
-      if (sessionId) {
-        try {
+        let res
+        if (sessionId) {
           res = await fetch(`/api/sessions/${sessionId}/complete`, {
-            method: 'POST',
-            credentials: 'include',
-            headers,
+            method: 'POST', credentials: 'include', headers, signal: controller.signal,
             body: JSON.stringify({
               utr_number: payment.transactionId.trim(),
               payment_app: payment.app || 'other',
               screenshot_url: screenshotUrl,
             }),
           })
-          data = await res.json()
-        } catch {
-          setServerError('Could not reach the server. Your entries are still here; check your connection and try again.')
-          paymentSubmittedRef.current = false
-          setPaymentSubmitting(false)
-          setShowConfirmModal(false)
-          return
-        }
-      } else if (rejectedReg?.id) {
-        try {
+        } else if (rejectedReg?.id) {
           res = await fetch(`/api/tournaments/${id}/register/${rejectedReg.id}/payment`, {
-            method: 'POST',
-            credentials: 'include',
-            headers,
+            method: 'POST', credentials: 'include', headers, signal: controller.signal,
             body: JSON.stringify({
               transaction_id: payment.transactionId.trim(),
               payment_app: payment.app || 'other',
               screenshot_url: screenshotUrl,
             }),
           })
-          data = await res.json()
-        } catch {
-          setServerError('Could not reach the server. Your entries are still here; check your connection and try again.')
-          paymentSubmittedRef.current = false
-          setPaymentSubmitting(false)
-          setShowConfirmModal(false)
-          return
+        } else {
+          throw new Error('Registration session not found. Please restart registration.')
         }
-      } else {
-        setServerError('Registration session not found. Please restart registration.')
-        paymentSubmittedRef.current = false
-        setPaymentSubmitting(false)
-        setShowConfirmModal(false)
-        return
-      }
 
-      if (!data || typeof data !== 'object') {
-        setServerError('The server did not confirm the payment proof. Your entries are still here; please try again.')
-        paymentSubmittedRef.current = false
-        setPaymentSubmitting(false)
-        setShowConfirmModal(false)
-        return
-      }
+        const data = await res.json().catch(() => null)
+        if (!data || typeof data !== 'object') {
+          throw new Error('The server did not confirm the payment proof. Please try again.')
+        }
 
-      const existingProofSaved = data.already_registered &&
-        Boolean(data.registration?.payment_id && data.registration?.screenshot_url)
-      const newlySavedProof = data.success &&
-        Boolean((data.payment?.id || data.registration?.id) && (data.registration?.screenshot_url || data.registration?.transaction_id))
+        const existingProofSaved = data.already_registered &&
+          Boolean(data.registration?.payment_id && data.registration?.screenshot_url)
+        const newlySavedProof = data.success &&
+          Boolean((data.payment?.id || data.registration?.id) && (data.registration?.screenshot_url || data.registration?.transaction_id))
 
-      if (res?.ok && (existingProofSaved || newlySavedProof || data.success)) {
+        if (!res.ok || !(existingProofSaved || newlySavedProof || data.success)) {
+          const refCode = data.ref ? ` (Ref: ${data.ref})` : ''
+          throw new Error((data.message || 'The payment proof was not confirmed as saved. Please try again.') + refCode)
+        }
+
         const nowIST = new Date().toLocaleTimeString('en-IN', {
-          timeZone: 'Asia/Kolkata',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true
+          timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
         }).toUpperCase()
         setSubmittedTimeIST(nowIST)
         if (data.registration) setRegisteredTeam(data.registration)
         if (data.amount_to_pay) setAmountToPay(data.amount_to_pay)
         setShowConfirmModal(false)
         setStep('success')
-        return
-      } else {
-        const refCode = data.ref ? ` (Ref: ${data.ref})` : ''
-        setServerError((data.message || 'The payment proof was not confirmed as saved. Your entries are still here; please try again.') + refCode)
-        paymentSubmittedRef.current = false
-        setPaymentSubmitting(false)
-        setShowConfirmModal(false)
       }
+
+      await Promise.race([submitWork(), timeout])
     } catch (unexpectedErr) {
-      setServerError('Could not submit the payment. Your entries are still here; please try again.')
+      let errorMessage
+      if (timedOut) {
+        errorMessage = 'Payment submission timed out after 60 seconds. Check your connection and try again.'
+      } else if (unexpectedErr?.status === 413 || unexpectedErr?.code === 'FILE_TOO_LARGE') {
+        errorMessage = 'The selected file is too large (maximum allowed size is 10 MB).'
+      } else if (unexpectedErr?.status === 415 || unexpectedErr?.code === 'INVALID_FILE_TYPE') {
+        errorMessage = 'Unsupported image format. Allowed formats: JPEG, PNG, WebP.'
+      } else if (unexpectedErr?.status === 429 || unexpectedErr?.code === 'RATE_LIMIT_EXCEEDED') {
+        errorMessage = `Too many uploads. Please wait ${unexpectedErr?.retryAfter || 60} seconds and try again.`
+      } else if (unexpectedErr?.ref) {
+        errorMessage = `Could not upload the screenshot. Please try again. (Ref: ${unexpectedErr.ref})`
+      } else {
+        errorMessage = unexpectedErr?.message && !/network|failed to fetch/i.test(unexpectedErr.message)
+          ? unexpectedErr.message
+          : 'Could not reach the server. Check your connection and try again.'
+      }
+      setConfirmPaymentError(errorMessage)
+    } finally {
+      window.clearTimeout(timeoutId)
       paymentSubmittedRef.current = false
       setPaymentSubmitting(false)
-      setShowConfirmModal(false)
     }
   }
 
@@ -1470,6 +1443,7 @@ function RegistrationPage({ onNavigate }) {
                   if (!e.nativeEvent.isTrusted) return
                   setServerError('')
                   if (!validatePayment()) return
+                  setConfirmPaymentError('')
                   setShowConfirmModal(true)
                 }}
                 disabled={paymentSubmitting || !isPaymentFormValid}
@@ -1501,6 +1475,7 @@ function RegistrationPage({ onNavigate }) {
               if (!e.nativeEvent.isTrusted) return
               setServerError('')
               if (!validatePayment()) return
+              setConfirmPaymentError('')
               setShowConfirmModal(true)
             }}
             disabled={paymentSubmitting || !isPaymentFormValid}
@@ -1542,7 +1517,7 @@ function RegistrationPage({ onNavigate }) {
                 {paymentSubmitting ? (
                   <>
                     <div className="payment-submit-spinner w-4 h-4 border-2 border-white border-t-transparent rounded-full shrink-0" />
-                    <span>Submitting...</span>
+                    <span>Processing...</span>
                   </>
                 ) : (
                   <span>Confirm &amp; Submit</span>
@@ -1563,6 +1538,19 @@ function RegistrationPage({ onNavigate }) {
               <span className="material-symbols-outlined text-amber-500 text-base shrink-0 mt-0.5">warning</span>
               <span>Don't close or refresh this page. Your payment may fail.</span>
             </div>
+
+            {paymentSubmitting && (
+              <div role="status" aria-live="polite" className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/10 px-4 py-3 text-sm font-semibold text-on-background">
+                <span className="payment-submit-spinner h-5 w-5 shrink-0 rounded-full border-2 border-primary border-t-transparent" />
+                <span>Processing your payment proof...</span>
+              </div>
+            )}
+
+            {confirmPaymentError && (
+              <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                {confirmPaymentError}
+              </div>
+            )}
 
             <div className="rounded-xl border border-outline-variant/30 divide-y divide-outline-variant/20 bg-surface-container-low/50 text-xs overflow-hidden">
               <div className="flex items-center justify-between p-3 gap-3">
