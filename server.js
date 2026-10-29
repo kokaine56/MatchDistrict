@@ -743,6 +743,10 @@ async function removeUploadedMedia(mediaUrl) {
     for (const [url, file] of IMAGEKIT_UPLOAD_IDS_BY_URL) {
       if (now - file.createdAt > 10 * 60 * 1000) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(url);
     }
+    const baseUrl = new URL(mediaUrl);
+    baseUrl.searchParams.delete('v');
+    const normalizedUrl = baseUrl.toString();
+    const uploadedFile = IMAGEKIT_UPLOAD_IDS_BY_URL.get(normalizedUrl);
     const ikPrivateKey = getImageKitPrivateKey();
     if (!uploadedFile || !ikPrivateKey) return;
 
@@ -752,7 +756,7 @@ async function removeUploadedMedia(mediaUrl) {
       headers: { Authorization: 'Basic ' + auth }
     });
     if (!response.ok) throw new Error('ImageKit file deletion failed with status ' + response.status);
-    IMAGEKIT_UPLOAD_IDS_BY_URL.delete(mediaUrl);
+    IMAGEKIT_UPLOAD_IDS_BY_URL.delete(normalizedUrl);
     console.log('[MediaCleanup] Removed uploaded ImageKit file after transaction rollback.');
   } catch (err) {
     console.warn('[MediaCleanup] Could not remove uploaded media:', err.message);
@@ -1577,9 +1581,11 @@ async function requireApprovedOrganizer(req, res, authUser, pool) {
 // Admin guard for promotion management. Authorization is derived from the
 // server-side user record (roles loaded from the database), never from a
 // client-supplied role claim or the (potentially stale) JWT payload alone.
-async function requireAdminFromDb(req, res) {
+async function requireAdminFromDb(req, res, context = '') {
+  if (context) console.info(`[${context}] Admin permission check started.`);
   const authUser = getAuthUser(req);
   if (!authUser) {
+    if (context) console.warn(`[${context}] Admin permission check denied: no authenticated user.`);
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
     return null;
@@ -1590,18 +1596,22 @@ async function requireAdminFromDb(req, res) {
       [authUser.id]
     );
     if (result.rows.length === 0) {
+      if (context) console.warn(`[${context}] Admin permission check denied: account ${authUser.id} was not found.`);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'Account not found.' }));
       return null;
     }
     const dbUser = result.rows[0];
     if (!canManagePromotions(dbUser)) {
+      if (context) console.warn(`[${context}] Admin permission check denied: account ${dbUser.id} has no administrator role.`);
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'Only administrators can manage tournament promotions.' }));
       return null;
     }
+    if (context) console.info(`[${context}] Admin permission check passed for account ${dbUser.id}.`);
     return { id: dbUser.id, name: dbUser.name, roles: resolveRoles(dbUser) };
   } catch (err) {
+    if (context) console.error(`[${context}] Admin permission check failed:`, err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: false, error: err.message }));
     return null;
@@ -1936,22 +1946,8 @@ const server = http.createServer(async (req, res) => {
 
     req.on('end', async () => {
       if (aborted) return;
+      let uploadContext = '';
       try {
-        const privateKey = getImageKitPrivateKey();
-        const urlEndpoint = getImageKitUrlEndpoint();
-        if (!privateKey || !urlEndpoint) {
-          const ref = makeErrorRef();
-          logErrorWithRef(ref, 'POST /api/media/upload', new Error('ImageKit media configuration is missing or empty.'), 'check_config', 500);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            success: false,
-            error: 'SERVER_ERROR',
-            ref,
-            message: `Could not upload image. Please try again. (Ref: ${ref})`,
-          }));
-          return;
-        }
-
         let data;
         try {
           data = JSON.parse(body);
@@ -1964,6 +1960,26 @@ const server = http.createServer(async (req, res) => {
         if (!data || !data.file || typeof data.file !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'No file data provided' }));
+          return;
+        }
+
+        const isTournamentQrUpload = data.purpose === 'tournament-payment-qr';
+        uploadContext = isTournamentQrUpload ? `TournamentPaymentSettings:${String(data.tournament_id || 'unknown')}` : '';
+        if (isTournamentQrUpload) {
+          console.info(`[${uploadContext}] QR storage upload started.`);
+          const admin = await requireAdminFromDb(req, res, `${uploadContext} upload`);
+          if (!admin) return;
+        }
+
+        const privateKey = getImageKitPrivateKey();
+        const urlEndpoint = getImageKitUrlEndpoint();
+        if (!privateKey || !urlEndpoint) {
+          const configError = new Error('ImageKit media configuration is missing or empty.');
+          const ref = makeErrorRef();
+          logErrorWithRef(ref, 'POST /api/media/upload', configError, 'check_config', 500);
+          if (uploadContext) console.error(`[${uploadContext}] QR storage upload failed:`, configError);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: uploadContext ? configError.message : `Could not upload image. Please try again. (Ref: ${ref})` }));
           return;
         }
 
@@ -1984,6 +2000,12 @@ const server = http.createServer(async (req, res) => {
         }
 
         const dataUrlMatch = data.file.match(/^data:(image\/(?:jpeg|jpg|png|gif|webp|heic|heif|avif));base64,([\s\S]*)$/i);
+        if (isTournamentQrUpload && (!dataUrlMatch || !['image/png', 'image/jpeg', 'image/jpg', 'image/webp'].includes(dataUrlMatch[1].toLowerCase()))) {
+          console.error(`[${uploadContext}] QR storage upload rejected: unsupported image content type.`);
+          res.writeHead(415, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_IMAGE_TYPE', message: 'QR image must be a PNG, JPG, JPEG, or WebP file.' }));
+          return;
+        }
         const isRemoteUrl = /^https:\/\//i.test(data.file);
         let rawBuffer = null;
         let uploadSource = null;
@@ -2015,9 +2037,11 @@ const server = http.createServer(async (req, res) => {
           uploadSource = new Blob([rawBuffer], { type: mimeType });
         }
 
-        if (rawBuffer && rawBuffer.length > MAX_IMAGE_BYTES) {
+        const maxImageBytes = isTournamentQrUpload ? 5 * 1024 * 1024 : MAX_IMAGE_BYTES;
+        if (rawBuffer && rawBuffer.length > maxImageBytes) {
+          if (isTournamentQrUpload) console.error(`[${uploadContext}] QR storage upload rejected: ${rawBuffer.length} bytes exceeds 5 MB.`);
           res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: 'Image must be 10 MB or smaller.' }));
+          res.end(JSON.stringify({ success: false, error: 'PAYLOAD_TOO_LARGE', message: isTournamentQrUpload ? 'QR image must be 5 MB or smaller.' : 'Image must be 10 MB or smaller.' }));
           return;
         }
 
@@ -2067,6 +2091,7 @@ const server = http.createServer(async (req, res) => {
             if (oldestUrl) IMAGEKIT_UPLOAD_IDS_BY_URL.delete(oldestUrl);
           }
           IMAGEKIT_UPLOAD_IDS_BY_URL.set(imageKitData.url, { fileId: imageKitData.fileId, createdAt: now });
+          if (isTournamentQrUpload) console.info(`[${uploadContext}] QR storage upload succeeded: ${imageKitData.url}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, secure_url: imageKitData.url }));
         } else {
@@ -2075,14 +2100,16 @@ const server = http.createServer(async (req, res) => {
           const ikError = new Error(`ImageKit rejected upload: ${ikMsg}`);
           ikError.status = imageKitResponse.status;
           logErrorWithRef(ref, 'POST /api/media/upload', ikError, 'imagekit_upload');
+          if (isTournamentQrUpload) console.error(`[${uploadContext}] QR storage upload failed:`, ikError);
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
+          res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: isTournamentQrUpload ? ikError.message : `Could not upload image. Please try again. (Ref: ${ref})` }));
         }
       } catch (err) {
         const ref = makeErrorRef();
         logErrorWithRef(ref, 'POST /api/media/upload', err, 'handler');
+        if (uploadContext) console.error(`[${uploadContext}] QR storage upload failed:`, err);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: `Could not upload image. Please try again. (Ref: ${ref})` }));
+        res.end(JSON.stringify({ success: false, error: 'SERVER_ERROR', ref, message: uploadContext ? err.message : `Could not upload image. Please try again. (Ref: ${ref})` }));
       }
     });
     return;
@@ -7355,9 +7382,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   // GET/PUT /api/admin/tournaments/:id/payment-settings
   const adminTournamentPaymentMatch = urlPath.match(/^\/api\/admin\/tournaments\/([^/]+)\/payment-settings$/);
   if (adminTournamentPaymentMatch && req.method === 'GET') {
-    const admin = await requireAdminFromDb(req, res);
-    if (!admin) return;
     const tournamentId = decodeURIComponent(adminTournamentPaymentMatch[1]);
+    const admin = await requireAdminFromDb(req, res, `TournamentPaymentSettings:${tournamentId} GET`);
+    if (!admin) return;
     try {
       const result = await pool.query('SELECT payment_qr_image_url, payment_upi_id FROM tournaments WHERE id = $1', [tournamentId]);
       if (!result.rows.length) {
@@ -7365,7 +7392,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, settings: result.rows[0] }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -7377,21 +7404,41 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', async () => {
-      const admin = await requireAdminFromDb(req, res);
-      if (!admin) return;
       const tournamentId = decodeURIComponent(adminTournamentPaymentMatch[1]);
+      const context = `TournamentPaymentSettings:${tournamentId}`;
+      const admin = await requireAdminFromDb(req, res, `${context} PUT`);
+      if (!admin) {
+        try {
+          const deniedPayload = JSON.parse(body || '{}');
+          if (deniedPayload.payment_qr_uploaded) await removeUploadedMedia(deniedPayload.payment_qr_image_url);
+        } catch (cleanupError) {
+          console.error(`[${context}] Could not clean up uploaded QR after permission denial:`, cleanupError);
+        }
+        return;
+      }
+      let uploadedQrUrl = '';
       try {
         const payload = JSON.parse(body || '{}');
         const rawQr = payload.payment_qr_image_url !== undefined ? payload.payment_qr_image_url : payload.payment_qr_url;
         const rawUpi = payload.payment_upi_id !== undefined ? payload.payment_upi_id : payload.upi_id;
         const qrUrl = rawQr === undefined ? undefined : String(rawQr || '').trim();
         const upiId = rawUpi === undefined ? undefined : String(rawUpi || '').trim();
+        if (payload.payment_qr_uploaded === true) uploadedQrUrl = qrUrl || '';
+        console.info(`[${context}] Database update started.`, { hasQr: qrUrl !== undefined && Boolean(qrUrl), hasUpi: upiId !== undefined && Boolean(upiId) });
         if (qrUrl !== undefined && qrUrl && (!/^https:\/\//i.test(qrUrl) || qrUrl.length > 2048)) {
+          if (uploadedQrUrl) await removeUploadedMedia(uploadedQrUrl);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_QR_URL', message: 'QR image must be a valid HTTPS URL.' }));
           return;
         }
+        if (upiId !== undefined && upiId && !/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/.test(upiId)) {
+          if (uploadedQrUrl) await removeUploadedMedia(uploadedQrUrl);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'INVALID_UPI_ID', message: 'Enter a valid UPI ID, for example 66566656556@upi.' }));
+          return;
+        }
         if (upiId !== undefined && upiId.length > 255) {
+          if (uploadedQrUrl) await removeUploadedMedia(uploadedQrUrl);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'INVALID_UPI_ID', message: 'UPI ID must be 255 characters or fewer.' }));
           return;
@@ -7400,11 +7447,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const updateParams = [];
         if (qrUrl !== undefined) {
           updateParams.push(qrUrl);
-          setClauses.push(`payment_qr_image_url = ${updateParams.length}`);
+          setClauses.push(`payment_qr_image_url = $${updateParams.length}`);
         }
         if (upiId !== undefined) {
           updateParams.push(upiId);
-          setClauses.push(`payment_upi_id = ${updateParams.length}`);
+          setClauses.push(`payment_upi_id = $${updateParams.length}`);
         }
         if (setClauses.length === 0) {
           const curRes = await pool.query('SELECT payment_qr_image_url, payment_upi_id FROM tournaments WHERE id = $1', [tournamentId]);
@@ -7414,19 +7461,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         }
         updateParams.push(tournamentId);
         const result = await pool.query(
-          `UPDATE tournaments SET ${setClauses.join(', ')} WHERE id = ${updateParams.length} RETURNING payment_qr_image_url, payment_upi_id`,
+          `UPDATE tournaments SET ${setClauses.join(', ')} WHERE id = $${updateParams.length} RETURNING payment_qr_image_url, payment_upi_id`,
           updateParams
         );
         if (!result.rows.length) {
+          if (uploadedQrUrl) await removeUploadedMedia(uploadedQrUrl);
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
           return;
         }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        console.info(`[${context}] Database update succeeded.`);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ success: true, settings: result.rows[0] }));
       } catch (err) {
+        console.error(`[${context}] Database update failed:`, err);
+        if (uploadedQrUrl) await removeUploadedMedia(uploadedQrUrl);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: err.message, message: 'Could not save tournament payment settings.' }));
+        res.end(JSON.stringify({ success: false, error: err.message, message: `Could not update payment settings for tournament ${tournamentId}: ${err.message}` }));
       }
     });
     return;

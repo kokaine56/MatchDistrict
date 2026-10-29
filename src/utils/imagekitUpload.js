@@ -33,7 +33,7 @@ export async function uploadImage(image, options = {}) {
       method: 'POST',
       credentials: 'include',
       headers,
-      body: JSON.stringify({ file: fileData }),
+      body: JSON.stringify({ file: fileData, ...(options.purpose ? { purpose: options.purpose } : {}), ...(options.tournamentId ? { tournament_id: options.tournamentId } : {}) }),
       ...(signal ? { signal } : {}),
     });
 
