@@ -587,7 +587,6 @@ function OrganizerDashboard({
             </button>
           ))}
         </div>
-        </div>
       </div>
 
       <AnimatePresence mode="wait">
