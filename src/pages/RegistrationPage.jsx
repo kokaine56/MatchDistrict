@@ -337,62 +337,59 @@ const getPresetSubs = (preset) => {
 async function downscaleScreenshot(file) {
   if (!file) return file
   const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name)
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const objectUrl = URL.createObjectURL(file)
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl)
+  if (typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap === 'function') {
+    const workerSource = `self.onmessage = async ({ data: file }) => {
       try {
-        let width = img.naturalWidth || img.width
-        let height = img.naturalHeight || img.height
-        const maxDim = 1600
+        const bitmap = await createImageBitmap(file);
+        let width = bitmap.width;
+        let height = bitmap.height;
+        const maxDim = 1600;
         if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width)
-            width = maxDim
-          } else {
-            width = Math.round((width * maxDim) / height)
-            height = maxDim
+          if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+          else { width = Math.round((width * maxDim) / height); height = maxDim; }
+        }
+        const canvas = new OffscreenCanvas(width, height);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not process screenshot image.');
+        context.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close?.();
+        const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+        self.postMessage({ blob });
+      } catch (error) {
+        self.postMessage({ error: error?.message || 'Could not process screenshot image.' });
+      }
+    };`
+    try {
+      const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }))
+      return await new Promise((resolve, reject) => {
+        const worker = new Worker(workerUrl)
+        const cleanup = () => {
+          worker.terminate()
+          URL.revokeObjectURL(workerUrl)
+        }
+        worker.onmessage = ({ data }) => {
+          cleanup()
+          if (data?.error) {
+            reject(new Error(isHeic
+              ? 'HEIC/HEIF images cannot be decoded by your browser. Please select or take a JPEG, PNG, or WebP screenshot.'
+              : data.error))
+            return
           }
+          const baseName = (file.name || 'screenshot').replace(/\.[^.]+$/, '')
+          resolve(new File([data.blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: Date.now() }))
         }
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          return resolve(file)
+        worker.onerror = (error) => {
+          cleanup()
+          reject(error)
         }
-        ctx.drawImage(img, 0, 0, width, height)
-        canvas.toBlob(
-          (blob) => {
-            if (blob) {
-              const baseName = (file.name || 'screenshot').replace(/\.[^.]+$/, '')
-              const convertedFile = new File([blob], `${baseName}.jpg`, {
-                type: 'image/jpeg',
-                lastModified: Date.now(),
-              })
-              resolve(convertedFile)
-            } else {
-              resolve(file)
-            }
-          },
-          'image/jpeg',
-          0.8
-        )
-      } catch {
-        resolve(file)
-      }
+        worker.postMessage(file)
+      })
+    } catch (error) {
+      if (error instanceof Error && /HEIC\/HEIF images/.test(error.message)) throw error
+      return file
     }
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl)
-      if (isHeic) {
-        reject(new Error('HEIC/HEIF images cannot be decoded by your browser. Please select or take a JPEG, PNG, or WebP screenshot.'))
-      } else {
-        reject(new Error('Could not decode the selected image file.'))
-      }
-    }
-    img.src = objectUrl
-  })
+  }
+  return file
 }
 
 function RegistrationPage({ onNavigate }) {
@@ -427,7 +424,6 @@ function RegistrationPage({ onNavigate }) {
   const [registeredTeam, setRegisteredTeam] = useState(null)
   const [sessionId, setSessionId] = useState(null)
   const [amountToPay, setAmountToPay] = useState(null)
-  const [predictedGroup, setPredictedGroup] = useState(null)
 
   const [payment, setPayment] = useState({
     app: '',
@@ -895,8 +891,13 @@ function RegistrationPage({ onNavigate }) {
         >
           {/* Success Header */}
           <div className="text-center">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 mx-auto mb-3.5 shadow-sm">
-              <span className="material-symbols-outlined text-2xl font-bold">check</span>
+            <div className="md-payment-success mx-auto mb-3.5" role="img" aria-label="Registration successful">
+              <span className="md-payment-success__pulse" />
+              <span className="md-payment-success__circle">
+                <svg viewBox="0 0 48 48" aria-hidden="true">
+                  <path className="md-payment-success__check" d="M13 24.5 20.5 32 35 17" />
+                </svg>
+              </span>
             </div>
             <h2 className="font-headline-md text-2xl sm:text-3xl font-extrabold text-on-background tracking-tight">Team Registered!</h2>
             {tourney?.title && (
@@ -957,14 +958,6 @@ function RegistrationPage({ onNavigate }) {
                   </button>
                 </div>
               </div>
-              {predictedGroup && !/not assigned|no group|unassigned/i.test(toMessage(predictedGroup)) && (
-                <div className="flex items-center justify-between p-3 gap-3">
-                  <span className="text-on-surface-variant font-medium shrink-0">Assigned Group</span>
-                  <span className="font-bold text-primary text-xs">
-                    {toMessage(predictedGroup).startsWith('Group') ? toMessage(predictedGroup) : `Group ${toMessage(predictedGroup)}`}
-                  </span>
-                </div>
-              )}
               {amountToPay && (
                 <div className="flex items-center justify-between p-3 gap-3">
                   <span className="text-on-surface-variant font-medium shrink-0">Amount Due</span>
@@ -1017,11 +1010,11 @@ function RegistrationPage({ onNavigate }) {
     setServerError('')
 
     try {
+      await new Promise(resolve => window.setTimeout(resolve, 0))
       const token = await getAuthToken()
       let screenshotUrl = null
       try {
-        const fileToUpload = await downscaleScreenshot(payment.screenshotFile)
-        screenshotUrl = await uploadImage(fileToUpload)
+        screenshotUrl = await uploadImage(payment.screenshotFile)
       } catch (uploadErr) {
         let errorMsg = 'Could not upload the screenshot. Your entries are still here; please try again.'
         if (uploadErr?.status === 413 || uploadErr?.code === 'FILE_TOO_LARGE') {
@@ -1119,7 +1112,6 @@ function RegistrationPage({ onNavigate }) {
         setSubmittedTimeIST(nowIST)
         if (data.registration) setRegisteredTeam(data.registration)
         if (data.amount_to_pay) setAmountToPay(data.amount_to_pay)
-        if (data.predicted_group) setPredictedGroup(data.predicted_group)
         setShowConfirmModal(false)
         setStep('success')
         return
@@ -1400,10 +1392,17 @@ function RegistrationPage({ onNavigate }) {
                 <input
                   type="text"
                   inputMode="numeric"
+                  pattern="[0-9]{12}"
                   maxLength={12}
                   value={payment.transactionId}
+                  onPaste={e => {
+                    e.preventDefault()
+                    const val = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 12)
+                    setPayment(prev => ({ ...prev, transactionId: val }))
+                    setPaymentErrors(prev => ({ ...prev, transactionId: val.length && val.length !== 12 ? 'A valid 12-digit UPI reference (UTR) is required.' : '' }))
+                  }}
                   onChange={e => {
-                    const val = e.target.value.replace(/\s+/g, '').toUpperCase();
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 12);
                     setPayment(prev => ({ ...prev, transactionId: val }));
                     if (val.length === 12) {
                       setPaymentErrors(prev => ({ ...prev, transactionId: '' }));
@@ -1542,7 +1541,7 @@ function RegistrationPage({ onNavigate }) {
               >
                 {paymentSubmitting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                    <div className="payment-submit-spinner w-4 h-4 border-2 border-white border-t-transparent rounded-full shrink-0" />
                     <span>Submitting...</span>
                   </>
                 ) : (
@@ -1558,6 +1557,11 @@ function RegistrationPage({ onNavigate }) {
               <span>
                 Please confirm that you have completed the payment and that the transaction reference and screenshot are correct. Submitting payment proof does not guarantee payment verification.
               </span>
+            </div>
+
+            <div role="alert" className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-700 dark:text-amber-200 text-xs font-semibold leading-relaxed flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-amber-500 text-base shrink-0 mt-0.5">warning</span>
+              <span>Don't close or refresh this page. Your payment may fail.</span>
             </div>
 
             <div className="rounded-xl border border-outline-variant/30 divide-y divide-outline-variant/20 bg-surface-container-low/50 text-xs overflow-hidden">
@@ -1784,6 +1788,8 @@ function RegistrationPage({ onNavigate }) {
                 <label htmlFor="reg-captainUid" className="block text-xs font-semibold text-white/60 mb-1.5">UID *</label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   id="reg-captainUid"
                   data-field="captainUid"
                   value={form.captainUid}
@@ -1824,6 +1830,8 @@ function RegistrationPage({ onNavigate }) {
                   <label htmlFor={`reg-player_${i}_uid`} className="block text-xs font-semibold text-white/60 mb-1.5">Player {i + 2} UID *</label>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     id={`reg-player_${i}_uid`}
                     data-field={`player_${i}_uid`}
                     value={player.uid}
@@ -1863,6 +1871,8 @@ function RegistrationPage({ onNavigate }) {
                   <label htmlFor={`reg-sub_${i}_uid`} className="block text-xs font-semibold text-white/60 mb-1.5">Sub {i + 1} UID</label>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     id={`reg-sub_${i}_uid`}
                     data-field={`sub_${i}_uid`}
                     value={sub.uid}

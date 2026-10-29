@@ -2601,7 +2601,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           </div>
                           <div className="space-y-1">
                             <label className="text-[9px] text-on-surface-variant">UID</label>
-                            <input type="text" value={presetForm.captain_uid} onChange={e => setPresetForm({ ...presetForm, captain_uid: e.target.value.replace(/\D/g, '') })} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                            <input type="text" inputMode="numeric" pattern="[0-9]*" value={presetForm.captain_uid} onChange={e => setPresetForm({ ...presetForm, captain_uid: e.target.value.replace(/\D/g, '') })} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
                           </div>
                         </div>
                       </div>
@@ -2618,7 +2618,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               </div>
                               <div className="space-y-1">
                                 <label className="text-[9px] text-on-surface-variant">UID</label>
-                                <input type="text" value={p.uid} onChange={e => { const u = [...presetForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, players: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                                <input type="text" inputMode="numeric" pattern="[0-9]*" value={p.uid} onChange={e => { const u = [...presetForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, players: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
                               </div>
                             </div>
                           ))}
@@ -2637,7 +2637,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                               </div>
                               <div className="space-y-1">
                                 <label className="text-[9px] text-on-surface-variant">UID</label>
-                                <input type="text" value={s.uid} onChange={e => { const u = [...presetForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, substitutes: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
+                                <input type="text" inputMode="numeric" pattern="[0-9]*" value={s.uid} onChange={e => { const u = [...presetForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setPresetForm({ ...presetForm, substitutes: u }); }} placeholder="Numeric ID" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-secondary transition-colors" />
                               </div>
                             </div>
                           ))}
@@ -2691,7 +2691,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             </div>
                             <div className="space-y-1">
                               <label className="text-[9px] text-on-surface-variant">UID</label>
-                              <input type="text" value={editForm.captain_uid} onChange={e => setEditForm({ ...editForm, captain_uid: e.target.value.replace(/\D/g, '') })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                              <input type="text" inputMode="numeric" pattern="[0-9]*" value={editForm.captain_uid} onChange={e => setEditForm({ ...editForm, captain_uid: e.target.value.replace(/\D/g, '') })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
                             </div>
                           </div>
                         </div>
@@ -2707,7 +2707,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[9px] text-on-surface-variant">UID</label>
-                                  <input type="text" value={p.uid} onChange={e => { const u = [...editForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, players: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={p.uid} onChange={e => { const u = [...editForm.players]; u[pIdx] = { ...u[pIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, players: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
                                 </div>
                               </div>
                             ))}
@@ -2725,7 +2725,7 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 </div>
                                 <div className="space-y-1">
                                   <label className="text-[9px] text-on-surface-variant">UID</label>
-                                  <input type="text" value={s.uid} onChange={e => { const u = [...editForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, substitutes: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
+                                  <input type="text" inputMode="numeric" pattern="[0-9]*" value={s.uid} onChange={e => { const u = [...editForm.substitutes]; u[sIdx] = { ...u[sIdx], uid: e.target.value.replace(/\D/g, '') }; setEditForm({ ...editForm, substitutes: u }); }} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-2.5 py-2 text-[11px] text-on-background focus:outline-none focus:border-primary transition-colors" />
                                 </div>
                               </div>
                             ))}
