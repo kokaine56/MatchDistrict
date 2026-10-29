@@ -120,6 +120,62 @@ const INJECTED_ESPORTS_TEAM_NAMES = Object.freeze([
   'Fearless Legends',
   'TNR eSports'
 ]);
+const INJECTED_ESPORTS_TEAM_LEADERS = Object.freeze([
+  'ViperX', 'RudraOP', 'ShadowKai', 'BlazeRaj', 'NightHawk', 'AryanGod', 'VenomX', 'ZeroGhost',
+  'KaiserOP', 'DarkFury', 'StormBlade', 'PhantomAim', 'TitanRaj', 'RogueSniper', 'IronFist',
+  'AlphaStrike', 'ManavFF', 'ToxicVibe', 'SkyReaper', 'CobraX', 'HunterOP', 'RebelAce',
+  'Vikrant', 'NovaSlayer', 'GhostRider', 'ArjunX', 'LethalOP', 'ThunderKid', 'FuryAim',
+  'KabirXD', 'SavageRaj'
+]);
+const GENERATED_TEAM_FIRST_WORDS = Object.freeze([
+  'Astra', 'Raven', 'Vortex', 'Nova', 'Shadow', 'Crimson', 'Royal', 'Frost', 'Solar', 'Mystic',
+  'Iron', 'Storm', 'Phoenix', 'Apex', 'Titan', 'Quantum', 'Blaze', 'Neon', 'Obsidian', 'Eclipse',
+  'Orion', 'Savage', 'Rogue', 'Noble', 'Hyper', 'Silent', 'Rapid', 'Golden', 'Cosmic', 'Thunder',
+  'Prime', 'Alpha', 'Arctic', 'Celestial', 'Inferno', 'Jade', 'Lunar', 'Onyx', 'Scarlet', 'Tempest'
+]);
+const GENERATED_TEAM_SECOND_WORDS = Object.freeze([
+  'Vanguard', 'Sentinels', 'Dragons', 'Falcons', 'Wolves', 'Titans', 'Legends', 'Rebels', 'Guardians', 'Rangers',
+  'Warriors', 'Strikers', 'Knights', 'Phantoms', 'Hunters', 'Raiders', 'Predators', 'Gladiators', 'Pioneers', 'Dynasty',
+  'Eagles', 'Hawks', 'Spartans', 'Marauders', 'Nomads', 'Rivals', 'Reapers', 'Outlaws', 'Command', 'Alliance',
+  'Force', 'United', 'Prowlers', 'Royals', 'Vipers', 'Wraiths', 'Raptors', 'Phoenix', 'Syndicate', 'Empire'
+]);
+const GENERATED_TEAM_DESCRIPTORS = Object.freeze([
+  'Esports', 'Gaming', 'Esports Club', 'Gaming Collective', 'Competitive Gaming', 'Arena', 'Pro League', 'Gaming Alliance'
+]);
+const GENERATED_LEADER_WORDS = Object.freeze([
+  'Raven', 'Orion', 'Onyx', 'Rogue', 'Blaze', 'Frost', 'Rift', 'Nova', 'Titan', 'Shadow',
+  'Storm', 'Phantom', 'Cipher', 'Astra', 'Rebel', 'Nomad', 'Fury', 'Arctic', 'Ghost', 'Saber',
+  'Spectral', 'Thunder', 'Ronin', 'Raptor', 'Nexus', 'Lethal', 'Jade', 'Falcon', 'Ryder', 'Wolf',
+  'Zenith', 'Dynamo', 'Comet', 'Maverick', 'Striker', 'Phoenix', 'Vanguard', 'Spectre', 'Inferno', 'Apex'
+]);
+const GENERATED_LEADER_SUFFIXES = Object.freeze(['X', 'OP', 'FF', 'XD']);
+
+function getInjectedTeamPairForSlot(slotNumber) {
+  const pairIndex = Math.max(0, Math.floor(Number(slotNumber) || 1) - 1);
+  if (pairIndex < INJECTED_ESPORTS_TEAM_NAMES.length) {
+    return {
+      teamName: INJECTED_ESPORTS_TEAM_NAMES[pairIndex],
+      leaderName: INJECTED_ESPORTS_TEAM_LEADERS[pairIndex]
+    };
+  }
+
+  const extraIndex = pairIndex - INJECTED_ESPORTS_TEAM_NAMES.length;
+  const teamFirst = GENERATED_TEAM_FIRST_WORDS[extraIndex % GENERATED_TEAM_FIRST_WORDS.length];
+  const teamSecond = GENERATED_TEAM_SECOND_WORDS[Math.floor(extraIndex / GENERATED_TEAM_FIRST_WORDS.length) % GENERATED_TEAM_SECOND_WORDS.length];
+  const teamDescriptor = GENERATED_TEAM_DESCRIPTORS[
+    Math.floor(extraIndex / (GENERATED_TEAM_FIRST_WORDS.length * GENERATED_TEAM_SECOND_WORDS.length)) % GENERATED_TEAM_DESCRIPTORS.length
+  ];
+  const leaderBase = GENERATED_LEADER_WORDS[extraIndex % GENERATED_LEADER_WORDS.length];
+  const leaderSuffix = GENERATED_LEADER_SUFFIXES[
+    Math.floor(extraIndex / GENERATED_LEADER_WORDS.length) % GENERATED_LEADER_SUFFIXES.length
+  ];
+  const leaderCycle = Math.floor(extraIndex / (GENERATED_LEADER_WORDS.length * GENERATED_LEADER_SUFFIXES.length));
+
+  return {
+    teamName: `${teamFirst} ${teamSecond} ${teamDescriptor}`,
+    leaderName: `${leaderBase}${leaderSuffix}${leaderCycle ? leaderCycle + 1 : ''}`
+  };
+}
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18555,7 +18611,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
         // Query existing registrations to ensure no duplicate slot numbers or IDs
         const existingRegsRes = await injectionClient.query(
-          'SELECT id, slot_number, team_name FROM tournament_registrations WHERE tournament_id = $1',
+          'SELECT id, slot_number, team_name, captain FROM tournament_registrations WHERE tournament_id = $1',
           [tournamentId]
         );
         const existingCount = existingRegsRes.rows.length;
@@ -18572,16 +18628,11 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           return;
         }
 
-        // Clamp to remaining slots so total registrations never exceed slotsTotal
-        const injectedTeamNames = new Set(existingRegsRes.rows.map(registration => String(registration.team_name || '').trim().toLocaleLowerCase('en-US')));
-        const availableTeamNames = INJECTED_ESPORTS_TEAM_NAMES.filter(name => !injectedTeamNames.has(name.toLocaleLowerCase('en-US')));
-        const slotsToInject = Math.min(requestedSlots, remainingSlots, availableTeamNames.length);
-        if (slotsToInject <= 0) {
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'NO_UNIQUE_TEAM_NAMES', message: 'All supplied esports team names are already registered in this tournament.' }));
-          return;
-        }
-
+        // Clamp to remaining capacity. Names are deterministic by slot and skipped if already registered.
+        const slotsToInject = Math.min(requestedSlots, remainingSlots);
+        const normalizeName = value => String(value || '').trim().toLocaleLowerCase('en-US');
+        const injectedTeamNames = new Set(existingRegsRes.rows.map(registration => normalizeName(registration.team_name)).filter(Boolean));
+        const injectedLeaderNames = new Set(existingRegsRes.rows.map(registration => normalizeName(registration.captain)).filter(Boolean));
         const occupiedSlots = new Set(
           existingRegsRes.rows
             .map(r => parseInt(r.slot_number, 10))
@@ -18596,47 +18647,54 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         const testRegistrations = [];
         let candidateSlot = 1;
 
-        for (let i = 0; i < slotsToInject; i++) {
-          const teamName = availableTeamNames[i];
-          const regId = `REG-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
-          const userId = `USR-TEST-${now}-${batchTag}-${String(i + 1).padStart(4, '0')}`;
-          const leaderIgn = `TestLeader_${i + 1}`;
-
-          // Find next unoccupied slot within capacity (1..slotsTotal)
+        while (testRegistrations.length < slotsToInject && candidateSlot <= slotsTotal) {
           while (occupiedSlots.has(candidateSlot) && candidateSlot <= slotsTotal) {
             candidateSlot++;
           }
-
           if (candidateSlot > slotsTotal) {
             break; // Strictly enforce: never exceed slotsTotal
           }
 
           const assignedSlot = candidateSlot;
-          occupiedSlots.add(candidateSlot);
+          const pair = getInjectedTeamPairForSlot(assignedSlot);
+          const teamNameKey = normalizeName(pair.teamName);
+          const leaderNameKey = normalizeName(pair.leaderName);
+          if (!teamNameKey || !leaderNameKey || injectedTeamNames.has(teamNameKey) || injectedLeaderNames.has(leaderNameKey)) {
+            candidateSlot++;
+            continue;
+          }
+
+          const registrationIndex = testRegistrations.length + 1;
+          const regId = `REG-TEST-${now}-${batchTag}-${String(registrationIndex).padStart(4, '0')}`;
+          const userId = `USR-TEST-${now}-${batchTag}-${String(registrationIndex).padStart(4, '0')}`;
+          const leaderIgn = pair.leaderName;
           candidateSlot++;
+          occupiedSlots.add(assignedSlot);
+          injectedTeamNames.add(teamNameKey);
+          injectedLeaderNames.add(leaderNameKey);
           const regStatus = 'approved';
 
           const members = JSON.stringify([
-            { role: 'Leader', ign: leaderIgn, in_game_id: `999${i + 1}1` },
-            { role: 'Member', ign: `TestAssault_${i + 1}`, in_game_id: `999${i + 1}2` },
-            { role: 'Member', ign: `TestSniper_${i + 1}`, in_game_id: `999${i + 1}3` },
-            { role: 'Member', ign: `TestSupport_${i + 1}`, in_game_id: `999${i + 1}4` }
+            { role: 'Leader', ign: leaderIgn, in_game_id: `999${assignedSlot}1` },
+            { role: 'Member', ign: `TestAssault_${assignedSlot}`, in_game_id: `999${assignedSlot}2` },
+            { role: 'Member', ign: `TestSniper_${assignedSlot}`, in_game_id: `999${assignedSlot}3` },
+            { role: 'Member', ign: `TestSupport_${assignedSlot}`, in_game_id: `999${assignedSlot}4` }
           ]);
 
           testRegistrations.push({
             id: regId,
             tournament_id: tournamentId,
             user_id: userId,
-            team_name: teamName,
+            team_name: pair.teamName,
             captain: leaderIgn,
-            captain_uid: `UID-TEST-${now}-${i + 1}`,
+            captain_uid: `UID-TEST-${now}-${assignedSlot}`,
             members,
             status: regStatus,
             slot_number: assignedSlot,
             transaction_id: `TXN-TEST-${batchTag}-${i + 1}`,
             payment_id: `PAY-TEST-${batchTag}-${i + 1}`,
             payment_app: 'TEST',
-            email: `test_squad_${i + 1}@test.matchdistrict.local`,
+            email: `test_squad_${assignedSlot}@test.matchdistrict.local`,
             phone: '9999999999',
             amount_due: '0.00',
             is_test: true,
@@ -18644,6 +18702,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
             injected_by: adminId,
             injected_at: injectedAt
           });
+        }
+
+        if (testRegistrations.length === 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'NO_UNIQUE_TEST_PAIRS', message: 'No free slot has an unused team and leader pair for this tournament.' }));
+          return;
         }
 
         // Insert into database in batches using server connection pool
@@ -18719,7 +18783,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          message: `Successfully injected ${testRegistrations.length} registration${testRegistrations.length === 1 ? '' : 's'} using unique esports team names. Tournament capacity is now ${existingCount + testRegistrations.length}/${slotsTotal} slots.${testRegistrations.length < requestedSlots ? ` Only ${testRegistrations.length} unique names or capacity slots were available.` : ''}`,
+          message: `Successfully injected ${testRegistrations.length} registration${testRegistrations.length === 1 ? '' : 's'} with unique esports team and leader names. Tournament capacity is now ${existingCount + testRegistrations.length}/${slotsTotal} slots.${testRegistrations.length < requestedSlots ? ` Only ${testRegistrations.length} unique pairs or capacity slots were available.` : ''}`,
           injectedCount: testRegistrations.length,
           slotsTotal,
           slotsFilled: existingCount + testRegistrations.length,

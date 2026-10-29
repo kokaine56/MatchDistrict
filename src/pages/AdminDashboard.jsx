@@ -1701,15 +1701,6 @@ function SubscriptionPaymentsTab({ triggerToast }) {
                 </div>
               )}
 
-              {deleteSummary.ambiguousRegistrations > 0 && (
-                <div className="p-2.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300 text-[10px] flex items-start gap-1.5">
-                  <span className="material-symbols-outlined text-sm shrink-0 mt-0.5">verified_user</span>
-                  <span>
-                    <strong>{deleteSummary.ambiguousRegistrations}</strong> registration(s) have test-like team names but lack reliable test provenance. They are protected and will remain untouched.
-                  </span>
-                </div>
-              )}
-
               {!deleteSummary.canDelete && !deleteSummary.blockedByPaymentRecords && (
                 <div className="p-3 rounded-xl border border-outline-variant/40 bg-surface-container-low text-center text-on-surface-variant text-[11px]">
                   No test-injected data with reliable provenance was found. Unmarked or ambiguous records will remain untouched.

@@ -111,20 +111,6 @@ export async function getTournamentTestInjectionSummary(poolOrClient, tournament
   const totalRegistrations = totalRegsRes.rows[0]?.count || 0;
   const realRegistrations = Math.max(0, totalRegistrations - testRegs.length);
 
-  // Ambiguous registrations: have [TEST] in name but did NOT match test markers
-  const ambiguousRes = await poolOrClient.query(`
-    SELECT COUNT(*)::int AS count
-    FROM tournament_registrations r
-    WHERE r.tournament_id = $1::varchar
-      AND (r.team_name ILIKE '%[TEST]%' OR r.team_name ILIKE 'TEST %')
-      AND NOT (
-        ${hasCols ? 'r.is_test = TRUE OR r.test_batch_id IS NOT NULL OR' : ''}
-        r.id LIKE 'REG-TEST-%'
-        OR r.user_id LIKE 'USR-TEST-%'
-      )
-  `, [canonicalId]);
-  const ambiguousCount = ambiguousRes.rows[0]?.count || 0;
-
   // Exclusively test-owned teams
   const testTeams = await fetchTestTeams(poolOrClient, canonicalId, testRegIds);
   const testTeamIds = testTeams.map(t => t.id);
@@ -181,7 +167,6 @@ export async function getTournamentTestInjectionSummary(poolOrClient, tournament
     slotsFilled: parseInt(tournament.slotsFilled, 10) || 0,
     provenTestRegistrations: testRegs.length,
     otherRegistrationsProtected: realRegistrations,
-    ambiguousRegistrations: ambiguousCount,
     testTeams: testTeams.length,
     matchAssignments,
     matchResults,
