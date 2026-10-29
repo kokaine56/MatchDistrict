@@ -473,8 +473,101 @@ function cleanDiscordEnv(val) {
   return val.trim().replace(/^["']|["']$/g, '').trim();
 }
 
-// Custom User-Agent for all Discord API requests to avoid Cloudflare bot blocking (HTTP 403 / Error 1010)
-const DISCORD_API_USER_AGENT = 'MatchDistrict (https://matchdistrict.in, 1.0)';
+// Custom User-Agent and Base URL for Discord API requests
+const DISCORD_API_USER_AGENT = process.env.DISCORD_USER_AGENT || 'MatchDistrictBot (https://matchdistrict.in, 1.0.0)';
+const DISCORD_API_BASE_URL = (process.env.DISCORD_API_BASE_URL || 'https://discord.com/api').replace(/\/+$/, '');
+
+// Global tracker for Discord API rate limits / Cloudflare IP blocks (Error 1015)
+let discordRateLimitCooldown = {
+  activeUntil: 0,
+  retryAfterSeconds: 0,
+  blockType: 'none',
+  lastEncounteredAt: 0,
+  endpoint: null,
+};
+
+function recordDiscordRateLimit(endpoint, retryAfterSec, isHtml) {
+  const retrySec = Math.max(1, parseInt(retryAfterSec, 10) || 60);
+  discordRateLimitCooldown = {
+    activeUntil: Date.now() + (retrySec * 1000),
+    retryAfterSeconds: retrySec,
+    blockType: isHtml ? 'ip_level_html' : 'discord_json',
+    lastEncounteredAt: Date.now(),
+    endpoint,
+  };
+  console.warn(
+    `[DISCORD RATE LIMIT COOLDOWN SET] Endpoint: ${endpoint} | BlockType: ${discordRateLimitCooldown.blockType} | ` +
+    `Cooldown: ${retrySec}s (~${Math.round(retrySec / 60)}m) until ${new Date(discordRateLimitCooldown.activeUntil).toISOString()}`
+  );
+}
+
+function getActiveDiscordRateLimitCooldown() {
+  const now = Date.now();
+  if (now < discordRateLimitCooldown.activeUntil) {
+    const remainingSeconds = Math.ceil((discordRateLimitCooldown.activeUntil - now) / 1000);
+    return {
+      isRateLimited: true,
+      remainingSeconds,
+      blockType: discordRateLimitCooldown.blockType,
+      endpoint: discordRateLimitCooldown.endpoint,
+    };
+  }
+  return { isRateLimited: false, remainingSeconds: 0, blockType: 'none', endpoint: null };
+}
+
+function analyzeDiscordResponse(res, rawBody, stepName) {
+  const status = res.status;
+  const contentType = res.headers.get('content-type') || '';
+  const retryAfter = res.headers.get('retry-after') || null;
+  const rlLimit = res.headers.get('x-ratelimit-limit') || null;
+  const rlRemaining = res.headers.get('x-ratelimit-remaining') || null;
+  const rlReset = res.headers.get('x-ratelimit-reset') || null;
+  const rlResetAfter = res.headers.get('x-ratelimit-reset-after') || null;
+  const rlBucket = res.headers.get('x-ratelimit-bucket') || null;
+  const rlScope = res.headers.get('x-ratelimit-scope') || null;
+  const rlGlobal = res.headers.get('x-ratelimit-global') || null;
+  const cfRay = res.headers.get('cf-ray') || null;
+
+  let isJson = false;
+  let parsedJson = null;
+  try {
+    parsedJson = JSON.parse(rawBody);
+    isJson = true;
+  } catch {
+    isJson = false;
+  }
+
+  const isHtml = !isJson && (contentType.includes('text/html') || /^\s*<(!DOCTYPE|html)/i.test(rawBody));
+  const blockType = isHtml ? 'HTML page (Cloudflare IP-level block / Error 1015)' : (isJson ? 'JSON (Discord application rate limit)' : 'Unknown response format');
+
+  console.error(
+    `[DISCORD API RESPONSE DETAILS] Step: ${stepName} | Status: ${status} | ` +
+    `BlockType: ${blockType} | Retry-After: ${retryAfter || 'none'} | ` +
+    `x-ratelimit-limit: ${rlLimit || 'none'} | x-ratelimit-remaining: ${rlRemaining || 'none'} | ` +
+    `x-ratelimit-reset-after: ${rlResetAfter || 'none'} | x-ratelimit-scope: ${rlScope || 'none'} | ` +
+    `x-ratelimit-bucket: ${rlBucket || 'none'} | x-ratelimit-global: ${rlGlobal || 'none'} | ` +
+    `cf-ray: ${cfRay || 'none'} | Content-Type: ${contentType || 'none'} | ` +
+    `Body: ${rawBody.slice(0, 300).replace(/[\r\n\t]+/g, ' ').trim() || 'empty'}`
+  );
+
+  return {
+    status,
+    contentType,
+    retryAfter,
+    rlLimit,
+    rlRemaining,
+    rlReset,
+    rlResetAfter,
+    rlBucket,
+    rlScope,
+    rlGlobal,
+    cfRay,
+    isJson,
+    isHtml,
+    blockType,
+    parsedJson,
+  };
+}
 
 // In-memory cache to prevent duplicate token exchange attempts on single-use authorization codes
 const processedDiscordCodes = new Map();
@@ -3217,9 +3310,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const discordLinkedAt = user.discord_linked_at || discordConn?.connected_at || discordIdentity?.linked_at || null;
       const discordCooldown = getUnlinkCooldownStatus(discordLinkedAt);
 
+      const activeCooldown = getActiveDiscordRateLimitCooldown();
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
+        discord_rate_limited: activeCooldown.isRateLimited ? {
+          remainingSeconds: activeCooldown.remainingSeconds,
+          blockType: activeCooldown.blockType,
+        } : null,
         methods: {
           email: {
             address: user.email || '',
@@ -3279,6 +3378,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
 
     const clientIp = getClientIp(req);
     const authUserId = authUser ? (authUser.id || authUser.uid) : null;
+
+    const activeGlobalCooldown = getActiveDiscordRateLimitCooldown();
+    if (activeGlobalCooldown.isRateLimited) {
+      console.warn(`[DISCORD AUTH] Connect start blocked by active Discord rate limit cooldown (${activeGlobalCooldown.remainingSeconds}s remaining). Block type: ${activeGlobalCooldown.blockType}`);
+      res.writeHead(302, { Location: linkErrorRedirect('rate_limited', activeGlobalCooldown.remainingSeconds) });
+      res.end();
+      return;
+    }
+
     const ipLimit = checkRateLimit('discord_connect_ip:' + clientIp, 30, 10 * 60 * 1000);
     if (!ipLimit.allowed) {
       console.error(`[DISCORD AUTH] Step: connect_ip_rate_limit | Code: rate_limited | Flow: ${isLoginFlow ? 'login' : 'link'} | IP: ${clientIp}`);
@@ -3383,6 +3491,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
       return `/profile?discord=error&code=${encodeURIComponent(code)}${qs}`;
     };
+
+    const activeGlobalCooldown = getActiveDiscordRateLimitCooldown();
+    if (activeGlobalCooldown.isRateLimited) {
+      console.warn(`[DISCORD AUTH] Callback blocked by active Discord rate limit cooldown (${activeGlobalCooldown.remainingSeconds}s remaining). Block type: ${activeGlobalCooldown.blockType}`);
+      res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation('rate_limited', activeGlobalCooldown.remainingSeconds) });
+      res.end();
+      return;
+    }
 
     const cbIpLimit = checkRateLimit('discord_callback_ip:' + clientIp, 60, 10 * 60 * 1000);
     if (!cbIpLimit.allowed) {
@@ -3564,7 +3680,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const tokenTimer = setTimeout(() => tokenAbort.abort(), 10000);
       let tokenRes;
       try {
-        tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+        tokenRes = await fetch(`${DISCORD_API_BASE_URL}/oauth2/token`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -3590,37 +3706,20 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const durationMs = Date.now() - exchangeStartTime;
 
       if (!tokenRes.ok) {
-        const contentType = tokenRes.headers.get('content-type') || 'unknown';
         const rawBody = await tokenRes.text().catch(() => '');
-        let discordError = '';
-        let discordErrorDesc = '';
-        let isJson = false;
-
-        try {
-          const errJson = JSON.parse(rawBody);
-          isJson = true;
-          discordError = errJson.error || errJson.message || `http_${tokenRes.status}`;
-          discordErrorDesc = errJson.error_description || '';
-        } catch {
-          isJson = false;
-        }
-
-        const bodySnippet = isJson
-          ? `error: ${discordError} | description: ${discordErrorDesc}`
-          : `body_preview: ${rawBody.slice(0, 200).replace(/[\r\n\t]+/g, ' ').trim() || 'empty'}`;
-
-        console.error(`[DISCORD TOKEN EXCHANGE ERROR] step: token_exchange | status: ${tokenRes.status} | content_type: ${contentType} | ${bodySnippet} | pkce: ${pkceUsed} | redirect_uri_auth: ${statePayload.redirectUri || 'none'} | redirect_uri_token: ${effectiveRedirectUri} | uris_match: ${urisMatch} | duration_ms: ${durationMs}`);
+        const analysis = analyzeDiscordResponse(tokenRes, rawBody, 'token_exchange');
 
         let clientRedirectCode = 'token_exchange_failed';
         let retryAfterVal = null;
-        if (discordError === 'invalid_grant') {
+        if (analysis.parsedJson?.error === 'invalid_grant') {
           clientRedirectCode = 'invalid_grant';
-        } else if (discordError === 'invalid_client') {
+        } else if (analysis.parsedJson?.error === 'invalid_client') {
           clientRedirectCode = 'invalid_client';
         } else if (tokenRes.status === 403 || tokenRes.status === 429) {
           clientRedirectCode = tokenRes.status === 429 ? 'rate_limited' : 'blocked';
-          const headerRetry = tokenRes.headers.get('retry-after');
-          if (headerRetry) retryAfterVal = parseInt(headerRetry, 10) || 60;
+          const headerRetry = analysis.retryAfter;
+          retryAfterVal = headerRetry ? (parseInt(headerRetry, 10) || 60) : 60;
+          recordDiscordRateLimit('oauth2/token', retryAfterVal, analysis.isHtml);
         }
 
         res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode, retryAfterVal) });
@@ -3632,12 +3731,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const accessToken = tokenJson.access_token;
       const tokenType = tokenJson.token_type || 'Bearer';
 
+      // Small pacing delay to avoid triggering burst rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
       // Fetch user profile from Discord (id, username, global_name, avatar)
       const userAbort = new AbortController();
       const userTimer = setTimeout(() => userAbort.abort(), 10000);
       let userRes;
       try {
-        userRes = await fetch('https://discord.com/api/users/@me', {
+        userRes = await fetch(`${DISCORD_API_BASE_URL}/users/@me`, {
           headers: {
             'Authorization': `${tokenType} ${accessToken}`,
             'Accept': 'application/json',
@@ -3656,35 +3758,22 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
       clearTimeout(userTimer);
 
-      // Best-effort immediate token revocation — access/refresh tokens are NEVER stored
-      try {
-        const revokeBody = new URLSearchParams({
-          client_id: discordClientId,
-          client_secret: discordClientSecret,
-          token: accessToken,
-          token_type_hint: 'access_token'
-        });
-        fetch('https://discord.com/api/oauth2/token/revoke', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': DISCORD_API_USER_AGENT
-          },
-          body: revokeBody.toString()
-        }).catch(() => {});
-      } catch {}
-
       if (!userRes.ok) {
         const rawUserBody = await userRes.text().catch(() => '');
-        let discordErrCode = `http_${userRes.status}`;
-        try {
-          const errJson = JSON.parse(rawUserBody);
-          discordErrCode = errJson.message || errJson.error || `http_${userRes.status}`;
-        } catch {}
-        const safeDiscordErr = String(discordErrCode).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || `http_${userRes.status}`;
-        console.error(`[DISCORD CONNECT ERROR] Step: profile_fetch | HTTP: ${userRes.status} | Discord: ${safeDiscordErr}`);
-        const clientRedirectCode = userRes.status === 403 ? 'blocked' : 'profile_fetch_failed';
-        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode) });
+        const analysis = analyzeDiscordResponse(userRes, rawUserBody, 'profile_fetch');
+
+        let clientRedirectCode = 'profile_fetch_failed';
+        let retryAfterVal = null;
+        if (userRes.status === 429) {
+          clientRedirectCode = 'rate_limited';
+          const headerRetry = analysis.retryAfter;
+          retryAfterVal = headerRetry ? (parseInt(headerRetry, 10) || 60) : 60;
+          recordDiscordRateLimit('users/@me', retryAfterVal, analysis.isHtml);
+        } else if (userRes.status === 403) {
+          clientRedirectCode = 'blocked';
+        }
+
+        res.writeHead(302, { 'Set-Cookie': clearStateCookies, 'Location': callbackErrorLocation(clientRedirectCode, retryAfterVal) });
         res.end();
         return;
       }
@@ -4113,7 +4202,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const uId = authUser.id || authUser.uid;
       const statusRes = await pool.query(
-        `SELECT udc.discord_id, udc.username, udc.global_name, udc.connected_at,
+        `SELECT udc.discord_id, udc.username, udc.global_name, udc.avatar_hash, udc.connected_at,
                 u.discord_id AS u_discord_id, u.discord_user_id, u.discord_username, u.discord_linked_at
          FROM users u
          LEFT JOIN user_discord_connections udc ON udc.user_id = u.id
@@ -4131,6 +4220,23 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const connected = Boolean(discordId);
       const discordLinkedAt = connected ? (row.connected_at || row.discord_linked_at || null) : null;
       const cooldown = getUnlinkCooldownStatus(discordLinkedAt);
+
+      let avatarUrl = null;
+      if (connected && discordId) {
+        if (row.avatar_hash) {
+          avatarUrl = `https://cdn.discordapp.com/avatars/${discordId}/${row.avatar_hash}.${row.avatar_hash.startsWith('a_') ? 'gif' : 'png'}?size=128`;
+        } else {
+          try {
+            const discNum = (BigInt(discordId) >> 22n) % 6n;
+            avatarUrl = `https://cdn.discordapp.com/embed/avatars/${discNum}.png`;
+          } catch {
+            avatarUrl = 'https://cdn.discordapp.com/embed/avatars/0.png';
+          }
+        }
+      }
+
+      const activeCooldown = getActiveDiscordRateLimitCooldown();
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         success: true,
@@ -4138,10 +4244,15 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         discordId: connected ? discordId : null,
         username: connected ? (row.username || row.discord_username || null) : null,
         displayName: connected ? (row.global_name || row.username || row.discord_username || null) : null,
+        avatarUrl,
         connectedAt: discordLinkedAt,
         canUnlink: cooldown.canUnlink,
         remainingDays: cooldown.remainingDays,
         canUnlinkAt: cooldown.canUnlinkAt ? cooldown.canUnlinkAt.toISOString() : null,
+        rateLimited: activeCooldown.isRateLimited ? {
+          remainingSeconds: activeCooldown.remainingSeconds,
+          blockType: activeCooldown.blockType,
+        } : null,
       }));
       return;
     } catch (err) {
@@ -13101,12 +13212,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           return;
         }
 
-        if (!(await userHasLinkedDiscordAccount(authUser.id))) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
-          return;
-        }
-
         const formData = JSON.parse(body);
         if (!formData.team_name || !formData.captain) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -13253,12 +13358,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         return;
       }
 
-      if (!(await userHasLinkedDiscordAccount(authUser.id))) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
-        return;
-      }
-
       const sesRes = await pool.query('SELECT * FROM registration_sessions WHERE id = $1 AND user_id = $2', [sessionId, authUser.id]);
       if (sesRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -13358,12 +13457,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to complete registration.' }));
-          return;
-        }
-
-        if (!(await userHasLinkedDiscordAccount(authUser.id, client))) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
           return;
         }
 
@@ -13774,12 +13867,6 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         if (!authUser) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in to register.' }));
-          return;
-        }
-
-        if (!(await userHasLinkedDiscordAccount(authUser.id))) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'DISCORD_LINK_REQUIRED', message: 'Linking a Discord account is compulsory. Link Discord to complete registration.' }));
           return;
         }
 
@@ -15162,12 +15249,8 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const id = parts[3];
     try {
       const regsRes = await pool.query(
-        `SELECT tr.team_name, tr.captain, tr.user_id, tr.captain_uid, tr.status, tr.created_at,
-                COALESCE(udc.discord_id, u.discord_id, u.discord_user_id) AS discord_id,
-                COALESCE(udc.username, u.discord_username) AS discord_username
+        `SELECT tr.team_name, tr.captain, tr.created_at
          FROM tournament_registrations tr
-         LEFT JOIN users u ON (u.id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND u.id::text = tr.captain_uid::text))
-         LEFT JOIN user_discord_connections udc ON (udc.user_id::text = tr.user_id::text OR (tr.captain_uid IS NOT NULL AND udc.user_id::text = tr.captain_uid::text))
          WHERE tr.tournament_id = $1
            AND LOWER(COALESCE(tr.status, '')) = 'approved'
          ORDER BY tr.created_at ASC`,
@@ -15182,13 +15265,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         const lower = rawName.toLowerCase();
         if (seen.has(lower)) continue;
         seen.add(lower);
-        const isLinked = Boolean(r.discord_id);
         teams.push({
           teamName: rawName,
           teamLeader: (r.captain || 'Anonymous').trim(),
-          leaderUserId: r.user_id || r.captain_uid || null,
-          discordLinked: isLinked,
-          discordUsername: isLinked && r.discord_username ? r.discord_username : null,
         });
       }
 

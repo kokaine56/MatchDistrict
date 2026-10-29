@@ -102,7 +102,16 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
           ref: 'db_error',
         },
         rate_limited: {
-          msg: 'Too many requests. Please wait a moment before trying again.',
+          msg: (() => {
+            const retrySec = Number(params.get('retry_after')) || 60;
+            const minutes = Math.max(1, Math.ceil(retrySec / 60));
+            try {
+              sessionStorage.setItem('discord_retry_until', String(Date.now() + (retrySec * 1000)));
+            } catch {
+              /* ignore storage error */
+            }
+            return `Discord is temporarily rate-limited. Please retry in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+          })(),
           ref: 'rate_limited',
         },
         unknown: {
@@ -130,7 +139,23 @@ export default function DiscordConnectCard({ currentUser, providerIdentity, onUs
   }, [triggerToast, onUserUpdated]);
 
   const handleConnectClick = (reconnect = false) => {
-    const url = reconnect ? '/api/auth/discord/connect?reconnect=true' : '/api/auth/discord/connect';
+    try {
+      const stored = sessionStorage.getItem('discord_retry_until');
+      if (stored) {
+        const remainingMs = Number(stored) - Date.now();
+        if (remainingMs > 0) {
+          const remainingMins = Math.max(1, Math.ceil(remainingMs / 60000));
+          if (typeof triggerToast === 'function') {
+            triggerToast(`Discord rate limit active. Please wait ~${remainingMins} minute${remainingMins === 1 ? '' : 's'} before retrying.`);
+          }
+          return;
+        } else {
+          sessionStorage.removeItem('discord_retry_until');
+        }
+      }
+    } catch {
+      /* ignore storage error */
+    }
     window.location.href = url;
   };
 

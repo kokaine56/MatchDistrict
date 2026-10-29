@@ -15,9 +15,8 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
   const [confirmPassword, setConfirmPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [modalError, setModalError] = useState('')
+  const [discordRateLimit, setDiscordRateLimit] = useState(null)
   const googleBtnRef = useRef(null)
-
-
 
   const refresh = useCallback(async () => {
     try {
@@ -27,11 +26,54 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
         throw new Error(data.message || 'Could not load sign-in methods.')
       }
       setMethods(data.methods)
+      if (data.discord_rate_limited?.remainingSeconds > 0) {
+        setDiscordRateLimit(data.discord_rate_limited)
+        try {
+          sessionStorage.setItem('discord_retry_until', String(Date.now() + (data.discord_rate_limited.remainingSeconds * 1000)))
+        } catch {
+          /* ignore storage error */
+        }
+      } else {
+        try {
+          const stored = sessionStorage.getItem('discord_retry_until')
+          if (stored) {
+            const rem = Math.ceil((Number(stored) - Date.now()) / 1000)
+            if (rem > 0) {
+              setDiscordRateLimit({ remainingSeconds: rem })
+            } else {
+              sessionStorage.removeItem('discord_retry_until')
+              setDiscordRateLimit(null)
+            }
+          } else {
+            setDiscordRateLimit(null)
+          }
+        } catch {
+          /* ignore storage error */
+        }
+      }
       setError('')
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.')
     }
   }, [])
+
+  useEffect(() => {
+    if (!discordRateLimit || discordRateLimit.remainingSeconds <= 0) return
+    const timer = setInterval(() => {
+      setDiscordRateLimit((prev) => {
+        if (!prev || prev.remainingSeconds <= 1) {
+          try {
+            sessionStorage.removeItem('discord_retry_until')
+          } catch {
+            /* ignore storage error */
+          }
+          return null
+        }
+        return { ...prev, remainingSeconds: prev.remainingSeconds - 1 }
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [discordRateLimit?.remainingSeconds])
 
   useEffect(() => {
     refresh()
@@ -309,10 +351,37 @@ export default function LoginMethodsCard({ currentUser, onUserUpdated, triggerTo
               </span>
             )}
           </div>
+        ) : discordRateLimit?.remainingSeconds > 0 ? (
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <button
+              type="button"
+              disabled
+              title={`Discord connection is temporarily rate-limited. Retry in ~${Math.ceil(discordRateLimit.remainingSeconds / 60)}m.`}
+              className="px-4 h-9 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold flex items-center gap-1.5 cursor-not-allowed opacity-80 whitespace-nowrap"
+            >
+              <span className="material-symbols-outlined text-sm">schedule</span>
+              <span>Rate limited ({Math.ceil(discordRateLimit.remainingSeconds / 60)}m)</span>
+            </button>
+            <span className="text-[10px] text-amber-400 font-medium">
+              Retry in {Math.floor(discordRateLimit.remainingSeconds / 60)}m {discordRateLimit.remainingSeconds % 60}s
+            </span>
+          </div>
         ) : (
           <button
             type="button"
-            onClick={() => { window.location.href = '/api/auth/discord/connect' }}
+            onClick={() => {
+              try {
+                const stored = sessionStorage.getItem('discord_retry_until')
+                if (stored && Number(stored) > Date.now()) {
+                  const remMins = Math.max(1, Math.ceil((Number(stored) - Date.now()) / 60000))
+                  triggerToast?.(`Discord rate limit active. Please wait ${remMins}m before retrying.`)
+                  return
+                }
+              } catch {
+                /* ignore storage error */
+              }
+              window.location.href = '/api/auth/discord/connect'
+            }}
             className="px-4 h-9 rounded-full border border-outline-variant/60 hover:border-primary/40 text-xs font-semibold text-on-background hover:bg-surface-variant flex items-center gap-1.5 transition-all shrink-0 whitespace-nowrap"
           >
             <span className="material-symbols-outlined text-sm">link</span> Connect

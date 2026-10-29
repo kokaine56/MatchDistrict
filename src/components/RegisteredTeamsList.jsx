@@ -16,8 +16,9 @@ function DiscordIcon({ className = 'w-4 h-4' }) {
 
 /**
  * RegisteredTeamsList component
- * Displays a clean, unified list of registered teams for a tournament.
- * Shows Team Name and Team Leader, with Discord connection status and linking actions.
+ * Displays a clean, two-column list of registered teams (Team Name & Team Leader)
+ * without exposing other users' Discord details.
+ * Provides a viewer-specific Discord connection/status action at the top.
  */
 export default function RegisteredTeamsList({
   tournamentId,
@@ -28,8 +29,35 @@ export default function RegisteredTeamsList({
   const [currentUser] = useCurrentUser();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [linkingTeam, setLinkingTeam] = useState(null);
+  const [viewerDiscord, setViewerDiscord] = useState(null);
+  const [isLinking, setIsLinking] = useState(false);
 
+  // Fetch viewer's own Discord status
+  useEffect(() => {
+    if (!currentUser) {
+      setViewerDiscord(null);
+      return;
+    }
+
+    let isMounted = true;
+    fetch('/api/auth/discord/status', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (isMounted && data.success) {
+          setViewerDiscord({
+            connected: Boolean(data.connected),
+            username: data.username || data.displayName || null,
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser, refreshTrigger]);
+
+  // Fetch registered teams for this tournament
   useEffect(() => {
     let isMounted = true;
 
@@ -55,7 +83,7 @@ export default function RegisteredTeamsList({
           }
         }
 
-        // Defensive fallback: Extract eligible teams from slotsData if provided
+        // Fallback from slotsData if provided (only teamName and teamLeader)
         if (slotsData?.slots && Array.isArray(slotsData.slots)) {
           const seen = new Set();
           const fallbackTeams = [];
@@ -66,9 +94,6 @@ export default function RegisteredTeamsList({
               fallbackTeams.push({
                 teamName: name,
                 teamLeader: (s.captain || 'Anonymous').trim(),
-                leaderUserId: s.userId || s.user_id || s.leader_user_id || null,
-                discordLinked: Boolean(s.discordLinked || s.discord_id),
-                discordUsername: s.discordUsername || s.discord_username || null,
               });
             }
           }
@@ -98,14 +123,24 @@ export default function RegisteredTeamsList({
     };
   }, [tournamentId, slotsData, refreshTrigger]);
 
-  const handleLinkDiscord = (team) => {
-    if (linkingTeam) return;
-    setLinkingTeam(team.teamName);
+  const handleConnectDiscord = () => {
+    if (isLinking) return;
+    setIsLinking(true);
     const returnTo = window.location.pathname + window.location.search;
-    window.location.href = `/api/auth/discord/link?redirect=${encodeURIComponent(returnTo)}`;
+    window.location.href = `/api/auth/discord/connect?redirect=${encodeURIComponent(returnTo)}`;
   };
 
-  const currentUserId = currentUser ? String(currentUser.id || currentUser.uid || '') : '';
+  const isViewerDiscordLinked = Boolean(
+    viewerDiscord?.connected ||
+    currentUser?.discord?.connected ||
+    currentUser?.discord_id
+  );
+
+  const viewerDiscordUsername =
+    viewerDiscord?.username ||
+    currentUser?.discord?.username ||
+    currentUser?.discordTag ||
+    null;
 
   if (loading) {
     return (
@@ -157,6 +192,49 @@ export default function RegisteredTeamsList({
         </span>
       </div>
 
+      {/* Viewer's Own Discord Status / Action (Only for logged-in users) */}
+      {currentUser && (
+        <div
+          className={`flex items-center justify-between gap-3 p-3.5 mb-5 rounded-xl border ${
+            isGoldTheme
+              ? 'bg-[#F5F0E1]/80 border-[#D4A017]/30'
+              : 'bg-slate-50 border-slate-200'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-[#5865F2]/10 border border-[#5865F2]/20 flex items-center justify-center shrink-0 text-[#5865F2]">
+              <DiscordIcon className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                Your Discord
+              </span>
+              {isViewerDiscordLinked ? (
+                <span className="text-xs sm:text-sm font-bold text-[#5865F2] truncate block">
+                  @{viewerDiscordUsername || 'Connected'}
+                </span>
+              ) : (
+                <span className="text-xs text-slate-500 block">
+                  Not connected
+                </span>
+              )}
+            </div>
+          </div>
+
+          {!isViewerDiscordLinked && (
+            <button
+              type="button"
+              onClick={handleConnectDiscord}
+              disabled={isLinking}
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-bold shadow-sm transition-all shrink-0 active:scale-95 disabled:opacity-60 cursor-pointer"
+            >
+              <DiscordIcon className="w-3.5 h-3.5" />
+              <span>{isLinking ? 'Connecting...' : 'Connect Discord'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Empty State */}
       {teams.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center text-slate-400">
@@ -180,7 +258,7 @@ export default function RegisteredTeamsList({
           </p>
         </div>
       ) : (
-        /* Unified List / Table */
+        /* Unified List / Table: Exactly Two Columns (Team Name & Team Leader) */
         <div className="w-full overflow-hidden rounded-xl border border-slate-100">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead>
@@ -191,10 +269,10 @@ export default function RegisteredTeamsList({
                     : 'bg-slate-50 text-slate-600 border-b border-slate-200'
                 }`}
               >
-                <th className="py-3 px-4 font-bold uppercase tracking-wider w-3/5">
+                <th className="py-3 px-4 font-bold uppercase tracking-wider w-1/2 sm:w-3/5">
                   Team Name
                 </th>
-                <th className="py-3 px-4 font-bold uppercase tracking-wider w-2/5">
+                <th className="py-3 px-4 font-bold uppercase tracking-wider w-1/2 sm:w-2/5">
                   Team Leader
                 </th>
               </tr>
@@ -204,88 +282,34 @@ export default function RegisteredTeamsList({
                 isGoldTheme ? 'divide-[#D4A017]/15' : 'divide-slate-100'
               }`}
             >
-              {teams.map((team, idx) => {
-                const leaderId = team.leaderUserId ? String(team.leaderUserId) : '';
-                const isOwner = Boolean(currentUserId && leaderId && currentUserId === leaderId);
-
-                return (
-                  <tr
-                    key={`${team.teamName}-${idx}`}
-                    className={`transition-colors ${
-                      isGoldTheme ? 'hover:bg-[#D4A017]/5' : 'hover:bg-slate-50/80'
+              {teams.map((team, idx) => (
+                <tr
+                  key={`${team.teamName}-${idx}`}
+                  className={`transition-colors ${
+                    isGoldTheme ? 'hover:bg-[#D4A017]/5' : 'hover:bg-slate-50/80'
+                  }`}
+                >
+                  <td
+                    className={`py-3.5 px-4 font-bold break-words align-middle ${
+                      isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
                     }`}
                   >
-                    <td
-                      className={`py-3.5 px-4 font-bold break-words align-middle ${
-                        isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
-                      }`}
+                    {team.teamName}
+                  </td>
+                  <td
+                    className={`py-3.5 px-4 font-medium align-middle ${
+                      isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
+                    }`}
+                  >
+                    <span
+                      className="truncate max-w-[200px] block"
+                      title={team.teamLeader}
                     >
-                      {team.teamName}
-                    </td>
-                    <td
-                      className={`py-3.5 px-4 font-medium align-middle ${
-                        isGoldTheme ? 'text-[#4B5563]' : 'text-slate-600'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                        <span
-                          className="truncate max-w-[130px] sm:max-w-[200px]"
-                          title={team.teamLeader}
-                        >
-                          {team.teamLeader}
-                        </span>
-
-                        {/* Discord Status / Action Icon */}
-                        {team.discordLinked ? (
-                          <span
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#5865F2]/10 border border-[#5865F2]/30 text-[#5865F2] text-xs font-semibold select-none transition-colors"
-                            title={
-                              team.discordUsername
-                                ? `Discord Linked: @${team.discordUsername}`
-                                : 'Discord Linked'
-                            }
-                            aria-label={
-                              team.discordUsername
-                                ? `Discord Linked: @${team.discordUsername}`
-                                : 'Discord Linked'
-                            }
-                          >
-                            <DiscordIcon className="w-3.5 h-3.5 text-[#5865F2] shrink-0" />
-                            <span className="hidden sm:inline text-[11px] font-semibold text-[#5865F2] max-w-[110px] truncate leading-none">
-                              {team.discordUsername ? `@${team.discordUsername}` : 'Linked'}
-                            </span>
-                            <span className="sm:hidden text-[11px] font-semibold text-[#5865F2] leading-none">
-                              Linked
-                            </span>
-                          </span>
-                        ) : isOwner ? (
-                          <button
-                            type="button"
-                            onClick={() => handleLinkDiscord(team)}
-                            disabled={linkingTeam === team.teamName}
-                            title="Link Discord"
-                            aria-label="Link Discord"
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-dashed border-[#5865F2]/50 hover:border-[#5865F2] text-[#5865F2] bg-[#5865F2]/5 hover:bg-[#5865F2]/15 transition-all text-xs font-semibold cursor-pointer active:scale-95 group focus:outline-none focus:ring-2 focus:ring-[#5865F2]/40 disabled:opacity-60 disabled:cursor-not-allowed"
-                          >
-                            <DiscordIcon className="w-3.5 h-3.5 text-[#5865F2] group-hover:scale-110 transition-transform shrink-0" />
-                            <span className="text-[11px] font-medium leading-none">
-                              {linkingTeam === team.teamName ? 'Connecting...' : 'Link Discord'}
-                            </span>
-                          </button>
-                        ) : (
-                          <span
-                            className="inline-flex items-center text-slate-400/60 hover:text-slate-400 transition-colors cursor-default select-none"
-                            title="Discord Not Linked"
-                            aria-label="Discord Not Linked"
-                          >
-                            <DiscordIcon className="w-3.5 h-3.5" />
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      {team.teamLeader}
+                    </span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -293,4 +317,3 @@ export default function RegisteredTeamsList({
     </div>
   );
 }
-

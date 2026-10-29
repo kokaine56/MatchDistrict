@@ -141,45 +141,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [frozenCards, setFrozenCards] = useState({});
   const [isNavigatingToRegister, setIsNavigatingToRegister] = useState(false);
   const [discordToast, setDiscordToast] = useState(null);
-  const [showDiscordLinkModal, setShowDiscordLinkModal] = useState(false);
-  const [discordLinkError, setDiscordLinkError] = useState('');
   const [discordRefreshTrigger, setDiscordRefreshTrigger] = useState(0);
-  const discordModalRef = useRef(null);
-  const discordContinueRef = useRef(null);
-
-  useEffect(() => {
-    if (!showDiscordLinkModal) return undefined;
-    const previousFocus = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const focusFrame = window.requestAnimationFrame(() => discordContinueRef.current?.focus());
-    const handleModalKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setShowDiscordLinkModal(false);
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusable = discordModalRef.current?.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])');
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && (document.activeElement === first || !discordModalRef.current.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !discordModalRef.current.contains(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', handleModalKeyDown);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      document.removeEventListener('keydown', handleModalKeyDown);
-      document.body.style.overflow = previousOverflow;
-      if (previousFocus?.isConnected) previousFocus.focus?.();
-    };
-  }, [showDiscordLinkModal]);
 
   useEffect(() => {
     try {
@@ -193,25 +155,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             message: 'Discord account linked successfully!'
           });
           setDiscordRefreshTrigger(prev => prev + 1);
-          if (shouldResumeRegistration && tournamentId) {
-            (async () => {
-              try {
-                const token = await getAuthToken();
-                const headers = token ? { Authorization: `Bearer ${token}` } : {};
-                const response = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { credentials: 'include', headers });
-                const status = await response.json();
-                if (!response.ok || !status?.success) throw new Error(status?.message || 'Could not confirm the Discord link.');
-                if (status?.discord_linked) navigate(`/tournaments/${tournamentId}/register`);
-                else {
-                  setDiscordLinkError('Discord linking did not complete. Please try again.');
-                  setShowDiscordLinkModal(true);
-                }
-              } catch (error) {
-                setDiscordLinkError(error?.message || 'Could not confirm the Discord link. Please try again.');
-                setShowDiscordLinkModal(true);
-              }
-            })();
-          }
         } else if (discordParam === 'error') {
           const code = params.get('code');
           let message = 'Failed to link Discord account.';
@@ -235,10 +178,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             type: 'error',
             message
           });
-          if (shouldResumeRegistration) {
-            setDiscordLinkError(message);
-            setShowDiscordLinkModal(true);
-          }
         }
 
         params.delete('discordJoin');
@@ -343,8 +282,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const [slotsLoading, setSlotsLoading] = useState(true);
   const [slotsError, setSlotsError] = useState(null);
   const [myRegistration, setMyRegistration] = useState(null);
-  const [discordLinked, setDiscordLinked] = useState(false);
-  const [discordLinkChecked, setDiscordLinkChecked] = useState(false);
 
   // Fetch the caller's own registration (+ payment proof status) for the button state.
   // Uses the dedicated /my-registration endpoint that never exposes other users' data.
@@ -355,8 +292,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`/api/tournaments/${tournamentId}/my-registration`, { headers });
       const data = await res.json();
-      if (data.success) { setMyRegistration(data.registration || null); setDiscordLinked(Boolean(data.discord_linked)); }
-    } catch (_) { setDiscordLinked(false); } finally { setDiscordLinkChecked(true); }
+      if (data.success) { setMyRegistration(data.registration || null); }
+    } catch (_) {}
   }, [tournamentId]);
 
   // Keep the full registrations list fetch for the organizer registrations tab.
@@ -1395,10 +1332,13 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         </div>
                         <button
                           type="button"
-                          disabled={isNavigatingToRegister || !discordLinkChecked}
+                          disabled={isNavigatingToRegister}
                           onClick={() => {
                             if (isNavigatingToRegister) return;
-                            if (!discordLinked) { setDiscordLinkError(''); setShowDiscordLinkModal(true); return; }
+                            if (!currentUser) {
+                              navigate(`/login?redirect=${encodeURIComponent(`/tournaments/${tourney.id}`)}`);
+                              return;
+                            }
                             setIsNavigatingToRegister(true);
                             navigate(`/tournaments/${tourney.id}/register`);
                           }}
@@ -1454,7 +1394,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                     }
                   }
 
-                  const isButtonDisabled = btnState.disabled || isNavigatingToRegister || !discordLinkChecked;
+                  const isButtonDisabled = btnState.disabled || isNavigatingToRegister;
 
                   return (
                     <div className="flex w-full items-center gap-3">
@@ -1463,7 +1403,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         disabled={isButtonDisabled}
                         onClick={() => {
                           if (isButtonDisabled || !btnState.action) return;
-                          if (!discordLinked) { setDiscordLinkError(''); setShowDiscordLinkModal(true); return; }
+                          if (!currentUser) {
+                            navigate(`/login?redirect=${encodeURIComponent(`/tournaments/${tourney.id}`)}`);
+                            return;
+                          }
                           setIsNavigatingToRegister(true);
                           navigate(`/tournaments/${tourney.id}/register`);
                         }}
@@ -2509,57 +2452,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {showDiscordLinkModal && (
-          <motion.div
-            className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-black/60 p-4"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setShowDiscordLinkModal(false)}
-          >
-            <motion.div
-              ref={discordModalRef}
-              className="relative my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-outline-variant/60 bg-surface-container-low p-5 text-on-background shadow-xl sm:p-7"
-              initial={{ opacity: 0, y: 14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }}
-              onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="discord-link-required-title"
-            >
-              <button type="button" onClick={() => setShowDiscordLinkModal(false)} className="absolute right-3 top-3 inline-flex h-10 w-10 items-center justify-center rounded-lg text-on-surface-variant transition hover:bg-surface-container-high hover:text-on-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" aria-label="Close Discord sign-in dialog">
-                <span className="material-symbols-outlined">close</span>
-              </button>
-              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-                <DiscordBrandIcon className="h-7 w-7" />
-              </div>
-              <h2 id="discord-link-required-title" className="mb-2 pr-10 font-headline-lg text-xl font-bold text-on-background sm:text-2xl">Continue with Discord</h2>
-              <p className="text-sm leading-relaxed text-on-surface-variant">
-                {currentUser
-                  ? 'Connect Discord to your existing MatchDistrict account. Discord is required for tournament registration, player identification, and slot allocation.'
-                  : 'Create your MatchDistrict account or sign in to your existing account with Discord. Discord is required for tournament registration, player identification, and slot allocation.'}
-              </p>
-              {discordLinkError && <p role="alert" className="mt-4 rounded-xl border border-error/30 bg-error/10 p-3 text-sm text-error">{discordLinkError}</p>}
-              <button
-                type="button"
-                onClick={() => {
-                  setDiscordLinkError('');
-                  const returnTo = `/tournaments/${encodeURIComponent(tournamentId)}?discordJoin=1`;
-                  const flow = currentUser ? 'connect' : 'login';
-                  window.location.assign(`/api/auth/discord/${flow}?redirect=${encodeURIComponent(returnTo)}`);
-                }}
-                ref={discordContinueRef}
-                className="mt-6 inline-flex min-h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-primary px-5 py-3 text-sm font-bold text-on-primary shadow-sm transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container-low"
-              >
-                <DiscordBrandIcon />
-                Continue with Discord
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowDiscordLinkModal(false)}
-                className="mt-2 min-h-11 w-full rounded-xl px-5 py-2.5 text-sm font-semibold text-on-surface-variant transition hover:bg-surface-container-high hover:text-on-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                Cancel
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
 
       {/* Discord Account Linking Toast Notification */}
       <AnimatePresence>
