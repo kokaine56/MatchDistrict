@@ -21,11 +21,63 @@ import { getTournamentLifecycleStatus } from '../utils/tournamentLifecycle'
 const SHOW_FEEDBACKS = false
 
 
+function TournamentCardSkeleton() {
+  return (
+    <div
+      className="relative select-none py-2 w-[150px] h-[200px] shrink-0 pr-1.5 md:pr-3"
+      style={{ perspective: '1000px', transform: 'rotate3d(1, -1, 0, 4deg)', transformStyle: 'preserve-3d', touchAction: 'pan-x pan-y' }}
+    >
+      <div className="relative w-full h-full bg-surface-container-low/90 rounded-2xl overflow-hidden border border-outline-variant/30 p-2.5 flex flex-col justify-between shadow-md animate-pulse">
+        {/* Top Header Placeholder */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between pb-1 border-b border-outline-variant/20">
+            <div className="h-2 w-16 bg-surface-container-highest/80 rounded-full" />
+            <div className="h-2 w-2 bg-surface-container-highest/60 rounded-full" />
+          </div>
+
+          {/* Title & Organizer Placeholder */}
+          <div className="space-y-1 pt-0.5">
+            <div className="h-2.5 w-4/5 bg-surface-container-highest rounded" />
+            <div className="h-2 w-1/2 bg-surface-container-highest/60 rounded" />
+          </div>
+
+          {/* Prize & Entry Placeholder */}
+          <div className="grid grid-cols-2 gap-1.5 py-1.5 border-y border-outline-variant/20">
+            <div className="flex items-center gap-1">
+              <div className="w-2.5 h-2.5 bg-amber-400/40 rounded-full shrink-0" />
+              <div className="h-2 w-10 bg-surface-container-highest/80 rounded" />
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2.5 h-2.5 bg-emerald-400/40 rounded-full shrink-0" />
+              <div className="h-2 w-10 bg-surface-container-highest/80 rounded" />
+            </div>
+          </div>
+
+          {/* Format & Slots Placeholder */}
+          <div className="space-y-1">
+            <div className="h-1.5 w-8 bg-surface-container-highest/50 rounded" />
+            <div className="h-2 w-14 bg-surface-container-highest/70 rounded" />
+          </div>
+        </div>
+
+        {/* View Details CTA Button Placeholder */}
+        <div className="pt-1 border-t border-outline-variant/20 flex items-center justify-between gap-1">
+          <div className="h-5 flex-1 bg-surface-container-highest/80 rounded" />
+          <div className="h-5 w-5 bg-surface-container-highest/60 rounded shrink-0" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Homepage({ onNavigate }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isFeedbackPaused, setIsFeedbackPaused] = useState(false)
   const { currentUser, signOut } = useUser()
   const [tournamentsList, setTournamentsList] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [now, setNow] = useState(new Date())
   const pauseTimeoutRef = useRef(null)
 
@@ -37,34 +89,57 @@ function Homepage({ onNavigate }) {
     return () => clearInterval(interval)
   }, [])
 
-  const loadTournaments = useCallback(async () => {
-    const { ok, data } = await fetchJsonWithRetry('/api/tournaments')
-    if (ok && data?.success && data.tournaments) {
-      const filtered = data.tournaments.filter(t => !t.isDraft)
-      setTournamentsList(filtered)
+  const loadTournaments = useCallback(async (isInitial = false) => {
+    if (isInitial) {
+      setIsLoading(true)
+      setLoadError(null)
+    }
+    try {
+      const { ok, data, error } = await fetchJsonWithRetry('/api/tournaments')
+      if (ok && data?.success && Array.isArray(data.tournaments)) {
+        const filtered = data.tournaments.filter(t => !t.isDraft)
+        setTournamentsList(filtered)
+        setLoadError(null)
+      } else {
+        const errMsg = data?.message || data?.error || error || 'Failed to load tournaments'
+        setTournamentsList(prev => {
+          if (!prev || prev.length === 0) {
+            setLoadError(errMsg)
+          }
+          return prev
+        })
+      }
+    } catch (err) {
+      setTournamentsList(prev => {
+        if (!prev || prev.length === 0) {
+          setLoadError(err?.message || 'Network error while loading tournaments')
+        }
+        return prev
+      })
+    } finally {
+      setIsLoading(false)
+      setHasLoaded(true)
     }
   }, [])
 
   useEffect(() => {
-    loadTournaments()
-  }, [loadTournaments])
-
-  useRefetchOnFocus(loadTournaments)
-
-  useEffect(() => {
-    loadTournaments()
+    loadTournaments(true)
 
     const channel = supabase
       .channel('homepage-tournaments')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'tournaments' },
-        () => { loadTournaments() }
+        () => { loadTournaments(false) }
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }, [loadTournaments])
+
+  useRefetchOnFocus(useCallback(() => {
+    loadTournaments(false)
+  }, [loadTournaments]))
 
   const handleSignOut = async () => {
     await signOut()
@@ -186,7 +261,41 @@ function Homepage({ onNavigate }) {
                   <button onClick={() => onNavigate && onNavigate('tournaments')} className="text-primary font-label-caps text-xs hover:underline flex items-center gap-1 font-bold">View All <span className="material-symbols-outlined text-sm">arrow_forward</span></button>
                 </div>
                 <div className="pt-1 overflow-visible">
-                  {plazaTournaments.length === 0 ? (
+                  {isLoading ? (
+                    <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
+                      <div
+                        className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-auto"
+                        style={{ overflowX: 'auto', overflowY: 'visible', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', width: '100%' }}
+                      >
+                        <div className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-sm md:pl-lg" style={{ width: 'max-content' }}>
+                          {[1, 2, 3, 4, 5, 6].map((i) => (
+                            <div key={i} className="snap-start first:ml-3" style={{ flexShrink: 0, minWidth: '150px' }}>
+                              <TournamentCardSkeleton />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : loadError && tournamentsList.length === 0 ? (
+                    <div className="glass-card p-6 sm:p-8 text-center rounded-2xl space-y-3 w-full max-w-xl mx-auto my-4 shadow-xl bg-surface-container-low/40 backdrop-blur-md border border-error/30 animate-in fade-in duration-300">
+                      <div className="w-12 h-12 rounded-full bg-error/10 border border-error/20 flex items-center justify-center mx-auto text-error">
+                        <span className="material-symbols-outlined text-2xl" data-icon="error_outline">error_outline</span>
+                      </div>
+                      <h3 className="font-display-lg text-lg sm:text-xl font-bold text-white tracking-tight">Failed to Load Tournaments</h3>
+                      <p className="font-body-md text-xs sm:text-sm text-on-surface-variant max-w-sm mx-auto leading-relaxed">
+                        {loadError || 'Unable to connect to Match District servers. Please check your connection and try again.'}
+                      </p>
+                      <div className="pt-2">
+                        <button
+                          onClick={() => loadTournaments(true)}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-primary hover:bg-primary/90 transition-all shadow-md active:scale-95 cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-sm">refresh</span>
+                          <span>Retry</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : plazaTournaments.length === 0 ? (
                     <div className="glass-card p-8 sm:p-10 text-center rounded-2xl space-y-3 w-full max-w-2xl mx-auto my-4 shadow-xl bg-surface-container-low/40 backdrop-blur-md animate-in fade-in duration-300">
                       <span className="material-symbols-outlined text-4xl text-primary animate-pulse" data-icon="stadium">stadium</span>
                       <h3 className="font-display-lg text-xl sm:text-2xl font-bold text-white tracking-tight">No Tournaments Available</h3>
@@ -250,7 +359,22 @@ function Homepage({ onNavigate }) {
                     <span className="material-symbols-outlined text-[14px] group-hover:translate-x-0.5 transition-transform" data-icon="arrow_forward">arrow_forward</span>
                   </button>
                 </div>
-                {liveMatches.length === 0 ? (
+                {isLoading ? (
+                  <div className="-mx-4 sm:-mx-sm md:-mx-lg" style={{ overflowY: 'visible' }}>
+                    <div
+                      className="pb-8 pt-4 scrollbar-hide scroll-pl-1 md:scroll-pl-2 !touch-auto"
+                      style={{ overflowX: 'auto', overflowY: 'visible', WebkitOverflowScrolling: 'touch', touchAction: 'pan-x pan-y', width: '100%' }}
+                    >
+                      <div className="flex flex-row gap-4 sm:gap-6 snap-x snap-mandatory pl-4 sm:pl-sm md:pl-lg" style={{ width: 'max-content' }}>
+                        {[1, 2, 3, 4].map((i) => (
+                          <div key={i} className="snap-start first:ml-3" style={{ flexShrink: 0, minWidth: '150px' }}>
+                            <TournamentCardSkeleton />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : liveMatches.length === 0 ? (
                   <div className="glass-card p-6 sm:p-8 text-center rounded-2xl space-y-2.5 bg-surface-container-low/40 backdrop-blur-md shadow-sm">
                     <span className="material-symbols-outlined text-3xl text-on-surface-variant animate-pulse" data-icon="sensors">sensors</span>
                     <h3 className="font-headline-md text-sm sm:text-base text-on-background font-bold">No Live Matches Currently in Progress</h3>
