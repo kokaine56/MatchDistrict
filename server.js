@@ -5236,9 +5236,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
           res.end(JSON.stringify({ success: false, error: parsed.error, message: parsed.message }));
           return;
         }
-        const { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
-
         const existRes = await pool.query('SELECT * FROM team_presets WHERE id = $1::varchar', [id]);
+        let { presetName, game, teamName, captain, captainUid, players, substitutes, isDefault } = parsed.preset;
+        if (data.preset_name === undefined && existRes.rows.length > 0 && existRes.rows[0].preset_name) {
+          presetName = existRes.rows[0].preset_name;
+        }
         if (existRes.rows.length === 0) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Preset not found.' }));
@@ -8114,6 +8116,153 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
+
+function validateTournamentSocialUrl(platform, rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    return { valid: true, value: '' };
+  }
+  const trimmed = rawUrl.trim();
+  if (!trimmed.startsWith('https://')) {
+    return { valid: false, error: 'Link must start with https://' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { valid: false, error: 'Please enter a valid URL' };
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname;
+
+  switch (platform) {
+    case 'instagram':
+      if (host !== 'instagram.com' && host !== 'www.instagram.com') {
+        return { valid: false, error: 'Must be a valid instagram.com link' };
+      }
+      if (path.length <= 1) {
+        return { valid: false, error: 'Please include an Instagram profile or page link' };
+      }
+      return { valid: true, value: trimmed };
+
+    case 'discord':
+      if (host === 'discord.gg' || host === 'www.discord.gg') {
+        if (!/^\/[A-Za-z0-9-_]+\/?$/.test(path)) {
+          return { valid: false, error: 'Must include a valid Discord invite code (e.g. https://discord.gg/yourcode)' };
+        }
+        return { valid: true, value: trimmed };
+      } else if (host === 'discord.com' || host === 'www.discord.com') {
+        if (!/^\/invite\/[A-Za-z0-9-_]+\/?$/.test(path)) {
+          return { valid: false, error: 'Must be a discord.com/invite/... link' };
+        }
+        return { valid: true, value: trimmed };
+      } else {
+        return { valid: false, error: 'Must be a valid Discord invite link (discord.gg or discord.com/invite)' };
+      }
+
+    case 'whatsapp':
+      if (!host.endsWith('whatsapp.com')) {
+        return { valid: false, error: 'Must be a valid whatsapp.com link' };
+      }
+      if (!path.startsWith('/channel/')) {
+        return { valid: false, error: 'Must be a WhatsApp channel link (https://whatsapp.com/channel/...)' };
+      }
+      return { valid: true, value: trimmed };
+
+    case 'youtube':
+      if (host === 'youtube.com' || host === 'www.youtube.com' || host === 'm.youtube.com') {
+        if (path.length <= 1) {
+          return { valid: false, error: 'Please include a YouTube channel or video link' };
+        }
+        return { valid: true, value: trimmed };
+      } else if (host === 'youtu.be') {
+        if (path.length <= 1) {
+          return { valid: false, error: 'Please include a YouTube video ID' };
+        }
+        return { valid: true, value: trimmed };
+      } else {
+        return { valid: false, error: 'Must be a valid YouTube link (youtube.com or youtu.be)' };
+      }
+
+    default:
+      return { valid: false, error: 'Unknown platform' };
+  }
+}
+
+
+  // 7g-social. PUT /api/tournaments/:id/social-links — organizer updates tournament social links
+  const socialLinksMatch = urlPath.match(/^\/api\/tournaments\/([^\/]+)\/social-links$/);
+  if (socialLinksMatch && req.method === 'PUT') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const authUser = getAuthUser(req);
+        if (!authUser) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'UNAUTHORIZED', message: 'You must be signed in.' }));
+        }
+        const tId = decodeURIComponent(socialLinksMatch[1]);
+        const tournRes = await pool.query('SELECT * FROM tournaments WHERE id = $1', [tId]);
+        if (tournRes.rows.length === 0) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found.' }));
+        }
+
+        const tournament = tournRes.rows[0];
+        const access = checkTournamentOrganizerAccess(authUser, tournament);
+        if (!access.authorized) {
+          res.writeHead(access.statusCode, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ success: false, error: access.error, message: access.message }));
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const rawSocial = payload.social_links || payload.socialLinks || {};
+
+        const validated = {};
+        for (const platform of ['instagram', 'discord', 'whatsapp', 'youtube']) {
+          const raw = rawSocial[platform];
+          const valRes = validateTournamentSocialUrl(platform, raw);
+          if (!valRes.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'VALIDATION_ERROR', message: valRes.error, platform }));
+          }
+          if (valRes.value) {
+            validated[platform] = valRes.value;
+          }
+        }
+
+        const discordInviteUrl = validated.discord || '';
+        const socialJson = JSON.stringify(validated);
+
+        await pool.query(`
+          ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS social_links TEXT DEFAULT '{}';
+          ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS discord_invite_url TEXT DEFAULT '';
+        `).catch(() => {});
+
+        const updateRes = await pool.query(
+          `UPDATE tournaments
+           SET social_links = $1, discord_invite_url = $2, version = version + 1
+           WHERE id = $3
+           RETURNING *`,
+          [socialJson, discordInviteUrl, tId]
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          social_links: validated,
+          discord_invite_url: discordInviteUrl,
+          tournament: updateRes.rows[0]
+        }));
+      } catch (err) {
+        console.error('[SocialLinks] Error updating social links:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: err.message }));
       }
     });
     return;

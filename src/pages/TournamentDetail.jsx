@@ -22,6 +22,7 @@ import { computeSquadCapacity } from '../utils/squadRegistration.js';
 import { isSystemAdmin } from '../utils/iamRoles.js';
 import { isTournamentOrganizer } from '../utils/tournamentAuth.js';
 import { getThemeConfig } from '../utils/themeEngine.js';
+import TournamentSocialLinks from '../components/TournamentSocialLinks.jsx';
 
 import gameBgmi from '../assets/supported_games/bgmi.png';
 import gameFreeFire from '../assets/supported_games/freefire.png';
@@ -422,6 +423,16 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     return () => { supabase.removeChannel(channel); };
   }, [tournamentId, fetchRegistrations, fetchSlots, loadTournament, fetchSponsors]);
 
+    const handleSocialLinksUpdated = useCallback((newSocialLinks, newDiscordInvite) => {
+    setTournamentRow((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        social_links: newSocialLinks,
+        discord_invite_url: newDiscordInvite,
+      };
+    });
+  }, []);
   const tourney = useMemo(() => normalizeTournamentRow(tournamentRow), [tournamentRow]);
   const isTournamentOwner = useMemo(
     () => isTournamentOrganizer(currentUser, tourney),
@@ -872,8 +883,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
   const sponsoredAmount = 0;
   const prizeDisplay = totalPrize > 0 ? `₹${totalPrize.toLocaleString('en-IN')}` : (tourney?.prizePool ? formatIndianCurrency(tourney.prizePool) : 'TBA');
   const discordInvite = getValidDiscordInvite(
-    tourney?.discord_invite_url, tourney?.discord_invite, tourney?.discordInvite,
-    orgProfile?.discord_invite_url, orgProfile?.discord_invite, orgProfile?.discordInvite
+    tourney?.social_links?.discord,
+    tourney?.discord_invite_url,
+    tourney?.discord_invite,
+    tourney?.discordInvite
   );
   const slotTotal = parseInt(tourney?.slotsTotal || slotsData?.slotsTotal, 10) || 128;
 
@@ -1551,15 +1564,24 @@ function TournamentDetail({ onNavigate, tournamentId }) {
           {/* Tab Content Area */}
           <div className="mt-6 w-full pb-20 min-h-[120px]">
             {activeTab === 'overview' && (
-              <div className={cardContainerClass}>
-                <h3 className={cardTitleClass}>About Tournament</h3>
-                <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
-                {discordInvite && (
-                  <a href={discordInvite} target="_blank" rel="noopener noreferrer"
-                    className="mt-5 inline-flex items-center justify-center rounded-xl bg-[#5865F2] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#4752C4]">
-                    Join Discord
-                  </a>
-                )}
+              <div className="space-y-4">
+                <div className={cardContainerClass}>
+                  <h3 className={cardTitleClass}>About Tournament</h3>
+                  <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
+                  {discordInvite && (
+                    <a href={discordInvite} target="_blank" rel="noopener noreferrer"
+                      className="mt-5 inline-flex items-center justify-center rounded-xl bg-[#5865F2] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#4752C4]">
+                      Join Discord
+                    </a>
+                  )}
+                </div>
+
+                <TournamentSocialLinks
+                  tournament={tourney}
+                  isOwner={isTournamentOwner}
+                  onSocialLinksUpdated={handleSocialLinksUpdated}
+                  isGoldTheme={isGoldTheme}
+                />
               </div>
             )}
             {activeTab === 'prize' && (

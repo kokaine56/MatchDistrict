@@ -108,5 +108,14 @@ export function normalizeTournamentRow(matched) {
     })(),
     basePrize: parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0,
     totalPrize: parseInt(matched.prize_pool_amount || matched.basePrize || 0, 10) || 0,
+    social_links: (() => {
+      try {
+        if (!matched.social_links) return {}
+        return typeof matched.social_links === 'string' ? JSON.parse(matched.social_links) : (matched.social_links || {})
+      } catch {
+        return {}
+      }
+    })(),
+    discord_invite_url: matched.discord_invite_url || '',
   }
 }

@@ -1672,7 +1672,7 @@ function RegistrationPage({ onNavigate }) {
                     <option value="" disabled>Select a squad to auto-fill…</option>
                     {presetsWithStatus.map(p => (
                       <option key={p.id} value={p.id} disabled={!p.selectable}>
-                        {p.preset_name || p.team_name}{p.is_default ? ' (default)' : ''}
+                        {p.team_name || p.preset_name || 'Team'}{p.is_default ? ' (default)' : ''}
                         {p.disabledReason ? ` (${p.disabledReason})` : ''}
                       </option>
                     ))}

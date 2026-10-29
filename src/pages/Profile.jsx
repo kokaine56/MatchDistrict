@@ -61,7 +61,6 @@ const statsCardVariants = {
 const SUCCESSFUL_REG_STATUSES = ['pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host']
 
 const emptyPresetForm = () => ({
-  preset_name: '',
   game: 'BGMI',
   team_name: '',
   captain: '',
@@ -95,9 +94,11 @@ const consolidatePreset = (preset) => {
   const substitutes = parseRosterJson(preset.substitutes).map(normalizeSlot).filter(Boolean);
   const legacyMembers = parseRosterJson(preset.members).map(normalizeSlot).filter(Boolean);
   const mergedPlayers = players.length > 0 ? players : legacyMembers;
+  const teamName = preset.team_name || preset.preset_name || 'Team';
   return {
     ...preset,
-    preset_name: preset.preset_name || preset.team_name || 'Untitled Squad',
+    team_name: teamName,
+    preset_name: teamName,
     game: preset.game || 'BGMI',
     captain_uid: preset.captain_uid || '',
     players: mergedPlayers,
@@ -113,7 +114,6 @@ const presetToForm = (preset) => {
     return out;
   };
   return {
-    preset_name: c.preset_name === c.team_name ? '' : c.preset_name,
     game: c.game,
     team_name: c.team_name,
     captain: c.captain || '',
@@ -135,7 +135,6 @@ const validatePresetForm = (form) => {
 }
 
 const buildPresetPayload = (form) => ({
-  preset_name: form.preset_name.trim(),
   game: form.game || 'BGMI',
   team_name: form.team_name.trim(),
   captain: form.captain.trim(),
@@ -2577,18 +2576,12 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                         </button>
                       </div>
 
-                      {/* Preset name + game */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Squad Label <span className="normal-case text-on-surface-variant/60 lowercase">(optional)</span></label>
-                          <input type="text" value={presetForm.preset_name} onChange={e => setPresetForm({ ...presetForm, preset_name: e.target.value })} placeholder="e.g. Main Roster" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors" />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
-                          <select value={presetForm.game} onChange={e => setPresetForm({ ...presetForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors">
-                            {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
-                          </select>
-                        </div>
+                      {/* Game */}
+                      <div className="space-y-1">
+                        <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
+                        <select value={presetForm.game} onChange={e => setPresetForm({ ...presetForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-secondary transition-colors">
+                          {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
                       </div>
 
                       {/* Team name */}
@@ -2675,17 +2668,12 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                           </button>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Squad Label</label>
-                            <input type="text" value={editForm.preset_name} onChange={e => setEditForm({ ...editForm, preset_name: e.target.value })} placeholder="e.g. Main Roster" className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors" />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
-                            <select value={editForm.game} onChange={e => setEditForm({ ...editForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors">
-                              {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
-                            </select>
-                          </div>
+                        {/* Game */}
+                        <div className="space-y-1">
+                          <label className="font-label-caps text-[9px] text-on-surface-variant uppercase tracking-wider font-bold block">Game *</label>
+                          <select value={editForm.game} onChange={e => setEditForm({ ...editForm, game: e.target.value })} className="w-full bg-surface-container-low border border-outline-variant/40 rounded-lg px-3 py-2 text-xs text-on-background focus:outline-none focus:border-primary transition-colors">
+                            {PRESET_GAME_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                          </select>
                         </div>
 
                         <div className="space-y-1">
@@ -2798,13 +2786,10 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                                 <GameIcon game={game} size={44} rounded="rounded-xl" />
                                 <div className="flex-1 min-w-0">
                                   <h4 className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">
-                                    {preset.team_name}
+                                    {preset.team_name || preset.preset_name || 'Team'}
                                   </h4>
                                   <div className="flex items-center gap-1.5 mt-0.5">
-                                    {preset.preset_name && preset.preset_name !== preset.team_name && (
-                                      <span className="text-[10px] text-on-surface-variant truncate">{preset.preset_name}</span>
-                                    )}
-                                    <span className="text-[10px] text-on-surface-variant">· {game}</span>
+                                    <span className="text-[10px] text-on-surface-variant">{game}</span>
                                   </div>
                                 </div>
                                 <button
@@ -2897,12 +2882,9 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
                             <GameIcon game={game} size={40} rounded="rounded-xl" />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 min-w-0">
-                                <span className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">{preset.team_name}</span>
-
+                                <span className="font-headline-md text-sm font-bold text-on-background leading-tight truncate">{preset.team_name || preset.preset_name || 'Team'}</span>
                               </div>
-                              {preset.preset_name && preset.preset_name !== preset.team_name && (
-                                <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">{preset.preset_name}</p>
-                              )}
+                              <p className="text-[10px] text-on-surface-variant mt-0.5 truncate">{game}</p>
                             </div>
                             <span className="material-symbols-outlined text-lg text-on-surface-variant/70 group-hover:text-primary transition-colors shrink-0">chevron_right</span>
                           </button>

@@ -574,6 +574,8 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS teams_advancing_per_district INTEGER;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS enable_semi_finals BOOLEAN;
       ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS room_credentials_release_minutes INTEGER DEFAULT 15;
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS social_links TEXT DEFAULT '{}';
+      ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS discord_invite_url TEXT DEFAULT '';
 
       CREATE TABLE IF NOT EXISTS tournament_registrations (
         id VARCHAR(50) PRIMARY KEY,
