@@ -6,8 +6,8 @@ export function parseRosterMembers(rawMembers) {
   if (!rawMembers) return [];
   if (Array.isArray(rawMembers)) {
     return rawMembers
-      .filter((m) => m && (typeof m === 'object' ? m.ign || m.uid : typeof m === 'string' && m.trim()))
-      .map((m) => (typeof m === 'object' ? { ign: (m.ign || '').trim(), uid: (m.uid || '').trim() } : { ign: m.trim(), uid: '' }));
+      .filter((m) => m && (typeof m === 'object' ? m.ign || m.uid || m.name : typeof m === 'string' && m.trim()))
+      .map((m) => (typeof m === 'object' ? { ...m, ign: (m.ign || m.name || '').trim(), uid: (m.uid || m.inGameId || '').trim() } : { ign: m.trim(), uid: '' }));
   }
   if (typeof rawMembers === 'string' && rawMembers.trim()) {
     try {

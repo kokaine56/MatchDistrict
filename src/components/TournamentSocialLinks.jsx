@@ -525,41 +525,49 @@ export default function TournamentSocialLinks({
 
   return (
     <>
-      <div className="mt-3 flex flex-wrap items-center gap-3 sm:gap-3.5">
-        {/* Circular icon buttons for each set link without text label */}
-        {platforms.map(({ id, name, url, Icon, colorClass }) => (
-          <a
-            key={id}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={name}
-            title={name}
-            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center border transition-all duration-200 hover:scale-110 active:scale-95 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 ${colorClass}`}
-          >
-            <Icon className="w-5 h-5 sm:w-5.5 sm:h-5.5" />
-          </a>
-        ))}
-
-        {/* Organiser: Add / Edit Social Links Button */}
-        {isOwner && (
-          <button
-            type="button"
-            onClick={() => setShowModal(true)}
-            aria-label={hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}
-            title={hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition border shadow-sm active:scale-95 ${
-              isGoldTheme
-                ? 'bg-[#D4A017]/10 text-[#D4A017] border-[#D4A017]/40 hover:bg-[#D4A017]/20'
-                : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[17px]">
-              {hasAnyLink ? 'edit' : 'add'}
-            </span>
-            <span>{hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}</span>
-          </button>
+      <div className="mt-4 flex flex-col items-center text-center space-y-3">
+        {hasAnyLink && (
+          <h4 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+            Join our community
+          </h4>
         )}
+
+        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-3.5">
+          {/* Circular icon buttons for each set link without text label */}
+          {platforms.map(({ id, name, url, Icon, colorClass }) => (
+            <a
+              key={id}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={name}
+              title={name}
+              className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center border transition-all duration-200 hover:scale-110 active:scale-95 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 ${colorClass}`}
+            >
+              <Icon className="w-5 h-5 sm:w-6 sm:h-6" />
+            </a>
+          ))}
+
+          {/* Organiser: Add / Edit Social Links Button */}
+          {isOwner && (
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              aria-label={hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}
+              title={hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition border shadow-sm active:scale-95 ${
+                isGoldTheme
+                  ? 'bg-[#D4A017]/10 text-[#D4A017] border-[#D4A017]/40 hover:bg-[#D4A017]/20'
+                  : 'bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-white/20 hover:bg-slate-200 dark:hover:bg-white/15'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[17px]">
+                {hasAnyLink ? 'edit' : 'add'}
+              </span>
+              <span>{hasAnyLink ? 'Edit Social Links' : 'Add Social Links'}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Organiser Modal */}

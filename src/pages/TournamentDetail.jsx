@@ -1536,7 +1536,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
               {[
                 { id: 'overview', label: 'Overview' },
                 { id: 'prize', label: 'Prize Pool' },
-                ...(currentUser ? [{ id: 'my_team', label: 'My Team' }] : []),
+                /* My Team tab hidden in UI only; code preserved below */
+                // ...(currentUser ? [{ id: 'my_team', label: 'My Team' }] : []),
                 { id: 'rules', label: 'Rules & Regulations' },
                 { id: 'teams', label: 'Registered Teams' },
 
@@ -1568,12 +1569,6 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 <div className={cardContainerClass}>
                   <h3 className={cardTitleClass}>About Tournament</h3>
                   <p className={cardBodyClass}>{tourney?.description || 'No description provided for this tournament.'}</p>
-                  {discordInvite && (
-                    <a href={discordInvite} target="_blank" rel="noopener noreferrer"
-                      className="mt-5 inline-flex items-center justify-center rounded-xl bg-[#5865F2] px-5 py-2.5 text-sm font-bold text-white transition hover:bg-[#4752C4]">
-                      Join Discord
-                    </a>
-                  )}
                 </div>
 
                 <TournamentSocialLinks
@@ -1587,36 +1582,11 @@ function TournamentDetail({ onNavigate, tournamentId }) {
             {activeTab === 'prize' && (
               isGoldTheme ? (
                 <div className="flex flex-col gap-4 w-full max-w-2xl select-none">
-                  {/* Sleek, Compact Total Prize Pool Card */}
-                  <div className="relative overflow-hidden rounded-xl p-4 sm:p-5 bg-gradient-to-br from-[#E6B93C] via-[#D4A017] to-[#B8860B] border border-[#FFF4C2]/80 shadow-[0_6px_20px_rgba(212,160,23,0.35)] backdrop-blur-md">
-                    <div className="absolute inset-0 opacity-15 pointer-events-none bg-[radial-gradient(#FFF4C2_1px,transparent_1px)] [background-size:16px_16px]" />
-
-                    <div className="relative z-10 space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs sm:text-sm font-black uppercase tracking-[0.2em] text-[#FFFFFF]">
-                          Total Prize Pool
-                        </span>
-                        <h2 className="text-2xl sm:text-3xl font-black text-[#FFFFFF] tracking-tight text-right">
-                          {formatIndianCurrency(totalPrize)}
-                        </h2>
-                      </div>
-
-                      {sponsoredAmount > 0 && (
-                        <div className="pt-2 border-t border-[#FFF4C2]/30 flex items-center justify-between gap-2 text-xs text-[#FFFFFF]">
-                          <span className="font-bold text-[#FFFFFF]">Base Prize: {formatIndianCurrency(basePrize)}</span>
-                          <span className="font-bold text-[#FFFFFF] bg-[#8A5A00]/40 border border-[#FFF4C2]/40 px-2 py-0.5 rounded-md text-[11px]">
-                            + Sponsored: {formatIndianCurrency(sponsoredAmount)}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
                   {/* Sleek Royal Gold Prize Distribution Board */}
                   {prizeDistributions.length > 0 ? (
                     <div className="space-y-2.5">
-                      <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-[#FFFFFF] pl-1">
-                        Prize Distribution
+                      <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[#FFFFFF] pl-1">
+                        Prize Pool Distribution
                       </h3>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -1722,50 +1692,10 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
               ) : (
                 <div className="flex flex-col gap-5 max-w-2xl">
-                  {/* Prize Pool Breakdown Summary */}
-                  <div className="relative overflow-hidden rounded-2xl p-6 bg-white border border-slate-200 shadow-lg">
-                    {sponsoredAmount > 0 ? (
-                      <>
-                        <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] mb-5 relative z-10 text-slate-400">Prize Pool Breakdown</h4>
-
-                        <div className="flex items-center justify-between relative z-10">
-                          <span className="text-sm font-medium text-slate-600">Base Prize</span>
-                          <span className="text-sm font-bold text-slate-800">{formatIndianCurrency(basePrize)}</span>
-                        </div>
-
-                        <div className="flex items-center justify-between mt-4 relative z-10">
-                          <span className="text-sm font-medium flex items-center gap-1.5 text-slate-600">
-                            Sponsored Contributions
-                            <svg className="w-4 h-4 shrink-0 aspect-square text-amber-500" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M11.644 1.59a.5.5 0 01.712 0l4.203 4.26a.5.5 0 00.337.164l6.02.526a.5.5 0 01.285.873l-4.47 4.208a.5.5 0 00-.167.472l1.297 5.928a.5.5 0 01-.743.542L12 15.579a.5.5 0 00-.488 0l-5.53 2.988a.5.5 0 01-.743-.542l1.297-5.928a.5.5 0 00-.167-.472l-4.47-4.208a.5.5 0 01.285-.873l6.02-.526a.5.5 0 00.337-.164L11.644 1.59z" />
-                            </svg>
-                          </span>
-                          <span className="text-sm font-bold text-amber-400">+{formatIndianCurrency(sponsoredAmount)}</span>
-                        </div>
-
-                        <div className="my-4 relative z-10 border-t border-slate-100" />
-
-                        <div className="flex items-center justify-between relative z-10">
-                          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Prize Pool</span>
-                          <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 bg-clip-text text-transparent">
-                            {formatIndianCurrency(totalPrize)}
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex items-center justify-between relative z-10">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Prize Pool</span>
-                        <span className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 bg-clip-text text-transparent">
-                          {formatIndianCurrency(totalPrize)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
                   {/* Prize Distribution Cards */}
                   {prizeDistributions.length > 0 ? (
                     <div className="flex flex-col gap-2.5">
-                      <h5 className="text-[10px] font-black uppercase tracking-[0.2em] pl-1 text-slate-400">Prize Distribution</h5>
+                      <h5 className="text-xs font-black uppercase tracking-[0.2em] pl-1 text-slate-400">Prize Pool Distribution</h5>
                       {prizeDistributions.slice(0, 15).map((row, i) => {
                         const medalSvgs = [
                           <svg key="g" className="w-7 h-7 shrink-0 drop-shadow-[0_2px_10px_rgba(245,158,11,0.45)]" viewBox="0 0 24 24" fill="none">
@@ -1812,7 +1742,8 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                 </div>
               )
             )}
-            {activeTab === 'my_team' && currentUser && (
+            {/* My Team tab hidden in UI only; preserved to re-enable easily */}
+            {false && activeTab === 'my_team' && currentUser && (
               <TournamentTeamHub
                 tournamentId={tourney.id}
                 tournamentTitle={tourney.title}

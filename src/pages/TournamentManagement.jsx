@@ -1014,14 +1014,35 @@ function RegistrationManager({
 
   // Parse team members — supports both `teamMembers` array (mock) and `members` JSON string (server)
   const getTeamMembers = (reg) => {
-    if (reg.teamMembers) return reg.teamMembers
+    if (Array.isArray(reg.teamMembers)) return reg.teamMembers
+    const list = []
     if (reg.members) {
       try {
         const parsed = typeof reg.members === 'string' ? JSON.parse(reg.members) : reg.members
-        return Array.isArray(parsed) ? parsed : []
-      } catch { return [] }
+        if (Array.isArray(parsed)) list.push(...parsed)
+      } catch {}
     }
-    return []
+    if (list.length === 0 && reg.players) {
+      try {
+        const parsed = typeof reg.players === 'string' ? JSON.parse(reg.players) : reg.players
+        if (Array.isArray(parsed)) list.push(...parsed)
+      } catch {}
+    }
+    if (reg.substitutes) {
+      try {
+        const parsed = typeof reg.substitutes === 'string' ? JSON.parse(reg.substitutes) : reg.substitutes
+        if (Array.isArray(parsed)) {
+          parsed.forEach((s) => {
+            if (s && typeof s === 'object') {
+              list.push({ ...s, is_substitute: true, role: 'substitute' })
+            } else if (typeof s === 'string' && s.trim()) {
+              list.push({ ign: s.trim(), is_substitute: true, role: 'substitute' })
+            }
+          })
+        }
+      } catch {}
+    }
+    return list
   }
 
   return (
@@ -1152,15 +1173,27 @@ function RegistrationManager({
                             const captainUidLower = (reg.captain_uid || '').toLowerCase();
                             const remaining = teamMembers.filter((m, idx) => {
                               if (!reg.captain) return idx > 0;
+                              const isCap = typeof m === 'object' && (m.is_captain || m.role === 'captain');
+                              if (isCap) return false;
                               const nameMatch = (m.name || m.ign || '').toLowerCase() === captainNameLower;
                               const uidMatch = (m.inGameId || m.uid || '').toLowerCase() === captainUidLower;
                               return !(nameMatch || uidMatch);
                             });
-                            return remaining.map((m, idx) => (
-                              <li key={idx} className="leading-tight pl-4 text-slate-500">
-                                • {m.name || m.ign || '—'} (UID: {m.inGameId || m.uid || '—'})
-                              </li>
-                            ));
+                            return remaining.map((m, idx) => {
+                              const ign = typeof m === 'string' ? m : (m.name || m.ign || m.username || '—');
+                              const uid = typeof m === 'object' ? (m.inGameId || m.uid || m.userId || m.in_game_id || '') : '';
+                              const isSub = typeof m === 'object' && (m.is_substitute || m.role === 'substitute' || m.role === 'Sub');
+                              return (
+                                <li key={idx} className="leading-tight pl-4 text-slate-500 flex items-center gap-1.5">
+                                  <span>• {ign}{uid ? ` (UID: ${uid})` : ''}</span>
+                                  {isSub && (
+                                    <span className="text-[8px] bg-purple-500/10 text-purple-600 font-bold uppercase tracking-wider px-1 py-0.2 rounded border border-purple-500/20">
+                                      Substitute
+                                    </span>
+                                  )}
+                                </li>
+                              );
+                            });
                           })()}
                         </ul>
                       </td>

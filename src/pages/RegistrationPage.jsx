@@ -674,9 +674,34 @@ function RegistrationPage({ onNavigate }) {
     setIsSubmitting(true)
     try {
       const token = await getAuthToken()
-      const members = form.players.filter(p => p.ign.trim() && p.uid.trim())
-      const subs = form.substitutes.filter(s => s.ign.trim() && s.uid.trim())
-      const allMembers = [...members, ...subs]
+      const captainObj = {
+        role: 'captain',
+        name: form.captainIgn.trim(),
+        ign: form.captainIgn.trim(),
+        uid: form.captainUid.trim(),
+        is_captain: true,
+      }
+      const playerObjs = form.players
+        .filter(p => p.ign.trim() || p.uid.trim())
+        .map((p, idx) => ({
+          role: 'player',
+          position: idx + 1,
+          name: p.ign.trim(),
+          ign: p.ign.trim(),
+          uid: p.uid.trim(),
+          is_substitute: false,
+        }))
+      const subObjs = form.substitutes
+        .filter(s => s.ign.trim() || s.uid.trim())
+        .map((s, idx) => ({
+          role: 'substitute',
+          position: idx + 1,
+          name: s.ign.trim(),
+          ign: s.ign.trim(),
+          uid: s.uid.trim(),
+          is_substitute: true,
+        }))
+      const allMembers = [captainObj, ...playerObjs, ...subObjs]
 
       const formPayload = {
         team_name: form.teamName.trim(),
@@ -684,6 +709,8 @@ function RegistrationPage({ onNavigate }) {
         phone: form.phone.replace(/\D/g, ''),
         captain: form.captainIgn.trim(),
         captain_uid: form.captainUid.trim(),
+        players: playerObjs,
+        substitutes: subObjs,
         members: allMembers,
       }
 
@@ -930,7 +957,7 @@ function RegistrationPage({ onNavigate }) {
                   </button>
                 </div>
               </div>
-              {predictedGroup && (
+              {predictedGroup && !/not assigned|no group|unassigned/i.test(toMessage(predictedGroup)) && (
                 <div className="flex items-center justify-between p-3 gap-3">
                   <span className="text-on-surface-variant font-medium shrink-0">Assigned Group</span>
                   <span className="font-bold text-primary text-xs">
@@ -1218,11 +1245,24 @@ function RegistrationPage({ onNavigate }) {
           )}
 
           <div className="space-y-6">
+            {/* Payment Warning */}
+            <div className="p-3.5 sm:p-4 rounded-xl border border-amber-500/40 bg-amber-500/15 text-amber-300 flex items-center gap-3 shadow-sm">
+              <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">warning</span>
+              <p className="text-xs sm:text-sm font-semibold text-amber-200">
+                Don't close or refresh this page. Your payment may fail.
+              </p>
+            </div>
+
             {/* UPI Details & QR Code Redesign */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-bold text-white/60 uppercase tracking-wider">Pay via UPI</h2>
-                <img src="/payment-brand-assets/upi-logo.svg" alt="UPI official logo" className="h-5 w-auto object-contain" />
+                <div className="flex items-center">
+                  <div className="px-2 py-0.5 rounded-md bg-white border border-slate-200 shadow-xs flex items-center dark:hidden">
+                    <img src="/payment-brand-assets/upi-logo-light.svg" alt="UPI official logo" className="h-5 w-auto object-contain" />
+                  </div>
+                  <img src="/payment-brand-assets/upi-logo.svg" alt="UPI official logo" className="h-5 w-auto object-contain hidden dark:block" />
+                </div>
               </div>
               <div className="bg-white/5 rounded-xl p-6 text-center space-y-4 flex flex-col items-center">
                 

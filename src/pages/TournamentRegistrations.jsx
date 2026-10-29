@@ -465,33 +465,47 @@ export default function TournamentRegistrations() {
                                 <div className="flex items-center gap-2">
                                   <span className="text-xs font-semibold text-on-background truncate">{reg.captain || 'Leader'}</span>
                                   <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-400">
-                                    Captain (Slot 0)
+                                    Captain
                                   </span>
                                 </div>
-                                <p className="text-[10px] font-mono text-on-surface-variant truncate">User ID: {reg.user_id}</p>
+                                <p className="text-[10px] font-mono text-on-surface-variant truncate">
+                                  UID: {reg.captain_uid || (typeof players[0] === 'object' && (players[0]?.uid || players[0]?.inGameId)) || reg.user_id || '—'}
+                                </p>
                               </div>
                             </div>
 
-                            {/* Teammates */}
-                            {players.map((player, pi) => (
-                              <div
-                                key={pi}
-                                className="flex items-center gap-3 p-3 rounded-xl bg-surface/60 border border-outline-variant/20"
-                              >
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-primary/10 text-primary border border-primary/20">
-                                  {pi + 2}
-                                </div>
-                                <div className="flex-1 min-w-0 space-y-0.5">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-semibold text-on-background truncate">{player.ign || `Player ${pi + 2}`}</span>
-                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-primary/10 text-primary">
-                                      Slot {pi + 1}
-                                    </span>
+                            {/* Teammates & Substitutes */}
+                            {players.filter((p, idx) => {
+                              const ign = typeof p === 'string' ? p : (p.name || p.ign || '');
+                              const uid = typeof p === 'object' ? (p.uid || p.inGameId || '') : '';
+                              if ((p.role === 'captain' || p.is_captain) && (ign === reg.captain || uid === reg.captain_uid)) return false;
+                              return true;
+                            }).map((player, pi) => {
+                              const ign = typeof player === 'string' ? player : (player.name || player.ign || `Player ${pi + 2}`);
+                              const uid = typeof player === 'object' ? (player.uid || player.inGameId || '') : '';
+                              const isSub = typeof player === 'object' && (player.is_substitute || player.role === 'substitute');
+                              return (
+                                <div
+                                  key={pi}
+                                  className={`flex items-center gap-3 p-3 rounded-xl bg-surface/60 border ${isSub ? 'border-purple-500/30' : 'border-outline-variant/20'}`}
+                                >
+                                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${isSub ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-primary/10 text-primary border border-primary/20'}`}>
+                                    {pi + 2}
                                   </div>
-                                  <p className="text-[10px] font-mono text-on-surface-variant truncate">IGN: {player.ign || '—'}</p>
+                                  <div className="flex-1 min-w-0 space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-semibold text-on-background truncate">{ign}</span>
+                                      <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider ${isSub ? 'bg-purple-500/15 text-purple-400 border border-purple-500/20' : 'bg-primary/10 text-primary'}`}>
+                                        {isSub ? 'Substitute' : `Slot ${pi + 1}`}
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] font-mono text-on-surface-variant truncate">
+                                      UID: {uid || '—'}
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       </div>

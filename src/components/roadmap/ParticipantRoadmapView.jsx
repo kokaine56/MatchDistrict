@@ -449,11 +449,7 @@ export default function ParticipantRoadmapView({
                           </div>
 
                           {/* District Rows */}
-                          {dayAllocs.length === 0 ? (
-                            <div className="py-2 text-center text-xs text-slate-400 italic">
-                              No districts assigned to Day {continuousDayNum}.
-                            </div>
-                          ) : (
+                          {dayAllocs.length === 0 ? null : (
                             <div className="space-y-1.5">
                               {dayAllocs.map((alloc, aIdx) => {
                                 const totalDistsInRound = (round.days || []).reduce((acc, d) => acc + (d.allocations?.length || 0), 0);
