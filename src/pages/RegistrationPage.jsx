@@ -1210,14 +1210,6 @@ function RegistrationPage({ onNavigate }) {
           )}
 
           <div className="space-y-6">
-            {/* Payment Warning */}
-            <div className="p-3.5 sm:p-4 rounded-xl border border-amber-500/40 bg-amber-500/15 text-amber-300 flex items-center gap-3 shadow-sm">
-              <span className="material-symbols-outlined text-amber-400 text-xl shrink-0">warning</span>
-              <p className="text-xs sm:text-sm font-semibold text-amber-200">
-                Don't close or refresh this page. Your payment may fail.
-              </p>
-            </div>
-
             {/* UPI Details & QR Code Redesign */}
             <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between">
