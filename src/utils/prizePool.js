@@ -70,3 +70,39 @@ export function getPrizePositions(meta) {
 
   return [];
 }
+
+/**
+ * Formats a tournament prize pool amount into compact notation for tournament cards
+ * and similar compact UI elements.
+ *
+ * Rules:
+ * - For amounts >= ₹1,000: divide by 1,000 and append 'k'
+ * - Round to 1 decimal place using standard rounding, removing unnecessary trailing '.0'
+ * - Amounts < ₹1,000: display standard amount with ₹ symbol
+ * - Examples:
+ *   ₹10,000 -> ₹10k
+ *   ₹5,700 -> ₹5.7k
+ *   ₹5,675 -> ₹5.7k
+ *   ₹25,000 -> ₹25k
+ *   ₹1,50,000 -> ₹150k
+ *   ₹999 -> ₹999
+ *   ₹500 -> ₹500
+ */
+export function formatCompactPrize(val) {
+  if (val === null || val === undefined || val === '') return 'TBA';
+  const str = String(val).trim();
+  if (/^tba$/i.test(str)) return 'TBA';
+  if (/^free$/i.test(str)) return 'Free';
+  if (/^₹?\s*\d+(\.\d+)?k$/i.test(str)) {
+    return str.startsWith('₹') ? str.replace(/\s+/g, '') : `₹${str.replace(/^₹?\s*/, '')}`;
+  }
+  const cleaned = str.replace(/[^0-9.]/g, '');
+  if (!cleaned) return val;
+  const num = parseFloat(cleaned);
+  if (isNaN(num)) return val;
+  if (num < 1000) {
+    return `₹${Math.round(num)}`;
+  }
+  const rounded = Math.round((num / 1000) * 10) / 10;
+  return `₹${rounded}k`;
+}

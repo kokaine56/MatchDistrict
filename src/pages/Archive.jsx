@@ -243,7 +243,7 @@ function Archive({ onNavigate }) {
                             <div className="flex items-center justify-between text-xs">
                               <div className="flex items-center gap-1">
                                 <span className="material-symbols-outlined text-[12px] text-amber-400" data-icon="emoji_events">emoji_events</span>
-                                <span className="font-bold text-amber-500 dark:text-amber-400">{formatINR(prize)}</span>
+                                <span className="font-bold text-amber-500 dark:text-amber-400 whitespace-nowrap">{formatCompactPrize(prize)}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <span className="material-symbols-outlined text-[12px] text-primary" data-icon="confirmation_number">confirmation_number</span>

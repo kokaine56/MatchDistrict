@@ -15,6 +15,7 @@ import {
 import { DEFAULT_BANNER } from '../utils/defaults.js'
 import { getThemeConfig, getThemeTypography } from '../utils/themeEngine'
 import ThemeCollectibleCardBg from './ThemeCollectibleCardBg'
+import { formatCompactPrize } from '../utils/prizePool.js'
 
 const MATCH_LABELS = { solo: 'Solo', duo: 'Duo', squad: 'Squad' }
 const PERSPECTIVE_LABELS = { tpp: 'TPP', fpp: 'FPP' }
@@ -154,7 +155,7 @@ function WalletPassCard({
   const filled = parseInt(slotsFilled) || 0
   const fillPct = total > 0 ? Math.min(Math.round((filled / total) * 100), 100) : 0
   const entryDisplay = entryFeeAmount > 0 ? `₹${parseInt(entryFeeAmount).toLocaleString('en-IN')}` : (entryFee || 'Free')
-  const prizeDisplay = prizePool ? formatINR(prizePool) : 'TBA'
+  const prizeDisplay = prizePool ? formatCompactPrize(prizePool) : 'TBA'
 
   return (
     <div
@@ -231,7 +232,7 @@ function WalletPassCard({
                   <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
                   <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
                 </svg>
-                <span className={`text-[10px] sm:text-[11px] font-black ${cc.prizeText || 'text-white'} ${cc.prizeShadow || ''} tracking-tight truncate leading-none`}>
+                <span className={`text-[10px] sm:text-[11px] font-black ${cc.prizeText || 'text-white'} ${cc.prizeShadow || ''} tracking-tight whitespace-nowrap shrink-0 leading-none`}>
                   {prizeDisplay}
                 </span>
                 {hasSponsors && <SponsoredStar size={8} />}
@@ -366,7 +367,7 @@ function InfoContent({
             <svg xmlns="http://www.w3.org/2000/svg" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400 shrink-0"><circle cx="12" cy="8" r="6"/><path d="M8.21 13.89 7 23l5-3 5 3-1.21-9.12"/></svg>
             PRIZE POOL
           </span>
-          <span className="text-[11px] sm:text-xs font-black text-white mt-0.5 inline-block leading-none">{prizePool ? formatINR(prizePool) : 'TBA'}</span>
+          <span className="text-[11px] sm:text-xs font-black text-white mt-0.5 inline-block leading-none whitespace-nowrap">{prizePool ? formatCompactPrize(prizePool) : 'TBA'}</span>
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-[9px] sm:text-[10px] font-semibold text-on-surface-variant uppercase flex items-center gap-1 leading-none tracking-wider opacity-85">

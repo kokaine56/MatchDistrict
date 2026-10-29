@@ -25,6 +25,7 @@ import { formatDate } from '../utils/timeFormat'
 import { GAME_CANONICAL_OPTIONS } from '../utils/gameUtils.js'
 import GameIcon from '../components/GameIcon'
 import PrizePaymentHistory from '../components/PrizePaymentHistory.jsx'
+import { formatCompactPrize } from '../utils/prizePool.js'
 import LoginMethodsCard from '../components/LoginMethodsCard.jsx'
 import DiscordOrganiserLinkingCard from '../components/DiscordOrganiserLinkingCard.jsx'
 import Avatar from '../components/Avatar.jsx'
@@ -268,7 +269,7 @@ function PublicOrgMatchesView({ orgData, tournamentsList, onNavigate }) {
               <div className="mt-3 pt-2.5 border-t border-outline-variant/20 grid grid-cols-2 gap-2 text-[10px]">
                 <div>
                   <span className="text-on-surface-variant/40 block font-label-caps uppercase text-[8px]">Prize Pool</span>
-                  <span className="font-bold text-secondary font-prize-display">{t.prize || 'TBA'}</span>
+                  <span className="font-bold text-secondary font-prize-display whitespace-nowrap">{formatCompactPrize(t.prize)}</span>
                 </div>
                 <div className="text-right">
                   <span className="text-on-surface-variant/40 block font-label-caps uppercase text-[8px]">Rosters</span>
