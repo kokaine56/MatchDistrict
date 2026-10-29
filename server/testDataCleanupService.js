@@ -220,6 +220,16 @@ export async function deleteTournamentTestInjectionData(pool, { tournamentId, ad
 
   const client = await pool.connect();
   let canonicalId = cleanTournamentId;
+  let deletedRegistrations = 0;
+  let deletedTeams = 0;
+  let deletedMatchResults = 0;
+  let deletedMatchAssignments = 0;
+  let deletedQualDecisions = 0;
+  let deletedQualTeams = 0;
+  let deletedLeaderboard = 0;
+  let deletedFinalStandings = 0;
+  let deletedPrizeAwards = 0;
+
   try {
     await client.query('BEGIN');
 
@@ -274,15 +284,15 @@ export async function deleteTournamentTestInjectionData(pool, { tournamentId, ad
       throw err;
     }
 
-    let deletedRegistrations = 0;
-    let deletedTeams = 0;
-    let deletedMatchResults = 0;
-    let deletedMatchAssignments = 0;
-    let deletedQualDecisions = 0;
-    let deletedQualTeams = 0;
-    let deletedLeaderboard = 0;
-    let deletedFinalStandings = 0;
-    let deletedPrizeAwards = 0;
+    deletedRegistrations = 0;
+    deletedTeams = 0;
+    deletedMatchResults = 0;
+    deletedMatchAssignments = 0;
+    deletedQualDecisions = 0;
+    deletedQualTeams = 0;
+    deletedLeaderboard = 0;
+    deletedFinalStandings = 0;
+    deletedPrizeAwards = 0;
 
     // 4. Safely delete dependent team records in reverse-dependency order
     if (testTeamIds.length > 0) {
@@ -480,6 +490,15 @@ export async function deleteTournamentTestInjectionData(pool, { tournamentId, ad
  */
 export async function deleteAllTestInjectionData(pool, { adminId, adminEmail }) {
   const client = await pool.connect();
+  let deletedRegistrations = 0;
+  let deletedTeams = 0;
+  let deletedMatchResults = 0;
+  let deletedMatchAssignments = 0;
+  let deletedQualDecisions = 0;
+  let deletedQualTeams = 0;
+  let deletedLeaderboard = 0;
+  let deletedFinalStandings = 0;
+  let deletedPrizeAwards = 0;
   try {
     await client.query('BEGIN');
 
@@ -548,15 +567,15 @@ export async function deleteAllTestInjectionData(pool, { adminId, adminEmail }) 
       throw err;
     }
 
-    let deletedRegistrations = 0;
-    let deletedTeams = 0;
-    let deletedMatchResults = 0;
-    let deletedMatchAssignments = 0;
-    let deletedQualDecisions = 0;
-    let deletedQualTeams = 0;
-    let deletedLeaderboard = 0;
-    let deletedFinalStandings = 0;
-    let deletedPrizeAwards = 0;
+    deletedRegistrations = 0;
+    deletedTeams = 0;
+    deletedMatchResults = 0;
+    deletedMatchAssignments = 0;
+    deletedQualDecisions = 0;
+    deletedQualTeams = 0;
+    deletedLeaderboard = 0;
+    deletedFinalStandings = 0;
+    deletedPrizeAwards = 0;
 
     if (testTeamIds.length > 0) {
       const qdRes = await client.query('DELETE FROM tournament_qualification_decisions WHERE team_id = ANY($1::text[])', [testTeamIds]);

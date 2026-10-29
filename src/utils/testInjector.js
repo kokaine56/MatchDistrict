@@ -171,6 +171,7 @@ export const clearDevTestingData = async (tournamentId = null) => {
       success: true,
       message: data.message,
       deleted: data.deleted,
+      slotsFilled: data.slotsFilled,
       affectedTournaments: data.affectedTournaments
     };
 

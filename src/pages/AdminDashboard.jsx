@@ -376,17 +376,38 @@ export default function AdminDashboard({ onNavigate }) {
     try {
       const res = await clearDevTestingData(targetTourney || null)
       if (res.success) {
-        triggerToast(res.message || 'Dev testing data cleared successfully!')
+        const deletedRegs = res.deleted?.registrations ?? 0
+        const deletedTeams = res.deleted?.teams ?? 0
+        const successMsg = `Successfully removed ${deletedRegs} test registration(s) and ${deletedTeams} dummy team(s).`
+        triggerToast(successMsg)
+
+        // Immediately update local slot counter if returned
+        if (targetTourney && typeof res.slotsFilled === 'number') {
+          setTournamentsList(prev => prev.map(t => t.id === targetTourney ? { ...t, slotsFilled: res.slotsFilled } : t))
+          setActiveTournament(prev => prev && prev.id === targetTourney ? { ...prev, slotsFilled: res.slotsFilled } : prev)
+        }
+
+        // Refresh all tournament data and registrations on the page
+        fetchTournaments()
         loadAllAdminData()
         if (activeTournament) {
           loadTournamentRegistrations(activeTournament.id)
         }
       } else {
-        triggerToast(res.error || 'Failed to clear dev testing data')
+        const rawErr = res.error || res.message || 'Failed to clear dev testing data.'
+        let userMsg = rawErr
+        if (rawErr === 'TOURNAMENT_NOT_FOUND') {
+          userMsg = `Tournament "${targetTourney}" was not found.`
+        } else if (rawErr === 'INVALID_TOURNAMENT_ID') {
+          userMsg = 'Please enter a valid Tournament ID.'
+        } else if (rawErr === 'TEST_CLEANUP_PAYMENT_RECORDS_PRESENT') {
+          userMsg = 'Cannot delete: Payment records are linked to this test data.'
+        }
+        triggerToast(userMsg)
       }
     } catch (err) {
       console.error('Error clearing dev testing data:', err)
-      triggerToast(err.message || 'Error clearing dev testing data')
+      triggerToast(err.message || 'An unexpected error occurred while clearing data.')
     } finally {
       setIsClearingDevData(false)
     }
@@ -834,21 +855,21 @@ export default function AdminDashboard({ onNavigate }) {
                         </div>
                       )}
 
-                      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                              Tournament ID {selectedInjectTourney && `(${selectedInjectTourney.slotsFilled || 0}/${tourneySlotsTotal} Filled)`}
+                      <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between min-h-[22px] mb-1.5">
+                            <label className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">
+                              Tournament ID {selectedInjectTourney && `(${selectedInjectTourney.slotsFilled || 0}/${tourneySlotsTotal} filled)`}
                             </label>
-                            {injectTournamentId && (
+                            {injectTournamentId ? (
                               <button
                                 type="button"
                                 onClick={() => setInjectTournamentId('')}
-                                className="text-[9px] text-amber-600/70 hover:text-amber-600 font-bold uppercase cursor-pointer"
+                                className="text-xs text-amber-600/80 hover:text-amber-600 dark:text-amber-400/80 dark:hover:text-amber-300 font-semibold uppercase tracking-wider hover:underline cursor-pointer ml-2 shrink-0"
                               >
                                 Clear Selection
                               </button>
-                            )}
+                            ) : null}
                           </div>
                           <input
                             type="text"
@@ -866,7 +887,7 @@ export default function AdminDashboard({ onNavigate }) {
                               }
                             }}
                             placeholder="Optional: Enter Tournament ID (Leave empty to target all)"
-                            className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                            className="w-full h-11 px-3.5 rounded-xl border border-amber-500/30 bg-surface/70 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50 shadow-sm transition-all"
                           />
                           <datalist id="admin-inject-tournaments-list">
                             {tournamentsList.map((t) => (
@@ -877,57 +898,60 @@ export default function AdminDashboard({ onNavigate }) {
                           </datalist>
                         </div>
 
-                        <div className="w-full sm:w-36 space-y-1">
-                          <label className="font-label-caps text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                            Slots (Max: {tourneySlotsTotal})
-                          </label>
+                        <div className="w-full lg:w-40">
+                          <div className="flex items-center min-h-[22px] mb-1.5">
+                            <label className="text-xs font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">
+                              Slots (Max: {tourneySlotsTotal})
+                            </label>
+                          </div>
                           <input
                             type="number"
                             value={injectSlotCount}
                             onChange={(e) => setInjectSlotCount(Math.min(tourneySlotsTotal, Math.max(1, Number(e.target.value))))}
                             min={1}
                             max={tourneySlotsTotal}
-                            className="w-full px-3 py-2 rounded-lg border border-amber-500/30 bg-surface/60 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+                            className="w-full h-11 px-3.5 rounded-xl border border-amber-500/30 bg-surface/70 text-on-background text-xs font-mono placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-amber-500/50 shadow-sm transition-all"
                           />
                         </div>
 
-                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleInjectSlots}
-                            disabled={isInjecting || !injectTournamentId.trim()}
-                            className="px-5 py-2.5 min-h-[44px] bg-amber-500 text-white rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider shadow-md shadow-amber-500/20 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 cursor-pointer"
-                          >
-                            {isInjecting ? (
-                              <span className="flex items-center gap-1.5">
-                                <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                Injecting...
-                              </span>
-                            ) : (
-                              `Inject ${injectSlotCount.toLocaleString()} Slots`
-                            )}
-                          </button>
+                        <button
+                          type="button"
+                          onClick={handleInjectSlots}
+                          disabled={isInjecting || !injectTournamentId.trim()}
+                          className="w-full sm:w-auto h-11 px-5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider shadow-sm hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 whitespace-nowrap"
+                        >
+                          {isInjecting ? (
+                            <span className="flex items-center gap-2">
+                              <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Injecting...</span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-base">add_circle</span>
+                              <span>Inject {injectSlotCount.toLocaleString()} Slots</span>
+                            </span>
+                          )}
+                        </button>
 
-                          <button
-                            type="button"
-                            onClick={handleClearDevData}
-                            disabled={isClearingDevData || isInjecting}
-                            className="px-4 py-2.5 min-h-[44px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 rounded-xl font-headline-md text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                            title={injectTournamentId.trim() ? `Clear dev testing data for tournament ${injectTournamentId}` : "Clear all dev testing injected data across all tournaments"}
-                          >
-                            {isClearingDevData ? (
-                              <span className="flex items-center gap-1.5">
-                                <span className="w-3.5 h-3.5 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin" />
-                                Clearing Data...
-                              </span>
-                            ) : (
-                              <>
-                                <span className="material-symbols-outlined text-base">delete_sweep</span>
-                                <span>Clear Data</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={handleClearDevData}
+                          disabled={isClearingDevData || isInjecting}
+                          className="w-full sm:w-auto h-11 px-4 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:border-rose-500/50 rounded-xl text-xs font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0 shadow-sm whitespace-nowrap"
+                          title={injectTournamentId.trim() ? `Clear dev testing data for tournament ${injectTournamentId}` : "Clear all dev testing injected data across all tournaments"}
+                        >
+                          {isClearingDevData ? (
+                            <span className="flex items-center gap-2">
+                              <span className="w-3.5 h-3.5 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin" />
+                              <span>Clearing Data...</span>
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5">
+                              <span className="material-symbols-outlined text-base">delete_sweep</span>
+                              <span>Clear Data</span>
+                            </span>
+                          )}
+                        </button>
                       </div>
 
                       <div className="text-[10px] text-amber-700/80 dark:text-amber-400/70 flex items-center gap-1.5 pt-1">
