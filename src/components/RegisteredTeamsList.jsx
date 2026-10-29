@@ -127,6 +127,10 @@ export default function RegisteredTeamsList({
     if (isLinking) return;
     setIsLinking(true);
     const returnTo = window.location.pathname + window.location.search;
+    if (!currentUser) {
+      window.location.href = `/login?redirect=${encodeURIComponent(returnTo)}`;
+      return;
+    }
     window.location.href = `/api/auth/discord/connect?redirect=${encodeURIComponent(returnTo)}`;
   };
 
@@ -158,82 +162,91 @@ export default function RegisteredTeamsList({
 
   return (
     <div
-      className={`rounded-2xl p-5 sm:p-7 shadow-sm border w-full ${
-        isGoldTheme ? 'bg-[#FAF7F0] border-[#D4A017]/35' : 'bg-white border-slate-200'
+      className={`rounded-2xl p-4 sm:p-7 shadow-sm border w-full ${
+        isGoldTheme
+          ? 'bg-[#FAF7F0] dark:bg-[#1A1812] border-[#D4A017]/35'
+          : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
       }`}
     >
-      {/* Header with Title and Count */}
+      {/* Header */}
       <div
-        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-5 border-b ${
-          isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-200'
+        className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 mb-4 border-b ${
+          isGoldTheme ? 'border-[#D4A017]/25' : 'border-slate-200 dark:border-slate-800'
         }`}
       >
         <div>
           <h3
             className={`text-base sm:text-lg font-black uppercase tracking-wider ${
-              isGoldTheme ? 'text-[#1F2937]' : 'text-slate-800'
+              isGoldTheme ? 'text-[#1F2937] dark:text-slate-100' : 'text-slate-800 dark:text-slate-100'
             }`}
           >
             Registered Teams
           </h3>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Teams competing in this tournament
           </p>
         </div>
-
-        <span
-          className={`self-start sm:self-auto text-xs font-bold px-3 py-1 rounded-full ${
-            isGoldTheme
-              ? 'bg-[#D4A017]/20 text-[#8A5C00] border border-[#D4A017]/30'
-              : 'bg-blue-50 text-blue-600 border border-blue-200/60'
-          }`}
-        >
-          {teams.length} {teams.length === 1 ? 'Team' : 'Teams'}
-        </span>
       </div>
 
-      {/* Viewer's Own Discord Status / Action (Only for logged-in users) */}
-      {currentUser && (
-        <div
-          className={`flex items-center justify-between gap-3 p-3.5 mb-5 rounded-xl border ${
-            isGoldTheme
-              ? 'bg-[#F5F0E1]/80 border-[#D4A017]/30'
-              : 'bg-slate-50 border-slate-200'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-[#5865F2]/10 border border-[#5865F2]/20 flex items-center justify-center shrink-0 text-[#5865F2]">
-              <DiscordIcon className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
-                Your Discord
-              </span>
-              {isViewerDiscordLinked ? (
-                <span className="text-xs sm:text-sm font-bold text-[#5865F2] truncate block">
-                  @{viewerDiscordUsername || 'Connected'}
-                </span>
-              ) : (
-                <span className="text-xs text-slate-500 block">
-                  Not connected
-                </span>
-              )}
-            </div>
-          </div>
+      {/* Mandatory Discord Linking Notice - Strictly 1 Line */}
+      <div
+        className={`flex items-center gap-1.5 px-3 py-1.5 mb-3 rounded-lg border text-[10px] min-[360px]:text-[10.5px] min-[400px]:text-xs font-semibold tracking-tight whitespace-nowrap overflow-hidden text-ellipsis ${
+          isGoldTheme
+            ? 'bg-[#D4A017]/10 border-[#D4A017]/25 text-[#9E7311] dark:text-[#E5B842]'
+            : 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-400'
+        }`}
+      >
+        <svg className="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+        </svg>
+        <span className="truncate">Discord account linking is compulsory to participate in this tournament.</span>
+      </div>
 
-          {!isViewerDiscordLinked && (
-            <button
-              type="button"
-              onClick={handleConnectDiscord}
-              disabled={isLinking}
-              className="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-bold shadow-sm transition-all shrink-0 active:scale-95 disabled:opacity-60 cursor-pointer"
-            >
-              <DiscordIcon className="w-3.5 h-3.5" />
-              <span>{isLinking ? 'Connecting...' : 'Connect Discord'}</span>
-            </button>
-          )}
+      {/* Viewer's Discord Status / Action */}
+      <div
+        className={`flex items-center justify-between gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 mb-5 rounded-xl border transition-colors ${
+          isGoldTheme
+            ? 'bg-[#F5F0E1]/80 dark:bg-[#1A1812]/80 border-[#D4A017]/30 text-slate-800 dark:text-slate-100'
+            : 'bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
+        }`}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-[#5865F2]/10 border border-[#5865F2]/20 flex items-center justify-center shrink-0 text-[#5865F2]">
+            <DiscordIcon className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex flex-col justify-center">
+            <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-none mb-1">
+              Your Discord
+            </span>
+            {isViewerDiscordLinked ? (
+              <span className="text-xs sm:text-sm font-bold text-[#5865F2] truncate leading-tight block">
+                @{viewerDiscordUsername || 'Connected'}
+              </span>
+            ) : (
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400 leading-tight block">
+                Not connected
+              </span>
+            )}
+          </div>
         </div>
-      )}
+
+        {!isViewerDiscordLinked ? (
+          <button
+            type="button"
+            onClick={handleConnectDiscord}
+            disabled={isLinking}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5865F2] hover:bg-[#4752C4] active:scale-95 text-white text-xs font-bold shadow-sm transition-all shrink-0 cursor-pointer disabled:opacity-60 whitespace-nowrap"
+          >
+            <DiscordIcon className="w-3.5 h-3.5" />
+            <span>{isLinking ? 'Connecting...' : 'Connect Discord'}</span>
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shrink-0 select-none">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            Linked
+          </span>
+        )}
+      </div>
 
       {/* Empty State */}
       {teams.length === 0 ? (
