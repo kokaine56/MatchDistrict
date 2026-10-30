@@ -7,6 +7,8 @@ export const SCHEMA_TABLES = Object.freeze([
   'user_discord_connections',
   'auth_identities',
   'auth_link_challenges',
+  'login_otp_challenges',
+  'login_otp_send_limits',
   'otps',
   'verification_abuse',
   'email_change_requests',
@@ -247,6 +249,23 @@ export async function runSchemaMigrations(clientOrPool) {
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS login_otp_challenges (
+        user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        email VARCHAR(255) NOT NULL,
+        purpose VARCHAR(20) NOT NULL DEFAULT 'login' CHECK (purpose = 'login'),
+        code_hash VARCHAR(64) NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS login_otp_send_limits (
+        subject_type VARCHAR(20) NOT NULL,
+        subject_key VARCHAR(64) NOT NULL,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (subject_type, subject_key, sent_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_otp_send_limits_recent
+        ON login_otp_send_limits(subject_type, subject_key, sent_at DESC);
 
       -- Compatibility backfills are additive and safe to repeat. Conflicting mappings
       -- are left untouched for manual review; no account is reassigned or merged.
@@ -622,6 +641,12 @@ export async function runSchemaMigrations(clientOrPool) {
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS injected_by VARCHAR(100);
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS injected_at TIMESTAMPTZ;
       ALTER TABLE tournament_registrations ADD COLUMN IF NOT EXISTS discord_verified BOOLEAN NOT NULL DEFAULT FALSE;
+      CREATE OR REPLACE VIEW registered_tournament_team_counts AS
+      SELECT tournament_id, COUNT(DISTINCT LOWER(BTRIM(team_name)))::INTEGER AS slots_filled
+      FROM tournament_registrations
+      WHERE LOWER(COALESCE(status, '')) = 'approved'
+        AND BTRIM(COALESCE(team_name, '')) <> ''
+      GROUP BY tournament_id;
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament ON tournament_registrations(tournament_id);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_tournament_status_created ON tournament_registrations(tournament_id, status, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_tournament_registrations_user ON tournament_registrations(user_id);

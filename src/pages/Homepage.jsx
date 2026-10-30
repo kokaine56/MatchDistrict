@@ -132,6 +132,11 @@ function Homepage({ onNavigate }) {
         { event: '*', schema: 'public', table: 'tournaments' },
         () => { loadTournaments(false) }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tournament_registrations' },
+        () => { loadTournaments(false) }
+      )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }

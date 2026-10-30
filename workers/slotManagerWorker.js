@@ -73,16 +73,11 @@ export async function reconcileTournamentSlots(pool, tournamentId) {
     // Assign groups to verified slot-holders (idempotent, same transaction).
     await assignGroups(client, tournamentId);
 
-    // 3. Update the slotsFilled count — canonical count of eligible registrations (excluding cancelled, rejected, expired, payment_rejected)
-    // De-duplicate by team_name if present to prevent duplicate registrations from inflating count
+    // 3. Keep the denormalized field aligned with the Registered Teams count.
     const approvedCountRes = await client.query(
-      `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
-       FROM tournament_registrations
-       WHERE tournament_id = $1
-         AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
-      [tournamentId, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
+      'SELECT COALESCE(slots_filled, 0)::int AS count FROM registered_tournament_team_counts WHERE tournament_id = $1', [tournamentId]
     );
-    const slotsFilled = Math.min(slotsTotal, parseInt(approvedCountRes.rows[0].count) || 0);
+    const slotsFilled = Math.min(slotsTotal, parseInt(approvedCountRes.rows[0]?.count) || 0);
     await client.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [slotsFilled, tournamentId]);
 
     await client.query('COMMIT');

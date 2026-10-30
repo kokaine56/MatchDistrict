@@ -143,6 +143,38 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     password: '', 
     rememberMe: true 
   })
+  const [passwordlessLogin, setPasswordlessLogin] = useState(null)
+  const [loginOtpSent, setLoginOtpSent] = useState(false)
+  const [loginOtpDigits, setLoginOtpDigits] = useState(Array(OTP_DIGITS_COUNT).fill(''))
+  const [loginOtpCooldown, setLoginOtpCooldown] = useState(0)
+  const loginOtpRefs = useRef([])
+
+  useEffect(() => {
+    const identifier = loginForm.email.trim()
+    if (!identifier || isAdminLogin || authMode !== 'login' || loginOtpSent) {
+      setPasswordlessLogin(null)
+      return undefined
+    }
+    let active = true
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch('/api/auth/login-method', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+          body: JSON.stringify({ identifier })
+        })
+        const data = await response.json()
+        if (active && data.success && data.passwordless) setPasswordlessLogin(data)
+        else if (active) setPasswordlessLogin(null)
+      } catch { if (active) setPasswordlessLogin(null) }
+    }, 350)
+    return () => { active = false; clearTimeout(timer) }
+  }, [loginForm.email, isAdminLogin, authMode, loginOtpSent])
+
+  useEffect(() => {
+    if (loginOtpCooldown <= 0) return undefined
+    const timer = setTimeout(() => setLoginOtpCooldown(value => Math.max(0, value - 1)), 1000)
+    return () => clearTimeout(timer)
+  }, [loginOtpCooldown])
 
   // Admin TOTP login state
   const [isAdminLogin, setIsAdminLogin] = useState(false)
@@ -185,6 +217,46 @@ function Auth({ onNavigate, initialMode = 'login' }) {
     setAdminOtp(pasted)
     const focusIdx = Math.min(pasted.length, OTP_DIGITS_COUNT - 1)
     otpBoxRefs.current[focusIdx]?.focus()
+  }
+
+  const updateLoginOtpDigit = (index, digit) => {
+    const next = [...loginOtpDigits]
+    next[index] = digit.slice(-1)
+    setLoginOtpDigits(next)
+    if (digit && index < OTP_DIGITS_COUNT - 1) loginOtpRefs.current[index + 1]?.focus()
+  }
+  const handleLoginOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !loginOtpDigits[index] && index > 0) loginOtpRefs.current[index - 1]?.focus()
+    if (e.key === 'ArrowLeft' && index > 0) { e.preventDefault(); loginOtpRefs.current[index - 1]?.focus() }
+    if (e.key === 'ArrowRight' && index < OTP_DIGITS_COUNT - 1) { e.preventDefault(); loginOtpRefs.current[index + 1]?.focus() }
+  }
+  const handleLoginOtpPaste = (e) => {
+    e.preventDefault()
+    const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_DIGITS_COUNT)
+    if (!digits) return
+    setLoginOtpDigits(Array.from({ length: OTP_DIGITS_COUNT }, (_, index) => digits[index] || ''))
+    loginOtpRefs.current[Math.min(digits.length, OTP_DIGITS_COUNT - 1)]?.focus()
+  }
+
+  const handleSendLoginOtp = async () => {
+    setIsLoading(true)
+    try {
+      const response = await fetch('/api/auth/login-otp/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ identifier: loginForm.email.trim() })
+      })
+      const data = await response.json()
+      if (!response.ok || !data.success) {
+        triggerToast(data.message || 'Could not send a login code.')
+        return
+      }
+      setPasswordlessLogin(prev => ({ ...prev, maskedEmail: data.maskedEmail || prev?.maskedEmail }))
+      setLoginOtpDigits(Array(OTP_DIGITS_COUNT).fill(''))
+      setLoginOtpSent(true)
+      setLoginOtpCooldown(60)
+      triggerToast(`Login code sent to ${data.maskedEmail || 'your email'}.`)
+    } catch { triggerToast('Could not send a login code. Please try again.') }
+    finally { setIsLoading(false) }
   }
 
   const triggerOtpShake = () => {
@@ -670,7 +742,9 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const isLoginFormValid = loginForm.email.trim().length > 0 && (
     isAdminLogin
       ? (adminTotpNotConfigured ? loginForm.password.length > 0 : adminOtp.length === 6)
-      : loginForm.password.length > 0
+      : passwordlessLogin
+        ? (loginOtpSent ? loginOtpDigits.join('').length === OTP_DIGITS_COUNT : true)
+        : loginForm.password.length > 0
   )
 
   // Register Validation
@@ -699,6 +773,47 @@ function Auth({ onNavigate, initialMode = 'login' }) {
   const handleLoginSubmit = async (e) => {
     e.preventDefault()
     if (!isLoginFormValid) return
+
+    if (!isAdminLogin && passwordlessLogin) {
+      if (!loginOtpSent) {
+        await handleSendLoginOtp()
+        return
+      }
+
+      setIsLoading(true)
+      setLoadingMessage('Verifying your login code...')
+      try {
+        const response = await fetch('/api/auth/login-otp/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+          body: JSON.stringify({ identifier: loginForm.email.trim(), code: loginOtpDigits.join('') })
+        })
+        const data = await response.json()
+        if (!response.ok || !data.success) {
+          triggerToast(data.message || 'Could not verify that code. Please try again.')
+          if (data.error === 'LOGIN_OTP_INVALID' || data.error === 'LOGIN_OTP_TOO_MANY_ATTEMPTS') {
+            setLoginOtpDigits(Array(OTP_DIGITS_COUNT).fill(''))
+            loginOtpRefs.current[0]?.focus()
+          }
+          return
+        }
+        setAuthTokenInMemory(data.token)
+        if (loginForm.rememberMe && data.encryptedSession) {
+          localStorage.setItem('md_persistent_session', data.encryptedSession)
+          addRememberedAccount(data.user, 'email')
+        } else {
+          localStorage.removeItem('md_persistent_session')
+        }
+        setCurrentUser(data.user)
+        triggerToast(data.message || 'Signed in successfully.')
+        setTimeout(() => {
+          setIsLoading(false)
+          if (redirectTo) navigate(redirectTo, { replace: true })
+          else onNavigate && onNavigate('home')
+        }, 600)
+      } catch { triggerToast('Could not verify the login code. Please try again.') }
+      finally { setIsLoading(false) }
+      return
+    }
 
     const isEmailAdmin = (loginForm.email || '').toLowerCase() === 'admin' || 
                           (loginForm.email || '').toLowerCase() === (emailConfig.admin || '').toLowerCase()
@@ -1929,6 +2044,11 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                             onChange={(e) => {
                               const val = e.target.value
                               setLoginForm({...loginForm, email: val})
+                              if (loginOtpSent) {
+                                setLoginOtpSent(false)
+                                setLoginOtpDigits(Array(OTP_DIGITS_COUNT).fill(''))
+                                setLoginOtpCooldown(0)
+                              }
                               checkAdminTotpStatus(val)
                             }} 
                             className="w-full h-11 bg-slate-50 dark:bg-white/5 border border-slate-300 dark:border-white/10 rounded-xl pl-11 pr-4 text-slate-900 dark:text-white font-body-md font-bold focus:border-primary focus:ring-[3px] focus:ring-primary/10 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-on-surface-variant/30" 
@@ -1958,6 +2078,32 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                             ))}
                           </div>
                           <p className="text-[10px] text-on-surface-variant/60 px-1 text-center">Enter the current 6-digit code from Google Authenticator</p>
+                        </div>
+                      ) : passwordlessLogin ? (
+                        <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                          {!loginOtpSent ? (
+                            <p className="text-xs leading-relaxed text-on-surface-variant">This account has no password yet. Get a login code on your email to sign in.</p>
+                          ) : (
+                            <>
+                              <p className="text-xs leading-relaxed text-on-surface-variant">Enter the 6-digit code sent to <span className="font-bold text-on-background">{passwordlessLogin.maskedEmail}</span>.</p>
+                              <div className="flex justify-center gap-2" role="group" aria-label="Login verification code">
+                                {loginOtpDigits.map((digit, index) => (
+                                  <OtpDigitBox key={index} inputRef={el => { loginOtpRefs.current[index] = el }} value={digit}
+                                    onChange={value => updateLoginOtpDigit(index, value)} onKeyDown={e => handleLoginOtpKeyDown(index, e)}
+                                    onPaste={handleLoginOtpPaste} autoFocus={index === 0} error={false} />
+                                ))}
+                              </div>
+                              <div className="flex items-center justify-between text-[11px]">
+                                <button type="button" disabled={loginOtpCooldown > 0 || isLoading}
+                                  onClick={handleSendLoginOtp}
+                                  className="font-bold text-primary disabled:text-on-surface-variant/60 disabled:cursor-default">
+                                  {loginOtpCooldown > 0 ? `Resend code in ${loginOtpCooldown}s` : 'Resend code'}
+                                </button>
+                                <button type="button" onClick={() => { setLoginOtpSent(false); setLoginOtpDigits(Array(OTP_DIGITS_COUNT).fill('')); setLoginOtpCooldown(0); setPasswordlessLogin(null); setLoginForm(prev => ({ ...prev, email: '', password: '' })); }}
+                                  className="font-semibold text-on-surface-variant hover:text-on-background">Use a different method</button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       ) : (
                         <div className="space-y-1">
@@ -2014,7 +2160,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
                       disabled={!isLoginFormValid || isLoading}
                       className="w-full h-11 bg-primary hover:bg-primary/95 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none text-white rounded-xl font-headline-md text-xs font-bold transition-all shadow-[0_4px_12px_rgba(90,93,250,0.2)] flex items-center justify-center gap-1.5"
                     >
-                      <span>{isAdminLogin ? 'Admin Login' : 'Submit'}</span>
+                      <span>{isAdminLogin ? 'Admin Login' : passwordlessLogin ? (loginOtpSent ? 'Verify & Sign in' : 'Send OTP') : 'Submit'}</span>
                       <span className="material-symbols-outlined text-[18px]">{isAdminLogin ? 'security' : 'login'}</span>
                     </button>
                   </form>

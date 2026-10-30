@@ -2429,6 +2429,194 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 2. JWT & Supabase Login Service
+  if (urlPath === '/api/auth/login-method' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const { identifier = '' } = JSON.parse(body || '{}');
+        const value = String(identifier).trim();
+        if (!value) return res.end(JSON.stringify({ success: true, hasPassword: true }));
+        const lookup = await pool.query(
+          `SELECT id, email, password, password_set FROM users
+           WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1)) OR LOWER(BTRIM(district_id)) = LOWER(BTRIM($1)) LIMIT 1`, [value]
+        );
+        const account = lookup.rows[0];
+        const hasPassword = Boolean(account?.password_set === true && account.password);
+        const maskedEmail = account?.email ? (() => {
+          const [local, domain] = account.email.split('@');
+          return `${local.slice(0, 2)}***@${domain || ''}`;
+        })() : null;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, hasPassword, passwordless: Boolean(account && !hasPassword), maskedEmail }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: false, message: 'Could not check this sign-in method.' }));
+      }
+    });
+    return;
+  }
+
+  if (urlPath === '/api/auth/login-otp/send' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let client = null;
+      try {
+        const { identifier = '' } = JSON.parse(body || '{}');
+        const value = String(identifier).trim();
+        const lookup = await pool.query(
+          `SELECT id, email, password, password_set FROM users
+           WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1)) OR LOWER(BTRIM(district_id)) = LOWER(BTRIM($1)) LIMIT 1`, [value]
+        );
+        const account = lookup.rows[0];
+        if (!account || (account.password_set === true && account.password)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_UNAVAILABLE', message: 'Email-code sign-in is not available for this account.' }));
+          return;
+        }
+        const email = String(account.email || '').trim().toLowerCase();
+        if (!(await accountSecurity.guardSend(req, res, { flow: 'login_otp', email, userId: account.id }))) return;
+
+        const forwarded = (process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1')
+          ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
+        const ip = forwarded || req.socket?.remoteAddress || '127.0.0.1';
+        const abuse = accountSecurity.abuse;
+        const subjects = [
+          ['user', abuse.hashSubject('user', account.id)],
+          ['email', abuse.hashSubject('email', email)],
+          ['ip', abuse.hashSubject('ip', ip)],
+        ];
+        client = await pool.connect();
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM login_otp_send_limits WHERE sent_at < NOW() - INTERVAL '1 hour'`);
+        for (const [, key] of subjects) await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [key]);
+        const recent = await client.query(
+          `SELECT subject_type, subject_key, COUNT(*)::int AS hourly_count,
+                  EXTRACT(EPOCH FROM (NOW() - MAX(sent_at)))::int AS seconds_since_last
+           FROM login_otp_send_limits
+           WHERE (subject_type, subject_key) IN (SELECT * FROM unnest($1::text[], $2::text[]))
+             AND sent_at > NOW() - INTERVAL '1 hour'
+           GROUP BY subject_type, subject_key`,
+          [subjects.map(s => s[0]), subjects.map(s => s[1])]
+        );
+        if (recent.rows.some(row => Number(row.hourly_count) >= 5 || Number(row.seconds_since_last) < 60)) {
+          await client.query('ROLLBACK');
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_RATE_LIMITED', message: 'Please wait 60 seconds before requesting another code. You can request up to 5 codes per hour.' }));
+          return;
+        }
+        for (const [type, key] of subjects) {
+          await client.query('INSERT INTO login_otp_send_limits(subject_type, subject_key) VALUES ($1, $2)', [type, key]);
+        }
+        const code = crypto.randomInt(100000, 1000000).toString();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        const codeHash = crypto.createHmac('sha256', JWT_SECRET).update(`login:${account.id}:${code}`).digest('hex');
+        await client.query(
+          `INSERT INTO login_otp_challenges(user_id, email, purpose, code_hash, attempts, expires_at, created_at)
+           VALUES ($1, $2, 'login', $3, 0, $4, NOW())
+           ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, purpose = 'login',
+             code_hash = EXCLUDED.code_hash, attempts = 0, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
+          [account.id, email, codeHash, expiresAt]
+        );
+        await client.query('COMMIT');
+        client.release(); client = null;
+        const sent = await sendEmail({
+          to: email,
+          subject: 'Your Match District login code',
+          html: `<div style="font-family:sans-serif;max-width:600px;margin:auto;padding:20px"><h2>Sign in to Match District</h2><p>Your login code is:</p><p style="font-size:32px;font-weight:bold;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request it, ignore this email.</p></div>`
+        });
+        if (!sent.success) {
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'EMAIL_DELIVERY_FAILED', message: 'Could not deliver the login code. Please try again shortly.' }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ success: true, maskedEmail: `${email.split('@')[0].slice(0, 2)}***@${email.split('@')[1]}`, expiresAt: expiresAt.toISOString() }));
+      } catch (error) {
+        await client?.query('ROLLBACK').catch(() => {});
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_SEND_FAILED', message: 'Could not send a login code. Please try again.' }));
+      } finally { client?.release(); }
+    });
+    return;
+  }
+
+  if (urlPath === '/api/auth/login-otp/verify' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      let client = null;
+      try {
+        const { identifier = '', code = '' } = JSON.parse(body || '{}');
+        const value = String(identifier).trim();
+        const otp = String(code).trim();
+        const lookup = await pool.query(
+          `SELECT * FROM users
+           WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1)) OR LOWER(BTRIM(district_id)) = LOWER(BTRIM($1)) LIMIT 1`, [value]
+        );
+        const account = lookup.rows[0];
+        if (!account || (account.password_set === true && account.password)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_NOT_FOUND', message: 'No active login code found. Request a new code.' }));
+          return;
+        }
+        if (!(await accountSecurity.guardVerify(req, res, { email: account.email, userId: account.id }))) return;
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const challengeRes = await client.query(
+          `SELECT * FROM login_otp_challenges WHERE user_id = $1 AND email = LOWER(BTRIM($2))
+             AND purpose = 'login' FOR UPDATE`, [account.id, account.email]
+        );
+        const challenge = challengeRes.rows[0];
+        if (!challenge) {
+          await client.query('ROLLBACK');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_NOT_FOUND', message: 'No active login code found. Request a new code.' }));
+          return;
+        }
+        if (new Date(challenge.expires_at) <= new Date()) {
+          await client.query('DELETE FROM login_otp_challenges WHERE user_id = $1', [account.id]);
+          await client.query('COMMIT');
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_EXPIRED', message: 'That login code has expired. Request a new code.' }));
+          return;
+        }
+        if (Number(challenge.attempts) >= 5) {
+          await client.query('DELETE FROM login_otp_challenges WHERE user_id = $1', [account.id]);
+          await client.query('COMMIT');
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_TOO_MANY_ATTEMPTS', message: 'Too many incorrect codes. Request a new code.' }));
+          return;
+        }
+        const candidateHash = crypto.createHmac('sha256', JWT_SECRET).update(`login:${account.id}:${otp}`).digest();
+        const storedHash = Buffer.from(challenge.code_hash, 'hex');
+        if (!/^\d{6}$/.test(otp) || storedHash.length !== candidateHash.length || !crypto.timingSafeEqual(candidateHash, storedHash)) {
+          const attempt = await client.query('UPDATE login_otp_challenges SET attempts = attempts + 1 WHERE user_id = $1 RETURNING attempts', [account.id]);
+          const maxed = Number(attempt.rows[0]?.attempts) >= 5;
+          if (maxed) await client.query('DELETE FROM login_otp_challenges WHERE user_id = $1', [account.id]);
+          await client.query('COMMIT');
+          res.writeHead(maxed ? 429 : 400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: maxed ? 'LOGIN_OTP_TOO_MANY_ATTEMPTS' : 'LOGIN_OTP_INVALID', message: maxed ? 'Too many incorrect codes. Request a new code.' : 'That code is incorrect. Check it and try again.' }));
+          return;
+        }
+        await client.query('DELETE FROM login_otp_challenges WHERE user_id = $1', [account.id]);
+        await client.query('DELETE FROM verification_abuse WHERE subject_key = $1 AND action = $2', [accountSecurity.abuse.hashSubject('user', account.id), 'login_otp:verify']).catch(() => {});
+        await client.query('COMMIT');
+        client.release(); client = null;
+        const token = signJwt({ email: account.email, role: account.role, roles: account.roles || [account.role], id: account.uid || account.id });
+        const encryptedSession = encryptSessionData(JSON.stringify({ token, userId: account.uid || account.id, email: account.email }));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': buildSessionCookie(token, req) });
+        res.end(JSON.stringify({ success: true, token, encryptedSession, user: publicUserRow(account), message: 'Signed in successfully.' }));
+      } catch {
+        await client?.query('ROLLBACK').catch(() => {});
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'LOGIN_OTP_VERIFY_FAILED', message: 'Could not verify the login code. Please try again.' }));
+      } finally { client?.release(); }
+    });
+    return;
+  }
+
   if (req.url === '/api/auth/login' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -6510,10 +6698,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         let query = `
         SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled",
                t."registrationOpenDate", t."registrationCloseDate", t."startDate", t.created_at,
-               (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
-                WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
-                  AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
+               COALESCE(rc.slots_filled, 0) AS registered_teams_count
         FROM tournaments t
+        LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
       `;
       const params = [];
       const whereClauses = [];
@@ -7258,10 +7445,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // 7. Fetch tournaments owned by this organiser
         const tourRes = await pool.query(
           `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
-                  (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
-                   WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
-                     AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
+                  COALESCE(rc.slots_filled, 0) AS registered_teams_count
            FROM tournaments t
+           LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
            WHERE (t."orgId" = $1 OR t.org_id = $1)
              AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
            ORDER BY t.created_at DESC`,
@@ -7357,10 +7543,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const tourRes = await pool.query(
         `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
-                (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
-                 WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
-                   AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
+                COALESCE(rc.slots_filled, 0) AS registered_teams_count
          FROM tournaments t
+         LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
          WHERE (t."orgId" = $1 OR t.org_id = $1)
            AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
          ORDER BY t.created_at DESC`,
@@ -7393,13 +7578,14 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
   if (urlPath === '/api/tournaments' && req.method === 'GET') {
     try {
       const dbRes = await pool.query(`
-        SELECT t.*, u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
+        SELECT t.*, COALESCE(rc.slots_filled, 0) AS "slotsFilled", u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
         FROM tournaments t
+        LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
         LEFT JOIN users u ON t."orgId" = u.id
         WHERE (t."isDraft" = false OR t."isDraft" IS NULL)
         ORDER BY t.created_at DESC
       `);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       const normalized = (dbRes.rows || []).map(withTournamentDisplay);
       res.end(JSON.stringify({ success: true, tournaments: normalized }));
     } catch (err) {
@@ -7429,10 +7615,11 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         `SELECT
            p.id AS promotion_id, p.placement, p.priority, p.display_order,
            p.starts_at, p.ends_at,
-           t.*,
+           t.*, COALESCE(rc.slots_filled, 0) AS "slotsFilled",
            u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
          FROM tournament_promotions p
          JOIN tournaments t ON t.id = p.tournament_id
+         LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
          LEFT JOIN users u ON t."orgId" = u.id
          WHERE p.is_active = true
            AND (p.starts_at IS NULL OR p.starts_at <= NOW())
@@ -7444,7 +7631,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         [limit]
       );
       const normalized = (dbRes.rows || []).map(withTournamentDisplay);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, tournaments: normalized, limit }));
     } catch (err) {
       console.warn('⚠️ [PROMOTION] Failed to fetch promoted tournaments:', err.message);
@@ -7774,8 +7961,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const id = decodeURIComponent(singleTournamentMatch[1]);
     try {
       const dbRes = await pool.query(`
-        SELECT t.*, u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
+        SELECT t.*, COALESCE(rc.slots_filled, 0) AS "slotsFilled", u.tier AS "orgTier", u."orgName" AS "userOrgName", u."orgImage" AS "userOrgImage", u.name AS "userName"
         FROM tournaments t
+        LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
         LEFT JOIN users u ON t."orgId" = u.id
         WHERE t.id = $1
       `, [id]);
@@ -7786,27 +7974,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       }
       const row = dbRes.rows[0];
 
-      // Reconcile authoritative slotsFilled count from canonical active registrations
-      try {
-        const countRes = await pool.query(
-          `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
-           FROM tournament_registrations
-           WHERE tournament_id = $1
-             AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
-          [id, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
-        );
-        const canonicalCount = parseInt(countRes.rows[0]?.count) || 0;
-        const total = parseInt(row.slotsTotal) || 128;
-        const canonicalFilled = Math.min(total, canonicalCount);
-        if (canonicalFilled !== parseInt(row.slotsFilled)) {
-          row.slotsFilled = canonicalFilled;
-          pool.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [canonicalFilled, id]).catch(() => {});
-        } else {
-          row.slotsFilled = canonicalFilled;
-        }
-      } catch (countErr) {
-        console.warn(`[TournamentDetail] slotsFilled count reconcile warn: ${countErr.message}`);
-      }
+      row.slotsFilled = parseInt(row.slotsFilled, 10) || 0;
 
       // Block draft access for non-owners (drafts should only be visible to the organizer)
       if (row.isDraft) {
@@ -7852,7 +8020,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       // Room credentials are strictly served via the dedicated credentials / lobby endpoint
       delete row.roomID;
       delete row.roomPassword;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({ success: true, tournament: row }));
     } catch (err) {
       console.warn('⚠️ [MATCH DISTRICT DB] Supabase fetch tournament failed:', err.message);
@@ -9244,11 +9412,12 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         organizerRecord.role
       ].filter(Boolean).map(role => String(role).toLowerCase());
       const dbRes = await pool.query(`
-        SELECT t.*,
+        SELECT t.*, COALESCE(rc.slots_filled, 0) AS "slotsFilled",
           u.tier AS "orgTier", u."orgName" AS "userOrgName", u.name AS "userName",
-          (SELECT COUNT(DISTINCT LOWER(BTRIM(team_name))) FROM tournament_registrations WHERE tournament_id = t.id AND LOWER(COALESCE(status, '')) = 'approved' AND BTRIM(COALESCE(team_name, '')) <> '') AS "registrationCount",
+          COALESCE(rc.slots_filled, 0) AS "registrationCount",
           (SELECT COALESCE(SUM(COALESCE(amount,0)),0) FROM sponsor_contributions WHERE tournament_id = t.id AND status = 'approved') AS "sponsorRevenue"
         FROM tournaments t
+        LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id
         LEFT JOIN users u ON t."orgId" = u.id
         WHERE t."orgId" = $1
         ORDER BY t.created_at DESC
@@ -13548,7 +13717,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
         // Check tournament exists and is open
         const tRes = await pool.query(
-          'SELECT id, title, status, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate" FROM tournaments WHERE id = $1',
+          'SELECT t.id, t.title, t.status, t."slotsTotal", COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.entry_fee_amount, t."registrationCloseDate" FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.id = $1',
           [tournamentId]
         );
         if (tRes.rows.length === 0) {
@@ -13707,7 +13876,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           [session.tournament_id, authUser.id, session.idempotency_key]
         );
         const tRes = await pool.query(
-          'SELECT id, title, game, "cover_image_url", prize, entry, entry_fee_amount, "orgName", status, "slotsTotal", "slotsFilled", teams_per_group FROM tournaments WHERE id = $1',
+          'SELECT t.id, t.title, t.game, t."cover_image_url", t.prize, t.entry, t.entry_fee_amount, t."orgName", t.status, t."slotsTotal", COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.teams_per_group FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.id = $1',
           [session.tournament_id]
         );
         let predictedGroup = null;
@@ -13747,7 +13916,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
       // Also fetch tournament data
       const tRes = await pool.query(
-        'SELECT id, title, game, "cover_image_url", prize, entry, entry_fee_amount, "orgName", status, "slotsTotal", "slotsFilled" FROM tournaments WHERE id = $1',
+        'SELECT t.id, t.title, t.game, t."cover_image_url", t.prize, t.entry, t.entry_fee_amount, t."orgName", t.status, t."slotsTotal", COALESCE(rc.slots_filled, 0) AS "slotsFilled" FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.id = $1',
         [session.tournament_id]
       );
 
@@ -13879,7 +14048,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
         // Verify tournament is still open
         const tRes = await client.query(
-          'SELECT id, title, "slotsTotal", "slotsFilled", entry_fee_amount, "registrationCloseDate", teams_per_group, unique_amount_suffix_enabled FROM tournaments WHERE id = $1::varchar',
+          'SELECT t.id, t.title, t."slotsTotal", COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.entry_fee_amount, t."registrationCloseDate", t.teams_per_group, t.unique_amount_suffix_enabled FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.id = $1::varchar',
           [session.tournament_id]
         );
         if (tRes.rows.length === 0) {
@@ -14060,11 +14229,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           const lockedTourney = tournamentLockRes.rows[0];
           const sessionSlotsTotal = parseInt(lockedTourney.slotsTotal) || 128;
           const capCheckRes = await client.query(
-            `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS count
-             FROM tournament_registrations
-             WHERE tournament_id = $1::varchar
-               AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
-            [session.tournament_id, ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted']]
+            'SELECT COALESCE(slots_filled, 0)::int AS count FROM registered_tournament_team_counts WHERE tournament_id = $1::varchar',
+            [session.tournament_id]
           );
           const currentOccupied = parseInt(capCheckRes.rows[0]?.count) || 0;
           if (currentOccupied >= sessionSlotsTotal) {
@@ -14280,11 +14446,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
           // Count active registrations within transaction (excluding cancelled, rejected, expired, payment_rejected)
           const EXCLUDED_STATUSES = ['rejected', 'cancelled', 'expired', 'payment_rejected', 'waitlisted'];
           const activeCountRes = await regClient.query(
-            `SELECT COUNT(DISTINCT COALESCE(NULLIF(LOWER(TRIM(team_name)), ''), id)) AS active_count
-             FROM tournament_registrations
-             WHERE tournament_id = $1::varchar
-               AND (status IS NULL OR NOT (LOWER(status) = ANY($2)))`,
-            [id, EXCLUDED_STATUSES]
+            'SELECT COALESCE(slots_filled, 0)::int AS active_count FROM registered_tournament_team_counts WHERE tournament_id = $1::varchar', [id]
           );
           const activeCount = parseInt(activeCountRes.rows[0]?.active_count || '0');
           const slotsTotal = parseInt(t.slotsTotal) || 128;
@@ -15630,7 +15792,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
     const parts = req.url.split('/');
     const id = parts[3];
     try {
-      const tRes = await pool.query('SELECT "slotsTotal", "slotsFilled", match_type, max_slots_per_room, teams_per_group, teams_per_match FROM tournaments WHERE id = $1', [id]);
+      const tRes = await pool.query('SELECT t."slotsTotal", COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.match_type, t.max_slots_per_room, t.teams_per_group, t.teams_per_match FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.id = $1', [id]);
       if (tRes.rows.length === 0) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: 'NOT_FOUND', message: 'Tournament not found' }));
@@ -15777,7 +15939,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         }
       }
 
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify({
         success: true,
         slotsTotal,
@@ -16126,7 +16288,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
       // Total slots across active non-draft tournaments
       const slotsRes = await pool.query(
-        `SELECT COALESCE(SUM("slotsTotal"), 0) as total, COALESCE(SUM("slotsFilled"), 0) as filled FROM tournaments WHERE "orgId" = $1 AND "isDraft" = false`,
+        `SELECT COALESCE(SUM(t."slotsTotal"), 0) as total, COALESCE(SUM(rc.slots_filled), 0) as filled FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t."orgId" = $1 AND t."isDraft" = false`,
         [authUser.id]
       );
 
@@ -19227,7 +19389,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       }
 
       const tournamentsRes = await pool.query(
-        `SELECT id, prize, entry, "slotsFilled", status FROM tournaments WHERE status IN ('live', 'upcoming')`
+        `SELECT t.id, t.prize, t.entry, COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.status FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.status IN ('live', 'upcoming')`
       );
 
       // Fetch dynamic platform fee percentage
@@ -19251,7 +19413,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
       // All-time historical metrics (all statuses including completed/archived)
       const allTimeRes = await pool.query(
-        `SELECT prize, entry, "slotsFilled", status FROM tournaments WHERE status != 'draft'`
+        `SELECT t.prize, t.entry, COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.status FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t.status != 'draft'`
       );
       let allTimePrizePool = 0;
       let allTimeCommission = 0;
@@ -20052,7 +20214,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       }
       const [tourneyRes, slotRes, orgRes, avgRes, staffRes, analyticsRes] = await Promise.all([
         pool.query('SELECT COUNT(*) as total FROM tournaments'),
-        pool.query('SELECT COALESCE(SUM("slotsFilled"), 0) as total FROM tournaments'),
+        pool.query('SELECT COALESCE(SUM(rc.slots_filled), 0) as total FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id'),
         pool.query(`SELECT COUNT(*) as total FROM users WHERE 'organiser' = ANY(roles)`),
         pool.query(`SELECT COALESCE(AVG(tournament_count), 0) as avg FROM (SELECT COUNT(*) as tournament_count FROM tournaments GROUP BY "orgId") sub`),
         pool.query('SELECT COUNT(*) as total FROM staff_members'),
@@ -20070,8 +20232,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       ]);
 
       const [currentParticipants, prevParticipants] = await Promise.all([
-        pool.query(`SELECT COALESCE(SUM("slotsFilled"), 0) as c FROM tournaments WHERE "createdAt" >= $1`, [firstOfMonth]),
-        pool.query(`SELECT COALESCE(SUM("slotsFilled"), 0) as c FROM tournaments WHERE "createdAt" >= $1 AND "createdAt" < $2`, [firstOfPrevMonth, firstOfMonth]),
+        pool.query(`SELECT COALESCE(SUM(rc.slots_filled), 0) as c FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t."createdAt" >= $1`, [firstOfMonth]),
+        pool.query(`SELECT COALESCE(SUM(rc.slots_filled), 0) as c FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t."createdAt" >= $1 AND t."createdAt" < $2`, [firstOfPrevMonth, firstOfMonth]),
       ]);
 
       const tGrowth = prevTourneys.rows[0].c > 0 ? Math.round((currentTourneys.rows[0].c - prevTourneys.rows[0].c) / prevTourneys.rows[0].c * 100) : 0;
@@ -20518,7 +20680,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       );
       const registrations = parseInt(regCountRes.rows[0].cnt);
       const slotRes = await pool.query(
-        `SELECT SUM(CAST(t."slotsTotal" AS INTEGER)) as total, SUM(CAST(t."slotsFilled" AS INTEGER)) as filled FROM tournaments t WHERE t."orgId" = $1`,
+        `SELECT SUM(CAST(t."slotsTotal" AS INTEGER)) as total, SUM(COALESCE(rc.slots_filled, 0)) as filled FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE t."orgId" = $1`,
         [user.id]
       );
       const totalSlots = parseInt(slotRes.rows[0]?.total) || 0;
@@ -20536,8 +20698,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       const prevCount = parseInt(prevGrowthRes.rows[0].cnt);
       const participantGrowth = prevCount > 0 ? Math.round(((currentCount - prevCount) / prevCount) * 100) : currentCount > 0 ? 100 : 0;
       const revenueRes = await pool.query(
-        `SELECT COALESCE(SUM(CAST(COALESCE(t."slotsFilled", 0) AS INTEGER) * CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER)), 0) as revenue
-         FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1)`,
+        `SELECT COALESCE(SUM(CAST(COALESCE(rc.slots_filled, 0) AS INTEGER) * CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER)), 0) as revenue
+         FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE (t."orgId" = $1 OR t.org_id = $1)`,
         [user.id]
       );
       const revenue = parseInt(revenueRes.rows[0]?.revenue) || 0;
@@ -20579,8 +20741,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
       // Total revenue from entry fees
       const tourneyRes = await pool.query(
-        `SELECT id, title, entry_fee_amount, entry, "slotsFilled", prize_pool_amount, created_at 
-         FROM tournaments WHERE ("orgId" = $1 OR org_id = $1) ORDER BY created_at DESC`,
+        `SELECT t.id, t.title, t.entry_fee_amount, t.entry, COALESCE(rc.slots_filled, 0) AS "slotsFilled", t.prize_pool_amount, t.created_at
+         FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE (t."orgId" = $1 OR t.org_id = $1) ORDER BY t.created_at DESC`,
         [user.id]
       );
       const tournaments = tourneyRes.rows;
@@ -20785,8 +20947,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
 
       // Tournament revenue (entry fees * slots filled)
       const tRevRes = await pool.query(
-        `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(t."slotsFilled", 0) AS INTEGER)), 0) as revenue
-         FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)`,
+        `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(rc.slots_filled, 0) AS INTEGER)), 0) as revenue
+         FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)`,
         [userId]
       );
       const tournamentRevenue = parseFloat(tRevRes.rows[0].revenue) || 0;
@@ -20810,8 +20972,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         const month = d.getMonth() + 1;
         const label = `${year}-${String(month).padStart(2, '0')}`;
         const revRes = await pool.query(
-          `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(t."slotsFilled", 0) AS INTEGER)), 0) as rev
-           FROM tournaments t WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)
+          `SELECT COALESCE(SUM(CAST(COALESCE(t.entry_fee_amount, 0) AS INTEGER) * CAST(COALESCE(rc.slots_filled, 0) AS INTEGER)), 0) as rev
+           FROM tournaments t LEFT JOIN registered_tournament_team_counts rc ON rc.tournament_id = t.id WHERE (t."orgId" = $1 OR t.org_id = $1) AND (t."isDraft" = false OR t."isDraft" IS NULL)
            AND EXTRACT(YEAR FROM t.created_at) = $2 AND EXTRACT(MONTH FROM t.created_at) = $3`,
           [userId, year, month]
         );

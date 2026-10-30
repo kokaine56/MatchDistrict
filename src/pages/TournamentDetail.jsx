@@ -899,15 +899,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
     ? registrations.filter(r => ['approved', 'confirmed'].includes((r.status || '').toLowerCase())).length
     : 0;
 
-  const slotFilled = Math.min(
-    slotTotal,
-    Math.max(
-      Number(slotsData?.slotsFilled) || 0,
-      Number(tourney?.slotsFilled) || 0,
-      occupiedFromSlotsArray,
-      validRegistrationsCount
-    )
-  );
+  const slotFilled = Math.min(slotTotal, Math.max(0, Number(slotsData?.slotsFilled ?? tourney?.slotsFilled) || 0));
 
   const slotAvailable = Math.max(0, slotTotal - slotFilled);
   const fillPercent = Math.min(100, Math.round((slotFilled / slotTotal) * 100));
@@ -1311,7 +1303,7 @@ function TournamentDetail({ onNavigate, tournamentId }) {
                         {slotsLoading && !tourney?.slotsFilled && !slotsData ? (
                           <span className="animate-pulse opacity-75">...</span>
                         ) : (
-                          <span>{slotFilled}/{slotTotal}</span>
+                          <span>{slotFilled}/{slotTotal} ({fillPercent}%)</span>
                         )}
                       </span>
                     </div>

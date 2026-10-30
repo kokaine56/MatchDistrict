@@ -1565,7 +1565,7 @@ function Profile({ onNavigate, selectedUserProfile }) {
     if (!currentUser) return
     if (isPasswordSubmitting) return
 
-    const hasPassword = currentUser.password_set !== false && (currentUser.password_set === true || !currentUser.google_id);
+    const hasPassword = currentUser.password_set === true
 
     if (hasPassword && !currPass) {
       triggerToast('Please enter your current password.')
@@ -1579,8 +1579,8 @@ function Profile({ onNavigate, selectedUserProfile }) {
       triggerToast('New passwords do not match!')
       return
     }
-    if (newPass.length < 6) {
-      triggerToast('Password must be at least 6 characters long.')
+    if (newPass.length < 6 || !/[A-Za-z]/.test(newPass) || !/[0-9]/.test(newPass) || !/[^A-Za-z0-9]/.test(newPass)) {
+      triggerToast('Use at least 6 characters, including a letter, a number and a symbol.')
       return
     }
 
@@ -2976,6 +2976,27 @@ className="px-6 min-h-[44px] bg-secondary hover:bg-secondary/95 active:scale-95 
 
                   {/* GROUP 2: LOGIN METHODS */}
                   <div id="login-methods-section">
+                    {(() => {
+                      const hasPassword = currentUser?.password_set === true
+                      const passwordToggle = (shown, toggle) => (
+                        <button type="button" onClick={() => toggle(!shown)} className="px-3 text-xs text-primary font-semibold">
+                          {shown ? 'Hide' : 'Show'}
+                        </button>
+                      )
+                      return (
+                        <section className="glass-card p-4 sm:p-6 rounded-2xl border border-outline-variant/30 bg-surface-container-low/40 space-y-4 mb-4">
+                          <h3 className="font-headline-md text-sm sm:text-base font-bold uppercase flex items-center gap-2 text-on-background tracking-tight pb-2 border-b border-outline-variant/30">
+                            <span className="material-symbols-outlined text-primary text-xl">{hasPassword ? 'key' : 'lock_open'}</span>
+                            {hasPassword ? 'Change password' : 'Create password'}
+                          </h3>
+                          {hasPassword && <label className="block text-xs font-semibold text-on-surface-variant">Current password<div className="flex mt-1"><input type={showCurrentPassword ? 'text' : 'password'} autoComplete="current-password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="w-full rounded-xl border border-outline-variant/50 bg-surface-container px-3 py-2 text-sm" />{passwordToggle(showCurrentPassword, setShowCurrentPassword)}</div></label>}
+                          <label className="block text-xs font-semibold text-on-surface-variant">New password<div className="flex mt-1"><input type={showNewPassword ? 'text' : 'password'} autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full rounded-xl border border-outline-variant/50 bg-surface-container px-3 py-2 text-sm" />{passwordToggle(showNewPassword, setShowNewPassword)}</div></label>
+                          <label className="block text-xs font-semibold text-on-surface-variant">Confirm password<div className="flex mt-1"><input type={showConfirmPassword ? 'text' : 'password'} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full rounded-xl border border-outline-variant/50 bg-surface-container px-3 py-2 text-sm" />{passwordToggle(showConfirmPassword, setShowConfirmPassword)}</div></label>
+                          <p className="text-[11px] text-on-surface-variant">At least 6 characters, with a letter, a number and a symbol.</p>
+                          <button type="button" disabled={isPasswordSubmitting} onClick={() => autoSavePassword(currentPassword, newPassword, confirmPassword)} className="px-5 py-2.5 rounded-full bg-primary text-on-primary text-sm font-bold disabled:opacity-50">{isPasswordSubmitting ? 'Saving…' : hasPassword ? 'Save new password' : 'Create password'}</button>
+                        </section>
+                      )
+                    })()}
                     <LoginMethodsCard
                       currentUser={currentUser || currentUserFromContext}
                       onUserUpdated={refreshProfileUser}

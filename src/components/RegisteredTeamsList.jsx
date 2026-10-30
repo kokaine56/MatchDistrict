@@ -40,20 +40,30 @@ export default function RegisteredTeamsList({
     }
 
     let isMounted = true;
-    fetch('/api/auth/discord/status', { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => {
-        if (isMounted && data.success) {
+    const loadDiscordStatus = async () => {
+      try {
+        const res = await fetch('/api/auth/discord/status', { credentials: 'include', cache: 'no-store' });
+        const data = await res.json();
+        if (isMounted && res.ok && data.success) {
           setViewerDiscord({
             connected: Boolean(data.connected),
-            username: data.username || data.displayName || null,
+            username: data.connected ? (data.username || data.displayName || null) : null,
           });
         }
-      })
-      .catch(() => {});
+      } catch { /* keep status unknown until the backend can confirm it */ }
+    };
+
+    loadDiscordStatus();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') loadDiscordStatus();
+    };
+    window.addEventListener('focus', loadDiscordStatus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       isMounted = false;
+      window.removeEventListener('focus', loadDiscordStatus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [currentUser, refreshTrigger]);
 
@@ -134,17 +144,9 @@ export default function RegisteredTeamsList({
     window.location.href = `/api/auth/discord/connect?redirect=${encodeURIComponent(returnTo)}`;
   };
 
-  const isViewerDiscordLinked = Boolean(
-    viewerDiscord?.connected ||
-    currentUser?.discord?.connected ||
-    currentUser?.discord_id
-  );
-
-  const viewerDiscordUsername =
-    viewerDiscord?.username ||
-    currentUser?.discord?.username ||
-    currentUser?.discordTag ||
-    null;
+  const isViewerDiscordLinked = viewerDiscord?.connected === true;
+  const discordStatusKnown = !currentUser || viewerDiscord !== null;
+  const shouldShowDiscordWarning = discordStatusKnown && !isViewerDiscordLinked;
 
   if (loading) {
     return (
@@ -173,7 +175,7 @@ export default function RegisteredTeamsList({
       </div>
 
       {/* Mandatory Discord Linking Notice */}
-      <div
+      {shouldShowDiscordWarning && <div
         className={`flex w-full items-start gap-3 rounded-xl border p-3 sm:p-4 text-sm leading-5 ${
           isGoldTheme
             ? 'bg-amber-500/10 border-[#D4A017]/25 text-[#8A650D] dark:text-amber-200'
@@ -184,52 +186,31 @@ export default function RegisteredTeamsList({
           <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
         </svg>
         <span className="min-w-0 whitespace-normal break-words">Linking your Discord account is compulsory to participate.</span>
-      </div>
+      </div>}
 
       {/* Viewer's Discord Status / Action */}
-      <div
-        className={`flex w-full flex-col gap-4 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
-          isGoldTheme
-            ? 'bg-[#F5F0E1]/80 dark:bg-[#1A1812]/80 border-[#D4A017]/30 text-slate-800 dark:text-slate-100'
-            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100'
-        }`}
-      >
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#5865F2]/20 bg-[#5865F2]/10 text-[#5865F2]">
-            <DiscordIcon className="h-6 w-6" />
-          </div>
-          <div className="flex min-w-0 flex-col items-start gap-1.5">
-            <span className={`text-sm font-semibold leading-5 ${isGoldTheme ? 'text-[#1F2937] dark:text-slate-100' : 'text-slate-800 dark:text-slate-100'}`}>
-              Your Discord
-            </span>
-            {isViewerDiscordLinked ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Connected
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                Not connected
-              </span>
-            )}
-          </div>
+      <div className="flex min-h-10 w-full items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <DiscordIcon className="h-5 w-5 shrink-0 text-[#5865F2]" />
+          <span className={`min-w-0 truncate text-sm font-medium ${isGoldTheme ? 'text-[#1F2937] dark:text-slate-100' : 'text-slate-800 dark:text-slate-100'}`}>
+            {isViewerDiscordLinked ? (viewerDiscord.username ? `@${viewerDiscord.username}` : 'Discord connected') : discordStatusKnown ? 'Not connected' : 'Checking Discord…'}
+          </span>
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${isViewerDiscordLinked ? 'bg-emerald-500' : discordStatusKnown ? 'bg-red-500' : 'bg-slate-400'}`}
+            role="status"
+            aria-label={isViewerDiscordLinked ? 'Discord connected' : discordStatusKnown ? 'Discord not connected' : 'Checking Discord status'}
+            title={isViewerDiscordLinked ? 'Connected' : discordStatusKnown ? 'Not connected' : 'Checking status'}
+          />
         </div>
-
-        {!isViewerDiscordLinked ? (
+        {discordStatusKnown && !isViewerDiscordLinked && (
           <button
             type="button"
             onClick={handleConnectDiscord}
             disabled={isLinking}
-            className="inline-flex min-h-12 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-[#5865F2] px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#4752C4] active:scale-[0.98] active:bg-[#3C46B5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5865F2] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-75 sm:w-auto sm:min-w-48"
+            className="shrink-0 text-xs sm:text-sm font-semibold text-[#5865F2] hover:text-[#4752C4] disabled:opacity-60"
           >
-            <DiscordIcon className="h-5 w-5 shrink-0" />
-            <span className="whitespace-nowrap">{isLinking ? 'Connecting...' : 'Connect Discord'}</span>
-            {isLinking && <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />}
+            {isLinking ? 'Connecting…' : 'Connect Discord'}
           </button>
-        ) : (
-          <span className="min-w-0 truncate text-sm font-medium text-slate-600 dark:text-slate-300 sm:max-w-[45%] sm:text-right" title={viewerDiscordUsername || undefined}>
-            {viewerDiscordUsername ? `@${viewerDiscordUsername}` : 'Discord account connected'}
-          </span>
         )}
       </div>
 
