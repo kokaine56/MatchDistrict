@@ -482,9 +482,12 @@ function buildClearSessionCookies(req) {
   const isSecure = isHttpsRequest(req);
   const expiredDate = 'Thu, 01 Jan 1970 00:00:00 GMT';
   const cookies = [];
-  cookies.push(`token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0; Expires=${expiredDate}${isSecure ? '; Secure' : ''}`);
-  if (isSecure) {
-    cookies.push(`token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0; Expires=${expiredDate}`);
+  const securityFlags = isSecure ? ['; Secure', ''] : [''];
+  const domains = ['', '; Domain=matchdistrict.in', '; Domain=.matchdistrict.in'];
+  for (const domain of domains) {
+    for (const securityFlag of securityFlags) {
+      cookies.push(`token=; Path=/; SameSite=Lax; HttpOnly; Max-Age=0; Expires=${expiredDate}${domain}${securityFlag}`);
+    }
   }
   return cookies;
 }
@@ -2241,7 +2244,7 @@ const server = http.createServer(async (req, res) => {
         // Generate cryptographically secure 6-digit OTP on server only.
         // Never allow client to supply otp!
         const otp = crypto.randomInt(100000, 1000000).toString();
-        const expiry = Date.now() + 5 * 60 * 1000; // 5 minutes
+        const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes
 
         // Database-backed abuse guard: 60 s resend cooldown, 3 sends / 15 min per email and IP, timeouts.
         const otpFlow = parsed.purpose === 'gamertag_change' ? 'gamertag' : 'signup';
@@ -2271,7 +2274,7 @@ const server = http.createServer(async (req, res) => {
                 <div style="background-color: #f4f4f4; padding: 20px; text-align: center; font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #000; margin: 20px 0; border-radius: 4px;">
                   ${otp}
                 </div>
-                <p>This code will expire in 5 minutes.</p>
+                <p>This code will expire in 10 minutes.</p>
                 <p>If you didn't request this code, you can safely ignore this email.</p>
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
                 <p style="font-size: 12px; color: #888; text-align: center;">&copy; 2026 Match District. All rights reserved.</p>
@@ -2326,7 +2329,7 @@ const server = http.createServer(async (req, res) => {
         if (!(await accountSecurity.guardVerify(req, res, { email }))) return;
 
         const now = new Date();
-        const otpRes = await pool.query('SELECT * FROM otps WHERE email = $1', [email]);
+        const otpRes = await pool.query('SELECT * FROM otps WHERE LOWER(BTRIM(email)) = $1', [email]);
         if (otpRes.rows.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'OTP_NOT_FOUND', message: 'No active verification code found. Please request a new one.' }));
@@ -2337,7 +2340,7 @@ const server = http.createServer(async (req, res) => {
 
         // Check expiry
         if (new Date(otpRecord.expires_at) <= now) {
-          await pool.query('DELETE FROM otps WHERE email = $1', [email]);
+          await pool.query('DELETE FROM otps WHERE LOWER(BTRIM(email)) = $1', [email]);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, error: 'OTP_EXPIRED', message: 'Verification code has expired. Please request a new one.' }));
           return;
@@ -2346,7 +2349,7 @@ const server = http.createServer(async (req, res) => {
         // Check attempts limit (max 5)
         const attempts = parseInt(otpRecord.attempts || 0, 10);
         if (attempts >= 5) {
-          await pool.query('DELETE FROM otps WHERE email = $1', [email]);
+          await pool.query('DELETE FROM otps WHERE LOWER(BTRIM(email)) = $1', [email]);
           res.writeHead(429, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: false,
@@ -2383,26 +2386,25 @@ const server = http.createServer(async (req, res) => {
           return;
         }
 
-        // Consume atomically so concurrent requests cannot verify the same OTP.
-        const consumeRes = await pool.query(
-          `DELETE FROM otps WHERE email = $1 AND otp = $2
-             AND expires_at > NOW() AND COALESCE(attempts, 0) < 5 RETURNING email`,
-          [email, otpRecord.otp]
+        // Keep a successful result reusable for retries/double submits. The OTP
+        // remains database-backed and single-use at registration finalization.
+        const tokenRes = await pool.query(
+          `SELECT verification_token FROM temp_users WHERE LOWER(BTRIM(email)) = $1
+           AND verified = true AND expires_at > NOW() AND verification_token IS NOT NULL LIMIT 1`, [email]
         );
-        if (consumeRes.rows.length === 0) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'INVALID_OTP', message: 'Verification code is invalid or expired. Please request a new code.' }));
+        if (tokenRes.rows.length > 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'OTP verified successfully.', verificationToken: tokenRes.rows[0].verification_token }));
           return;
         }
-
-        // Issue cryptographically secure verification token
         const verificationToken = crypto.randomBytes(32).toString('hex');
-
-        // Mark temp_users as verified
         const verifiedRes = await pool.query(
-          `UPDATE temp_users SET verified = true, verification_token = $1
-           WHERE email = $2 AND expires_at > NOW() RETURNING email`,
-          [verificationToken, email]
+          `UPDATE temp_users SET verified = true, verification_token = COALESCE(verification_token, $1)
+           WHERE LOWER(BTRIM(email)) = $2 AND expires_at > NOW() AND EXISTS (
+             SELECT 1 FROM otps WHERE LOWER(BTRIM(email)) = $2 AND otp = $3
+               AND expires_at > NOW() AND COALESCE(attempts, 0) < 5
+           ) RETURNING verification_token`,
+          [verificationToken, email, otpRecord.otp]
         );
         if (verifiedRes.rows.length === 0) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2416,7 +2418,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({
           success: true,
           message: 'OTP verified successfully.',
-          verificationToken
+          verificationToken: verifiedRes.rows[0].verification_token
         }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -3037,10 +3039,11 @@ const server = http.createServer(async (req, res) => {
         }
         const providerOnAccount = await db.query('SELECT provider_user_id FROM auth_identities WHERE user_id = $1 AND provider = $2 FOR UPDATE', [account.id, pending.provider]);
         if (providerOnAccount.rows.length && providerOnAccount.rows[0].provider_user_id !== pending.providerUserId) {
-          await db.query('ROLLBACK');
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: 'PROVIDER_REPLACEMENT_REQUIRED', message: 'A different provider account is already linked. Use Reconnect from profile settings.' }));
-          return;
+          // Ownership has been proven. Replace only this account's old identity;
+          // the provider identity uniqueness check above blocks cross-account moves.
+          await db.query('DELETE FROM auth_identities WHERE user_id = $1 AND provider = $2', [account.id, pending.provider]);
+          if (pending.provider === 'google') await db.query('UPDATE users SET google_id = NULL WHERE id = $1', [account.id]);
+          else await db.query('UPDATE users SET discord_id = NULL WHERE id = $1', [account.id]);
         }
         if (pending.provider === 'google') {
           await db.query('UPDATE users SET google_id = COALESCE(google_id, $1) WHERE id = $2', [pending.providerUserId, account.id]);
@@ -4385,7 +4388,10 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     const clearCookies = buildClearSessionCookies(req);
     res.writeHead(200, {
       'Content-Type': 'application/json',
-      'Set-Cookie': clearCookies
+      'Set-Cookie': clearCookies,
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
     res.end(JSON.stringify({ success: true, message: 'Logged out successfully.' }));
     return;
@@ -6501,12 +6507,12 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
       const organizerParam = (parsedUrl.searchParams.get('organizer_id') || parsedUrl.searchParams.get('organiser_id') || '').trim();
       const includeAll = statusParam === 'all';
 
-      let query = `
+        let query = `
         SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled",
                t."registrationOpenDate", t."registrationCloseDate", t."startDate", t.created_at,
-               (SELECT COUNT(*) FROM tournament_registrations tr
-                WHERE tr.tournament_id = t.id
-                  AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
+               (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
+                WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
+                  AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
         FROM tournaments t
       `;
       const params = [];
@@ -7252,9 +7258,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         // 7. Fetch tournaments owned by this organiser
         const tourRes = await pool.query(
           `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
-                  (SELECT COUNT(*) FROM tournament_registrations tr
-                   WHERE tr.tournament_id = t.id
-                     AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
+                  (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
+                   WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
+                     AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
            FROM tournaments t
            WHERE (t."orgId" = $1 OR t.org_id = $1)
              AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
@@ -7351,9 +7357,9 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
     try {
       const tourRes = await pool.query(
         `SELECT t.id, t.title, t.game, t.status, t."isDraft", t."slotsTotal", t."slotsFilled", t.created_at,
-                (SELECT COUNT(*) FROM tournament_registrations tr
-                 WHERE tr.tournament_id = t.id
-                   AND LOWER(COALESCE(tr.status, '')) = 'approved') AS registered_teams_count
+                (SELECT COUNT(DISTINCT LOWER(BTRIM(tr.team_name))) FROM tournament_registrations tr
+                 WHERE tr.tournament_id = t.id AND LOWER(COALESCE(tr.status, '')) = 'approved'
+                   AND BTRIM(COALESCE(tr.team_name, '')) <> '') AS registered_teams_count
          FROM tournaments t
          WHERE (t."orgId" = $1 OR t.org_id = $1)
            AND (t.status IS NULL OR LOWER(t.status) != 'deleted')
@@ -7791,7 +7797,7 @@ async function getDiscordConnectionForUser(clientOrPool, userId, discordIdFallba
         );
         const canonicalCount = parseInt(countRes.rows[0]?.count) || 0;
         const total = parseInt(row.slotsTotal) || 128;
-        const canonicalFilled = Math.min(total, Math.max(parseInt(row.slotsFilled) || 0, canonicalCount));
+        const canonicalFilled = Math.min(total, canonicalCount);
         if (canonicalFilled !== parseInt(row.slotsFilled)) {
           row.slotsFilled = canonicalFilled;
           pool.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [canonicalFilled, id]).catch(() => {});
@@ -9240,7 +9246,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       const dbRes = await pool.query(`
         SELECT t.*,
           u.tier AS "orgTier", u."orgName" AS "userOrgName", u.name AS "userName",
-          (SELECT COUNT(*) FROM tournament_registrations WHERE tournament_id = t.id) AS "registrationCount",
+          (SELECT COUNT(DISTINCT LOWER(BTRIM(team_name))) FROM tournament_registrations WHERE tournament_id = t.id AND LOWER(COALESCE(status, '')) = 'approved' AND BTRIM(COALESCE(team_name, '')) <> '') AS "registrationCount",
           (SELECT COALESCE(SUM(COALESCE(amount,0)),0) FROM sponsor_contributions WHERE tournament_id = t.id AND status = 'approved') AS "sponsorRevenue"
         FROM tournaments t
         LEFT JOIN users u ON t."orgId" = u.id
@@ -13974,6 +13980,8 @@ function validateTournamentSocialUrl(platform, rawUrl) {
            FROM tournament_registrations tr
            LEFT JOIN payment_submissions ps ON ps.registration_id = tr.id
            WHERE tr.tournament_id = $1::varchar AND tr.user_id = $2::varchar
+             AND LOWER(COALESCE(tr.status, '')) NOT IN ('cancelled', 'expired', 'rejected', 'payment_rejected', 'waitlisted')
+             AND (LOWER(COALESCE(tr.status, '')) = 'approved' OR tr.screenshot_url IS NOT NULL OR tr.transaction_id IS NOT NULL OR ps.proof_url IS NOT NULL)
            ORDER BY tr.created_at DESC LIMIT 1 FOR UPDATE OF tr`,
           [session.tournament_id, authUser.id]
         );
@@ -15113,7 +15121,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         res.end(JSON.stringify({ success: false, error: 'FORBIDDEN', message: 'You can only view your own registrations.' }));
         return;
       }
-      const dbRes = await pool.query('SELECT * FROM tournament_registrations WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+      const dbRes = await pool.query(`SELECT * FROM tournament_registrations r WHERE user_id = $1 AND (LOWER(COALESCE(status, '')) IN ('approved', 'confirmed', 'verified_by_host') OR screenshot_url IS NOT NULL OR transaction_id IS NOT NULL OR EXISTS (SELECT 1 FROM payment_submissions p WHERE p.registration_id = r.id AND p.proof_url IS NOT NULL)) ORDER BY created_at DESC`, [userId]);
 
       const tournIds = Array.from(new Set(dbRes.rows.map((r) => r.tournament_id).filter(Boolean)));
       let tournamentsMap = new Map();
@@ -15643,7 +15651,9 @@ function validateTournamentSocialUrl(platform, rawUrl) {
       const ACTIVE_REG_STATUSES = ['pending', 'pending_payment', 'PENDING_PAYMENT_VERIFICATION', 'approved', 'confirmed', 'VERIFIED_BY_HOST', 'verified_by_host'];
 
       const regsRes = await pool.query(
-        'SELECT id, team_name, captain, status, slot_number FROM tournament_registrations WHERE tournament_id = $1 ORDER BY created_at ASC',
+        `SELECT id, team_name, captain, status, slot_number FROM tournament_registrations
+         WHERE tournament_id = $1 AND LOWER(COALESCE(status, '')) = 'approved'
+           AND BTRIM(COALESCE(team_name, '')) <> '' ORDER BY created_at ASC`,
         [id]
       );
       const regs = regsRes.rows;
@@ -15662,7 +15672,7 @@ function validateTournamentSocialUrl(platform, rawUrl) {
         validRegs.push(r);
       }
 
-      const canonicalFilled = Math.min(slotsTotal, Math.max(parseInt(tRes.rows[0].slotsFilled) || 0, validRegs.length));
+      const canonicalFilled = Math.min(slotsTotal, validRegs.length);
       const slotsFilled = canonicalFilled;
       if (canonicalFilled !== parseInt(tRes.rows[0].slotsFilled)) {
         pool.query('UPDATE tournaments SET "slotsFilled" = $1 WHERE id = $2', [canonicalFilled, id]).catch(() => {});

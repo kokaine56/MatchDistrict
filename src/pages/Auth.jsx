@@ -612,13 +612,12 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
   // Common OTP sending utility (used for registration)
   const sendOtp = async (email) => {
-    const otp = Math.floor(100000 + Math.random() * 900000).toString()
-    const expiry = Date.now() + 5 * 60 * 1000 // 5 minutes
+    const expiry = Date.now() + 10 * 60 * 1000 // 10 minutes
     
     const res = await fetch('/api/auth/send-otp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, otp, expiry })
+      body: JSON.stringify({ email })
     })
     
     const data = await res.json()
@@ -1001,7 +1000,7 @@ function Auth({ onNavigate, initialMode = 'login' }) {
 
       if (!verifyRes.ok || !verifyData.success) {
         setIsLoading(false)
-        triggerToast(verifyData.error || verifyData.message || 'Invalid verification code.')
+        triggerToast(verifyData.message || (verifyData.error === 'OTP_NOT_FOUND' ? 'No active verification code found. Please request a new code.' : verifyData.error === 'OTP_EXPIRED' ? 'Your verification code expired. Please request a new one.' : verifyData.error === 'TOO_MANY_ATTEMPTS' ? 'Too many incorrect attempts. Please request a new code.' : verifyData.error === 'INVALID_OTP' ? 'That code is incorrect. Check it and try again.' : 'Could not verify that code. Please try again.'))
         return
       }
 

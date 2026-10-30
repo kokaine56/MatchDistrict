@@ -30,6 +30,7 @@ function clearBrowserAuthState() {
       if (
         key === 'md_persistent_session' ||
         key === 'md_user' ||
+        normalizedKey === 'currentuser' ||
         normalizedKey.includes('supabase') ||
         normalizedKey.includes('auth') ||
         normalizedKey.includes('token') ||
@@ -67,7 +68,7 @@ export function UserProvider({ children }) {
 
   useEffect(() => {
     userRef.current = userState;
-    if (userState) {
+    if (userState && !isLoggingOutRef.current) {
       // Any explicit authenticated user state clears the logged-out lockout flag
       try {
         sessionStorage.removeItem(LOGGED_OUT_KEY);
@@ -164,12 +165,23 @@ export function UserProvider({ children }) {
     let supabaseSub = null;
 
     async function initializeAuth() {
+      // A stale cookie must not win a race against an in-progress or completed
+      // logout. The logout lock is checked before every restoration source.
+      try {
+        if (sessionStorage.getItem(LOGGED_OUT_KEY) === 'true' || isLoggingOutRef.current) {
+          setLoading(false);
+          return;
+        }
+      } catch {}
+
       // 1. Check for active cookie-backed session via /api/auth/me (e.g. from Discord or Google auth redirects)
       try {
         const meRes = await fetch('/api/auth/me', { credentials: 'include' });
         if (meRes.ok) {
           const meData = await meRes.json();
-          if (active && meData.success && meData.user) {
+          let loggedOut = false;
+          try { loggedOut = sessionStorage.getItem(LOGGED_OUT_KEY) === 'true'; } catch {}
+          if (active && !isLoggingOutRef.current && !loggedOut && meData.success && meData.user) {
             try {
               sessionStorage.removeItem(LOGGED_OUT_KEY);
             } catch {}
@@ -196,6 +208,10 @@ export function UserProvider({ children }) {
       } catch {}
 
       // 3. Fallback: Restore encrypted persistent session from localStorage
+      if (isLoggingOutRef.current) {
+        setLoading(false);
+        return;
+      }
       const persistentSession = localStorage.getItem('md_persistent_session');
       if (persistentSession) {
         try {
@@ -205,7 +221,9 @@ export function UserProvider({ children }) {
             body: JSON.stringify({ encryptedSession: persistentSession })
           });
           const data = await res.json();
-          if (active && res.ok && data.success) {
+          let loggedOut = false;
+          try { loggedOut = sessionStorage.getItem(LOGGED_OUT_KEY) === 'true'; } catch {}
+          if (active && !isLoggingOutRef.current && !loggedOut && res.ok && data.success) {
             if (data.encryptedSession) {
               localStorage.setItem('md_persistent_session', data.encryptedSession);
             }
@@ -223,6 +241,17 @@ export function UserProvider({ children }) {
       // Fallback: Supabase's built-in session engine
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!active) return;
+
+        let loggedOut = false;
+        try { loggedOut = sessionStorage.getItem(LOGGED_OUT_KEY) === 'true'; } catch {}
+        if (isLoggingOutRef.current || loggedOut) {
+          if (event === 'SIGNED_OUT' || !session) {
+            userRef.current = null;
+            setUserState(null);
+          }
+          setLoading(false);
+          return;
+        }
         
         // Preserve admin state across auth events (admin users may not have Supabase auth sessions)
         if (userRef.current?.role === 'admin' || userRef.current?.id === 'ADM-001' || (emailConfig.admin && userRef.current?.email === emailConfig.admin)) {
@@ -230,7 +259,7 @@ export function UserProvider({ children }) {
           return;
         }
 
-        if (session?.user) {
+        if (session?.user && event !== 'SIGNED_OUT') {
           // Pull user profile directly from the encrypted server-side database.
           const { data: profile } = await supabase
             .from('profiles')
@@ -290,6 +319,7 @@ export function UserProvider({ children }) {
    * 8. Navigates with replace to home so browser back button never shows authenticated views.
    */
   const signOut = async () => {
+    if (isLoggingOutRef.current) return;
     isLoggingOutRef.current = true;
 
     // 1. Clear in-memory token and React state immediately
@@ -302,10 +332,17 @@ export function UserProvider({ children }) {
       sessionStorage.setItem(LOGGED_OUT_KEY, 'true');
     } catch {}
 
-    // 3. Clear browser storage (theme preserved, md_user wiped)
+    // Revoke Supabase refresh sessions while its refresh token is still present.
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'global' });
+      if (error) console.warn('Supabase signOut failed:', error);
+    } catch (e) {
+      console.warn('Supabase signOut failed:', e);
+    }
+
     clearBrowserAuthState();
 
-    // 4. Broadcast to other open browser tabs
+    // Broadcast after revocation so another tab cannot erase the shared refresh token first.
     try {
       if (typeof BroadcastChannel !== 'undefined') {
         const channel = new BroadcastChannel('matchdistrict_auth');
@@ -316,14 +353,6 @@ export function UserProvider({ children }) {
     } catch (bcErr) {
       console.warn('BroadcastChannel error:', bcErr);
     }
-
-    // 5. Invalidate Supabase session
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.warn('Supabase signOut failed:', e);
-    }
-
     // 6. Disable Google auto-select / One Tap so it cannot auto re-login
     try {
       if (window.google?.accounts?.id?.disableAutoSelect) {
@@ -335,8 +364,13 @@ export function UserProvider({ children }) {
 
     // 7. Clear client-accessible cookie variants as a secondary defense
     try {
-      document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax';
-      document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax; Secure';
+      const cookieDomains = ['', '; domain=matchdistrict.in', '; domain=.matchdistrict.in'];
+      const secureSuffixes = ['', '; Secure'];
+      for (const domain of cookieDomains) {
+        for (const secure of secureSuffixes) {
+          document.cookie = `token=; path=/${domain}; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax${secure}`;
+        }
+      }
     } catch {}
 
     // 8. Clear Cache Storage API caches
@@ -350,19 +384,38 @@ export function UserProvider({ children }) {
     }
 
     // 9. Call server logout endpoint to clear HttpOnly cookies on the server
+    let serverLogoutSucceeded = false;
     try {
-      await fetch('/api/auth/logout', {
+      const logoutResponse = await fetch('/api/auth/logout', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+        cache: 'no-store'
       });
+      serverLogoutSucceeded = logoutResponse.ok;
     } catch (netErr) {
       // Local cleanup proceeds regardless; never display server network error on logout
       console.warn('Server logout request failed:', netErr);
     }
 
+    // Reassert local logout after Supabase's auth listener has handled SIGNED_OUT.
+    setUserState(null);
+    userRef.current = null;
+    setAuthTokenInMemory(null);
+    clearBrowserAuthState();
+    if (!serverLogoutSucceeded) {
+      // Keep the logged-out UI immediate; retry cookie clearing/revocation after
+      // the page navigates, using keepalive so the request survives the reload.
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        keepalive: true
+      }).catch(() => {});
+    }
+
     // 10. Navigate with replace to root/home so back-button does not show protected views
-    window.location.replace('/');
+    window.location.replace(`/?signed_out=${Date.now()}`);
   };
 
   return (
